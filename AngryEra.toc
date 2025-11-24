@@ -1,4 +1,4 @@
-## Interface: 11506
+## Interface: 11508
 ## Title: Angry Era
 ## Author: Mikinho
 ## X-Original-Author: Ermad

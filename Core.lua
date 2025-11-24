@@ -538,13 +538,20 @@ local function AngryAssign_AddPage(widget, event, value)
 			button1 = OKAY,
 			button2 = CANCEL,
 			OnAccept = function(self)
-				local text = self.editBox:GetText()
-				if text ~= "" then AngryAssign:CreatePage(text) end
+				local editBox = self.editBox or self.wideEditBox or self.EditBox
+				if editBox then
+					local text = editBox:GetText()
+					if text ~= "" then AngryAssign:CreatePage(text) end
+				end
 			end,
 			EditBoxOnEnterPressed = function(self)
-				local text = self:GetParent().editBox:GetText()
-				if text ~= "" then AngryAssign:CreatePage(text) end
-				self:GetParent():Hide()
+				local parent = self:GetParent()
+				local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
+				if editBox then
+					local text = editBox:GetText()
+					if text ~= "" then AngryAssign:CreatePage(text) end
+				end
+				parent:Hide()
 			end,
 			text = "New page name:",
 			hasEditBox = true,
@@ -567,16 +574,30 @@ local function AngryAssign_RenamePage(pageId)
 			button1 = OKAY,
 			button2 = CANCEL,
 			OnAccept = function(self)
-				local text = self.editBox:GetText()
-				AngryAssign:RenamePage(page.Id, text)
+				local editBox = self.editBox or self.wideEditBox or self.EditBox
+				if editBox then
+					local text = editBox:GetText()
+					if text and text ~= "" then
+						AngryAssign:RenamePage(page.Id, text)
+					end
+				end
 			end,
 			EditBoxOnEnterPressed = function(self)
-				local text = self:GetParent().editBox:GetText()
-				AngryAssign:RenamePage(page.Id, text)
+				local parent = self:GetParent()
+				local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
+				if editBox then
+					local text = editBox:GetText()
+					if text and text ~= "" then
+						AngryAssign:RenamePage(page.Id, text)
+					end
+				end
 				self:GetParent():Hide()
 			end,
 			OnShow = function(self)
-				self.editBox:SetText(page.Name)
+				local editBox = self.editBox or self.wideEditBox or self.EditBox
+				if editBox then
+					editBox:SetText(page.Name)
+				end
 			end,
 			whileDead = true,
 			hasEditBox = true,
@@ -1004,7 +1025,7 @@ function AngryAssign:CreateWindow()
 	button_rename:SetHeight(19)
 	button_rename:ClearAllPoints()
 	button_rename:SetPoint("BOTTOMLEFT", button_add.frame, "BOTTOMRIGHT", 5, 0)
-	button_rename:SetCallback("OnClick", function() AngryAssign_RenamePage() end)
+	button_rename:SetCallback("OnClick", function() AngryAssign_RenamePage(AngryAssign:SelectedId()) end)
 	window:AddChild(button_rename)
 	window.button_rename = button_rename
 
@@ -1014,7 +1035,7 @@ function AngryAssign:CreateWindow()
 	button_delete:SetHeight(19)
 	button_delete:ClearAllPoints()
 	button_delete:SetPoint("BOTTOMLEFT", button_rename.frame, "BOTTOMRIGHT", 5, 0)
-	button_delete:SetCallback("OnClick", function() AngryAssign_DeletePage() end)
+	button_delete:SetCallback("OnClick", function() AngryAssign_DeletePage(AngryAssign:SelectedId()) end)
 	window:AddChild(button_delete)
 	window.button_delete = button_delete
 
