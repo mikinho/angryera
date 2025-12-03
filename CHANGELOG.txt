@@ -1,3 +1,18 @@
+## v2.0.9
+
+* Core Validation: Implemented `ExtractAndValidateName` local helper to centralize input sanitization.
+    * Trims leading/trailing whitespace from Page and Category names.
+    * Prevents empty strings or nil values from being processed.
+* Duck Typing: Updated `CreatePage`, `RenamePage`, `CreateCategory`, and `RenameCategory` to accept either a raw string or a UI Frame object.
+* Error Handling: Core functions now return `success` (boolean) and `errorMessage` (string) instead of failing silently. UI handlers updated to print these errors to the chat frame.
+* Memory Leak (Popups): Fixed critical memory leak in `StaticPopupDialogs`.
+    * Removed dynamic table keys (e.g., `"AngryAssign_RenamePage_"..id`).
+    * Implemented a single static dialog entry for Rename/Delete actions.
+    * Now passes the target ID via the `data` parameter in `StaticPopup_Show`.
+* Memory Leak (Saved Variables): Fixed an issue in `DeleteCategory` where the expanded/collapsed state of the deleted category was left orphaned in `AngryAssign_State.tree.groups`.
+* Memory Leak (Runtime): Added `versionList` cleanup in `GROUP_JOINED` event to prevent the version tracking table from growing indefinitely during long sessions.
+* Sanitization: Hashing logic (`self:Hash`) now uses the sanitized/trimmed name, preventing "invisible" changes (like trailing spaces) from causing sync issues between clients.
+
 ## v2.0.8
 
 * ToC bump

@@ -2429,6 +2429,23 @@ function AngryAssign:RestoreDefaults()
 	LibStub("AceConfigRegistry-3.0"):NotifyChange("AngryAssign")
 end
 
+function AngryAssign:CleanupOrphanedStates()
+    if not AngryAssign_State or not AngryAssign_State.tree or not AngryAssign_State.tree.groups then return end
+
+    local count = 0
+    -- Iterate over the saved "expanded/collapsed" state of the tree
+    for id, _ in pairs(AngryAssign_State.tree.groups) do
+        -- Category IDs are stored as negative numbers in the tree group state
+        if id < 0 then
+            -- Check if the category actually exists (flip ID back to positive)
+            if not AngryAssign_Categories[-id] then
+                AngryAssign_State.tree.groups[id] = nil
+                count = count + 1
+            end
+        end
+    end
+end
+
 local blizOptionsPanel
 function AngryAssign:OnInitialize()
 	if AngryAssign_State == nil then
@@ -2451,6 +2468,9 @@ function AngryAssign:OnInitialize()
 			end
 		end
 	end
+
+	-- Run cleanup once on load
+    self:CleanupOrphanedStates()
 
 	local ver = AngryAssign_Version
 	if ver:sub(1,1) == "@" then ver = "dev" end
