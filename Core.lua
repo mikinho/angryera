@@ -107,6 +107,20 @@ local VERSION_ValidRaid = 4
 -- Utility Functions --
 -----------------------
 
+local ColorTable = {
+    ["|cblue"] = "|cff00cbf4",    ["|cgreen"] = "|cff0adc00",
+    ["|cred"] = "|cffeb310c",     ["|cyellow"] = "|cfffaf318",
+    ["|corange"] = "|cffff9d00",  ["|cpink"] = "|cfff64c97",
+    ["|cpurple"] = "|cffdc44eb",  ["|cdruid"] = "|cffff7d0a",
+    ["|chunter"] = "|cffabd473",  ["|cmage"] = "|cff40C7eb",
+    ["|cpaladin"] = "|cfff58cba", ["|cpriest"] = "|cffffffff",
+    ["|crogue"] = "|cfffff569",   ["|cshaman"] = "|cff0070de",
+    ["|cwarlock"] = "|cff8787ed", ["|cwarrior"] = "|cffc79c6e",
+    ["|cdk"] = "|cffc41f3b",      ["|cdeathknight"] = "|cffc41f3b",
+    ["|cmonk"] = "|cff00ff96",    ["|cdh"] = "|cffa330c9",
+    ["|cdemonhunter"] = "|cffa330c9", ["|cevoker"] = "|cff33937f"
+}
+
 local IconTable = {
     -- Raid Targets (Mapped directly to textures now)
     ["{star}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:0|t",
@@ -1697,38 +1711,13 @@ function AngryAssign:RenameCategory(id, nameOrFrame)
     local cat = self:GetCat(id)
     if not cat then return false, "Category not found." end
 
-    local nameToProcess
+    -- Use the helper to validate input (Consistency with CreatePage/RenamePage)
+    local name, err = ExtractAndValidateName(nameOrFrame)
+    if not name then return false, err end
 
-    -- Input Handling: Is it a UI Frame or a String?
-    if type(nameOrFrame) == "table" then
-        -- It is a frame, let's find the edit box inside it
-        -- We support passing the Popup frame directly
-        local editBox = nameOrFrame.editBox or nameOrFrame.wideEditBox or nameOrFrame.EditBox
-        
-        -- If we were passed the EditBox itself, use it, otherwise check for sub-keys
-        if not editBox and nameOrFrame.GetText then 
-             editBox = nameOrFrame 
-        end
+    if cat.Name == name then return true end
 
-        if not editBox then return false, "Could not find input box." end
-        nameToProcess = editBox:GetText()
-    else
-        -- It is a raw string (e.g. from a slash command)
-        nameToProcess = nameOrFrame
-    end
-
-    -- 2. Validation (Standard checks)
-    if type(nameToProcess) ~= "string" then return false, "Invalid name format." end
-    local cleanName = nameToProcess:match("^%s*(.-)%s*$")
-
-    if cleanName == "" then 
-        return false, "Category name cannot be empty." 
-    end
-
-    if cat.Name == cleanName then return true end
-
-    -- 3. Execution
-    cat.Name = cleanName
+    cat.Name = name
     self:UpdateTree()
     
     return true
@@ -2501,8 +2490,8 @@ function AngryAssign:CleanupOrphanedStates()
     local count = 0
     -- Iterate over the saved "expanded/collapsed" state of the tree
     for id, _ in pairs(AngryAssign_State.tree.groups) do
-        -- Category IDs are stored as negative numbers in the tree group state
-        if id < 0 then
+        -- FIX: Check that id is a number before comparing it
+        if type(id) == "number" and id < 0 then
             -- Check if the category actually exists (flip ID back to positive)
             if not AngryAssign_Categories[-id] then
                 AngryAssign_State.tree.groups[id] = nil
