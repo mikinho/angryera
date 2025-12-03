@@ -626,25 +626,30 @@ local function AngryAssign_RenamePage(pageId)
 end
 
 local function AngryAssign_DeletePage(pageId)
-	local page = AngryAssign:Get(pageId)
-	if not page then return end
+    local page = AngryAssign:Get(pageId)
+    if not page then return end
 
-	local popup_name = "AngryAssign_DeletePage_"..page.Id
-	if StaticPopupDialogs[popup_name] == nil then
-		StaticPopupDialogs[popup_name] = {
-			button1 = OKAY,
-			button2 = CANCEL,
-			OnAccept = function(self)
-				AngryAssign:DeletePage(page.Id)
-			end,
-			whileDead = true,
-			hideOnEscape = true,
-			preferredIndex = 3
-		}
-	end
-	StaticPopupDialogs[popup_name].text = 'Are you sure you want to delete page "'.. page.Name ..'"?'
-
-	StaticPopup_Show(popup_name)
+    local popup_name = "AngryAssign_DeletePage"
+    
+    if StaticPopupDialogs[popup_name] == nil then
+        StaticPopupDialogs[popup_name] = {
+            button1 = OKAY,
+            button2 = CANCEL,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            
+            OnAccept = function(self)
+                -- Get ID from data
+                local id = self.data
+                AngryAssign:DeletePage(id)
+            end,
+        }
+    end
+    
+    -- Pass the dynamic text as arg1, and the ID as data
+    StaticPopupDialogs[popup_name].text = 'Are you sure you want to delete page "%s"?'
+    StaticPopup_Show(popup_name, page.Name, nil, page.Id)
 end
 
 local function AngryAssign_AddCategory(widget, event, value)
@@ -681,65 +686,78 @@ local function AngryAssign_AddCategory(widget, event, value)
 end
 
 local function AngryAssign_RenameCategory(catId)
-	local cat = AngryAssign:GetCat(catId)
-	if not cat then return end
+    local cat = AngryAssign:GetCat(catId)
+    if not cat then return end
 
-	local popup_name = "AngryAssign_RenameCategory_"..cat.Id
-	if StaticPopupDialogs[popup_name] == nil then
-		StaticPopupDialogs[popup_name] = {
-			button1 = OKAY,
-			button2 = CANCEL,
-			OnAccept = function(self)
-		        -- 'self' is the Popup Frame
-		        local success, err = AngryAssign:RenameCategory(cat.Id, self)
-		        if not success and err then print(err) end
-		    end,
-		    EditBoxOnEnterPressed = function(self)
-		        local parent = self:GetParent()		        
-		        local success, err = AngryAssign:RenameCategory(cat.Id, parent)
-		        
-		        if success then
-		            parent:Hide()
-		        elseif err then
-		            print(err)
-		        end
-		    end,
-			OnShow = function(self)
-				local editBox = self.editBox or self.wideEditBox or self.EditBox
-				editBox:SetText(cat.Name)
-			end,
-			whileDead = true,
-			hasEditBox = true,
-			EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
-			hideOnEscape = true,
-			preferredIndex = 3
-		}
-	end
-	StaticPopupDialogs[popup_name].text = 'Rename category "'.. cat.Name ..'" to:'
-
-	StaticPopup_Show(popup_name)
+    local popup_name = "AngryAssign_RenameCategory"
+    
+    if StaticPopupDialogs[popup_name] == nil then
+        StaticPopupDialogs[popup_name] = {
+            text = "Rename category \"%s\" to:",
+            button1 = OKAY,
+            button2 = CANCEL,
+            hasEditBox = true,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            
+            OnShow = function(self)
+                local id = self.data
+                local c = AngryAssign:GetCat(id)
+                if c then
+                    local editBox = self.editBox or self.wideEditBox or self.EditBox
+                    editBox:SetText(c.Name)
+                    editBox:HighlightText()
+                end
+            end,
+            
+            OnAccept = function(self)
+                local id = self.data
+                local success, err = AngryAssign:RenameCategory(id, self)
+                if not success and err then print(err) end
+            end,
+            
+            EditBoxOnEnterPressed = function(self)
+                local parent = self:GetParent()
+                local id = parent.data
+                local success, err = AngryAssign:RenameCategory(id, parent)
+                
+                if success then
+                    parent:Hide()
+                elseif err then
+                    print(err)
+                end
+            end,
+            
+            EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        }
+    end
+    
+    StaticPopup_Show(popup_name, cat.Name, nil, cat.Id)
 end
 
 local function AngryAssign_DeleteCategory(catId)
-	local cat = AngryAssign:GetCat(catId)
-	if not cat then return end
+    local cat = AngryAssign:GetCat(catId)
+    if not cat then return end
 
-	local popup_name = "AngryAssign_DeleteCategory_"..cat.Id
-	if StaticPopupDialogs[popup_name] == nil then
-		StaticPopupDialogs[popup_name] = {
-			button1 = OKAY,
-			button2 = CANCEL,
-			OnAccept = function(self)
-				AngryAssign:DeleteCategory(cat.Id)
-			end,
-			whileDead = true,
-			hideOnEscape = true,
-			preferredIndex = 3
-		}
-	end
-	StaticPopupDialogs[popup_name].text = 'Are you sure you want to delete category "'.. cat.Name ..'"?'
-
-	StaticPopup_Show(popup_name)
+    local popup_name = "AngryAssign_DeleteCategory"
+    
+    if StaticPopupDialogs[popup_name] == nil then
+        StaticPopupDialogs[popup_name] = {
+            button1 = OKAY,
+            button2 = CANCEL,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnAccept = function(self)
+                local id = self.data
+                AngryAssign:DeleteCategory(id)
+            end,
+        }
+    end
+    
+    StaticPopupDialogs[popup_name].text = 'Are you sure you want to delete category "%s"?'
+    StaticPopup_Show(popup_name, cat.Name, nil, cat.Id)
 end
 
 local function AngryAssign_AssignCategory(frame, entryId, catId)
