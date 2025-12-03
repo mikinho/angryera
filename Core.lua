@@ -107,6 +107,93 @@ local VERSION_ValidRaid = 4
 -- Utility Functions --
 -----------------------
 
+local IconTable = {
+    -- Raid Targets (Mapped directly to textures now)
+    ["{star}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:0|t",
+    ["{rt1}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:0|t",
+
+    ["{circle}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_2:0|t",
+    ["{rt2}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_2:0|t",
+
+    ["{diamond}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:0|t",
+    ["{rt3}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:0|t",
+
+    ["{triangle}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_4:0|t",
+    ["{rt4}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_4:0|t",
+
+    ["{moon}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_5:0|t",
+    ["{rt5}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_5:0|t",
+
+    ["{square}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_6:0|t",
+    ["{rt6}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_6:0|t",
+
+    ["{cross}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:0|t",
+    ["{x}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:0|t",
+    ["{rt7}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:0|t",
+
+    ["{skull}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:0|t",
+    ["{rt8}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:0|t",
+
+    -- Other Icons
+    ["{healthstone}"] = "|TInterface\\Icons\\INV_Stone_04:0|t",
+    ["{hs}"] = "|TInterface\\Icons\\INV_Stone_04:0|t",
+    ["{damage}"] = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41|t",
+    ["{dps}"] = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41|t",
+    ["{tank}"] = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:0:19:22:41|t",
+    ["{healer}"] = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:1:20|t",
+    ["{hero}"] = "|TInterface\\Icons\\ABILITY_Shaman_Heroism:0|t",
+    ["{heroism}"] = "|TInterface\\Icons\\ABILITY_Shaman_Heroism:0|t",
+    ["{bl}"] = "|TInterface\\Icons\\SPELL_Nature_Bloodlust:0|t",
+    ["{bloodlust}"] = "|TInterface\\Icons\\SPELL_Nature_Bloodlust:0|t",
+    
+    -- Class Icons
+    ["{hunter}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:16:32|t",
+    ["{warrior}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:0:16|t",
+    ["{rogue}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:0:16|t",
+    ["{mage}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:0:16|t",
+    ["{priest}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:16:32|t",
+    ["{warlock}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:16:32|t",
+    ["{paladin}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:32:48|t",
+    ["{druid}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:0:16|t",
+    ["{shaman}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:16:32|t",
+    ["{dk}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
+    ["{deathknight}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
+    ["{monk}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:32:48|t",
+    ["{dh}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t",
+    ["{demonhunter}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t",
+    ["{evoker}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:48:64|t"
+}
+
+-- Ensure ProcessTag uses this table correctly
+local function ProcessTag(tag)
+    local lowerTag = tag:lower()
+    
+    -- Check static table first (This now returns the texture directly)
+    if IconTable[lowerTag] then return IconTable[lowerTag] end
+
+    -- Check dynamic patterns
+    local type, id = lowerTag:match("{(%a+)%s+(%d+)}")
+    if type then
+        if type == "spell" then
+            return GetSpellLink(tonumber(id)) or tag
+        elseif type == "icon" then
+            return format("|T%s:0|t", select(3, GetSpellInfo(tonumber(id))) or "")
+        elseif type == "boss" then
+            return select(5, EJ_GetEncounterInfo(tonumber(id))) or tag
+        elseif type == "journal" then
+            return (C_EncounterJournal.GetSectionInfo(tonumber(id)) and C_EncounterJournal.GetSectionInfo(tonumber(id)).link) or tag
+        end
+    end
+
+    -- Check named icon {icon name}
+    local iconName = lowerTag:match("{icon%s+([%w_]+)}")
+    if iconName then
+        return "|TInterface\\Icons\\"..iconName..":0|t"
+    end
+
+    return tag
+end
+
 local function selectedLastValue(input)
 	local a = select(-1, strsplit("", input or ""))
 	return tonumber(a)
@@ -202,6 +289,26 @@ function AngryAssign:SendOutMessage(data, channel, target)
 	return true
 end
 
+local function ValidateString(str, maxLength, fieldName)
+    -- Type Safety: Ensure it is actually a string
+    if type(str) ~= "string" then 
+        return "" -- Fail safe to empty string
+    end
+
+    -- Length Limit: Truncate if too long to prevent memory bloat
+    if #str > maxLength then
+        str = string.sub(str, 1, maxLength)
+    end
+
+    -- Texture Safety: Neutralize direct texture tags (|T...|t)
+    -- We replace the pipe '|' with a lookalike or simple replacement to break the tag
+    -- This prevents the "Mega-Texture" client crash exploit.
+    -- We explicitly look for the texture pattern to avoid breaking color codes |c
+    str = string.gsub(str, "|[Tt]", "!") 
+
+    return str
+end
+
 function AngryAssign:ProcessMessage(sender, data)
 	local cmd = data[COMMAND]
 	sender = EnsureUnitFullName(sender)
@@ -214,15 +321,24 @@ function AngryAssign:ProcessMessage(sender, data)
 			return
 		end
 
+        -- SECURITY FIX: Validate Inputs immediately
+        -- Limit Name to 100 chars, Contents to 20,000 chars (generous but safe)
+        local safeName = ValidateString(data[PAGE_Name], 100, "Name")
+        local safeContents = ValidateString(data[PAGE_Contents], 20000, "Contents")
+
 		local contents_updated = true
 		local id = data[PAGE_Id]
+        
+        -- Type check ID to prevent table index errors
+        if type(id) ~= "number" then return end
+
 		local page = AngryAssign_Pages[id]
 		if page then
-			if data[PAGE_UpdateId] and page.UpdateId == data[PAGE_UpdateId] then return end -- The version received is same as the one we already have
+			if data[PAGE_UpdateId] and page.UpdateId == data[PAGE_UpdateId] then return end 
 
-			contents_updated = page.Contents ~= data[PAGE_Contents]
-			page.Name = data[PAGE_Name]
-			page.Contents = data[PAGE_Contents]
+			contents_updated = page.Contents ~= safeContents
+			page.Name = safeName
+			page.Contents = safeContents
 			page.Updated = data[PAGE_Updated]
 			page.UpdateId = data[PAGE_UpdateId] or self:Hash(page.Name, page.Contents)
 
@@ -231,7 +347,13 @@ function AngryAssign:ProcessMessage(sender, data)
 				self:UpdateSelected()
 			end
 		else
-			AngryAssign_Pages[id] = { Id = id, Updated = data[PAGE_Updated], UpdateId = data[PAGE_UpdateId], Name = data[PAGE_Name], Contents = data[PAGE_Contents] }
+			AngryAssign_Pages[id] = { 
+                Id = id, 
+                Updated = data[PAGE_Updated], 
+                UpdateId = data[PAGE_UpdateId], 
+                Name = safeName, 
+                Contents = safeContents 
+            }
 		end
 		if AngryAssign_State.displayed == id then
 			self:UpdateDisplayed()
@@ -248,6 +370,9 @@ function AngryAssign:ProcessMessage(sender, data)
 		end
 
 		local id = data[DISPLAY_Id]
+        -- Safety check on ID
+        if id and type(id) ~= "number" then return end
+
 		local updated = data[DISPLAY_Updated]
 		local updateId = data[DISPLAY_UpdateId]
 		local page = AngryAssign_Pages[id]
@@ -273,16 +398,18 @@ function AngryAssign:ProcessMessage(sender, data)
 	elseif cmd == "REQUEST_PAGE" then
 		if sender == PlayerFullName() then return end
 		
-		self:SendPage( data[REQUEST_PAGE_Id] )
-
+        -- Safety check on requested ID
+        if type(data[REQUEST_PAGE_Id]) == "number" then
+		    self:SendPage( data[REQUEST_PAGE_Id] )
+        end
 
 	elseif cmd == "VER_QUERY" then
-		
 		self:SendVersion()
 		
-		
 	elseif cmd == "VERSION" then
-		local ver = tostring(data[VERSION_Version])
+		-- Existing version logic is mostly safe as it casts tostring/tonumber
+        -- but let's wrap the assignments just to be sure
+		local ver = tostring(data[VERSION_Version] or "")
 		local timestamp = tonumber(data[VERSION_Timestamp]) or 0
 
 		local localTimestamp = "dev"
@@ -1572,7 +1699,7 @@ function AngryAssign:RenameCategory(id, nameOrFrame)
 
     local nameToProcess
 
-    -- 1. Input Handling: Is it a UI Frame or a String?
+    -- Input Handling: Is it a UI Frame or a String?
     if type(nameOrFrame) == "table" then
         -- It is a frame, let's find the edit box inside it
         -- We support passing the Popup frame directly
@@ -2150,134 +2277,73 @@ function AngryAssign:UpdateDisplayedIfNewGroup()
 end
 
 function AngryAssign:UpdateDisplayed()
-	local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
-	if page then
-		local text = page.Contents
+    local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
+    if not page then 
+        self.display_text:Clear()
+        self:UpdateBackdrop()
+        return 
+    end
 
-		local highlights = { }
-		for token in string.gmatch( AngryAssign:GetConfig('highlight') , "[^%s%p]+") do
-			token = token:lower()
-			if token == 'group'then
-				tinsert(highlights, 'g'..(currentGroup or 0))
-			else
-				tinsert(highlights, token)
-			end
-		end
-		local highlightHex = self:GetConfig('highlightColor')
-		
-		text = text:gsub("||", "|")
-			:gsub(ci_pattern('|cblue'), "|cff00cbf4")
-			:gsub(ci_pattern('|cgreen'), "|cff0adc00")
-			:gsub(ci_pattern('|cred'), "|cffeb310c")
-			:gsub(ci_pattern('|cyellow'), "|cfffaf318")
-			:gsub(ci_pattern('|corange'), "|cffff9d00")
-			:gsub(ci_pattern('|cpink'), "|cfff64c97")
-			:gsub(ci_pattern('|cpurple'), "|cffdc44eb")
-			:gsub(ci_pattern('|cdruid'), "|cffff7d0a")
-			:gsub(ci_pattern('|chunter'), "|cffabd473")
-			:gsub(ci_pattern('|cmage'), "|cff40C7eb")
-			:gsub(ci_pattern('|cpaladin'), "|cfff58cba")
-			:gsub(ci_pattern('|cpriest'), "|cffffffff")
-			:gsub(ci_pattern('|crogue'), "|cfffff569")
-			:gsub(ci_pattern('|cshaman'), "|cff0070de")
-			:gsub(ci_pattern('|cwarlock'), "|cff8787ed")
-			:gsub(ci_pattern('|cwarrior'), "|cffc79c6e")
-			:gsub("([^%s%p]+)", function(word)
-				local word_lower = word:lower()
-				for _, token in ipairs(highlights) do
-					if token == word_lower then
-						return string.format("|cff%s%s|r", highlightHex, word)
-					end
-				end
-				return word
-			end)
-			:gsub(ci_pattern('{spell%s+(%d+)}'), function(id)
-				return GetSpellLink(id)
-			end)
-			:gsub(ci_pattern('{star}'), "{rt1}")
-			:gsub(ci_pattern('{circle}'), "{rt2}")
-			:gsub(ci_pattern('{diamond}'), "{rt3}")
-			:gsub(ci_pattern('{triangle}'), "{rt4}")
-			:gsub(ci_pattern('{moon}'), "{rt5}")
-			:gsub(ci_pattern('{square}'), "{rt6}")
-			:gsub(ci_pattern('{cross}'), "{rt7}")
-			:gsub(ci_pattern('{x}'), "{rt7}")
-			:gsub(ci_pattern('{skull}'), "{rt8}")
-			:gsub(ci_pattern('{rt([1-8])}'), "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_%1:0|t" )
-			:gsub(ci_pattern('{healthstone}'), "{hs}")
-			:gsub(ci_pattern('{hs}'), "|TInterface\\Icons\\INV_Stone_04:0|t")
-			:gsub(ci_pattern('{icon%s+(%d+)}'), function(id)
-				return format("|T%s:0|t", select(3, GetSpellInfo(tonumber(id))) )
-			end)
-			:gsub(ci_pattern('{icon%s+([%w_]+)}'), "|TInterface\\Icons\\%1:0|t")
-			:gsub(ci_pattern('{damage}'), "{dps}")
-			:gsub(ci_pattern('{tank}'), "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:0:19:22:41|t")
-			:gsub(ci_pattern('{healer}'), "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:1:20|t")
-			:gsub(ci_pattern('{dps}'), "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41|t")
-			:gsub(ci_pattern('{hunter}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:16:32|t")
-			:gsub(ci_pattern('{warrior}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:0:16|t")
-			:gsub(ci_pattern('{rogue}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:0:16|t")
-			:gsub(ci_pattern('{mage}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:0:16|t")
-			:gsub(ci_pattern('{priest}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:16:32|t")
-			:gsub(ci_pattern('{warlock}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:16:32|t")
-			:gsub(ci_pattern('{paladin}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:32:48|t")
-			:gsub(ci_pattern('{druid}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:0:16|t")
-			:gsub(ci_pattern('{shaman}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:16:32|t")
-		
-        if not isClassicVanilla then
-            text = text:gsub(ci_pattern('{hero}'), "{heroism}")
-                :gsub(ci_pattern('{heroism}'), "|TInterface\\Icons\\ABILITY_Shaman_Heroism:0|t")
-                :gsub(ci_pattern('{bloodlust}'), "{bl}")
-                :gsub(ci_pattern('{bl}'), "|TInterface\\Icons\\SPELL_Nature_Bloodlust:0|t")
-
-			if not isClassicTBC then
-				text = text:gsub(ci_pattern('|cdk'), "|cdeathknight")
-                	:gsub(ci_pattern('|cdeathknight'), "|cffc41f3b")
-					:gsub(ci_pattern('{dk}'), "{deathknight}")
-					:gsub(ci_pattern('{deathknight}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t")
-						
-				if not isClassicWrath then
-					text = text:gsub(ci_pattern('|cmonk'), "|cff00ff96")
-						:gsub(ci_pattern('|cdh'), "|cdemonhunter")
-						:gsub(ci_pattern('|cdemonhunter'), "|cffa330c9")
-						:gsub(ci_pattern('|cevoker'), "|cff33937f")
-						:gsub(ci_pattern('{boss%s+(%d+)}'), function(id)
-							return select(5, EJ_GetEncounterInfo(id))
-						end)
-						:gsub(ci_pattern('{journal%s+(%d+)}'), function(id)
-							return C_EncounterJournal.GetSectionInfo(id) and C_EncounterJournal.GetSectionInfo(id).link
-						end)
-						:gsub(ci_pattern('{monk}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:32:48|t")
-						:gsub(ci_pattern('{dh}'), "{demonhunter}")
-						:gsub(ci_pattern('{demonhunter}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t")
-						:gsub(ci_pattern('{evoker}'), "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:48:64|t")
-				end
-			end
+    local text = page.Contents
+    
+    -- 1. Prepare Highlight Map (Optimization: O(1) lookup)
+    local highlightSet = {}
+    local currentGroupStr = 'g' .. (self:GetCurrentGroup() or 0)
+    
+    for token in string.gmatch( AngryAssign:GetConfig('highlight') , "[^%s%p]+") do
+        token = token:lower()
+        if token == 'group' then
+            highlightSet[currentGroupStr] = true
+        else
+            highlightSet[token] = true
         end
-		
+    end
+    local highlightHex = self:GetConfig('highlightColor')
 
-		self.display_text:Clear()
-		local lines = { strsplit("\n", text) }
-		local lines_count = #lines
-		for i = 1, lines_count do
-			local line
-			if AngryAssign_State.directionUp then
-				line = lines[i]
-			else 
-				line = lines[lines_count - i + 1]
-			end
-			if line == "" then line = " " end
-			self.display_text:AddMessage(line)
-		end
-	else
-		self.display_text:Clear()
-	end
-	self:UpdateBackdrop()
+    -- 2. Normalize Pipes
+    text = text:gsub("||", "|")
+
+    -- 3. Process Colors (Single Pass)
+    text = text:gsub("(|c%w+)", function(c)
+        return ColorTable[c:lower()] or c
+    end)
+
+    -- 4. Process Tags (Single Pass)
+    -- (%b{}) captures anything balanced between { and }
+    text = text:gsub("(%b{})", ProcessTag)
+
+    -- 5. Process Highlights (Word Scan)
+    -- We only replace if the word exists in our highlightSet
+    text = text:gsub("([^%s%p]+)", function(word)
+        if highlightSet[word:lower()] then
+            return string.format("|cff%s%s|r", highlightHex, word)
+        end
+        return word -- Return original if no match
+    end)
+
+    -- 6. Render
+    self.display_text:Clear()
+    local lines = { strsplit("\n", text) }
+    local lines_count = #lines
+    
+    for i = 1, lines_count do
+        local line
+        if AngryAssign_State.directionUp then
+            line = lines[i]
+        else 
+            line = lines[lines_count - i + 1]
+        end
+        if line == "" then line = " " end
+        self.display_text:AddMessage(line)
+    end
+
+    self:UpdateBackdrop()
 end
 
 function AngryAssign_OutputDisplayed()
 	return AngryAssign:OutputDisplayed( AngryAssign:SelectedId() )
 end
+
 function AngryAssign:OutputDisplayed(id)
 	if not self:PermissionCheck() then
 		self:Print( RED_FONT_COLOR_CODE .. "You don't have permission to output a page.|r" )
