@@ -2867,6 +2867,7 @@ function AngryAssign:PARTY_CONVERTED_TO_RAID()
 end
 
 function AngryAssign:GROUP_JOINED()
+	versionList = {} -- Reset version tracking when joining a new group
 	self:SendVerQuery()
 	self:UpdateDisplayedIfNewGroup()
 	self:ScheduleTimer("SendRequestDisplay", 0.5)
