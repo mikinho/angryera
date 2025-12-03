@@ -640,13 +640,20 @@ local function AngryAssign_AddCategory(widget, event, value)
 			button1 = OKAY,
 			button2 = CANCEL,
 			OnAccept = function(self)
-				local text = self.editBox:GetText()
-				if text ~= "" then AngryAssign:CreateCategory(text) end
+				local editBox = self.editBox or self.wideEditBox or self.EditBox
+				if editBox then
+					local text = editBox:GetText()
+					if text ~= "" then AngryAssign:CreateCategory(text) end
+				end
 			end,
 			EditBoxOnEnterPressed = function(self)
-				local text = self:GetParent().editBox:GetText()
-				if text ~= "" then AngryAssign:CreateCategory(text) end
-				self:GetParent():Hide()
+				local parent = self:GetParent()
+				local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
+				if editBox then
+					local text = editBox:GetText()
+					if text ~= "" then AngryAssign:CreateCategory(text) end
+				end
+				parent:Hide()
 			end,
 			text = "New category name:",
 			hasEditBox = true,
@@ -951,6 +958,19 @@ function AngryAssign:CreateWindow()
 	tree:SetCallback("OnClick", AngryAssign_TreeClick)
 	window:AddChild(tree)
 	window.tree = tree
+	
+	-- Enable delete key for tree
+	tree.treeframe:EnableKeyboard(true)
+	tree.treeframe:SetPropagateKeyboardInput(true)
+	tree.treeframe:SetScript("OnKeyDown", function(self, key)
+		if key == "DELETE" then
+			local selectedId = AngryAssign:SelectedId()
+			if selectedId and selectedId > 0 then
+				AngryAssign_DeletePage(selectedId)
+				self:SetPropagateKeyboardInput(false)
+			end
+		end
+	end)
 
 	local text = AceGUI:Create("MultiLineEditBox")
 	text:SetLabel(nil)
