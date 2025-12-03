@@ -676,12 +676,23 @@ local function AngryAssign_RenameCategory(catId)
 			button1 = OKAY,
 			button2 = CANCEL,
 			OnAccept = function(self)
-				local text = self.editBox:GetText()
-				AngryAssign:RenameCategory(cat.Id, text)
+				local editBox = self.editBox or self.wideEditBox or self.EditBox
+				if editBox then
+					local text = editBox:GetText()
+					if text and text ~= "" then
+						AngryAssign:RenameCategory(cat.Id, text)
+					end
+				end
 			end,
 			EditBoxOnEnterPressed = function(self)
-				local text = self:GetParent().editBox:GetText()
-				AngryAssign:RenameCategory(cat.Id, text)
+				local parent = self:GetParent()
+				local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
+				if editBox then
+					local text = editBox:GetText()
+					if text and text ~= "" then
+						AngryAssign:RenameCategory(cat.Id, text)
+					end
+				end
 				self:GetParent():Hide()
 			end,
 			OnShow = function(self)
