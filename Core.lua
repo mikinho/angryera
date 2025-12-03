@@ -1530,15 +1530,22 @@ function AngryAssign:TouchPage(id)
 	page.Updated = time()
 end
 
-function AngryAssign:CreateCategory(name)
-	local id = self:Hash("cat", math.random(2000000000))
+function AngryAssign:CreateCategory(nameOrFrame)
+    -- Validate and Clean Input using your new helper
+    local name, err = ExtractAndValidateName(nameOrFrame)
+    if not name then return false, err end
 
-	AngryAssign_Categories[id] = { Id = id, Name = name }
+    -- Generate ID and Save
+    local id = self:Hash("cat", math.random(2000000000))
 
-	if AngryAssign_State.tree.groups then
-		AngryAssign_State.tree.groups[ -id ] = true
-	end
-	self:UpdateTree()
+    AngryAssign_Categories[id] = { Id = id, Name = name }
+
+    if AngryAssign_State.tree.groups then
+        AngryAssign_State.tree.groups[ -id ] = true
+    end
+    self:UpdateTree()
+    
+    return true
 end
 
 function AngryAssign:RenameCategory(id, nameOrFrame)
