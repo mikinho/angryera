@@ -532,83 +532,97 @@ function AngryAssign_ToggleLock()
 end
 
 local function AngryAssign_AddPage(widget, event, value)
-	local popup_name = "AngryAssign_AddPage"
-	if StaticPopupDialogs[popup_name] == nil then
-		StaticPopupDialogs[popup_name] = {
-			button1 = OKAY,
-			button2 = CANCEL,
-			OnAccept = function(self)
-				local editBox = self.editBox or self.wideEditBox or self.EditBox
-				if editBox then
-					local text = editBox:GetText()
-					if text ~= "" then AngryAssign:CreatePage(text) end
-				end
-			end,
-			EditBoxOnEnterPressed = function(self)
-				local parent = self:GetParent()
-				local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
-				if editBox then
-					local text = editBox:GetText()
-					if text ~= "" then AngryAssign:CreatePage(text) end
-				end
-				parent:Hide()
-			end,
-			text = "New page name:",
-			hasEditBox = true,
-			whileDead = true,
-			EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
-			hideOnEscape = true,
-			preferredIndex = 3
-		}
-	end
-	StaticPopup_Show(popup_name)
+    local popup_name = "AngryAssign_AddPage"
+    
+    if StaticPopupDialogs[popup_name] == nil then
+        StaticPopupDialogs[popup_name] = {
+            text = "New page name:",
+            button1 = OKAY,
+            button2 = CANCEL,
+            hasEditBox = true,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            
+            OnAccept = function(self)
+                -- Pass 'self' (the popup frame) directly
+                local success, err = AngryAssign:CreatePage(self)
+                if not success and err then print(err) end
+            end,
+            
+            EditBoxOnEnterPressed = function(self)
+                local parent = self:GetParent()
+                local success, err = AngryAssign:CreatePage(parent)
+                
+                if success then
+                    parent:Hide()
+                elseif err then
+                    print(err)
+                end
+            end,
+            
+            EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        }
+    end
+    
+    StaticPopup_Show(popup_name)
 end
 
 local function AngryAssign_RenamePage(pageId)
-	local page = AngryAssign:Get(pageId)
-	if not page then return end
+    local page = AngryAssign:Get(pageId)
+    if not page then return end
 
-	local popup_name = "AngryAssign_RenamePage_"..page.Id
-	if StaticPopupDialogs[popup_name] == nil then
-		StaticPopupDialogs[popup_name] = {
-			button1 = OKAY,
-			button2 = CANCEL,
-			OnAccept = function(self)
-				local editBox = self.editBox or self.wideEditBox or self.EditBox
-				if editBox then
-					local text = editBox:GetText()
-					if text and text ~= "" then
-						AngryAssign:RenamePage(page.Id, text)
-					end
-				end
-			end,
-			EditBoxOnEnterPressed = function(self)
-				local parent = self:GetParent()
-				local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
-				if editBox then
-					local text = editBox:GetText()
-					if text and text ~= "" then
-						AngryAssign:RenamePage(page.Id, text)
-					end
-				end
-				self:GetParent():Hide()
-			end,
-			OnShow = function(self)
-				local editBox = self.editBox or self.wideEditBox or self.EditBox
-				if editBox then
-					editBox:SetText(page.Name)
-				end
-			end,
-			whileDead = true,
-			hasEditBox = true,
-			EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
-			hideOnEscape = true,
-			preferredIndex = 3
-		}
-	end
-	StaticPopupDialogs[popup_name].text = 'Rename page "'.. page.Name ..'" to:'
+    -- FIX: Use a static name, do not append ID (prevents memory leak)
+    local popup_name = "AngryAssign_RenamePage"
 
-	StaticPopup_Show(popup_name)
+    if StaticPopupDialogs[popup_name] == nil then
+        StaticPopupDialogs[popup_name] = {
+            -- Use %s to dynamically insert the old name later
+            text = "Rename page \"%s\" to:",
+            button1 = OKAY,
+            button2 = CANCEL,
+            hasEditBox = true,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+
+            OnShow = function(self)
+                -- Retrieve the ID passed via StaticPopup_Show
+                local id = self.data 
+                local p = AngryAssign:Get(id)
+                if p then
+                    local editBox = self.editBox or self.wideEditBox or self.EditBox
+                    if editBox then
+                        editBox:SetText(p.Name)
+                        editBox:HighlightText()
+                    end
+                end
+            end,
+
+            OnAccept = function(self)
+                local id = self.data
+                local success, err = AngryAssign:RenamePage(id, self)
+                if not success and err then print(err) end
+            end,
+
+            EditBoxOnEnterPressed = function(self)
+                local parent = self:GetParent()
+                local id = parent.data
+                local success, err = AngryAssign:RenamePage(id, parent)
+                
+                if success then
+                    parent:Hide()
+                elseif err then
+                    print(err)
+                end
+            end,
+            
+            EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        }
+    end
+
+    -- Args: Name, TextArg1 (%s), TextArg2, Data (The Page ID)
+    StaticPopup_Show(popup_name, page.Name, nil, page.Id)
 end
 
 local function AngryAssign_DeletePage(pageId)
@@ -1410,29 +1424,90 @@ function AngryAssign:Hash(name, contents)
 	return libC:fcs32final(code)
 end
 
-function AngryAssign:CreatePage(name)
-	if not self:PermissionCheck() then return end
-	local id = self:Hash("page", math.random(2000000000))
+-- Helper function to handle the "Duck Typing" of the input
+-- Places this at the top of your file or above the methods
+local function ExtractAndValidateName(nameOrFrame)
+    local text
 
-	AngryAssign_Pages[id] = { Id = id, Updated = time(), UpdateId = self:Hash(name, ""), Name = name, Contents = "" }
-	self:UpdateTree(id)
-	self:SendPage(id, true)
+    -- Extract text if input is a UI Frame
+    if type(nameOrFrame) == "table" then
+        local editBox = nameOrFrame.editBox or nameOrFrame.wideEditBox or nameOrFrame.EditBox
+        -- Fallback: If passed the EditBox directly
+        if not editBox and nameOrFrame.GetText then editBox = nameOrFrame end
+        
+        if not editBox then return nil, "Could not find input box." end
+        text = editBox:GetText()
+    else
+        -- Input is already a string
+        text = nameOrFrame
+    end
+
+    -- Validate type
+    if type(text) ~= "string" then return nil, "Invalid name format." end
+
+    -- Trim whitespace
+    local cleanName = text:match("^%s*(.-)%s*$")
+
+    -- Check empty
+    if cleanName == "" then return nil, "Name cannot be empty." end
+
+    return cleanName
 end
 
-function AngryAssign:RenamePage(id, name)
-	local page = self:Get(id)
-	if not page or not self:PermissionCheck() then return end
+function AngryAssign:CreatePage(nameOrFrame)
+    -- Check Permissions first
+    if not self:PermissionCheck() then return false, "Permission denied." end
 
-	page.Name = name
-	page.Updated = time()
-	page.UpdateId = self:Hash(page.Name, page.Contents)
+    -- Validate and Clean Input
+    local name, err = ExtractAndValidateName(nameOrFrame)
+    if not name then return false, err end
 
-	self:SendPage(id, true)
-	self:UpdateTree()
-	if AngryAssign_State.displayed == id then
-		self:UpdateDisplayed()
-		self:ShowDisplay()
-	end
+    -- Original Business Logic
+    local id = self:Hash("page", math.random(2000000000))
+
+    AngryAssign_Pages[id] = { 
+        Id = id, 
+        Updated = time(), 
+        UpdateId = self:Hash(name, ""), 
+        Name = name, 
+        Contents = "" 
+    }
+    
+    self:UpdateTree(id)
+    self:SendPage(id, true)
+    
+    return true
+end
+
+function AngryAssign:RenamePage(id, nameOrFrame)
+    -- Check Existence
+    local page = self:Get(id)
+    if not page then return false, "Page not found." end
+
+    -- Check Permissions
+    if not self:PermissionCheck() then return false, "Permission denied." end
+
+    -- Validate and Clean Input
+    local name, err = ExtractAndValidateName(nameOrFrame)
+    if not name then return false, err end
+
+    -- Optimization: Skip if name hasn't changed
+    if page.Name == name then return true end
+
+    -- Original Business Logic
+    page.Name = name
+    page.Updated = time()
+    page.UpdateId = self:Hash(page.Name, page.Contents)
+
+    self:SendPage(id, true)
+    self:UpdateTree()
+    
+    if AngryAssign_State.displayed == id then
+        self:UpdateDisplayed()
+        self:ShowDisplay()
+    end
+
+    return true
 end
 
 function AngryAssign:DeletePage(id)
