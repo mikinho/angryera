@@ -2275,7 +2275,7 @@ function AngryAssign:UpdateDisplayed()
 
     local text = page.Contents
     
-    -- 1. Prepare Highlight Map (Optimization: O(1) lookup)
+    -- Prepare Highlight Map (Optimization: O(1) lookup)
     local highlightSet = {}
     local currentGroupStr = 'g' .. (self:GetCurrentGroup() or 0)
     
@@ -2289,19 +2289,19 @@ function AngryAssign:UpdateDisplayed()
     end
     local highlightHex = self:GetConfig('highlightColor')
 
-    -- 2. Normalize Pipes
+    -- Normalize Pipes
     text = text:gsub("||", "|")
 
-    -- 3. Process Colors (Single Pass)
+    -- Process Colors (Single Pass)
     text = text:gsub("(|c%w+)", function(c)
         return ColorTable[c:lower()] or c
     end)
 
-    -- 4. Process Tags (Single Pass)
+    -- Process Tags (Single Pass)
     -- (%b{}) captures anything balanced between { and }
     text = text:gsub("(%b{})", ProcessTag)
 
-    -- 5. Process Highlights (Word Scan)
+    -- Process Highlights (Word Scan)
     -- We only replace if the word exists in our highlightSet
     text = text:gsub("([^%s%p]+)", function(word)
         if highlightSet[word:lower()] then
@@ -2310,7 +2310,7 @@ function AngryAssign:UpdateDisplayed()
         return word -- Return original if no match
     end)
 
-    -- 6. Render
+    -- Render
     self.display_text:Clear()
     local lines = { strsplit("\n", text) }
     local lines_count = #lines
@@ -2336,9 +2336,12 @@ end
 function AngryAssign:OutputDisplayed(id)
 	if not self:PermissionCheck() then
 		self:Print( RED_FONT_COLOR_CODE .. "You don't have permission to output a page.|r" )
+		return -- Added return here so we don't proceed with nil ID check if perm fails
 	end
+
 	if not id then id = AngryAssign_State.displayed end
 	local page = AngryAssign_Pages[ id ]
+	
 	local channel
 	if not isClassic and (IsInGroup(LE_PARTY_CATEGORY_INSTANCE) or IsInRaid(LE_PARTY_CATEGORY_INSTANCE)) then
 		channel = "INSTANCE_CHAT"
@@ -2347,89 +2350,76 @@ function AngryAssign:OutputDisplayed(id)
 	elseif IsInGroup() then
 		channel = "PARTY"
 	end
+
 	if channel and page then
 		local output = page.Contents
 
+        -- Normalize Pipes
 		output = output:gsub("||", "|")
-			:gsub(ci_pattern('|r'), "")
-			:gsub(ci_pattern('|cblue'), "")
-			:gsub(ci_pattern('|cgreen'), "")
-			:gsub(ci_pattern('|cred'), "")
-			:gsub(ci_pattern('|cyellow'), "")
-			:gsub(ci_pattern('|corange'), "")
-			:gsub(ci_pattern('|cpink'), "")
-			:gsub(ci_pattern('|cpurple'), "")
-			:gsub(ci_pattern('|cdruid'), "")
-			:gsub(ci_pattern('|chunter'), "")
-			:gsub(ci_pattern('|cmage'), "")
-			:gsub(ci_pattern('|cpaladin'), "")
-			:gsub(ci_pattern('|cpriest'), "")
-			:gsub(ci_pattern('|crogue'), "")
-			:gsub(ci_pattern('|cshaman'), "")
-			:gsub(ci_pattern('|cwarlock'), "")
-			:gsub(ci_pattern('|cwarrior'), "")
-			:gsub(ci_pattern('{spell%s+(%d+)}'), function(id)
-				return GetSpellLink(id)
-			end)
-			:gsub(ci_pattern('{star}'), "{rt1}")
-			:gsub(ci_pattern('{circle}'), "{rt2}")
-			:gsub(ci_pattern('{diamond}'), "{rt3}")
-			:gsub(ci_pattern('{triangle}'), "{rt4}")
-			:gsub(ci_pattern('{moon}'), "{rt5}")
-			:gsub(ci_pattern('{square}'), "{rt6}")
-			:gsub(ci_pattern('{cross}'), "{rt7}")
-			:gsub(ci_pattern('{x}'), "{rt7}")
-			:gsub(ci_pattern('{skull}'), "{rt8}")
-			:gsub(ci_pattern('{healthstone}'), "{hs}")
-			:gsub(ci_pattern('{hs}'), 'Healthstone')
-			:gsub(ci_pattern('{icon%s+([%w_]+)}'), '')
-			:gsub(ci_pattern('{damage}'), 'Damage')
-			:gsub(ci_pattern('{tank}'), 'Tanks')
-			:gsub(ci_pattern('{healer}'), 'Healers')
-			:gsub(ci_pattern('{dps}'), 'Damage')
-			:gsub(ci_pattern('{hunter}'), LOCALIZED_CLASS_NAMES_MALE["HUNTER"])
-			:gsub(ci_pattern('{warrior}'), LOCALIZED_CLASS_NAMES_MALE["WARRIOR"])
-			:gsub(ci_pattern('{rogue}'), LOCALIZED_CLASS_NAMES_MALE["ROGUE"])
-			:gsub(ci_pattern('{mage}'), LOCALIZED_CLASS_NAMES_MALE["MAGE"])
-			:gsub(ci_pattern('{priest}'), LOCALIZED_CLASS_NAMES_MALE["PRIEST"])
-			:gsub(ci_pattern('{warlock}'), LOCALIZED_CLASS_NAMES_MALE["WARLOCK"])
-			:gsub(ci_pattern('{paladin}'), LOCALIZED_CLASS_NAMES_MALE["PALADIN"])
-			:gsub(ci_pattern('{druid}'), LOCALIZED_CLASS_NAMES_MALE["DRUID"])
-			:gsub(ci_pattern('{shaman}'), LOCALIZED_CLASS_NAMES_MALE["SHAMAN"])
 
-		if not isClassicVanilla then
-			output = output:gsub(ci_pattern('{bloodlust}'), "{bl}")
-				:gsub(ci_pattern('{bl}'), 'Bloodlust')
-				:gsub(ci_pattern('{hero}'), "{heroism}")
-				:gsub(ci_pattern('{heroism}'), 'Heroism')
+        -- Process Tags (Icons, Spells, Class Names) - Single Pass
+        -- We look for anything inside {} and replace it based on logic or table lookup
+        output = output:gsub("{(.-)}", function(tagContent)
+            local lowerTag = "{"..tagContent:lower().."}"
 
-			if not isClassicTBC then
-				output = output:gsub(ci_pattern('|cdk'), "|cdeathknight")
-					:gsub(ci_pattern('|cdeathknight'), "")
-					:gsub(ci_pattern('{dk}'), "{deathknight}")
-					:gsub(ci_pattern('{deathknight}'), LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"])
-						
-				if not isClassicWrath then
-					output = output:gsub(ci_pattern('|cmonk'), "")
-						:gsub(ci_pattern('|cdh'), "|cdemonhunter")
-						:gsub(ci_pattern('|cdemonhunter'), "")
-						:gsub(ci_pattern('|cevoker'), "")
-						:gsub(ci_pattern('{boss%s+(%d+)}'), function(id)
-							return select(5, EJ_GetEncounterInfo(id))
-						end)
-						:gsub(ci_pattern('{journal%s+(%d+)}'), function(id)
-							return C_EncounterJournal.GetSectionInfo(id) and C_EncounterJournal.GetSectionInfo(id).link
-						end)
-                        :gsub(ci_pattern('{monk}'), LOCALIZED_CLASS_NAMES_MALE["MONK"])
-						:gsub(ci_pattern('{dh}'), "{demonhunter}")						
-                        :gsub(ci_pattern('{demonhunter}'), LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"])
-						:gsub(ci_pattern('{evoker}'), LOCALIZED_CLASS_NAMES_MALE["EVOKER"])
-				end
-			end
-        end
+            -- Direct Icon Replacements (star -> rt1, etc.)
+            -- We can reuse IconTable keys, but we need to map them to Chat-Friendly strings
+            -- Since IconTable maps to TEXTURES (|T...|t), we need a specific chat map here.
+            local chatMap = {
+                ["{star}"] = "{rt1}", ["{circle}"] = "{rt2}", ["{diamond}"] = "{rt3}",
+                ["{triangle}"] = "{rt4}", ["{moon}"] = "{rt5}", ["{square}"] = "{rt6}",
+                ["{cross}"] = "{rt7}", ["{x}"] = "{rt7}", ["{skull}"] = "{rt8}",
+                ["{healthstone}"] = "{hs}", ["{hs}"] = "Healthstone",
+                ["{damage}"] = "Damage", ["{dps}"] = "Damage",
+                ["{tank}"] = "Tanks", ["{healer}"] = "Healers",
+                ["{bloodlust}"] = "Bloodlust", ["{bl}"] = "Bloodlust",
+                ["{hero}"] = "Heroism", ["{heroism}"] = "Heroism",
+                ["{hunter}"] = LOCALIZED_CLASS_NAMES_MALE["HUNTER"],
+                ["{warrior}"] = LOCALIZED_CLASS_NAMES_MALE["WARRIOR"],
+                ["{rogue}"] = LOCALIZED_CLASS_NAMES_MALE["ROGUE"],
+                ["{mage}"] = LOCALIZED_CLASS_NAMES_MALE["MAGE"],
+                ["{priest}"] = LOCALIZED_CLASS_NAMES_MALE["PRIEST"],
+                ["{warlock}"] = LOCALIZED_CLASS_NAMES_MALE["WARLOCK"],
+                ["{paladin}"] = LOCALIZED_CLASS_NAMES_MALE["PALADIN"],
+                ["{druid}"] = LOCALIZED_CLASS_NAMES_MALE["DRUID"],
+                ["{shaman}"] = LOCALIZED_CLASS_NAMES_MALE["SHAMAN"],
+                ["{dk}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
+                ["{deathknight}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
+                ["{monk}"] = LOCALIZED_CLASS_NAMES_MALE["MONK"],
+                ["{dh}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
+                ["{demonhunter}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
+                ["{evoker}"] = LOCALIZED_CLASS_NAMES_MALE["EVOKER"],
+            }
 
-        output = output:gsub(ci_pattern('|c%w?%w?%w?%w?%w?%w?%w?%w?'), "")
-		
+            if chatMap[lowerTag] then return chatMap[lowerTag] end
+
+            -- Handle Dynamic Tags (spell, boss, journal)
+            local type, id = tagContent:match("^(%a+)%s+(%d+)$")
+            if type then
+                type = type:lower()
+                id = tonumber(id)
+                if type == "spell" then return GetSpellLink(id) end
+                if type == "boss" and not isClassicTBC and not isClassicWrath then 
+                    return select(5, EJ_GetEncounterInfo(id)) 
+                end
+                if type == "journal" and not isClassicTBC and not isClassicWrath then 
+                    return C_EncounterJournal.GetSectionInfo(id) and C_EncounterJournal.GetSectionInfo(id).link 
+                end
+            end
+            
+            -- Strip Icon tags entirely for chat output
+            if tagContent:lower():match("^icon%s+") then return "" end
+
+            -- Default: Return the tag as-is if we don't know it
+            return "{"..tagContent.."}"
+        end)
+
+        -- Strip all Colors (Simple Pattern)
+        -- Removes |cblue, |cff0000, |r, etc.
+        output = output:gsub("|c%x+", ""):gsub("|r", "")
+        -- Also strip our custom color names like |cblue if they remain (though the regex above catches hex)
+        output = output:gsub("|c%a+", "")
+
 		local lines = { strsplit("\n", output) }
 		for _, line in ipairs(lines) do
 			if line ~= "" then
