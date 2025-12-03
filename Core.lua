@@ -676,27 +676,23 @@ local function AngryAssign_RenameCategory(catId)
 			button1 = OKAY,
 			button2 = CANCEL,
 			OnAccept = function(self)
-				local editBox = self.editBox or self.wideEditBox or self.EditBox
-				if editBox then
-					local text = editBox:GetText()
-					if text and text ~= "" then
-						AngryAssign:RenameCategory(cat.Id, text)
-					end
-				end
-			end,
-			EditBoxOnEnterPressed = function(self)
-				local parent = self:GetParent()
-				local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
-				if editBox then
-					local text = editBox:GetText()
-					if text and text ~= "" then
-						AngryAssign:RenameCategory(cat.Id, text)
-					end
-				end
-				self:GetParent():Hide()
-			end,
+		        -- 'self' is the Popup Frame
+		        local success, err = AngryAssign:RenameCategory(cat.Id, self)
+		        if not success and err then print(err) end
+		    end,
+		    EditBoxOnEnterPressed = function(self)
+		        local parent = self:GetParent()		        
+		        local success, err = AngryAssign:RenameCategory(cat.Id, parent)
+		        
+		        if success then
+		            parent:Hide()
+		        elseif err then
+		            print(err)
+		        end
+		    end,
 			OnShow = function(self)
-				self.editBox:SetText(cat.Name)
+				local editBox = self.editBox or self.wideEditBox or self.EditBox
+				editBox:SetText(cat.Name)
 			end,
 			whileDead = true,
 			hasEditBox = true,
@@ -1470,13 +1466,45 @@ function AngryAssign:CreateCategory(name)
 	self:UpdateTree()
 end
 
-function AngryAssign:RenameCategory(id, name)
-	local cat = self:GetCat(id)
-	if not cat then return end
+function AngryAssign:RenameCategory(id, nameOrFrame)
+    local cat = self:GetCat(id)
+    if not cat then return false, "Category not found." end
 
-	cat.Name = name
+    local nameToProcess
 
-	self:UpdateTree()
+    -- 1. Input Handling: Is it a UI Frame or a String?
+    if type(nameOrFrame) == "table" then
+        -- It is a frame, let's find the edit box inside it
+        -- We support passing the Popup frame directly
+        local editBox = nameOrFrame.editBox or nameOrFrame.wideEditBox or nameOrFrame.EditBox
+        
+        -- If we were passed the EditBox itself, use it, otherwise check for sub-keys
+        if not editBox and nameOrFrame.GetText then 
+             editBox = nameOrFrame 
+        end
+
+        if not editBox then return false, "Could not find input box." end
+        nameToProcess = editBox:GetText()
+    else
+        -- It is a raw string (e.g. from a slash command)
+        nameToProcess = nameOrFrame
+    end
+
+    -- 2. Validation (Standard checks)
+    if type(nameToProcess) ~= "string" then return false, "Invalid name format." end
+    local cleanName = nameToProcess:match("^%s*(.-)%s*$")
+
+    if cleanName == "" then 
+        return false, "Category name cannot be empty." 
+    end
+
+    if cat.Name == cleanName then return true end
+
+    -- 3. Execution
+    cat.Name = cleanName
+    self:UpdateTree()
+    
+    return true
 end
 
 function AngryAssign:DeleteCategory(id)
