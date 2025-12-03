@@ -1625,6 +1625,11 @@ function AngryAssign:DeleteCategory(id)
 		end
 	end
 
+	-- Remove the expanded/collapsed state for this category
+	if AngryAssign_State.tree.groups then
+		AngryAssign_State.tree.groups[-id] = nil
+	end
+
 	AngryAssign_Categories[id] = nil
 
 	self:UpdateTree()
