@@ -648,36 +648,36 @@ local function AngryAssign_DeletePage(pageId)
 end
 
 local function AngryAssign_AddCategory(widget, event, value)
-	local popup_name = "AngryAssign_AddCategory"
-	if StaticPopupDialogs[popup_name] == nil then
-		StaticPopupDialogs[popup_name] = {
-			button1 = OKAY,
-			button2 = CANCEL,
-			OnAccept = function(self)
-				local editBox = self.editBox or self.wideEditBox or self.EditBox
-				if editBox then
-					local text = editBox:GetText()
-					if text ~= "" then AngryAssign:CreateCategory(text) end
-				end
-			end,
-			EditBoxOnEnterPressed = function(self)
-				local parent = self:GetParent()
-				local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
-				if editBox then
-					local text = editBox:GetText()
-					if text ~= "" then AngryAssign:CreateCategory(text) end
-				end
-				parent:Hide()
-			end,
-			text = "New category name:",
-			hasEditBox = true,
-			whileDead = true,
-			EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
-			hideOnEscape = true,
-			preferredIndex = 3
-		}
-	end
-	StaticPopup_Show(popup_name)
+    local popup_name = "AngryAssign_AddCategory"
+    if StaticPopupDialogs[popup_name] == nil then
+        StaticPopupDialogs[popup_name] = {
+            text = "New category name:",
+            button1 = OKAY,
+            button2 = CANCEL,
+            hasEditBox = true,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            
+            OnAccept = function(self)
+                local success, err = AngryAssign:CreateCategory(self)
+                if not success and err then print(err) end
+            end,
+            
+            EditBoxOnEnterPressed = function(self)
+                local parent = self:GetParent()
+                local success, err = AngryAssign:CreateCategory(parent)
+                if success then
+                    parent:Hide()
+                elseif err then
+                    print(err)
+                end
+            end,
+            
+            EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        }
+    end
+    StaticPopup_Show(popup_name)
 end
 
 local function AngryAssign_RenameCategory(catId)
