@@ -2487,9 +2487,28 @@ function AngryAssign:UpdateDisplayed()
     -- Normalize Pipes
     text = text:gsub("||", "|")
 
-    -- Process Colors (Single Pass)
+	-- Process Colors (Peel-Back Optimization)
     text = text:gsub("(|c%w+)", function(c)
-        return ColorTable[c:lower()] or c
+        local lowerC = c:lower()
+        
+        -- Check for exact match first (Fastest)
+        if ColorTable[lowerC] then return ColorTable[lowerC] end
+
+        -- Check for partial matches (e.g. |cmageGrp -> |cmage + Grp)
+        -- We loop backwards from the end of the string to find the longest valid color key
+        for i = #c - 1, 3, -1 do
+            local sub = lowerC:sub(1, i)
+            if ColorTable[sub] then
+                -- Found a valid color (e.g. |cmage)
+                local validColor = ColorTable[sub]
+                -- Append the rest of the text (e.g. Grp)
+                local remainder = c:sub(i + 1)
+                return validColor .. remainder
+            end
+        end
+
+        -- No match found (likely a standard hex code like |cff000000), return as-is
+        return c
     end)
 
     -- Process Tags (Single Pass)
@@ -2609,11 +2628,26 @@ function AngryAssign:OutputDisplayed(id)
             return "{"..tagContent.."}"
         end)
 
-        -- Strip all Colors (Simple Pattern)
-        -- Removes |cblue, |cff0000, |r, etc.
-        output = output:gsub("|c%x+", ""):gsub("|r", "")
-        -- Also strip our custom color names like |cblue if they remain (though the regex above catches hex)
-        output = output:gsub("|c%a+", "")
+		-- Strip Colors (Using the same Peel-Back logic to correctly remove |cmageGrp)
+        output = output:gsub("(|c%w+)", function(c)
+             local lowerC = c:lower()
+             -- If it's a known custom color key, strip it (return empty), but keep the remainder
+             if ColorTable[lowerC] then return "" end
+             
+             -- Peel back for attached text |cmageGrp
+             for i = #c - 1, 3, -1 do
+                 local sub = lowerC:sub(1, i)
+                 if ColorTable[sub] then
+                     -- Found color |cmage, return just the remainder "Grp"
+                     return c:sub(i + 1)
+                 end
+             end
+             
+             -- If it's a standard hex code |cff..., strip it entirely
+             if lowerC:match("^|c%x+$") then return "" end
+             
+             return c
+        end):gsub("|r", "")
 
 		local lines = { strsplit("\n", output) }
 		for _, line in ipairs(lines) do
