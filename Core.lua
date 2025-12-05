@@ -656,6 +656,192 @@ function AngryAssign:VersionCheckOutput()
 end
 
 --------------------------
+-- Bulk Management      --
+--------------------------
+
+function AngryAssign:ShowBulkManagement()
+    -- CHANGE: Use "Window" instead of "Frame" for better dialog behavior
+    local frame = AceGUI:Create("Window")
+    frame:SetTitle("Bulk Manage Pages")
+    frame:SetLayout("Flow")
+    frame:SetWidth(400)
+    frame:SetHeight(500)
+    frame:EnableResize(false)
+    
+    -- Setup Frame Strata and Global Name for Escape Key
+    if frame.frame then
+        local f = frame.frame
+        if f.SetFrameStrata then f:SetFrameStrata("FULLSCREEN_DIALOG") end
+        if f.SetToplevel then f:SetToplevel(true) end
+        
+        -- Assign a global name so UISpecialFrames can find it
+        local globalName = "AngryAssign_BulkManage"
+        _G[globalName] = f
+        
+        -- Register for Escape key closing
+        local found = false
+        for _, v in ipairs(UISpecialFrames) do
+            if v == globalName then found = true break end
+        end
+        if not found then tinsert(UISpecialFrames, globalName) end
+    end
+
+    -- Ensure the widget is released (cleaned up) when closed
+    frame:SetCallback("OnClose", function(widget) 
+        AceGUI:Release(widget) 
+    end)
+
+    -- Fixed height for scroll area
+    local scroll = AceGUI:Create("ScrollFrame")
+    scroll:SetLayout("List") 
+    scroll:SetFullWidth(true)
+    scroll:SetHeight(410) 
+    frame:AddChild(scroll)
+
+    local selectedToDelete = { pages = {}, categories = {} }
+    local allSelected = false 
+
+    -- Helper to build the list
+    local function BuildList()
+        scroll:ReleaseChildren()
+        
+        -- A. Gather Data
+        local sortedCats = {}
+        for _, cat in pairs(AngryAssign_Categories) do table.insert(sortedCats, cat) end
+        table.sort(sortedCats, function(a,b) return a.Name < b.Name end)
+
+        local orphanPages = {}
+        for _, page in pairs(AngryAssign_Pages) do
+            if not page.CategoryId then table.insert(orphanPages, page) end
+        end
+        table.sort(orphanPages, function(a,b) return a.Name < b.Name end)
+
+        -- B. Render Categories
+        for _, cat in ipairs(sortedCats) do
+            local catGroup = AceGUI:Create("SimpleGroup")
+            catGroup:SetLayout("Flow")
+            catGroup:SetFullWidth(true)
+            scroll:AddChild(catGroup)
+
+            local catCheck = AceGUI:Create("CheckBox")
+            catCheck:SetLabel("|cffffd200["..cat.Name.."]|r") 
+            catCheck:SetType("checkbox")
+            catCheck:SetValue(selectedToDelete.categories[cat.Id])
+            catCheck:SetCallback("OnValueChanged", function(_, _, val)
+                selectedToDelete.categories[cat.Id] = val or nil
+            end)
+            catCheck:SetFullWidth(true) 
+            catGroup:AddChild(catCheck)
+
+            -- Find children pages
+            local catPages = {}
+            for _, page in pairs(AngryAssign_Pages) do
+                if page.CategoryId == cat.Id then table.insert(catPages, page) end
+            end
+            table.sort(catPages, function(a,b) return a.Name < b.Name end)
+
+            -- Render Children
+            for _, page in ipairs(catPages) do
+                local pageCheck = AceGUI:Create("CheckBox")
+                pageCheck:SetLabel("    " .. page.Name) 
+                pageCheck:SetType("checkbox")
+                pageCheck:SetValue(selectedToDelete.pages[page.Id])
+                pageCheck:SetCallback("OnValueChanged", function(_, _, val)
+                    selectedToDelete.pages[page.Id] = val or nil
+                end)
+                pageCheck:SetFullWidth(true)
+                scroll:AddChild(pageCheck)
+            end
+        end
+
+        -- C. Render Orphan Pages
+        if #orphanPages > 0 then
+            local spacer = AceGUI:Create("Label")
+            spacer:SetText(" ")
+            scroll:AddChild(spacer)
+            
+            for _, page in ipairs(orphanPages) do
+                local pageCheck = AceGUI:Create("CheckBox")
+                pageCheck:SetLabel(page.Name)
+                pageCheck:SetValue(selectedToDelete.pages[page.Id])
+                pageCheck:SetCallback("OnValueChanged", function(_, _, val)
+                    selectedToDelete.pages[page.Id] = val or nil
+                end)
+                pageCheck:SetFullWidth(true)
+                scroll:AddChild(pageCheck)
+            end
+        end
+    end
+
+    BuildList()
+
+    -- 3. Create Button Group at the bottom
+    local btnGroup = AceGUI:Create("SimpleGroup")
+    btnGroup:SetLayout("Flow")
+    btnGroup:SetFullWidth(true)
+    frame:AddChild(btnGroup)
+
+    -- SELECT ALL BUTTON (30% Width)
+    local selectAllBtn = AceGUI:Create("Button")
+    selectAllBtn:SetText("Select All")
+    selectAllBtn:SetRelativeWidth(0.30)
+    selectAllBtn:SetCallback("OnClick", function()
+        allSelected = not allSelected
+        
+        local val = allSelected and true or nil
+        for _, cat in pairs(AngryAssign_Categories) do
+            selectedToDelete.categories[cat.Id] = val
+        end
+        for _, page in pairs(AngryAssign_Pages) do
+            selectedToDelete.pages[page.Id] = val
+        end
+
+        if allSelected then
+            selectAllBtn:SetText("Unselect All")
+        else
+            selectAllBtn:SetText("Select All")
+        end
+
+        BuildList()
+    end)
+    btnGroup:AddChild(selectAllBtn)
+
+    -- DELETE BUTTON (40% Width)
+    local delBtn = AceGUI:Create("Button")
+    delBtn:SetText("Delete Selected")
+    delBtn:SetRelativeWidth(0.40)
+    delBtn:SetCallback("OnClick", function()
+        local pCount, cCount = 0, 0
+        
+        for id, _ in pairs(selectedToDelete.pages) do
+            if selectedToDelete.pages[id] then
+                AngryAssign:DeletePage(id)
+                pCount = pCount + 1
+            end
+        end
+
+        for id, _ in pairs(selectedToDelete.categories) do
+            if selectedToDelete.categories[id] then
+                AngryAssign:DeleteCategory(id)
+                cCount = cCount + 1
+            end
+        end
+
+        AngryAssign:Print(string.format("Deleted %d pages and %d categories.", pCount, cCount))
+        frame:Hide()
+        if AngryAssign.window then AngryAssign:UpdateTree() end
+    end)
+    btnGroup:AddChild(delBtn)
+
+    -- CLOSE BUTTON (30% Width)
+    local closeBtn = AceGUI:Create("Button")
+    closeBtn:SetText("Close")
+    closeBtn:SetRelativeWidth(0.30)
+    closeBtn:SetCallback("OnClick", function() frame:Hide() end)
+    btnGroup:AddChild(closeBtn)
+end
+
+--------------------------
 -- Editing Pages Window --
 --------------------------
 
@@ -1248,6 +1434,15 @@ function AngryAssign:CreateWindow()
 	button_add_cat:SetCallback("OnClick", function() AngryAssign_AddCategory() end)
 	window:AddChild(button_add_cat)
 	window.button_add_cat = button_add_cat
+
+	local button_manage = AceGUI:Create("Button")
+	button_manage:SetText("Manage")
+	button_manage:SetWidth(80)
+	button_manage:SetHeight(19)
+	button_manage:ClearAllPoints()
+	button_manage:SetPoint("BOTTOMLEFT", button_add_cat.frame, "BOTTOMRIGHT", 5, 0)
+	button_manage:SetCallback("OnClick", function() AngryAssign:ShowBulkManagement() end)
+	window:AddChild(button_manage)
 
 	local button_clear = AceGUI:Create("Button")
 	button_clear:SetText("Clear")
