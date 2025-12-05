@@ -221,15 +221,15 @@ end
 
 local _player_realm = nil
 local function EnsureUnitFullName(unit)
-    if not _player_realm then _player_realm = select(2, UnitFullName('player')) end
-    if unit and not unit:find('-') then
-        unit = unit..'-'.._player_realm
+    if not _player_realm then _player_realm = select(2, UnitFullName("player")) end
+    if unit and not unit:find("-") then
+        unit = unit.."-".._player_realm
     end
     return unit
 end
 
 local function EnsureUnitShortName(unit)
-    if not _player_realm then _player_realm = select(2, UnitFullName('player')) end
+    if not _player_realm then _player_realm = select(2, UnitFullName("player")) end
     local name, realm = strsplit("-", unit, 2)
     if not realm or realm == _player_realm then
         return name
@@ -239,8 +239,8 @@ local function EnsureUnitShortName(unit)
 end
 
 local function PlayerFullName()
-    if not _player_realm then _player_realm = select(2, UnitFullName('player')) end
-    return UnitName('player')..'-'.._player_realm
+    if not _player_realm then _player_realm = select(2, UnitFullName("player")) end
+    return UnitName("player").."-".._player_realm
 end
 
 local function RGBToHex(r, g, b, a)
@@ -975,7 +975,7 @@ local function AngryAssign_DeletePage(pageId)
     end
     
     -- Pass the dynamic text as arg1, and the ID as data
-    StaticPopupDialogs[popup_name].text = 'Are you sure you want to delete page "%s"?'
+    StaticPopupDialogs[popup_name].text = "Are you sure you want to delete page \"%s\"?"
     StaticPopup_Show(popup_name, page.Name, nil, page.Id)
 end
 
@@ -1083,7 +1083,7 @@ local function AngryAssign_DeleteCategory(catId)
         }
     end
     
-    StaticPopupDialogs[popup_name].text = 'Are you sure you want to delete category "%s"?'
+    StaticPopupDialogs[popup_name].text = "Are you sure you want to delete category \"%s\"?"
     StaticPopup_Show(popup_name, cat.Name, nil, cat.Id)
 end
 
@@ -1282,7 +1282,7 @@ function AngryAssign:CreateWindow()
     window:SetTitle(AngryAssign_Title)
     window:SetStatusText("")
     window:SetLayout("Flow")
-    if AngryAssign:GetConfig('scale') then window.frame:SetScale( AngryAssign:GetConfig('scale') ) end
+    if AngryAssign:GetConfig("scale") then window.frame:SetScale( AngryAssign:GetConfig("scale") ) end
     window:SetStatusTable(AngryAssign_State.window)
     window:Hide()
     AngryAssign.window = window
@@ -1462,10 +1462,10 @@ end
 
 local function AngryAssign_IconPicker_Clicked(widget, event)
     local texture
-    if widget:GetUserData('name') then
-        icon = widget:GetUserData('name')
+    if widget:GetUserData("name") then
+        icon = widget:GetUserData("name")
     else
-        icon = '{icon '..strmatch(widget.image:GetTexture():lower(), "^interface\\icons\\([-_%w]+)$")..'}'
+        icon = "{icon "..strmatch(widget.image:GetTexture():lower(), "^interface\\icons\\([-_%w]+)$").."}"
     end
 
     local position = AngryAssign.window.text.editBox:GetCursorPosition()
@@ -1487,8 +1487,8 @@ local function AngryAssign_IconPicker_TextChanged(widget, event, value)
 
     local names = {}
 
-    local spellID = strmatch(value, '|Hspell:(%d+)|')
-    local itemID = strmatch(value, '|Hitem:(%d+):')
+    local spellID = strmatch(value, "|Hspell:(%d+)|")
+    local itemID = strmatch(value, "|Hitem:(%d+):")
 
     if spellID then
         local path = select(3, GetSpellInfo(tonumber(spellID)))
@@ -1519,7 +1519,7 @@ local function AngryAssign_IconPicker_TextChanged(widget, event, value)
             icon:SetImageSize(32, 32)
             icon:SetWidth(36)
             icon:SetHeight(36)
-            icon:SetCallback('OnClick', AngryAssign_IconPicker_Clicked)
+            icon:SetCallback("OnClick", AngryAssign_IconPicker_Clicked)
             AngryAssign.iconpicker_scroll:AddChild(icon)
         end
     end
@@ -1531,8 +1531,8 @@ function AngryAssign:CreateIconButton(name, texture)
     icon:SetImageSize(20, 20)
     icon:SetWidth(21)
     icon:SetHeight(24)
-    icon:SetUserData('name', name)
-    icon:SetCallback('OnClick', AngryAssign_IconPicker_Clicked)
+    icon:SetUserData("name", name)
+    icon:SetCallback("OnClick", AngryAssign_IconPicker_Clicked)
     return icon
 end
 
@@ -1985,7 +1985,7 @@ function AngryAssign:UpdateContents(id, value)
     local page = self:Get(id)
     if not page then return end
 
-    local new_content = value:gsub('^%s+', ''):gsub('%s+$', '')
+    local new_content = value:gsub("^%s+", ""):gsub("%s+$", "")
     local contents_updated = new_content ~= page.Contents
     page.Contents = new_content
     page.Backup = new_content
@@ -2063,7 +2063,7 @@ end
     
     
 function AngryAssign:IsValidRaid()
-    if self:GetConfig('allowall') then
+    if self:GetConfig("allowall") then
         return true
     end
     
@@ -2073,7 +2073,7 @@ function AngryAssign:IsValidRaid()
         return true
     end
     
-    for token in string.gmatch( AngryAssign:GetConfig('allowplayers') , "[^%s!#$%%&()*+,./:;<=>?@\\^_{|}~%[%]]+") do
+    for token in string.gmatch( AngryAssign:GetConfig("allowplayers") , "[^%s!#$%%&()*+,./:;<=>?@\\^_{|}~%[%]]+") do
         if leader and EnsureUnitFullName(token):lower() == EnsureUnitFullName(leader):lower() then
             return true
         end
@@ -2273,7 +2273,7 @@ function AngryAssign:CreateDisplay()
     glow:SetTexture("Interface\\AddOns\\" .. appName .. "\\Textures\\LevelUpTex")
     glow:SetSize(223, 115)
     glow:SetTexCoord(0.56054688, 0.99609375, 0.24218750, 0.46679688)
-    glow:SetVertexColor( HexToRGB(self:GetConfig('glowColor')) )
+    glow:SetVertexColor( HexToRGB(self:GetConfig("glowColor")) )
     glow:SetAlpha(0)
     self.display_glow = glow
 
@@ -2282,7 +2282,7 @@ function AngryAssign:CreateDisplay()
     glow2:SetTexture("Interface\\AddOns\\" .. appName .. "\\Textures\\LevelUpTex")
     glow2:SetSize(418, 7)
     glow2:SetTexCoord(0.00195313, 0.81835938, 0.01953125, 0.03320313)
-    glow2:SetVertexColor( HexToRGB(self:GetConfig('glowColor')) )
+    glow2:SetVertexColor( HexToRGB(self:GetConfig("glowColor")) )
     glow2:SetAlpha(0)
     self.display_glow2 = glow2
 
@@ -2350,7 +2350,7 @@ function AngryAssign:UpdateBackdrop()
         end
     end
 
-    if first and last and self:GetConfig('backdropShow') then
+    if first and last and self:GetConfig("backdropShow") then
         self.backdrop:ClearAllPoints()
         if AngryAssign_State.directionUp then
             self.backdrop:SetPoint("TOPLEFT", last, "TOPLEFT", -4, 4)
@@ -2359,7 +2359,7 @@ function AngryAssign:UpdateBackdrop()
             self.backdrop:SetPoint("TOPLEFT", first, "TOPLEFT", -4, 4)
             self.backdrop:SetPoint("BOTTOMRIGHT", last, "BOTTOMRIGHT", 4, -4)
         end
-        self.backdrop:SetColorTexture( HexToRGB(self:GetConfig('backdropColor')) )
+        self.backdrop:SetColorTexture( HexToRGB(self:GetConfig("backdropColor")) )
         self.backdrop:Show()
     else
         self.backdrop:Hide()
@@ -2368,20 +2368,20 @@ end
 
 local editFontName, editFontHeight, editFontFlags
 function AngryAssign:UpdateMedia()
-    local fontName = LSM:Fetch("font", AngryAssign:GetConfig('fontName'))
-    local fontHeight = AngryAssign:GetConfig('fontHeight')
-    local fontFlags = AngryAssign:GetConfig('fontFlags')
+    local fontName = LSM:Fetch("font", AngryAssign:GetConfig("fontName"))
+    local fontHeight = AngryAssign:GetConfig("fontHeight")
+    local fontFlags = AngryAssign:GetConfig("fontFlags")
 
     if fontFlags == "NONE" then
         fontFlags = ""
     end
 
-    self.display_text:SetTextColor( HexToRGB(self:GetConfig('color')) )
+    self.display_text:SetTextColor( HexToRGB(self:GetConfig("color")) )
     self.display_text:SetFont(fontName, fontHeight, fontFlags)
-    self.display_text:SetSpacing( AngryAssign:GetConfig('lineSpacing') )
+    self.display_text:SetSpacing( AngryAssign:GetConfig("lineSpacing") )
 
     if self.window then
-        if self:GetConfig('editBoxFont') then
+        if self:GetConfig("editBoxFont") then
             if not editFontName then
                 editFontName, editFontHeight, editFontFlags = self.window.text.editBox:GetFont()
             end
@@ -2472,17 +2472,17 @@ function AngryAssign:UpdateDisplayed()
     
     -- Prepare Highlight Map (Optimization: O(1) lookup)
     local highlightSet = {}
-    local currentGroupStr = 'g' .. (self:GetCurrentGroup() or 0)
+    local currentGroupStr = "g" .. (self:GetCurrentGroup() or 0)
     
-    for token in string.gmatch( AngryAssign:GetConfig('highlight') , "[^%s%p]+") do
+    for token in string.gmatch( AngryAssign:GetConfig("highlight") , "[^%s%p]+") do
         token = token:lower()
-        if token == 'group' then
+        if token == "group" then
             highlightSet[currentGroupStr] = true
         else
             highlightSet[token] = true
         end
     end
-    local highlightHex = self:GetConfig('highlightColor')
+    local highlightHex = self:GetConfig("highlightColor")
 
     -- Normalize Pipes
     text = text:gsub("||", "|")
@@ -2902,10 +2902,10 @@ function AngryAssign:OnInitialize()
                         type = "input",
                         order = 1,
                         name = "Highlight",
-                        desc = "A list of words to highlight on displayed pages (separated by spaces or punctuation)\n\nUse 'Group' to highlight the current group you are in, ex. G2",
-                        get = function(info) return self:GetConfig('highlight') end,
+                        desc = "A list of words to highlight on displayed pages (separated by spaces or punctuation)\n\nUse \"Group\" to highlight the current group you are in, ex. G2",
+                        get = function(info) return self:GetConfig("highlight") end,
                         set = function(info, val)
-                            self:SetConfig('highlight', val)
+                            self:SetConfig("highlight", val)
                             self:UpdateDisplayed()
                         end
                     },
@@ -2914,9 +2914,9 @@ function AngryAssign:OnInitialize()
                         order = 3,
                         name = "Hide on Combat",
                         desc = "Enable to hide display frame upon entering combat",
-                        get = function(info) return self:GetConfig('hideoncombat') end,
+                        get = function(info) return self:GetConfig("hideoncombat") end,
                         set = function(info, val)
-                            self:SetConfig('hideoncombat', val)
+                            self:SetConfig("hideoncombat", val)
                         end
                     },
                     scale = {
@@ -2926,9 +2926,9 @@ function AngryAssign:OnInitialize()
                         desc = "Sets the scale of the edit window",
                         min = 0.3,
                         max = 3,
-                        get = function(info) return self:GetConfig('scale') end,
+                        get = function(info) return self:GetConfig("scale") end,
                         set = function(info, val)
-                            self:SetConfig('scale', val)
+                            self:SetConfig("scale", val)
                             if AngryAssign.window then AngryAssign.window.frame:SetScale(val) end
                         end
                     },
@@ -2937,9 +2937,9 @@ function AngryAssign:OnInitialize()
                         order = 5,
                         name = "Display Backdrop",
                         desc = "Enable to display a backdrop behind the assignment display",
-                        get = function(info) return self:GetConfig('backdropShow') end,
+                        get = function(info) return self:GetConfig("backdropShow") end,
                         set = function(info, val)
-                            self:SetConfig('backdropShow', val)
+                            self:SetConfig("backdropShow", val)
                             self:UpdateBackdrop()
                         end
                     },
@@ -2950,11 +2950,11 @@ function AngryAssign:OnInitialize()
                         desc = "The color used by the backdrop",
                         hasAlpha = true,
                         get = function(info)
-                            local hex = self:GetConfig('backdropColor')
+                            local hex = self:GetConfig("backdropColor")
                             return HexToRGB(hex)
                         end,
                         set = function(info, r, g, b, a)
-                            self:SetConfig('backdropColor', RGBToHex(r, g, b, a))
+                            self:SetConfig("backdropColor", RGBToHex(r, g, b, a))
                             self:UpdateMedia()
                             self:UpdateDisplayed()
                         end
@@ -2965,11 +2965,11 @@ function AngryAssign:OnInitialize()
                         name = "Update Notification Color",
                         desc = "The color used by the update notification glow",
                         get = function(info)
-                            local hex = self:GetConfig('glowColor')
+                            local hex = self:GetConfig("glowColor")
                             return HexToRGB(hex)
                         end,
                         set = function(info, r, g, b)
-                            self:SetConfig('glowColor', RGBToHex(r, g, b))
+                            self:SetConfig("glowColor", RGBToHex(r, g, b))
                             self.display_glow:SetVertexColor(r, g, b)
                             self.display_glow2:SetVertexColor(r, g, b)
                         end
@@ -2983,15 +2983,15 @@ function AngryAssign:OnInitialize()
                 inline = true,
                 args = {
                     fontname = {
-                        type = 'select',
+                        type = "select",
                         order = 1,
-                        dialogControl = 'LSM30_Font',
-                        name = 'Face',
-                        desc = 'Sets the font face used to display a page',
+                        dialogControl = "LSM30_Font",
+                        name = "Face",
+                        desc = "Sets the font face used to display a page",
                         values = LSM:HashTable("font"),
-                        get = function(info) return self:GetConfig('fontName') end,
+                        get = function(info) return self:GetConfig("fontName") end,
                         set = function(info, val)
-                            self:SetConfig('fontName', val)
+                            self:SetConfig("fontName", val)
                             self:UpdateMedia()
                         end
                     },
@@ -3005,9 +3005,9 @@ function AngryAssign:OnInitialize()
                         min = 6,
                         max = 24,
                         step = 1,
-                        get = function(info) return self:GetConfig('fontHeight') end,
+                        get = function(info) return self:GetConfig("fontHeight") end,
                         set = function(info, val)
-                            self:SetConfig('fontHeight', val)
+                            self:SetConfig("fontHeight", val)
                             self:UpdateMedia()
                         end
                     },
@@ -3017,9 +3017,9 @@ function AngryAssign:OnInitialize()
                         name = "Outline",
                         desc = "Sets the font outline used to display a page",
                         values = { ["NONE"] = "None", ["OUTLINE"] = "Outline", ["THICKOUTLINE"] = "Thick Outline", ["MONOCHROMEOUTLINE"] = "Monochrome" },
-                        get = function(info) return self:GetConfig('fontFlags') end,
+                        get = function(info) return self:GetConfig("fontFlags") end,
                         set = function(info, val)
-                            self:SetConfig('fontFlags', val)
+                            self:SetConfig("fontFlags", val)
                             self:UpdateMedia()
                         end
                     },
@@ -3029,11 +3029,11 @@ function AngryAssign:OnInitialize()
                         name = "Normal Color",
                         desc = "The normal color used to display assignments",
                         get = function(info)
-                            local hex = self:GetConfig('color')
+                            local hex = self:GetConfig("color")
                             return HexToRGB(hex)
                         end,
                         set = function(info, r, g, b)
-                            self:SetConfig('color', RGBToHex(r, g, b))
+                            self:SetConfig("color", RGBToHex(r, g, b))
                             self:UpdateMedia()
                             self:UpdateDisplayed()
                         end
@@ -3044,11 +3044,11 @@ function AngryAssign:OnInitialize()
                         name = "Highlight Color",
                         desc = "The color used to emphasize highlighted words",
                         get = function(info)
-                            local hex = self:GetConfig('highlightColor')
+                            local hex = self:GetConfig("highlightColor")
                             return HexToRGB(hex)
                         end,
                         set = function(info, r, g, b)
-                            self:SetConfig('highlightColor', RGBToHex(r, g, b))
+                            self:SetConfig("highlightColor", RGBToHex(r, g, b))
                             self:UpdateDisplayed()
                         end
                     },
@@ -3062,9 +3062,9 @@ function AngryAssign:OnInitialize()
                         min = 0,
                         max = 10,
                         step = 1,
-                        get = function(info) return self:GetConfig('lineSpacing') end,
+                        get = function(info) return self:GetConfig("lineSpacing") end,
                         set = function(info, val)
-                            self:SetConfig('lineSpacing', val)
+                            self:SetConfig("lineSpacing", val)
                             self:UpdateMedia()
                             self:UpdateDisplayed()
                         end
@@ -3074,9 +3074,9 @@ function AngryAssign:OnInitialize()
                         order = 7,
                         name = "Change Edit Box Font",
                         desc = "Enable to set edit box font to display font",
-                        get = function(info) return self:GetConfig('editBoxFont') end,
+                        get = function(info) return self:GetConfig("editBoxFont") end,
                         set = function(info, val)
-                            self:SetConfig('editBoxFont', val)
+                            self:SetConfig("editBoxFont", val)
                             self:UpdateMedia()
                         end
                     },
@@ -3093,9 +3093,9 @@ function AngryAssign:OnInitialize()
                         order = 1,
                         name = "Allow All",
                         desc = "Enable to allow changes from any raid assistant, even if you aren't in a guild raid",
-                        get = function(info) return self:GetConfig('allowall') end,
+                        get = function(info) return self:GetConfig("allowall") end,
                         set = function(info, val)
-                            self:SetConfig('allowall', val)
+                            self:SetConfig("allowall", val)
                             self:PermissionsUpdated()
                         end
                     },
@@ -3104,9 +3104,9 @@ function AngryAssign:OnInitialize()
                         order = 2,
                         name = "Allow Players",
                         desc = "A list of players that when they are the raid leader to allow changes from all raid assistants",
-                        get = function(info) return self:GetConfig('allowplayers') end,
+                        get = function(info) return self:GetConfig("allowplayers") end,
                         set = function(info, val)
-                            self:SetConfig('allowplayers', val)
+                            self:SetConfig("allowplayers", val)
                             self:PermissionsUpdated()
                         end
                     },
@@ -3168,7 +3168,7 @@ function AngryAssign:GROUP_JOINED()
 end
 
 function AngryAssign:PLAYER_REGEN_DISABLED()
-    if AngryAssign:GetConfig('hideoncombat') then
+    if AngryAssign:GetConfig("hideoncombat") then
         self:HideDisplay()
     end
 end
