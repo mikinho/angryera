@@ -88,11 +88,37 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 	local normalTexture = button:GetNormalTexture()
 	local line = button.line
 	button.level = level
-	if ( level == 1 ) then
-		button.text:SetPoint("LEFT", (icon and 16 or 0) + 8, 2)
+    
+    -- Force Toggle Position to Left (indented)
+    local toggle = button.toggle
+    if not toggle then
+         -- OptionsListButtonTemplate creates "toggle" key? 
+         -- Or maybe it's just a child? 
+         -- Actually AceGUI uses explicit toggle handling sometimes.
+         -- But CreateButton above uses OptionsListButtonTemplate which has $parentToggle.
+         -- And assigns button.toggle = _G[name.."Toggle"] usually?
+         -- Our code had `local toggle = button.toggle` in line 68. Correct.
+    end
+    
+    toggle:ClearAllPoints()
+    toggle:SetPoint("LEFT", (level - 1) * 8, 0)
+
+    -- Adjust Text & Icon
+	button.text:ClearAllPoints()
+    
+    if icon then
+		button.icon:SetTexture(icon)
+        -- User Request: "make the left icons instead of its parent field set"
+        -- Interpreting as: Align icon with the toggle column (flat alignment relative to indentation)
+		button.icon:SetPoint("LEFT", (level - 1) * 8, (level == 1) and 0 or 1)
+        button.text:SetPoint("LEFT", button.icon, "RIGHT", 2, 2)
 	else
-		button.text:SetPoint("LEFT", (icon and 16 or 0) + 8 * level, 2)
+		button.icon:SetTexture(nil)
+        button.text:SetPoint("LEFT", toggle, "RIGHT", 2, 2)
 	end
+
+    -- Ensure text doesn't overlap Menu Button
+    button.text:SetPoint("RIGHT", button.menuBtn, "LEFT", -2, 0)
 	
 	if disabled then
 		button:EnableMouse(false)
@@ -102,12 +128,6 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 		button:EnableMouse(true)
 	end
 	
-	if icon then
-		button.icon:SetTexture(icon)
-		button.icon:SetPoint("LEFT", 8 * level, (level == 1) and 0 or 1)
-	else
-		button.icon:SetTexture(nil)
-	end
 	
 	if iconCoords then
 		button.icon:SetTexCoord(unpack(iconCoords))
@@ -138,7 +158,7 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 		toggle:Show()
 	else
 		toggle:Hide()
-	end
+    end
 end
 
 local function ShouldDisplayLevel(tree)
@@ -350,6 +370,18 @@ local methods = {
 		icon:SetWidth(14)
 		icon:SetHeight(14)
 		button.icon = icon
+        
+        -- Menu Button
+        local menuBtn = CreateFrame("Button", nil, button)
+        menuBtn:SetWidth(12)
+        menuBtn:SetHeight(12)
+        menuBtn:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+        menuBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+        menuBtn:SetScript("OnClick", function(this)
+            self:Fire("OnButtonMenu", button.uniquevalue)
+        end)
+        menuBtn:SetPoint("RIGHT", button, "RIGHT", -2, 0)
+        button.menuBtn = menuBtn
 
 		button:SetScript("OnClick",Button_OnClick)
 		--button:SetScript("OnDoubleClick", Button_OnDoubleClick)

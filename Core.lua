@@ -1539,6 +1539,25 @@ local function AngryAssign_TreeClick(widget, event, value, selected, button)
     end
 end
 
+local function AngryAssign_TreeMenuClick(widget, event, uniquevalue)
+    -- uniquevalue might be concatenated string "parent\001child". 
+    -- But AngryTreeGroup fires button.uniquevalue.
+    -- Wait, selectedLastValue(value) parses it.
+    local selectedId = selectedLastValue(uniquevalue)
+    
+    if not AngryAssign_DropDown then
+        AngryAssign_DropDown = CreateFrame("Frame", "AngryAssignMenuFrame", UIParent, "UIDropDownMenuTemplate")
+    end
+    
+    if selectedId < 0 then
+        -- Category
+        DDM.EasyMenu(AngryAssign_CategoryMenu(-selectedId), AngryAssign_DropDown, "cursor", 0 , 0, "MENU")
+    else
+        -- Page
+        DDM.EasyMenu(AngryAssign_PageMenu(selectedId), AngryAssign_DropDown, "cursor", 0 , 0, "MENU")
+    end
+end
+
 function AngryAssign:CreateWindow()
     local window = AceGUI:Create("Frame")
     window:SetTitle(AngryAssign_Title)
@@ -1584,6 +1603,7 @@ function AngryAssign:CreateWindow()
     tree:SetLayout("Flow")
     tree:SetCallback("OnGroupSelected", function(widget, event, value) AngryAssign:UpdateSelected(true) end)
     tree:SetCallback("OnClick", AngryAssign_TreeClick)
+    tree:SetCallback("OnButtonMenu", AngryAssign_TreeMenuClick)
     window:AddChild(tree)
     window.tree = tree
     
@@ -1672,7 +1692,7 @@ function AngryAssign:CreateWindow()
     window:PauseLayout()
     local button_add = AceGUI:Create("Button")
     button_add:SetText("Add")
-    button_add:SetWidth(60)
+    button_add:SetWidth(80)
     button_add:SetHeight(19)
     button_add:ClearAllPoints()
     button_add:SetPoint("BOTTOMLEFT", window.frame, "BOTTOMLEFT", 17, 18)
@@ -1680,39 +1700,21 @@ function AngryAssign:CreateWindow()
     window:AddChild(button_add)
     window.button_add = button_add
 
-    local button_rename = AceGUI:Create("Button")
-    button_rename:SetText("Rename")
-    button_rename:SetWidth(70)
-    button_rename:SetHeight(19)
-    button_rename:ClearAllPoints()
-    button_rename:SetPoint("BOTTOMLEFT", button_add.frame, "BOTTOMRIGHT", 5, 0)
-    button_rename:SetCallback("OnClick", function() AngryAssign_RenamePage(AngryAssign:SelectedId()) end)
-    window:AddChild(button_rename)
-    window.button_rename = button_rename
-
-    local button_delete = AceGUI:Create("Button")
-    button_delete:SetText("Delete")
-    button_delete:SetWidth(60)
-    button_delete:SetHeight(19)
-    button_delete:ClearAllPoints()
-    button_delete:SetPoint("BOTTOMLEFT", button_rename.frame, "BOTTOMRIGHT", 5, 0)
-    button_delete:SetCallback("OnClick", function() AngryAssign_DeletePage(AngryAssign:SelectedId()) end)
-    window:AddChild(button_delete)
-    window.button_delete = button_delete
+    -- Rename and Delete buttons removed (moved to Context Menu)
 
     local button_add_cat = AceGUI:Create("Button")
-    button_add_cat:SetText("Add Cat")
+    button_add_cat:SetText("Category")
     button_add_cat:SetWidth(80)
     button_add_cat:SetHeight(19)
     button_add_cat:ClearAllPoints()
-    button_add_cat:SetPoint("BOTTOMLEFT", button_delete.frame, "BOTTOMRIGHT", 5, 0)
+    button_add_cat:SetPoint("BOTTOMLEFT", button_add.frame, "BOTTOMRIGHT", 5, 0)
     button_add_cat:SetCallback("OnClick", function() AngryAssign_AddCategory() end)
     window:AddChild(button_add_cat)
     window.button_add_cat = button_add_cat
 
     local button_manage = AceGUI:Create("Button")
     button_manage:SetText("Manage")
-    button_manage:SetWidth(60)
+    button_manage:SetWidth(80)
     button_manage:SetHeight(19)
     button_manage:ClearAllPoints()
     button_manage:SetPoint("BOTTOMLEFT", button_add_cat.frame, "BOTTOMRIGHT", 5, 0)
@@ -1720,7 +1722,7 @@ function AngryAssign:CreateWindow()
     window:AddChild(button_manage)
     
     local button_load = AceGUI:Create("Button")
-    button_load:SetText("Load Raid")
+    button_load:SetText("Load")
     button_load:SetWidth(80)
     button_load:SetHeight(19)
     button_load:ClearAllPoints()
@@ -1958,7 +1960,7 @@ function AngryAssign:UpdateSelected(destructive)
         self.window.text.button:Disable()
     end
     if page and permission then
-        self.window.button_rename:SetDisabled(false)
+        -- self.window.button_rename:SetDisabled(false) -- Removed
         self.window.button_revert:SetDisabled(not self.window.text.button:IsEnabled())
         self.window.button_display:SetDisabled(self.window.text.button:IsEnabled())
         self.window.button_output:SetDisabled(self.window.text.button:IsEnabled())
@@ -1966,18 +1968,18 @@ function AngryAssign:UpdateSelected(destructive)
         self.window.button_restore:SetDisabled(false)
         self.window.text:SetDisabled(false)
     else
-        self.window.button_rename:SetDisabled(true)
+        -- self.window.button_rename:SetDisabled(true)
         self.window.button_revert:SetDisabled(true)
         self.window.button_display:SetDisabled(true)
         self.window.button_output:SetDisabled(true)
         self.window.button_restore:SetDisabled(true)
         self.window.text:SetDisabled(true)
     end
-    if page then
-        self.window.button_delete:SetDisabled(false)
-    else
-        self.window.button_delete:SetDisabled(true)
-    end
+    -- if page then
+    --    self.window.button_delete:SetDisabled(false)
+    -- else
+    --    self.window.button_delete:SetDisabled(true)
+    -- end
     if permission then
         self.window.button_add:SetDisabled(false)
         self.window.button_clear:SetDisabled(false)
