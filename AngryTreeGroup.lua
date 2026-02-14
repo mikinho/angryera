@@ -134,6 +134,15 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 	else
 		button.icon:SetTexCoord(0, 1, 0, 1)
 	end
+
+    -- Initial Menu Button State
+    if button.menuBtn then
+        if button:IsMouseOver() then
+            button.menuBtn:Show()
+        else
+            button.menuBtn:Hide()
+        end
+    end
 	
 	if canExpand or level == 1 then
 		button:SetNormalFontObject("GameFontNormal")
@@ -245,6 +254,10 @@ end
 local function Button_OnEnter(frame)
 	local self = frame.obj
 	self:Fire("OnButtonEnter", frame.uniquevalue, frame)
+    
+	if frame.menuBtn then 
+		frame.menuBtn:Show() 
+	end
 
 	if self.enabletooltips then
 		GameTooltip:SetOwner(frame, "ANCHOR_NONE")
@@ -259,13 +272,19 @@ local function Button_OnLeave(frame)
 	local self = frame.obj
 	self:Fire("OnButtonLeave", frame.uniquevalue, frame)
 
+	if frame.menuBtn and not frame.menuBtn:IsMouseOver() then 
+		frame.menuBtn:Hide() 
+	end
+
 	if self.enabletooltips then
 		GameTooltip:Hide()
 	end
 end
 
 local function OnScrollValueChanged(frame, value)
-	if frame.obj.noupdate then return end
+	if frame.obj.noupdate then 
+		return
+	end
 	local self = frame.obj
 	local status = self.status or self.localstatus
 	status.scrollvalue = floor(value + 0.5)
@@ -379,6 +398,17 @@ local methods = {
         menuBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
         menuBtn:SetScript("OnClick", function(this)
             self:Fire("OnButtonMenu", button.uniquevalue)
+        end)
+        menuBtn:SetScript("OnEnter", function(this)
+             button:LockHighlight()
+        end)
+        menuBtn:SetScript("OnLeave", function(this)
+             if not button:IsMouseOver() then
+                this:Hide()
+				if not button.selected then 
+					button:UnlockHighlight() 
+				end
+             end
         end)
         menuBtn:SetPoint("RIGHT", button, "RIGHT", -2, 0)
         button.menuBtn = menuBtn

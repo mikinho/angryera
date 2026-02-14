@@ -1,6 +1,11 @@
 ## v2.0.11
 
 * New Feature: Template System. "Load Raid" menu now supports saving your own custom templates from existing categories, in addition to the standard raid templates.
+* UI Overhaul:
+  * Tree View: Cleaner look with left-aligned expand toggles and hover-only "Gear" icons for context menus.
+  * Context Menus: Unified menu system. Right-click or use the Gear icon to Rename, Delete, or Save templates.
+  * Editor: Decluttered bottom bar by moving actions to a "Menu" dropdown.
+  * Bulk Management: Improved dialog with dark background and smart selection (click category to toggle all children).
 * Added templates for MC, BWL, AQ40 and Naxxramas
 * New Feature: Improved Backup system. Click "Restore" to browse and restore past versions.
 * New Feature: Added "Highlight" button to the editor. Automatically colorizes player names in your assignment based on their class.

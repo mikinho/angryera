@@ -642,9 +642,26 @@ function AngryAssign:ShowBulkManagement()
         if f.SetFrameStrata then f:SetFrameStrata("FULLSCREEN_DIALOG") end
         if f.SetToplevel then f:SetToplevel(true) end
         
+        -- Force SOLID Black Background Texture
+        local bg = f:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(f)
+        bg:SetColorTexture(0, 0, 0, 0.95)
+        
         -- Assign a global name so UISpecialFrames can find it
         local globalName = "AngryAssign_BulkManage"
         _G[globalName] = f
+        
+        -- Darker Background
+        local backdrop = {
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 }
+        }
+        if f.SetBackdrop then
+            f:SetBackdrop(backdrop)
+            f:SetBackdropColor(0, 0, 0, 1)        
+        end
         
         -- Register for Escape key closing
         local found = false
@@ -663,7 +680,7 @@ function AngryAssign:ShowBulkManagement()
     local scroll = AceGUI:Create("ScrollFrame")
     scroll:SetLayout("List") 
     scroll:SetFullWidth(true)
-    scroll:SetHeight(410) 
+    scroll:SetHeight(420) 
     frame:AddChild(scroll)
 
     local selectedToDelete = { pages = {}, categories = {} }
@@ -673,6 +690,10 @@ function AngryAssign:ShowBulkManagement()
     local function BuildList()
         scroll:ReleaseChildren()
         
+        -- Registry for direct updates
+        local pageCheckboxes = {} -- [pageId] = widget
+        local catCheckboxes = {} -- [catId] = widget
+
         -- A. Gather Data
         local sortedCats = {}
         for _, cat in pairs(AngryAssign_Categories) do table.insert(sortedCats, cat) end
@@ -686,6 +707,12 @@ function AngryAssign:ShowBulkManagement()
 
         -- B. Render Categories
         for _, cat in ipairs(sortedCats) do
+            local catPages = {}
+            for _, page in pairs(AngryAssign_Pages) do
+                if page.CategoryId == cat.Id then table.insert(catPages, page) end
+            end
+            table.sort(catPages, function(a,b) return a.Name < b.Name end)
+
             local catGroup = AceGUI:Create("SimpleGroup")
             catGroup:SetLayout("Flow")
             catGroup:SetFullWidth(true)
@@ -695,18 +722,42 @@ function AngryAssign:ShowBulkManagement()
             catCheck:SetLabel("|cffffd200["..cat.Name.."]|r") 
             catCheck:SetType("checkbox")
             catCheck:SetValue(selectedToDelete.categories[cat.Id])
-            catCheck:SetCallback("OnValueChanged", function(_, _, val)
-                selectedToDelete.categories[cat.Id] = val or nil
-            end)
             catCheck:SetFullWidth(true) 
+             
+            catCheck:SetCallback("OnValueChanged", function(_, _, val)
+                if val then
+                    -- State 0 -> 1: Just Select Category
+                    selectedToDelete.categories[cat.Id] = true
+                else
+                    -- Attempting to Uncheck. Check Logic:
+                    -- Check if ALL children are ALREADY selected?
+                    local allSelected = true
+                    if #catPages == 0 then allSelected = false end
+                    for _, p in ipairs(catPages) do
+                         if not selectedToDelete.pages[p.Id] then allSelected = false break end
+                    end
+                    
+                    if not allSelected and #catPages > 0 then
+                        -- State 1 -> 2: Select All Children
+                        selectedToDelete.categories[cat.Id] = true
+                        catCheck:SetValue(true) -- Keep checked
+                        for _, p in ipairs(catPages) do
+                            selectedToDelete.pages[p.Id] = true
+                            if pageCheckboxes[p.Id] then pageCheckboxes[p.Id]:SetValue(true) end
+                        end
+                    else
+                        -- State 2 -> 0: Deselect All
+                        selectedToDelete.categories[cat.Id] = nil
+                        for _, p in ipairs(catPages) do
+                            selectedToDelete.pages[p.Id] = nil
+                             if pageCheckboxes[p.Id] then pageCheckboxes[p.Id]:SetValue(false) end
+                        end
+                    end
+                end
+            end)
+            
             catGroup:AddChild(catCheck)
-
-            -- Find children pages
-            local catPages = {}
-            for _, page in pairs(AngryAssign_Pages) do
-                if page.CategoryId == cat.Id then table.insert(catPages, page) end
-            end
-            table.sort(catPages, function(a,b) return a.Name < b.Name end)
+            catCheckboxes[cat.Id] = catCheck
 
             -- Render Children
             for _, page in ipairs(catPages) do
@@ -719,6 +770,7 @@ function AngryAssign:ShowBulkManagement()
                 end)
                 pageCheck:SetFullWidth(true)
                 scroll:AddChild(pageCheck)
+                pageCheckboxes[page.Id] = pageCheck
             end
         end
 
@@ -737,6 +789,7 @@ function AngryAssign:ShowBulkManagement()
                 end)
                 pageCheck:SetFullWidth(true)
                 scroll:AddChild(pageCheck)
+                pageCheckboxes[page.Id] = pageCheck
             end
         end
     end
@@ -1558,6 +1611,22 @@ local function AngryAssign_TreeMenuClick(widget, event, uniquevalue)
     end
 end
 
+local function AngryAssign_MainMenu(frame)
+    if not AngryAssign_DropDown then
+        AngryAssign_DropDown = CreateFrame("Frame", "AngryAssignMenuFrame", UIParent, "UIDropDownMenuTemplate")
+    end
+    
+    local menu = {
+        { text = "Add Page", func = AngryAssign_AddPage, notCheckable = true },
+        { text = "Add Category", func = AngryAssign_AddCategory, notCheckable = true },
+        { text = "Load Raid Template", func = AngryAssign_LoadRaidMenu, notCheckable = true },
+        { text = " ", isTitle = true, notCheckable = true },
+        { text = "Manage Pages", func = function() AngryAssign:ShowBulkManagement() end, notCheckable = true },
+        { text = "Clear Page", func = AngryAssign_ClearPage, notCheckable = true },
+    }
+    DDM.EasyMenu(menu, AngryAssign_DropDown, "cursor", 0, 0, "MENU")
+end
+
 function AngryAssign:CreateWindow()
     local window = AceGUI:Create("Frame")
     window:SetTitle(AngryAssign_Title)
@@ -1645,24 +1714,15 @@ function AngryAssign:CreateWindow()
     tree:AddChild(button_display)
     window.button_display = button_display
 
-    local button_revert = AceGUI:Create("Button")
-    button_revert:SetText("Revert")
-    button_revert:SetWidth(80)
-    button_revert:SetHeight(22)
-    button_revert:ClearAllPoints()
-    button_revert:SetDisabled(true)
-    -- Anchor to text frame (offset 100 to clear Accept button)
-    button_revert:SetPoint("BOTTOMLEFT", text.frame, "BOTTOMLEFT", 100, 4)
-    button_revert:SetCallback("OnClick", AngryAssign_RevertPage)
-    tree:AddChild(button_revert)
-    window.button_revert = button_revert
+    window.button_display = button_display
     
     local button_restore = AceGUI:Create("Button")
     button_restore:SetText("Restore")
     button_restore:SetWidth(80)
     button_restore:SetHeight(22)
     button_restore:ClearAllPoints()
-    button_restore:SetPoint("LEFT", button_revert.frame, "RIGHT", 6, 0)
+    -- Anchor directly to text frame (replace Revert button position)
+    button_restore:SetPoint("BOTTOMLEFT", text.frame, "BOTTOMLEFT", 100, 4)
     button_restore:SetCallback("OnClick", AngryAssign_RestorePage)
     tree:AddChild(button_restore)
     window.button_restore = button_restore
@@ -1690,55 +1750,17 @@ function AngryAssign:CreateWindow()
     window.button_output = button_output
 
     window:PauseLayout()
-    local button_add = AceGUI:Create("Button")
-    button_add:SetText("Add")
-    button_add:SetWidth(80)
-    button_add:SetHeight(19)
-    button_add:ClearAllPoints()
-    button_add:SetPoint("BOTTOMLEFT", window.frame, "BOTTOMLEFT", 17, 18)
-    button_add:SetCallback("OnClick", AngryAssign_AddPage)
-    window:AddChild(button_add)
-    window.button_add = button_add
-
-    -- Rename and Delete buttons removed (moved to Context Menu)
-
-    local button_add_cat = AceGUI:Create("Button")
-    button_add_cat:SetText("Category")
-    button_add_cat:SetWidth(80)
-    button_add_cat:SetHeight(19)
-    button_add_cat:ClearAllPoints()
-    button_add_cat:SetPoint("BOTTOMLEFT", button_add.frame, "BOTTOMRIGHT", 5, 0)
-    button_add_cat:SetCallback("OnClick", function() AngryAssign_AddCategory() end)
-    window:AddChild(button_add_cat)
-    window.button_add_cat = button_add_cat
-
-    local button_manage = AceGUI:Create("Button")
-    button_manage:SetText("Manage")
-    button_manage:SetWidth(80)
-    button_manage:SetHeight(19)
-    button_manage:ClearAllPoints()
-    button_manage:SetPoint("BOTTOMLEFT", button_add_cat.frame, "BOTTOMRIGHT", 5, 0)
-    button_manage:SetCallback("OnClick", function() AngryAssign:ShowBulkManagement() end)
-    window:AddChild(button_manage)
     
-    local button_load = AceGUI:Create("Button")
-    button_load:SetText("Load")
-    button_load:SetWidth(80)
-    button_load:SetHeight(19)
-    button_load:ClearAllPoints()
-    button_load:SetPoint("BOTTOMLEFT", button_manage.frame, "BOTTOMRIGHT", 5, 0)
-    button_load:SetCallback("OnClick", function() AngryAssign_LoadRaidMenu() end)
-    window:AddChild(button_load)
-
-    local button_clear = AceGUI:Create("Button")
-    button_clear:SetText("Clear")
-    button_clear:SetWidth(80)
-    button_clear:SetHeight(19)
-    button_clear:ClearAllPoints()
-    button_clear:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -135, 18)
-    button_clear:SetCallback("OnClick", AngryAssign_ClearPage)
-    window:AddChild(button_clear)
-    window.button_clear = button_clear
+    -- Bottom Left "Menu" Button
+    local button_menu = AceGUI:Create("Button")
+    button_menu:SetText("Menu")
+    button_menu:SetWidth(80)
+    button_menu:SetHeight(19)
+    button_menu:ClearAllPoints()
+    button_menu:SetPoint("BOTTOMLEFT", window.frame, "BOTTOMLEFT", 17, 18)
+    button_menu:SetCallback("OnClick", AngryAssign_MainMenu)
+    window:AddChild(button_menu)
+    window.button_menu = button_menu
 
     self:UpdateSelected(true)
     self:UpdateMedia()
@@ -1960,32 +1982,23 @@ function AngryAssign:UpdateSelected(destructive)
         self.window.text.button:Disable()
     end
     if page and permission then
-        -- self.window.button_rename:SetDisabled(false) -- Removed
-        self.window.button_revert:SetDisabled(not self.window.text.button:IsEnabled())
+        -- self.window.button_revert:SetDisabled(not self.window.text.button:IsEnabled()) -- Removed Revert
         self.window.button_display:SetDisabled(self.window.text.button:IsEnabled())
         self.window.button_output:SetDisabled(self.window.text.button:IsEnabled())
         -- Always enable Restore button so users can see the menu (even if empty)
         self.window.button_restore:SetDisabled(false)
         self.window.text:SetDisabled(false)
     else
-        -- self.window.button_rename:SetDisabled(true)
-        self.window.button_revert:SetDisabled(true)
+        -- self.window.button_revert:SetDisabled(true) -- Removed Revert
         self.window.button_display:SetDisabled(true)
         self.window.button_output:SetDisabled(true)
         self.window.button_restore:SetDisabled(true)
         self.window.text:SetDisabled(true)
     end
-    -- if page then
-    --    self.window.button_delete:SetDisabled(false)
-    -- else
-    --    self.window.button_delete:SetDisabled(true)
-    -- end
     if permission then
-        self.window.button_add:SetDisabled(false)
-        self.window.button_clear:SetDisabled(false)
+        self.window.button_menu:SetDisabled(false)
     else
-        self.window.button_add:SetDisabled(true)
-        self.window.button_clear:SetDisabled(true)
+        self.window.button_menu:SetDisabled(true)
     end
 end
 
