@@ -178,6 +178,190 @@ local IconTable = {
     ["{evoker}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:48:64|t"
 }
 
+local AngryEra_RaidUtility = {
+    ["Warrior"] = {
+        ["Sunder"] = {
+            ["name"] = "Sunder Armor",
+            ["icon"] = "ability_warrior_sunderarmor"
+        },
+        ["AoE"] = {
+            ["name"] = "Challenging Shout",
+            ["icon"] = "ability_bullrush" -- This is the AoE Taunt
+        },
+        ["Mock"] = {
+            ["name"] = "Mocking Blow",
+            ["icon"] = "ability_kick"
+        },
+        ["Pummel"] = {
+            ["name"] = "Pummel",
+            ["icon"] = "inv_gauntlets_04"
+        },
+        ["Taunt"] = {
+            ["name"] = "Taunt",
+            ["icon"] = "spell_nature_reincarnation"
+        }
+    },
+    ["Consumables"] = {
+        ["LIP"] = {
+            ["name"] = "Limited Invulnerability Potion",
+            ["icon"] = "inv_potion_62"
+        },
+        ["Stone"] = {
+            ["name"] = "Greater Stoneshield Potion",
+            ["icon"] = "inv_potion_69"
+        },
+        ["FAP"] = {
+            ["name"] = "Free Action Potion",
+            ["icon"] = "inv_potion_04"
+        },
+        ["Petri"] = {
+            ["name"] = "Flask of Petrification",
+            ["icon"] = "inv_potion_26"
+        }
+    },
+    ["Priest"] = {
+        ["MC"] = {
+            ["name"] = "Mind Control",
+            ["icon"] = "spell_shadow_shadowworddominate"
+        },
+        ["PI"] = {
+            ["name"] = "Power Infusion",
+            ["icon"] = "spell_holy_powerinfusion"
+        },
+        ["FW"] = {
+            ["name"] = "Fear Ward",
+            ["icon"] = "spell_holy_fearward"
+        },
+        ["Shackle"] = {
+            ["name"] = "Shackle Undead",
+            ["icon"] = "spell_nature_slow"
+        },
+        ["Dispel"] = {
+            ["name"] = "Dispel Magic",
+            ["icon"] = "spell_holy_dispelmagic"
+        }
+    },
+    ["Warlock"] = {
+        ["CoE"] = {
+            ["name"] = "Curse of Elements",
+            ["icon"] = "spell_shadow_curseofelementals"
+        },
+        ["CoS"] = {
+            ["name"] = "Curse of Shadow",
+            ["icon"] = "spell_shadow_curseofshadow"
+        },
+        ["CoR"] = {
+            ["name"] = "Curse of Recklessness",
+            ["icon"] = "spell_shadow_unholystrength"
+        },
+        ["SS"] = {
+            ["name"] = "Create Soulstone",
+            ["icon"] = "spell_shadow_soulgem"
+        },
+        ["Banish"] = {
+            ["name"] = "Banish",
+            ["icon"] = "spell_shadow_cripple"
+        }
+    },
+    ["Druid"] = {
+        ["FF"] = {
+            ["name"] = "Faerie Fire",
+            ["icon"] = "spell_nature_faeriefire"
+        },
+        ["Innerv"] = {
+            ["name"] = "Innervate",
+            ["icon"] = "spell_nature_lightning"
+        },
+        ["BR"] = {
+            ["name"] = "Rebirth",
+            ["icon"] = "spell_nature_reincarnation"
+        },
+        ["Remove"] = {
+            ["name"] = "Remove Curse",
+            ["icon"] = "spell_nature_removecurse"
+        }
+    },
+    ["Paladin"] = {
+        ["JoL"] = {
+            ["name"] = "Judgement of Light",
+            ["icon"] = "spell_holy_judgmentoflight"
+        },
+        ["JoW"] = {
+            ["name"] = "Judgement of Wisdom",
+            ["icon"] = "spell_holy_judgmentofwisdom"
+        },
+        ["BoP"] = {
+            ["name"] = "Blessing of Protection",
+            ["icon"] = "spell_holy_sealofprotection"
+        },
+        ["DI"] = {
+            ["name"] = "Divine Intervention",
+            ["icon"] = "spell_nature_timestop"
+        },
+        ["Cleanse"] = {
+            ["name"] = "Cleanse",
+            ["icon"] = "spell_holy_renew"
+        }
+    },
+    ["Hunter"] = {
+        ["Tranq"] = {
+            ["name"] = "Tranquilizing Shot",
+            ["icon"] = "spell_nature_drowsy"
+        },
+        ["Mark"] = {
+            ["name"] = "Hunter's Mark",
+            ["icon"] = "ability_hunter_snipershot"
+        }
+    },
+    ["Mage"] = {
+        ["CS"] = {
+            ["name"] = "Counterspell",
+            ["icon"] = "spell_frost_iceshock"
+        },
+        ["Sheep"] = {
+            ["name"] = "Polymorph",
+            ["icon"] = "spell_nature_polymorph"
+        },
+        ["Decurse"] = {
+            ["name"] = "Remove Lesser Curse",
+            ["icon"] = "spell_nature_removecurse"
+        }
+    },
+    ["Shaman"] = {
+        ["ES"] = {
+            ["name"] = "Earth Shock",
+            ["icon"] = "spell_nature_earthshock"
+        },
+        ["WF"] = {
+            ["name"] = "Windfury Totem",
+            ["icon"] = "spell_nature_windfury"
+        },
+        ["Tremor"] = {
+            ["name"] = "Tremor Totem",
+            ["icon"] = "spell_nature_tremortotem"
+        }
+    },
+    ["Rogue"] = {
+        ["Kick"] = {
+            ["name"] = "Kick",
+            ["icon"] = "ability_kick"
+        },
+        ["Feint"] = {
+            ["name"] = "Feint",
+            ["icon"] = "ability_rogue_feint"
+        }
+    }
+}
+
+local UtilityChatMap = {}
+for category, items in pairs(AngryEra_RaidUtility) do
+    for key, info in pairs(items) do
+        local tag = "{" .. key:lower() .. "}"
+        IconTable[tag] = "|TInterface\\Icons\\" .. info.icon .. ":0|t"
+        UtilityChatMap[tag] = info.name
+    end
+end
+
 -- Ensure ProcessTag uses this table correctly
 local function ProcessTag(tag)
     local lowerTag = tag:lower()
@@ -2611,6 +2795,7 @@ function AngryAssign:OutputDisplayed(id)
             }
 
             if chatMap[lowerTag] then return chatMap[lowerTag] end
+            if UtilityChatMap[lowerTag] then return UtilityChatMap[lowerTag] end
 
             -- Handle Dynamic Tags (spell, boss, journal)
             local type, id = tagContent:match("^(%a+)%s+(%d+)$")

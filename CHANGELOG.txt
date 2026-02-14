@@ -1,3 +1,11 @@
+## v2.0.11
+
+* Shortcuts: Added a comprehensive list of raid utility shortcuts (e.g., `{Sunder}`, `{LIP}`, `{PI}`) that automatically map to the correct icon and chat text.
+* UI Polish: The assignment tree now respects your configured font settings.
+* UI Polish: Improved window resizing with a visible handle and lower minimum size limits (600x300).
+* Bugfix: Fixed a global variable leak in the icon picker.
+* Compatibility: Improved standard options panel opening for Classic clients.
+
 ## v2.0.10
 
 * Added Manage button to bulk delete pages and categories. Maybe LJ will be nicer?
