@@ -1,4 +1,4 @@
-## v2.0.11
+## v2.1.0
 
 * New Feature: Template System. "Load Raid" menu now supports saving your own custom templates from existing categories, in addition to the standard raid templates.
 * UI Overhaul:

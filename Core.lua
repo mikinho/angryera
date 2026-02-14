@@ -3031,6 +3031,45 @@ function AngryAssign:GetTemplateContext()
     return ctx
 end
 
+function AngryAssign:RenderPageContent(page, ctx)
+    local text = page.Contents
+    -- Normalize Pipes
+    text = text:gsub("||", "|")
+
+    local mergedVars = {}
+    
+    if LibMustache then
+        -- Merge Category Variables
+        if page.CategoryId then
+            local cat = AngryAssign:GetCat(page.CategoryId)
+            if cat and cat.Vars then
+                local vars = app.ParseVariables(cat.Vars)
+                for k, v in pairs(vars) do 
+                    ctx[k] = v 
+                    mergedVars[k] = v
+                end
+            end
+        end
+        
+        -- Merge Page Variables (Override Category)
+        if page.Vars then
+             local vars = app.ParseVariables(page.Vars)
+             for k, v in pairs(vars) do 
+                 ctx[k] = v 
+                 mergedVars[k] = v
+             end
+        end
+
+        -- Render
+        local success, result = pcall(LibMustache.render, text, ctx)
+        if success then
+            text = result
+        end
+    end
+    
+    return text, mergedVars
+end
+
 function AngryAssign:ProcessMarkdown(text)
     -- Headers (## Header) -> Gold
     -- Lists (- Item) -> Bullet
@@ -3081,63 +3120,35 @@ function AngryAssign:UpdateDisplayed()
     end
     local highlightHex = self:GetConfig("highlightColor")
 
-    -- Normalize Pipes
-    text = text:gsub("||", "|")
+    -- Mustache Templating & Merging
+    local ctx = self:GetTemplateContext()
+    local renderedText, mergedVars = self:RenderPageContent(page, ctx)
+    text = renderedText
 
-    -- Mustache Templating
-    if LibMustache then
-        local ctx = self:GetTemplateContext()
-        
-        -- Merge Category Variables
-        if page.CategoryId then
-            local cat = AngryAssign:GetCat(page.CategoryId)
-            if cat and cat.Vars then
-                local vars = app.ParseVariables(cat.Vars)
-                for k, v in pairs(vars) do 
-                    ctx[k] = v 
-                    -- Add to highlight set (generic)
-                    if type(v) == "string" and #v > 2 then
-                        for word in v:gmatch("[^%s%p]+") do
-                            if #word > 2 then highlightSet[word:lower()] = true end
-                        end
-                    end
-                end
-            end
-        end
-        
-        -- Merge Page Variables
-        if page.Vars then
-             local vars = app.ParseVariables(page.Vars)
-             for k, v in pairs(vars) do 
-                 ctx[k] = v 
-                 -- Add to highlight set (generic)
-                 if type(v) == "string" and #v > 2 then
-                     for word in v:gmatch("[^%s%p]+") do
-                         if #word > 2 then highlightSet[word:lower()] = true end
-                     end
-                 end
+    -- Add Variables to Highlight Set (Generic)
+    for k, v in pairs(mergedVars) do
+         if type(v) == "string" and #v > 2 then
+             for word in v:gmatch("[^%s%p]+") do
+                 if #word > 2 then highlightSet[word:lower()] = true end
              end
-        end
+         end
+    end
 
-        if self.GuildColors then
-            for name, color in pairs(self.GuildColors) do
-                highlightSet[name:lower()] = color 
-            end
-        end
-
-        -- Add Roster Colors to Highlight Set (LAST priority to override vars with Class Colors)
-        if ctx.rosterColors then
-            for name, color in pairs(ctx.rosterColors) do
-                highlightSet[name:lower()] = color
-            end
-        end
-
-        -- Use pcall to avoid crashing on template errors
-        local success, result = pcall(LibMustache.render, text, ctx)
-        if success then
-            text = result
+    -- Add Guild Colors (Override generic)
+    if self.GuildColors then
+        for name, color in pairs(self.GuildColors) do
+            highlightSet[name:lower()] = color 
         end
     end
+
+    -- Add Roster Colors to Highlight Set (LAST priority to override vars with Class Colors)
+    if ctx.rosterColors then
+        for name, color in pairs(ctx.rosterColors) do
+            highlightSet[name:lower()] = color
+        end
+    end
+    
+
 
     -- Markdown Support
     text = self:ProcessMarkdown(text)
@@ -3230,34 +3241,11 @@ function AngryAssign:OutputDisplayed(id)
     if channel and page then
         local output = page.Contents
 
-        -- Normalize Pipes
-        output = output:gsub("||", "|")
+        local ctx = self:GetTemplateContext()
+        local renderedText, _ = self:RenderPageContent(page, ctx)
+        output = renderedText
         
-        -- Mustache Templating
-        if LibMustache then
-            local ctx = self:GetTemplateContext()
-            
-            -- Merge Category Variables
-            if page.CategoryId then
-                local cat = AngryAssign:GetCat(page.CategoryId)
-                if cat and cat.Vars then
-                    local vars = app.ParseVariables(cat.Vars)
-                    for k, v in pairs(vars) do ctx[k] = v end
-                end
-            end
-            
-            -- Merge Page Variables
-            if page.Vars then
-                 local vars = app.ParseVariables(page.Vars)
-                 for k, v in pairs(vars) do ctx[k] = v end
-            end
-    
-            -- Render
-            local success, result = pcall(LibMustache.render, output, ctx)
-            if success then
-                output = result
-            end
-        end
+
 
         -- Process Tags (Icons, Spells, Class Names) - Single Pass
         -- We look for anything inside {} and replace it based on logic or table lookup
