@@ -1,6 +1,19 @@
 ## v2.0.11
 
-* Shortcuts: Added a comprehensive list of raid utility shortcuts (e.g., `{Sunder}`, `{LIP}`, `{PI}`) that automatically map to the correct icon and chat text.
+* Refactoring: Moved static data (icons, colors, shortcuts) to `Data.lua` and cleaned up `Core.lua` logic.
+* Formatting: Expanded single-line code blocks for better readability.
+* Shortcuts: Added a comprehensive list of raid utility shortcuts:
+  * Warrior: {Sunder}, {AoE}, {Mock}, {Pummel}, {Taunt}, {Demo}, {Thunder}, {SW}, {LS}, {Reflect}
+  * Priest: {MC}, {PI}, {FW}, {Shackle}, {Dispel}, {PW:S}, {Renew}, {Fort}, {Spirit}, {Shadow}, {Fade}, {MDS}
+  * Druid: {FF}, {Innerv}, {BR}, {Remove}, {Rejuv}, {Abolish}, {GOTW}, {Thorns}, {Bark}
+  * Paladin: {JoL}, {JoW}, {BoP}, {DI}, {Cleanse}, {LoH}, {BoK}, {BoW}, {Salv}, {Sanc}, {BoL}, {BoF}, {JoJ}, {Sac}, {DS}
+  * Mage: {CS}, {Sheep}, {Decurse}, {AI}, {Dampen}, {Amplify}, {Block}
+  * Warlock: {CoE}, {CoS}, {CoR}, {SS}, {Banish}, {HS}, {Seed}
+  * Hunter: {Tranq}, {Mark}, {MD}, {Trap}
+  * Shaman: {ES}, {WF}, {Tremor}, {BL}, {Hero}
+  * Rogue: {Kick}, {Feint}, {Cloak}, {Blind}
+  * Consumables: {LIP}, {Stone}, {FAP}, {Petri}
+  * Miscellaneous: {alliance}, {horde}, {rag}, {nef}, etc.
 * UI Polish: The assignment tree now respects your configured font settings.
 * UI Polish: Improved window resizing with a visible handle and lower minimum size limits (600x300).
 * Bugfix: Fixed a global variable leak in the icon picker.

@@ -40,6 +40,52 @@ If someone else saves edits to a particular page while you are editing that page
 
 Individual pages are identified internally with unique IDs.  The names seen in the edit window are only used for display purposes, so there can be multiple pages with the same name.  Much like an edit, if someone renames a page, that rename is sent out to everyone in the guild who's online at the time (others will get the rename later, whenever that page is next edited or sent).  Deletes, however, are only done locally - so if you delete a page, others will still have it.  If you've deleted a page, and later on someone else edits it or sends it, you'll get it back again.
 
+Raid Shortcuts
+--------------------
+You can use the following shortcuts in your assignments to display icons for spells and abilities:
+
+**Warrior**
+* `{Sunder}` Sunder Armor, `{AoE}` Challenging Shout, `{Mock}` Mocking Blow, `{Pummel}` Pummel
+* `{Taunt}` Taunt, `{Demo}` Demoralizing Shout, `{Thunder}` Thunder Clap, `{SW}` Shield Wall, `{LS}` Last Stand, `{Reflect}` Spell Reflection
+
+**Priest**
+* `{MC}` Mind Control, `{PI}` Power Infusion, `{FW}` Fear Ward, `{Shackle}` Shackle Undead
+* `{Dispel}` Dispel Magic, `{PW:S}` Power Word: Shield, `{Renew}` Renew
+* `{Fort}` Power Word: Fortitude, `{Spirit}` Divine Spirit, `{Shadow}` Shadow Protection, `{Fade}` Fade, `{MDS}` Mass Dispel
+
+**Druid**
+* `{FF}` Faerie Fire, `{Innerv}` Innervate, `{BR}` Rebirth, `{Remove}` Remove Curse
+* `{Rejuv}` Rejuvenation, `{Abolish}` Abolish Poison, `{GOTW}` Gift of the Wild, `{Thorns}` Thorns, `{Bark}` Barkskin
+
+**Paladin**
+* `{JoL}` Judgement of Light, `{JoW}` Judgement of Wisdom, `{BoP}` Blessing of Protection, `{DI}` Divine Intervention, `{BoF}` Blessing of Freedom, `{JoJ}` Judgement of Justice, `{Sac}` Blessing of Sacrifice, `{DS}` Divine Shield
+* `{Cleanse}` Cleanse, `{LoH}` Lay on Hands
+* `{BoK}` Kings, `{BoW}` Wisdom, `{Salv}` Salvation, `{Sanc}` Sanctuary, `{BoL}` Light
+
+**Mage**
+* `{CS}` Counterspell, `{Sheep}` Polymorph, `{Decurse}` Remove Lesser Curse
+* `{AI}` Arcane Intellect, `{Dampen}` Dampen Magic, `{Amplify}` Amplify Magic, `{Block}` Ice Block
+
+**Warlock**
+* `{CoE}` Curse of Elements, `{CoS}` Curse of Shadow, `{CoR}` Curse of Recklessness
+* `{SS}` Soulstone, `{Banish}` Banish, `{HS}` Healthstone, `{Seed}` Seed of Corruption
+
+**Hunter**
+* `{Tranq}` Tranquilizing Shot, `{Mark}` Hunter's Mark, `{MD}` Misdirection, `{Trap}` Freezing Trap
+
+**Shaman**
+* `{ES}` Earth Shock, `{WF}` Windfury Totem, `{Tremor}` Tremor Totem, `{BL}` Bloodlust, `{Hero}` Heroism
+
+**Rogue**
+* `{Kick}` Kick, `{Feint}` Feint, `{Cloak}` Cloak of Shadows, `{Blind}` Blind
+
+**Consumables**
+* `{LIP}`, `{Stone}` (Stoneshield), `{FAP}`, `{Petri}`
+
+**Miscellaneous**
+* Faction: `{alliance}`, `{horde}`
+* Bosses: `{rag}`, `{nef}`, `{ony}`, `{hakkar}`, `{cthun}`, `{kt}`
+
 Miscellaneous
 --------------------
 

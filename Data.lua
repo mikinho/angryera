@@ -14,27 +14,27 @@ local appName, app = ...
 -----------------------
 app.ColorTable = {
     ["|cblue"]        = "|cff00cbf4",
-    ["|cgreen"]       = "|cff0adc00",
-    ["|cred"]         = "|cffeb310c",
-    ["|cyellow"]      = "|cfffaf318",
-    ["|corange"]      = "|cffff9d00",
-    ["|cpink"]        = "|cfff64c97",
-    ["|cpurple"]      = "|cffdc44eb",
+    ["|cdeathknight"] = "|cffc41f3b",
+    ["|cdemonhunter"] = "|cffa330c9",
+    ["|cdh"]          = "|cffa330c9",
+    ["|cdk"]          = "|cffc41f3b",
     ["|cdruid"]       = "|cffff7d0a",
+    ["|cevoker"]      = "|cff33937f",
+    ["|cgreen"]       = "|cff0adc00",
     ["|chunter"]      = "|cffabd473",
     ["|cmage"]        = "|cff40C7eb",
+    ["|cmonk"]        = "|cff00ff96",
+    ["|corange"]      = "|cffff9d00",
     ["|cpaladin"]     = "|cfff58cba",
+    ["|cpink"]        = "|cfff64c97",
     ["|cpriest"]      = "|cffffffff",
+    ["|cpurple"]      = "|cffdc44eb",
+    ["|cred"]         = "|cffeb310c",
     ["|crogue"]       = "|cfffff569",
     ["|cshaman"]      = "|cff0070de",
     ["|cwarlock"]     = "|cff8787ed",
     ["|cwarrior"]     = "|cffc79c6e",
-    ["|cdk"]          = "|cffc41f3b",
-    ["|cdeathknight"] = "|cffc41f3b",
-    ["|cmonk"]        = "|cff00ff96",
-    ["|cdh"]          = "|cffa330c9",
-    ["|cdemonhunter"] = "|cffa330c9",
-    ["|cevoker"]      = "|cff33937f"
+    ["|cyellow"]      = "|cfffaf318"
 }
 
 -----------------------
@@ -61,47 +61,343 @@ app.IconTable = {
     ["{rt8}"]          = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:0|t",
 
     -- Other Icons
-    ["{healthstone}"]  = "|TInterface\\Icons\\INV_Stone_04:0|t",
-    ["{hs}"]           = "|TInterface\\Icons\\INV_Stone_04:0|t",
     ["{damage}"]       = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41|t",
     ["{dps}"]          = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41|t",
     ["{tank}"]         = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:0:19:22:41|t",
     ["{healer}"]       = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:1:20|t",
-    ["{hero}"]         = "|TInterface\\Icons\\ABILITY_Shaman_Heroism:0|t",
-    ["{heroism}"]      = "|TInterface\\Icons\\ABILITY_Shaman_Heroism:0|t",
-    ["{bl}"]           = "|TInterface\\Icons\\SPELL_Nature_Bloodlust:0|t",
-    ["{bloodlust}"]    = "|TInterface\\Icons\\SPELL_Nature_Bloodlust:0|t",
-    
+
     -- Class Icons
-    ["{hunter}"]       = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:16:32|t",
-    ["{warrior}"]      = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:0:16|t",
-    ["{rogue}"]        = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:0:16|t",
-    ["{mage}"]         = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:0:16|t",
-    ["{priest}"]       = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:16:32|t",
-    ["{warlock}"]      = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:16:32|t",
-    ["{paladin}"]      = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:32:48|t",
-    ["{druid}"]        = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:0:16|t",
-    ["{shaman}"]       = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:16:32|t",
-    ["{dk}"]           = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
     ["{deathknight}"]  = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
-    ["{monk}"]         = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:32:48|t",
-    ["{dh}"]           = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t",
     ["{demonhunter}"]  = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t",
-    ["{evoker}"]       = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:48:64|t"
+    ["{dh}"]           = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t",
+    ["{dk}"]           = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
+    ["{druid}"]        = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:0:16|t",
+    ["{evoker}"]       = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:48:64|t",
+    ["{hunter}"]       = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:16:32|t",
+    ["{mage}"]         = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:0:16|t",
+    ["{monk}"]         = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:32:48|t",
+    ["{paladin}"]      = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:32:48|t",
+    ["{priest}"]       = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:16:32|t",
+    ["{rogue}"]        = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:0:16|t",
+    ["{shaman}"]       = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:16:32|t",
+    ["{warlock}"]      = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:16:32|t",
+    ["{warrior}"]      = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:0:16|t",
+
+    -- Faction Icons
+    ["{alliance}"]     = "|TInterface\\Icons\\INV_BannerPVP_02:0|t",
+    ["{horde}"]        = "|TInterface\\Icons\\INV_BannerPVP_01:0|t",
+
+    -- Boss Icons
+    ["{cthun}"]        = "|TInterface\\Icons\\INV_Misc_Eye_01:0|t",
+    ["{hakkar}"]       = "|TInterface\\Icons\\INV_Misc_Head_Dragon_02:0|t",
+    ["{kt}"]           = "|TInterface\\Icons\\INV_Lich_Phylactery:0|t",
+    ["{nef}"]          = "|TInterface\\Icons\\INV_Misc_Head_Dragon_Black:0|t",
+    ["{ony}"]          = "|TInterface\\Icons\\INV_Misc_Head_Dragon_01:0|t",
+    ["{rag}"]          = "|TInterface\\Icons\\INV_Hammer_Unique_Sulfuras:0|t"
 }
 
 -----------------------
 -- Raid Utility
 -----------------------
 local AngryEra_RaidUtility = {
-    ["Warrior"] = {
-        ["Sunder"] = {
-            ["name"] = "Sunder Armor",
-            ["icon"] = "ability_warrior_sunderarmor"
+    ["Consumables"] = {
+        ["FAP"] = {
+            ["name"] = "Free Action Potion",
+            ["icon"] = "inv_potion_04"
         },
+        ["LIP"] = {
+            ["name"] = "Limited Invulnerability Potion",
+            ["icon"] = "inv_potion_62"
+        },
+        ["Petri"] = {
+            ["name"] = "Flask of Petrification",
+            ["icon"] = "inv_potion_26"
+        },
+        ["Stone"] = {
+            ["name"] = "Greater Stoneshield Potion",
+            ["icon"] = "inv_potion_69"
+        }
+    },
+    ["Druid"] = {
+        ["Abolish"] = {
+            ["name"] = "Abolish Poison",
+            ["icon"] = "spell_nature_nullifypoison_02"
+        },
+        ["Bark"] = {
+            ["name"] = "Barkskin",
+            ["icon"] = "spell_nature_stoneclawtotem"
+        },
+        ["BR"] = {
+            ["name"] = "Rebirth",
+            ["icon"] = "spell_nature_reincarnation"
+        },
+        ["FF"] = {
+            ["name"] = "Faerie Fire",
+            ["icon"] = "spell_nature_faeriefire"
+        },
+        ["GOTW"] = {
+            ["name"] = "Gift of the Wild",
+            ["icon"] = "spell_nature_regeneration"
+        },
+        ["Innerv"] = {
+            ["name"] = "Innervate",
+            ["icon"] = "spell_nature_lightning"
+        },
+        ["Rejuv"] = {
+            ["name"] = "Rejuvenation",
+            ["icon"] = "spell_nature_rejuvenation"
+        },
+        ["Remove"] = {
+            ["name"] = "Remove Curse",
+            ["icon"] = "spell_nature_removecurse"
+        },
+        ["Thorns"] = {
+            ["name"] = "Thorns",
+            ["icon"] = "spell_nature_thorns"
+        }
+    },
+    ["Hunter"] = {
+        ["Mark"] = {
+            ["name"] = "Hunter's Mark",
+            ["icon"] = "ability_hunter_snipershot"
+        },
+        ["MD"] = {
+            ["name"] = "Misdirection",
+            ["icon"] = "ability_hunter_misdirection" -- TBC
+        },
+        ["Tranq"] = {
+            ["name"] = "Tranquilizing Shot",
+            ["icon"] = "spell_nature_drowsy"
+        },
+        ["Trap"] = {
+            ["name"] = "Freezing Trap",
+            ["icon"] = "spell_frost_freezingtrap"
+        }
+    },
+    ["Mage"] = {
+        ["AI"] = {
+            ["name"] = "Arcane Intellect",
+            ["icon"] = "spell_holy_magicalsentry"
+        },
+        ["Amplify"] = {
+            ["name"] = "Amplify Magic",
+            ["icon"] = "spell_nature_abolishmagic"
+        },
+        ["Block"] = {
+            ["name"] = "Ice Block",
+            ["icon"] = "spell_frost_frost"
+        },
+        ["CS"] = {
+            ["name"] = "Counterspell",
+            ["icon"] = "spell_frost_iceshock"
+        },
+        ["Dampen"] = {
+            ["name"] = "Dampen Magic",
+            ["icon"] = "spell_nature_abolishmagic"
+        },
+        ["Decurse"] = {
+            ["name"] = "Remove Lesser Curse",
+            ["icon"] = "spell_nature_removecurse"
+        },
+        ["Sheep"] = {
+            ["name"] = "Polymorph",
+            ["icon"] = "spell_nature_polymorph"
+        }
+    },
+    ["Paladin"] = {
+        ["BoF"] = {
+            ["name"] = "Blessing of Freedom",
+            ["icon"] = "spell_holy_sealofvalor"
+        },
+        ["BoK"] = {
+            ["name"] = "Greater Blessing of Kings",
+            ["icon"] = "spell_magic_greaterblessingofkings"
+        },
+        ["BoL"] = {
+            ["name"] = "Greater Blessing of Light",
+            ["icon"] = "spell_holy_greaterblessingoflight"
+        },
+        ["BoP"] = {
+            ["name"] = "Blessing of Protection",
+            ["icon"] = "spell_holy_sealofprotection"
+        },
+        ["BoW"] = {
+            ["name"] = "Greater Blessing of Wisdom",
+            ["icon"] = "spell_holy_greaterblessingofwisdom"
+        },
+        ["Cleanse"] = {
+            ["name"] = "Cleanse",
+            ["icon"] = "spell_holy_renew"
+        },
+        ["DI"] = {
+            ["name"] = "Divine Intervention",
+            ["icon"] = "spell_nature_timestop"
+        },
+        ["DS"] = {
+            ["name"] = "Divine Shield",
+            ["icon"] = "spell_holy_divineshield"
+        },
+        ["JoJ"] = {
+            ["name"] = "Judgement of Justice",
+            ["icon"] = "spell_holy_sealofwrath"
+        },
+        ["JoL"] = {
+            ["name"] = "Judgement of Light",
+            ["icon"] = "spell_holy_judgmentoflight"
+        },
+        ["JoW"] = {
+            ["name"] = "Judgement of Wisdom",
+            ["icon"] = "spell_holy_judgmentofwisdom"
+        },
+        ["LoH"] = {
+            ["name"] = "Lay on Hands",
+            ["icon"] = "spell_holy_layonhands"
+        },
+        ["Sac"] = {
+            ["name"] = "Blessing of Sacrifice",
+            ["icon"] = "spell_holy_sealofsacrifice"
+        },
+        ["Salv"] = {
+            ["name"] = "Greater Blessing of Salvation",
+            ["icon"] = "spell_holy_greaterblessingofsalvation"
+        },
+        ["Sanc"] = {
+            ["name"] = "Greater Blessing of Sanctuary",
+            ["icon"] = "spell_holy_greaterblessingofsanctuary"
+        }
+    },
+    ["Priest"] = {
+        ["Dispel"] = {
+            ["name"] = "Dispel Magic",
+            ["icon"] = "spell_holy_dispelmagic"
+        },
+        ["Fade"] = {
+            ["name"] = "Fade",
+            ["icon"] = "spell_magic_lesserinvisibilty"
+        },
+        ["Fort"] = {
+            ["name"] = "Power Word: Fortitude",
+            ["icon"] = "spell_holy_wordfortitude"
+        },
+        ["FW"] = {
+            ["name"] = "Fear Ward",
+            ["icon"] = "spell_holy_fearward"
+        },
+        ["MC"] = {
+            ["name"] = "Mind Control",
+            ["icon"] = "spell_shadow_shadowworddominate"
+        },
+        ["MDS"] = {
+            ["name"] = "Mass Dispel",
+            ["icon"] = "spell_arcane_massdispel" -- TBC
+        },
+        ["PI"] = {
+            ["name"] = "Power Infusion",
+            ["icon"] = "spell_holy_powerinfusion"
+        },
+        ["PW:S"] = {
+            ["name"] = "Power Word: Shield",
+            ["icon"] = "spell_holy_powerwordshield"
+        },
+        ["Renew"] = {
+            ["name"] = "Renew",
+            ["icon"] = "spell_holy_renew"
+        },
+        ["Shackle"] = {
+            ["name"] = "Shackle Undead",
+            ["icon"] = "spell_nature_slow"
+        },
+        ["Shadow"] = {
+            ["name"] = "Shadow Protection",
+            ["icon"] = "spell_shadow_antishadow"
+        },
+        ["Spirit"] = {
+            ["name"] = "Divine Spirit",
+            ["icon"] = "spell_holy_divinespirit"
+        }
+    },
+    ["Rogue"] = {
+        ["Blind"] = {
+            ["name"] = "Blind",
+            ["icon"] = "spell_shadow_mindsteal"
+        },
+        ["Cloak"] = {
+            ["name"] = "Cloak of Shadows",
+            ["icon"] = "spell_shadow_nethercloak" -- TBC
+        },
+        ["Feint"] = {
+            ["name"] = "Feint",
+            ["icon"] = "ability_rogue_feint"
+        },
+        ["Kick"] = {
+            ["name"] = "Kick",
+            ["icon"] = "ability_kick"
+        }
+    },
+    ["Shaman"] = {
+        ["BL"] = {
+            ["name"] = "Bloodlust",
+            ["icon"] = "spell_nature_bloodlust"
+        },
+        ["ES"] = {
+            ["name"] = "Earth Shock",
+            ["icon"] = "spell_nature_earthshock"
+        },
+        ["Hero"] = {
+            ["name"] = "Heroism",
+            ["icon"] = "ability_shaman_heroism"
+        },
+        ["Tremor"] = {
+            ["name"] = "Tremor Totem",
+            ["icon"] = "spell_nature_tremortotem"
+        },
+        ["WF"] = {
+            ["name"] = "Windfury Totem",
+            ["icon"] = "spell_nature_windfury"
+        }
+    },
+    ["Warlock"] = {
+        ["Banish"] = {
+            ["name"] = "Banish",
+            ["icon"] = "spell_shadow_cripple"
+        },
+        ["CoE"] = {
+            ["name"] = "Curse of Elements",
+            ["icon"] = "spell_shadow_curseofelementals"
+        },
+        ["CoR"] = {
+            ["name"] = "Curse of Recklessness",
+            ["icon"] = "spell_shadow_unholystrength"
+        },
+        ["CoS"] = {
+            ["name"] = "Curse of Shadow",
+            ["icon"] = "spell_shadow_curseofshadow"
+        },
+        ["HS"] = {
+            ["name"] = "Healthstone",
+            ["icon"] = "inv_stone_04"
+        },
+        ["Seed"] = {
+            ["name"] = "Seed of Corruption",
+            ["icon"] = "spell_shadow_seedofdestruction" -- TBC
+        },
+        ["SS"] = {
+            ["name"] = "Soulstone",
+            ["icon"] = "spell_shadow_soulgem"
+        }
+    },
+    ["Warrior"] = {
         ["AoE"] = {
             ["name"] = "Challenging Shout",
             ["icon"] = "ability_bullrush" -- This is the AoE Taunt
+        },
+        ["Demo"] = {
+            ["name"] = "Demoralizing Shout",
+            ["icon"] = "ability_warrior_waracry"
+        },
+        ["LS"] = {
+            ["name"] = "Last Stand",
+            ["icon"] = "spell_holy_ashestoashes"
         },
         ["Mock"] = {
             ["name"] = "Mocking Blow",
@@ -111,159 +407,25 @@ local AngryEra_RaidUtility = {
             ["name"] = "Pummel",
             ["icon"] = "inv_gauntlets_04"
         },
+        ["Reflect"] = {
+            ["name"] = "Spell Reflection",
+            ["icon"] = "ability_warrior_shieldreflection" -- TBC
+        },
+        ["Sunder"] = {
+            ["name"] = "Sunder Armor",
+            ["icon"] = "ability_warrior_sunderarmor"
+        },
+        ["SW"] = {
+            ["name"] = "Shield Wall",
+            ["icon"] = "ability_warrior_shieldwall"
+        },
         ["Taunt"] = {
             ["name"] = "Taunt",
             ["icon"] = "spell_nature_reincarnation"
-        }
-    },
-    ["Consumables"] = {
-        ["LIP"] = {
-            ["name"] = "Limited Invulnerability Potion",
-            ["icon"] = "inv_potion_62"
         },
-        ["Stone"] = {
-            ["name"] = "Greater Stoneshield Potion",
-            ["icon"] = "inv_potion_69"
-        },
-        ["FAP"] = {
-            ["name"] = "Free Action Potion",
-            ["icon"] = "inv_potion_04"
-        },
-        ["Petri"] = {
-            ["name"] = "Flask of Petrification",
-            ["icon"] = "inv_potion_26"
-        }
-    },
-    ["Priest"] = {
-        ["MC"] = {
-            ["name"] = "Mind Control",
-            ["icon"] = "spell_shadow_shadowworddominate"
-        },
-        ["PI"] = {
-            ["name"] = "Power Infusion",
-            ["icon"] = "spell_holy_powerinfusion"
-        },
-        ["FW"] = {
-            ["name"] = "Fear Ward",
-            ["icon"] = "spell_holy_fearward"
-        },
-        ["Shackle"] = {
-            ["name"] = "Shackle Undead",
-            ["icon"] = "spell_nature_slow"
-        },
-        ["Dispel"] = {
-            ["name"] = "Dispel Magic",
-            ["icon"] = "spell_holy_dispelmagic"
-        }
-    },
-    ["Warlock"] = {
-        ["CoE"] = {
-            ["name"] = "Curse of Elements",
-            ["icon"] = "spell_shadow_curseofelementals"
-        },
-        ["CoS"] = {
-            ["name"] = "Curse of Shadow",
-            ["icon"] = "spell_shadow_curseofshadow"
-        },
-        ["CoR"] = {
-            ["name"] = "Curse of Recklessness",
-            ["icon"] = "spell_shadow_unholystrength"
-        },
-        ["SS"] = {
-            ["name"] = "Create Soulstone",
-            ["icon"] = "spell_shadow_soulgem"
-        },
-        ["Banish"] = {
-            ["name"] = "Banish",
-            ["icon"] = "spell_shadow_cripple"
-        }
-    },
-    ["Druid"] = {
-        ["FF"] = {
-            ["name"] = "Faerie Fire",
-            ["icon"] = "spell_nature_faeriefire"
-        },
-        ["Innerv"] = {
-            ["name"] = "Innervate",
-            ["icon"] = "spell_nature_lightning"
-        },
-        ["BR"] = {
-            ["name"] = "Rebirth",
-            ["icon"] = "spell_nature_reincarnation"
-        },
-        ["Remove"] = {
-            ["name"] = "Remove Curse",
-            ["icon"] = "spell_nature_removecurse"
-        }
-    },
-    ["Paladin"] = {
-        ["JoL"] = {
-            ["name"] = "Judgement of Light",
-            ["icon"] = "spell_holy_judgmentoflight"
-        },
-        ["JoW"] = {
-            ["name"] = "Judgement of Wisdom",
-            ["icon"] = "spell_holy_judgmentofwisdom"
-        },
-        ["BoP"] = {
-            ["name"] = "Blessing of Protection",
-            ["icon"] = "spell_holy_sealofprotection"
-        },
-        ["DI"] = {
-            ["name"] = "Divine Intervention",
-            ["icon"] = "spell_nature_timestop"
-        },
-        ["Cleanse"] = {
-            ["name"] = "Cleanse",
-            ["icon"] = "spell_holy_renew"
-        }
-    },
-    ["Hunter"] = {
-        ["Tranq"] = {
-            ["name"] = "Tranquilizing Shot",
-            ["icon"] = "spell_nature_drowsy"
-        },
-        ["Mark"] = {
-            ["name"] = "Hunter's Mark",
-            ["icon"] = "ability_hunter_snipershot"
-        }
-    },
-    ["Mage"] = {
-        ["CS"] = {
-            ["name"] = "Counterspell",
-            ["icon"] = "spell_frost_iceshock"
-        },
-        ["Sheep"] = {
-            ["name"] = "Polymorph",
-            ["icon"] = "spell_nature_polymorph"
-        },
-        ["Decurse"] = {
-            ["name"] = "Remove Lesser Curse",
-            ["icon"] = "spell_nature_removecurse"
-        }
-    },
-    ["Shaman"] = {
-        ["ES"] = {
-            ["name"] = "Earth Shock",
-            ["icon"] = "spell_nature_earthshock"
-        },
-        ["WF"] = {
-            ["name"] = "Windfury Totem",
-            ["icon"] = "spell_nature_windfury"
-        },
-        ["Tremor"] = {
-            ["name"] = "Tremor Totem",
-            ["icon"] = "spell_nature_tremortotem"
-        }
-    },
-    ["Rogue"] = {
-        ["Kick"] = {
-            ["name"] = "Kick",
-            ["icon"] = "ability_kick"
-        },
-        ["Feint"] = {
-            ["name"] = "Feint",
-            ["icon"] = "ability_rogue_feint"
+        ["Thunder"] = {
+            ["name"] = "Thunder Clap",
+            ["icon"] = "spell_nature_thunderclap"
         }
     }
 }
@@ -271,8 +433,16 @@ local AngryEra_RaidUtility = {
 app.UtilityChatMap = {}
 for category, items in pairs(AngryEra_RaidUtility) do
     for key, info in pairs(items) do
+        local iconTexture = "|TInterface\\Icons\\" .. info.icon .. ":0|t"
+
+        -- Register abbreviation (e.g. {sw})
         local tag = "{" .. key:lower() .. "}"
-        app.IconTable[tag] = "|TInterface\\Icons\\" .. info.icon .. ":0|t"
+        app.IconTable[tag] = iconTexture
         app.UtilityChatMap[tag] = info.name
+
+        -- Register full name (e.g. {shield wall})
+        local nameTag = "{" .. info.name:lower() .. "}"
+        app.IconTable[nameTag] = iconTexture
+        app.UtilityChatMap[nameTag] = info.name
     end
 end
