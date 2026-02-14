@@ -84,7 +84,7 @@ You can use the following shortcuts in your assignments to display icons for spe
 
 **Miscellaneous**
 * Faction: `{alliance}`, `{horde}`
-* Bosses: `{rag}`, `{nef}`, `{ony}`, `{hakkar}`, `{cthun}`, `{kt}`
+* Bosses: `{rag}`, `{nef}`, `{ony}`, `{hakkar}`, `{cthun}`, `{kt}`, `{sapph}`, `{patch}`, `{4hm}`, `{twins}`, `{gruul}`, `{mag}`, `{vashj}`, `{kael}`, `{illidan}`
 
 Miscellaneous
 --------------------

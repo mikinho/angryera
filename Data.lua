@@ -88,12 +88,23 @@ app.IconTable = {
     ["{horde}"]        = "|TInterface\\Icons\\INV_BannerPVP_01:0|t",
 
     -- Boss Icons
+    ["{4hm}"]          = "|TInterface\\Icons\\INV_Helmet_09:0|t",
+    ["{archi}"]        = "|TInterface\\Icons\\Spell_Shadow_DeathCoil:0|t",
     ["{cthun}"]        = "|TInterface\\Icons\\INV_Misc_Eye_01:0|t",
+    ["{gruul}"]        = "|TInterface\\Icons\\INV_Misc_MonsterHead_04:0|t", -- Scaled
     ["{hakkar}"]       = "|TInterface\\Icons\\INV_Misc_Head_Dragon_02:0|t",
+    ["{illidan}"]      = "|TInterface\\Icons\\INV_Weapon_Glaive_01:0|t",
+    ["{kael}"]         = "|TInterface\\Icons\\Spell_Fire_Burnout:0|t",
+    ["{kj}"]           = "|TInterface\\Icons\\INV_Misc_Head_Demon_02:0|t",
     ["{kt}"]           = "|TInterface\\Icons\\INV_Lich_Phylactery:0|t",
+    ["{mag}"]          = "|TInterface\\Icons\\INV_Misc_MonsterHead_03:0|t",
     ["{nef}"]          = "|TInterface\\Icons\\INV_Misc_Head_Dragon_Black:0|t",
     ["{ony}"]          = "|TInterface\\Icons\\INV_Misc_Head_Dragon_01:0|t",
-    ["{rag}"]          = "|TInterface\\Icons\\INV_Hammer_Unique_Sulfuras:0|t"
+    ["{patch}"]        = "|TInterface\\Icons\\INV_Misc_MonsterHead_04:0|t", -- Abom
+    ["{rag}"]          = "|TInterface\\Icons\\INV_Hammer_Unique_Sulfuras:0|t",
+    ["{sapph}"]        = "|TInterface\\Icons\\INV_Misc_Head_Dragon_Blue:0|t",
+    ["{twins}"]        = "|TInterface\\Icons\\INV_Misc_QirajiCrystal_01:0|t",
+    ["{vashj}"]        = "|TInterface\\Icons\\INV_Misc_Head_Naga_01:0|t"
 }
 
 -----------------------
@@ -160,10 +171,6 @@ local AngryEra_RaidUtility = {
         ["Mark"] = {
             ["name"] = "Hunter's Mark",
             ["icon"] = "ability_hunter_snipershot"
-        },
-        ["MD"] = {
-            ["name"] = "Misdirection",
-            ["icon"] = "ability_hunter_misdirection" -- TBC
         },
         ["Tranq"] = {
             ["name"] = "Tranquilizing Shot",
@@ -287,10 +294,6 @@ local AngryEra_RaidUtility = {
             ["name"] = "Mind Control",
             ["icon"] = "spell_shadow_shadowworddominate"
         },
-        ["MDS"] = {
-            ["name"] = "Mass Dispel",
-            ["icon"] = "spell_arcane_massdispel" -- TBC
-        },
         ["PI"] = {
             ["name"] = "Power Infusion",
             ["icon"] = "spell_holy_powerinfusion"
@@ -320,10 +323,6 @@ local AngryEra_RaidUtility = {
         ["Blind"] = {
             ["name"] = "Blind",
             ["icon"] = "spell_shadow_mindsteal"
-        },
-        ["Cloak"] = {
-            ["name"] = "Cloak of Shadows",
-            ["icon"] = "spell_shadow_nethercloak" -- TBC
         },
         ["Feint"] = {
             ["name"] = "Feint",
@@ -377,10 +376,6 @@ local AngryEra_RaidUtility = {
             ["name"] = "Healthstone",
             ["icon"] = "inv_stone_04"
         },
-        ["Seed"] = {
-            ["name"] = "Seed of Corruption",
-            ["icon"] = "spell_shadow_seedofdestruction" -- TBC
-        },
         ["SS"] = {
             ["name"] = "Soulstone",
             ["icon"] = "spell_shadow_soulgem"
@@ -407,10 +402,6 @@ local AngryEra_RaidUtility = {
             ["name"] = "Pummel",
             ["icon"] = "inv_gauntlets_04"
         },
-        ["Reflect"] = {
-            ["name"] = "Spell Reflection",
-            ["icon"] = "ability_warrior_shieldreflection" -- TBC
-        },
         ["Sunder"] = {
             ["name"] = "Sunder Armor",
             ["icon"] = "ability_warrior_sunderarmor"
@@ -429,6 +420,28 @@ local AngryEra_RaidUtility = {
         }
     }
 }
+
+local isTBC = select(4, GetBuildInfo()) >= 20000
+
+if isTBC then
+    -- Warrior
+    AngryEra_RaidUtility.Warrior.Reflect = { ["name"] = "Spell Reflection", ["icon"] = "ability_warrior_shieldreflection" }
+    
+    -- Priest
+    AngryEra_RaidUtility.Priest.MDS = { ["name"] = "Mass Dispel", ["icon"] = "spell_arcane_massdispel" }
+
+    -- Warlock
+    AngryEra_RaidUtility.Warlock.Seed = { ["name"] = "Seed of Corruption", ["icon"] = "spell_shadow_seedofdestruction" }
+
+    -- Hunter
+    AngryEra_RaidUtility.Hunter.MD = { ["name"] = "Misdirection", ["icon"] = "ability_hunter_misdirection" }
+
+    -- Rogue
+    AngryEra_RaidUtility.Rogue.Cloak = { ["name"] = "Cloak of Shadows", ["icon"] = "spell_shadow_nethercloak" }
+    
+    -- Shaman (Bloodlust/Heroism are TBC+, usually)
+    -- Leaving BL/Hero in main table for now as they are often used in generic macros, but could move here.
+end
 
 app.UtilityChatMap = {}
 for category, items in pairs(AngryEra_RaidUtility) do
