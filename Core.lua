@@ -1462,6 +1462,8 @@ end
 
 local function AngryAssign_IconPicker_Clicked(widget, event)
     local texture
+    local icon
+
     if widget:GetUserData("name") then
         icon = widget:GetUserData("name")
     else
@@ -2811,7 +2813,7 @@ function AngryAssign:OnInitialize()
             output = {
                 type = "execute",
                 name = "Output",
-                desc = "Outputs currently displayed assignents to chat",
+                desc = "Outputs currently displayed assignments to chat",
                 order = 11,
                 hidden = true,
                 cmdHidden = false,
@@ -3124,7 +3126,11 @@ end
 
 function AngryAssign:ChatCommand(input)
   if not input or input:trim() == "" then
-    Settings.OpenToCategory(AngryAssign_Title)
+    if Settings and Settings.OpenToCategory then
+        Settings.OpenToCategory(AngryAssign_Title)
+    else
+        InterfaceOptionsFrame_OpenToCategory(blizOptionsPanel)
+    end
   else
     LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryAssign", input)
   end
