@@ -1144,6 +1144,90 @@ local function AngryAssign_RestorePage(widget, event, value)
     AngryAssign_TextChanged(widget, event, value)
 end
 
+local function AngryAssign_HighlightNames()
+    if not AngryAssign.window or not AngryAssign.window.text then return end
+    
+    local text = AngryAssign.window.text:GetText()
+    if not text or text == "" then return end
+    
+    -- Strip existing color codes to fix broken tags or refresh highlights
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+
+    local roster = {}
+    local num = GetNumGroupMembers()
+    
+    if num == 0 then
+        local name = UnitName("player")
+        local _, class = UnitClass("player")
+        if name and class and app.ColorTable["|c"..class:lower()] then
+            roster[name] = app.ColorTable["|c"..class:lower()]
+        end
+    else
+        for i = 1, num do
+            local name, _, _, _, _, class = GetRaidRosterInfo(i)
+            if name and class and app.ColorTable["|c"..class:lower()] then
+                 name = name:match("([^-]+)") -- Strip realm
+                 roster[name] = app.ColorTable["|c"..class:lower()]
+            end
+        end
+    end
+
+    -- Include Guild Roster
+    if IsInGuild() then
+        local numGuild = GetNumGuildMembers()
+        for i = 1, numGuild do
+            local name, _, _, _, class, _, _, _, _, _, classFileName = GetGuildRosterInfo(i)
+            -- Use classFileName (English) if available, otherwise fallback to class (Localized)
+            local fileClass = classFileName or class
+            
+            if name and fileClass and app.ColorTable["|c"..fileClass:lower()] then
+                name = name:match("([^-]+)") -- Strip realm
+                roster[name] = app.ColorTable["|c"..fileClass:lower()]
+            end
+        end
+    end
+    
+    local Mask = {}
+    -- Mask tags like {mark} so we don't colorize the text inside them
+    text = text:gsub("(%b{})", function(s)
+        table.insert(Mask, s)
+        return "\001" .. #Mask .. "\002"
+    end)
+    
+    local count = 0
+    for name, color in pairs(roster) do
+        -- Escape magic chars and wrap in capture group
+        local escapedName = name:gsub("([%%%^%$%(%)%.%[%]%*%+%-%?])", "%%%1")
+        local pattern = "%f[%a](" .. escapedName .. ")%f[%A]"
+        local newText, n = text:gsub(pattern, color .. "%1|r")
+        if n > 0 then
+            text = newText
+            count = count + n
+        end
+    end
+    
+    -- Unmask
+    text = text:gsub("\001(%d+)\002", function(id)
+        return Mask[tonumber(id)]
+    end)
+    
+    if count > 0 then
+        AngryAssign.window.text:SetText(text)
+        AngryAssign.window.text:SetFocus()
+        
+        -- Save the highlighted text immediately
+        local selectedId = AngryAssign:SelectedId()
+        if selectedId and selectedId > 0 then
+            AngryAssign:UpdateContents(selectedId, text)
+        end
+        
+        -- Re-enable the Send button since we just saved
+        if AngryAssign.window.button_display then
+            AngryAssign.window.button_display:SetDisabled(false)
+        end
+    end
+end
+
 local function AngryAssign_CategoryMenuList(entryId, parentId)
     local categories = {}
 
@@ -1343,8 +1427,8 @@ function AngryAssign:CreateWindow()
 
     tree:PauseLayout()
     local button_display = AceGUI:Create("Button")
-    button_display:SetText("Send and Display")
-    button_display:SetWidth(140)
+    button_display:SetText("Send")
+    button_display:SetWidth(90)
     button_display:SetHeight(22)
     button_display:ClearAllPoints()
     button_display:SetPoint("BOTTOMRIGHT", text.frame, "BOTTOMRIGHT", 0, 4)
@@ -1373,12 +1457,24 @@ function AngryAssign:CreateWindow()
     tree:AddChild(button_restore)
     window.button_restore = button_restore
     
+    -- Right-aligned group (Output <- Highlight <- Send)
+    
+    local button_high = AceGUI:Create("Button")
+    button_high:SetText("Highlight")
+    button_high:SetWidth(90)
+    button_high:SetHeight(22)
+    button_high:ClearAllPoints()
+    button_high:SetPoint("RIGHT", button_display.frame, "LEFT", -6, 0)
+    button_high:SetCallback("OnClick", AngryAssign_HighlightNames)
+    tree:AddChild(button_high)
+    window.button_high = button_high
+    
     local button_output = AceGUI:Create("Button")
     button_output:SetText("Output")
     button_output:SetWidth(80)
     button_output:SetHeight(22)
     button_output:ClearAllPoints()
-    button_output:SetPoint("BOTTOMLEFT", button_restore.frame, "BOTTOMRIGHT", 6, 0)
+    button_output:SetPoint("RIGHT", button_high.frame, "LEFT", -6, 0)
     button_output:SetCallback("OnClick", AngryAssign_OutputDisplayed)
     tree:AddChild(button_output)
     window.button_output = button_output
