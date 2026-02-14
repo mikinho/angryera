@@ -1,7 +1,14 @@
---[[-----------------------------------------------------------------------------
-TreeGroup Container
-Container that uses a tree control to switch between groups.
--------------------------------------------------------------------------------]]
+-------------------------------------------------------------------------------
+-- Angry Era: AngryTreeGroup.lua
+--
+-- Custom AceGUI Widget: TreeGroup container.
+-- Features:
+-- 1. Search filter support.
+-- 2. Custom font rendering for items.
+-- 3. Visible Resizing Handle.
+-- version: 3
+-------------------------------------------------------------------------------
+
 local Type, Version = "AngryTreeGroup", 3
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then return end

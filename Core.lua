@@ -1,3 +1,16 @@
+-------------------------------------------------------------------------------
+-- Angry Era: Core.lua
+--
+-- Main application logic, responsible for:
+-- 1. Addon initialization and Ace3 library embedding.
+-- 2. Communication protocol (Syncing pages/display state).
+-- 3. UI orchestration and event handling.
+-- 4. Permission management.
+--
+-- Original Author: AngryAssignments Team
+-- Updated for Classic Era by: AngryEra Maintainers
+-------------------------------------------------------------------------------
+
 local _G = _G
 
 local appName, app = ...;
@@ -107,267 +120,19 @@ local VERSION_ValidRaid = 4
 -- Utility Functions --
 -----------------------
 
-local ColorTable = {
-    ["|cblue"] = "|cff00cbf4",    ["|cgreen"] = "|cff0adc00",
-    ["|cred"] = "|cffeb310c",     ["|cyellow"] = "|cfffaf318",
-    ["|corange"] = "|cffff9d00",  ["|cpink"] = "|cfff64c97",
-    ["|cpurple"] = "|cffdc44eb",  ["|cdruid"] = "|cffff7d0a",
-    ["|chunter"] = "|cffabd473",  ["|cmage"] = "|cff40C7eb",
-    ["|cpaladin"] = "|cfff58cba", ["|cpriest"] = "|cffffffff",
-    ["|crogue"] = "|cfffff569",   ["|cshaman"] = "|cff0070de",
-    ["|cwarlock"] = "|cff8787ed", ["|cwarrior"] = "|cffc79c6e",
-    ["|cdk"] = "|cffc41f3b",      ["|cdeathknight"] = "|cffc41f3b",
-    ["|cmonk"] = "|cff00ff96",    ["|cdh"] = "|cffa330c9",
-    ["|cdemonhunter"] = "|cffa330c9", ["|cevoker"] = "|cff33937f"
-}
 
-local IconTable = {
-    -- Raid Targets (Mapped directly to textures now)
-    ["{star}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:0|t",
-    ["{rt1}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:0|t",
-
-    ["{circle}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_2:0|t",
-    ["{rt2}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_2:0|t",
-
-    ["{diamond}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:0|t",
-    ["{rt3}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:0|t",
-
-    ["{triangle}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_4:0|t",
-    ["{rt4}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_4:0|t",
-
-    ["{moon}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_5:0|t",
-    ["{rt5}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_5:0|t",
-
-    ["{square}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_6:0|t",
-    ["{rt6}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_6:0|t",
-
-    ["{cross}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:0|t",
-    ["{x}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:0|t",
-    ["{rt7}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:0|t",
-
-    ["{skull}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:0|t",
-    ["{rt8}"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:0|t",
-
-    -- Other Icons
-    ["{healthstone}"] = "|TInterface\\Icons\\INV_Stone_04:0|t",
-    ["{hs}"] = "|TInterface\\Icons\\INV_Stone_04:0|t",
-    ["{damage}"] = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41|t",
-    ["{dps}"] = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41|t",
-    ["{tank}"] = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:0:19:22:41|t",
-    ["{healer}"] = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:1:20|t",
-    ["{hero}"] = "|TInterface\\Icons\\ABILITY_Shaman_Heroism:0|t",
-    ["{heroism}"] = "|TInterface\\Icons\\ABILITY_Shaman_Heroism:0|t",
-    ["{bl}"] = "|TInterface\\Icons\\SPELL_Nature_Bloodlust:0|t",
-    ["{bloodlust}"] = "|TInterface\\Icons\\SPELL_Nature_Bloodlust:0|t",
-    
-    -- Class Icons
-    ["{hunter}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:16:32|t",
-    ["{warrior}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:0:16|t",
-    ["{rogue}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:0:16|t",
-    ["{mage}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:0:16|t",
-    ["{priest}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:16:32|t",
-    ["{warlock}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:16:32|t",
-    ["{paladin}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:32:48|t",
-    ["{druid}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:0:16|t",
-    ["{shaman}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:16:32|t",
-    ["{dk}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
-    ["{deathknight}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
-    ["{monk}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:32:48|t",
-    ["{dh}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t",
-    ["{demonhunter}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t",
-    ["{evoker}"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:48:64|t"
-}
-
-local AngryEra_RaidUtility = {
-    ["Warrior"] = {
-        ["Sunder"] = {
-            ["name"] = "Sunder Armor",
-            ["icon"] = "ability_warrior_sunderarmor"
-        },
-        ["AoE"] = {
-            ["name"] = "Challenging Shout",
-            ["icon"] = "ability_bullrush" -- This is the AoE Taunt
-        },
-        ["Mock"] = {
-            ["name"] = "Mocking Blow",
-            ["icon"] = "ability_kick"
-        },
-        ["Pummel"] = {
-            ["name"] = "Pummel",
-            ["icon"] = "inv_gauntlets_04"
-        },
-        ["Taunt"] = {
-            ["name"] = "Taunt",
-            ["icon"] = "spell_nature_reincarnation"
-        }
-    },
-    ["Consumables"] = {
-        ["LIP"] = {
-            ["name"] = "Limited Invulnerability Potion",
-            ["icon"] = "inv_potion_62"
-        },
-        ["Stone"] = {
-            ["name"] = "Greater Stoneshield Potion",
-            ["icon"] = "inv_potion_69"
-        },
-        ["FAP"] = {
-            ["name"] = "Free Action Potion",
-            ["icon"] = "inv_potion_04"
-        },
-        ["Petri"] = {
-            ["name"] = "Flask of Petrification",
-            ["icon"] = "inv_potion_26"
-        }
-    },
-    ["Priest"] = {
-        ["MC"] = {
-            ["name"] = "Mind Control",
-            ["icon"] = "spell_shadow_shadowworddominate"
-        },
-        ["PI"] = {
-            ["name"] = "Power Infusion",
-            ["icon"] = "spell_holy_powerinfusion"
-        },
-        ["FW"] = {
-            ["name"] = "Fear Ward",
-            ["icon"] = "spell_holy_fearward"
-        },
-        ["Shackle"] = {
-            ["name"] = "Shackle Undead",
-            ["icon"] = "spell_nature_slow"
-        },
-        ["Dispel"] = {
-            ["name"] = "Dispel Magic",
-            ["icon"] = "spell_holy_dispelmagic"
-        }
-    },
-    ["Warlock"] = {
-        ["CoE"] = {
-            ["name"] = "Curse of Elements",
-            ["icon"] = "spell_shadow_curseofelementals"
-        },
-        ["CoS"] = {
-            ["name"] = "Curse of Shadow",
-            ["icon"] = "spell_shadow_curseofshadow"
-        },
-        ["CoR"] = {
-            ["name"] = "Curse of Recklessness",
-            ["icon"] = "spell_shadow_unholystrength"
-        },
-        ["SS"] = {
-            ["name"] = "Create Soulstone",
-            ["icon"] = "spell_shadow_soulgem"
-        },
-        ["Banish"] = {
-            ["name"] = "Banish",
-            ["icon"] = "spell_shadow_cripple"
-        }
-    },
-    ["Druid"] = {
-        ["FF"] = {
-            ["name"] = "Faerie Fire",
-            ["icon"] = "spell_nature_faeriefire"
-        },
-        ["Innerv"] = {
-            ["name"] = "Innervate",
-            ["icon"] = "spell_nature_lightning"
-        },
-        ["BR"] = {
-            ["name"] = "Rebirth",
-            ["icon"] = "spell_nature_reincarnation"
-        },
-        ["Remove"] = {
-            ["name"] = "Remove Curse",
-            ["icon"] = "spell_nature_removecurse"
-        }
-    },
-    ["Paladin"] = {
-        ["JoL"] = {
-            ["name"] = "Judgement of Light",
-            ["icon"] = "spell_holy_judgmentoflight"
-        },
-        ["JoW"] = {
-            ["name"] = "Judgement of Wisdom",
-            ["icon"] = "spell_holy_judgmentofwisdom"
-        },
-        ["BoP"] = {
-            ["name"] = "Blessing of Protection",
-            ["icon"] = "spell_holy_sealofprotection"
-        },
-        ["DI"] = {
-            ["name"] = "Divine Intervention",
-            ["icon"] = "spell_nature_timestop"
-        },
-        ["Cleanse"] = {
-            ["name"] = "Cleanse",
-            ["icon"] = "spell_holy_renew"
-        }
-    },
-    ["Hunter"] = {
-        ["Tranq"] = {
-            ["name"] = "Tranquilizing Shot",
-            ["icon"] = "spell_nature_drowsy"
-        },
-        ["Mark"] = {
-            ["name"] = "Hunter's Mark",
-            ["icon"] = "ability_hunter_snipershot"
-        }
-    },
-    ["Mage"] = {
-        ["CS"] = {
-            ["name"] = "Counterspell",
-            ["icon"] = "spell_frost_iceshock"
-        },
-        ["Sheep"] = {
-            ["name"] = "Polymorph",
-            ["icon"] = "spell_nature_polymorph"
-        },
-        ["Decurse"] = {
-            ["name"] = "Remove Lesser Curse",
-            ["icon"] = "spell_nature_removecurse"
-        }
-    },
-    ["Shaman"] = {
-        ["ES"] = {
-            ["name"] = "Earth Shock",
-            ["icon"] = "spell_nature_earthshock"
-        },
-        ["WF"] = {
-            ["name"] = "Windfury Totem",
-            ["icon"] = "spell_nature_windfury"
-        },
-        ["Tremor"] = {
-            ["name"] = "Tremor Totem",
-            ["icon"] = "spell_nature_tremortotem"
-        }
-    },
-    ["Rogue"] = {
-        ["Kick"] = {
-            ["name"] = "Kick",
-            ["icon"] = "ability_kick"
-        },
-        ["Feint"] = {
-            ["name"] = "Feint",
-            ["icon"] = "ability_rogue_feint"
-        }
-    }
-}
-
-local UtilityChatMap = {}
-for category, items in pairs(AngryEra_RaidUtility) do
-    for key, info in pairs(items) do
-        local tag = "{" .. key:lower() .. "}"
-        IconTable[tag] = "|TInterface\\Icons\\" .. info.icon .. ":0|t"
-        UtilityChatMap[tag] = info.name
-    end
-end
+local ColorTable = app.ColorTable
+local IconTable = app.IconTable
+local UtilityChatMap = app.UtilityChatMap
 
 -- Ensure ProcessTag uses this table correctly
 local function ProcessTag(tag)
     local lowerTag = tag:lower()
     
     -- Check static table first (This now returns the texture directly)
-    if IconTable[lowerTag] then return IconTable[lowerTag] end
+    if IconTable[lowerTag] then
+        return IconTable[lowerTag]
+    end
 
     -- Check dynamic patterns
     local type, id = lowerTag:match("{(%a+)%s+(%d+)}")
@@ -405,7 +170,9 @@ end
 
 local _player_realm = nil
 local function EnsureUnitFullName(unit)
-    if not _player_realm then _player_realm = select(2, UnitFullName("player")) end
+    if not _player_realm then
+        _player_realm = select(2, UnitFullName("player"))
+    end
     if unit and not unit:find("-") then
         unit = unit.."-".._player_realm
     end
@@ -413,7 +180,9 @@ local function EnsureUnitFullName(unit)
 end
 
 local function EnsureUnitShortName(unit)
-    if not _player_realm then _player_realm = select(2, UnitFullName("player")) end
+    if not _player_realm then
+        _player_realm = select(2, UnitFullName("player"))
+    end
     local name, realm = strsplit("-", unit, 2)
     if not realm or realm == _player_realm then
         return name
@@ -678,8 +447,13 @@ function AngryAssign:SendPageMessage(id)
     pageTimerId[id] = nil
     
     local page = AngryAssign_Pages[ id ]
-    if not page then error("Can't send page, does not exist"); return end
-    if not page.UpdateId then page.UpdateId = self:Hash(page.Name, page.Contents) end
+    if not page then
+        error("Can't send page, does not exist")
+        return
+    end
+    if not page.UpdateId then
+        page.UpdateId = self:Hash(page.Name, page.Contents)
+    end
     self:SendOutMessage({ "PAGE", [PAGE_Id] = page.Id, [PAGE_Updated] = page.Updated, [PAGE_Name] = page.Name, [PAGE_Contents] = page.Contents, [PAGE_UpdateId] = page.UpdateId })
 end
 
