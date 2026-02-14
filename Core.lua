@@ -2833,6 +2833,32 @@ function AngryAssign:UpdateDisplayedIfNewGroup()
     end
 end
 
+function AngryAssign:ProcessMarkdown(text)
+    -- Headers (## Header) -> Gold
+    -- Lists (- Item) -> Bullet
+    local lines = {strsplit("\n", text)}
+    for i, line in ipairs(lines) do
+        local hLevel, content = line:match("^(#+)%s+(.*)")
+        if hLevel then
+            lines[i] = "|cffffd200" .. content:upper() .. "|r"
+        elseif line:match("^%-%s+") then
+             -- List items "- Item" -> Bullet
+             lines[i] = "  |cffffd200*|r " .. line:match("^%-%s+(.*)")
+        end
+    end
+    text = table.concat(lines, "\n")
+    
+    -- Bold **text** -> White
+    text = text:gsub("%*%*(.-)%*%*", "|cffffffff%1|r")
+    
+    -- Italic *text* -> Grey (Use _ for italic to avoid * conflict?)
+    -- Strict Markdown allows * or _.
+    -- Let's support _text_ for italics to be safe
+    text = text:gsub("_(.-)_", "|cffaaaaaa%1|r")
+    
+    return text
+end
+
 function AngryAssign:UpdateDisplayed()
     local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
     if not page then 
@@ -2859,6 +2885,9 @@ function AngryAssign:UpdateDisplayed()
 
     -- Normalize Pipes
     text = text:gsub("||", "|")
+
+    -- Markdown Support
+    text = self:ProcessMarkdown(text)
 
     -- Process Colors (Peel-Back Optimization)
     text = text:gsub("(|c%w+)", function(c)

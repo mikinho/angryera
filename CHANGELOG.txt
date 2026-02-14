@@ -6,6 +6,11 @@
   * Context Menus: Unified menu system. Right-click or use the Gear icon to Rename, Delete, or Save templates.
   * Editor: Decluttered bottom bar by moving actions to a "Menu" dropdown.
   * Bulk Management: Improved dialog with dark background and smart selection (click category to toggle all children).
+* Markdown Support: Assignments now support basic markdown syntax:
+  * Headers: `## Header` (Displays in Gold + Uppercase)
+  * Lists: `- Item` (Displays with bullet point)
+  * Bold: `**text**` (Displays in White)
+  * Italic: `_text_` (Displays in Grey)
 * Added templates for MC, BWL, AQ40 and Naxxramas
 * New Feature: Improved Backup system. Click "Restore" to browse and restore past versions.
 * New Feature: Added "Highlight" button to the editor. Automatically colorizes player names in your assignment based on their class.
