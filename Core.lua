@@ -1289,9 +1289,9 @@ function AngryAssign:CreateWindow()
 
     AngryAssign_Window = window.frame
     if window.frame.SetResizeBounds then -- WoW 10.0
-        window.frame:SetResizeBounds(700, 400)
+        window.frame:SetResizeBounds(600, 300)
     else
-        window.frame:SetMinResize(700, 400)
+        window.frame:SetMinResize(600, 300)
     end
     window.frame:SetFrameStrata("HIGH")
     window.frame:SetFrameLevel(1)
@@ -2383,6 +2383,9 @@ function AngryAssign:UpdateMedia()
     self.display_text:SetSpacing( AngryAssign:GetConfig("lineSpacing") )
 
     if self.window then
+        if self.window.tree then
+            self.window.tree:SetButtonFont(fontName, fontHeight)
+        end
         if self:GetConfig("editBoxFont") then
             if not editFontName then
                 editFontName, editFontHeight, editFontFlags = self.window.text.editBox:GetFont()

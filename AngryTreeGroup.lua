@@ -2,7 +2,7 @@
 TreeGroup Container
 Container that uses a tree control to switch between groups.
 -------------------------------------------------------------------------------]]
-local Type, Version = "AngryTreeGroup", 2
+local Type, Version = "AngryTreeGroup", 3
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then return end
 
@@ -114,6 +114,10 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 	else
 		button:SetNormalFontObject("GameFontHighlight")
 		button:SetHighlightFontObject("GameFontHighlight")
+	end
+
+	if self.buttonFont then
+		button.text:SetFont(self.buttonFont, self.buttonFontSize or 11)
 	end
 
 	if canExpand then
@@ -260,7 +264,7 @@ local function Tree_OnMouseWheel(frame, delta)
 end
 
 local function Dragger_OnLeave(frame)
-	frame:SetBackdropColor(1, 1, 1, 0)
+	frame:SetBackdropColor(1, 1, 1, 0.2)
 end
 
 local function Dragger_OnEnter(frame)
@@ -318,6 +322,12 @@ local methods = {
 		self.localstatus.scrollvalue = 0
 		self.localstatus.treewidth = DEFAULT_TREE_WIDTH
 		self.localstatus.treesizable = DEFAULT_TREE_SIZABLE
+	end,
+
+	["SetButtonFont"] = function(self, font, size)
+		self.buttonFont = font
+		self.buttonFontSize = size
+		self:RefreshTree()
 	end,
 
 	["EnableButtonTooltips"] = function(self, enable)
@@ -672,7 +682,7 @@ local function Constructor()
 	dragger:SetPoint("TOP", treeframe, "TOPRIGHT")
 	dragger:SetPoint("BOTTOM", treeframe, "BOTTOMRIGHT")
 	dragger:SetBackdrop(DraggerBackdrop)
-	dragger:SetBackdropColor(1, 1, 1, 0)
+	dragger:SetBackdropColor(1, 1, 1, 0.2)
 	dragger:SetScript("OnEnter", Dragger_OnEnter)
 	dragger:SetScript("OnLeave", Dragger_OnLeave)
 	dragger:SetScript("OnMouseDown", Dragger_OnMouseDown)
