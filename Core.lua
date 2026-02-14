@@ -194,7 +194,9 @@ local function EnsureUnitShortName(unit)
 end
 
 local function PlayerFullName()
-    if not _player_realm then _player_realm = select(2, UnitFullName("player")) end
+    if not _player_realm then 
+        _player_realm = select(2, UnitFullName("player")) 
+    end
     return UnitName("player").."-".._player_realm
 end
 
@@ -207,6 +209,27 @@ local function RGBToHex(r, g, b, a)
     else
         a = math.ceil(255 * a)
         return string.format("%02x%02x%02x%02x", r, g, b, a)
+    end
+end
+
+AngryAssign.GuildColors = {}
+
+function AngryAssign:UpdateGuildColors()
+    if not IsInGuild() then 
+        return 
+    end
+    
+    local numGuild = GetNumGuildMembers()
+    for i = 1, numGuild do
+        local name, _, _, _, class, _, _, _, _, _, classFileName = GetGuildRosterInfo(i)
+        if name then
+            local fileClass = classFileName or class
+            if fileClass and RAID_CLASS_COLORS[fileClass] then
+                local color = RAID_CLASS_COLORS[fileClass].colorStr
+                name = name:match("([^-]+)") -- Strip realm
+                AngryAssign.GuildColors[name] = color
+            end
+        end
     end
 end
 
@@ -2944,6 +2967,7 @@ function AngryAssign:GetTemplateContext()
     local ctx = {
         classes = {},
         groups = {},
+        rosterColors = {},
         me = UnitName("player"),
     }
     
@@ -2962,6 +2986,7 @@ function AngryAssign:GetTemplateContext()
             local unit = { name = name, class = class, colored_name = name } -- Basic fallback
             if RAID_CLASS_COLORS[class] then
                 unit.colored_name = "|c" .. RAID_CLASS_COLORS[class].colorStr .. name .. "|r"
+                ctx.rosterColors[name] = RAID_CLASS_COLORS[class].colorStr 
             end
             table.insert(ctx.classes[class], unit)
             table.insert(ctx.groups[1], unit)
@@ -2973,7 +2998,15 @@ function AngryAssign:GetTemplateContext()
         local name, _, subgroup, _, _, class, _, online, isDead = GetRaidRosterInfo(i)
         if name then
             local colorStr = "ffffffff"
-            if class and RAID_CLASS_COLORS[class] then colorStr = RAID_CLASS_COLORS[class].colorStr end
+            if class and RAID_CLASS_COLORS[class] then 
+                colorStr = RAID_CLASS_COLORS[class].colorStr 
+                ctx.rosterColors[name] = colorStr
+                -- Also store short name
+                local shortName = name:match("([^-]+)")
+                if shortName and shortName ~= name then
+                    ctx.rosterColors[shortName] = colorStr
+                end
+            end
             
             local unit = {
                 name = name,
@@ -3060,14 +3093,43 @@ function AngryAssign:UpdateDisplayed()
             local cat = AngryAssign:GetCat(page.CategoryId)
             if cat and cat.Vars then
                 local vars = app.ParseVariables(cat.Vars)
-                for k, v in pairs(vars) do ctx[k] = v end
+                for k, v in pairs(vars) do 
+                    ctx[k] = v 
+                    -- Add to highlight set (generic)
+                    if type(v) == "string" and #v > 2 then
+                        for word in v:gmatch("[^%s%p]+") do
+                            if #word > 2 then highlightSet[word:lower()] = true end
+                        end
+                    end
+                end
             end
         end
         
         -- Merge Page Variables
         if page.Vars then
              local vars = app.ParseVariables(page.Vars)
-             for k, v in pairs(vars) do ctx[k] = v end
+             for k, v in pairs(vars) do 
+                 ctx[k] = v 
+                 -- Add to highlight set (generic)
+                 if type(v) == "string" and #v > 2 then
+                     for word in v:gmatch("[^%s%p]+") do
+                         if #word > 2 then highlightSet[word:lower()] = true end
+                     end
+                 end
+             end
+        end
+
+        if self.GuildColors then
+            for name, color in pairs(self.GuildColors) do
+                highlightSet[name:lower()] = color 
+            end
+        end
+
+        -- Add Roster Colors to Highlight Set (LAST priority to override vars with Class Colors)
+        if ctx.rosterColors then
+            for name, color in pairs(ctx.rosterColors) do
+                highlightSet[name:lower()] = color
+            end
         end
 
         -- Use pcall to avoid crashing on template errors
@@ -3113,8 +3175,13 @@ function AngryAssign:UpdateDisplayed()
     -- Process Highlights (Word Scan)
     -- We only replace if the word exists in our highlightSet
     text = text:gsub("([^%s%p]+)", function(word)
-        if highlightSet[word:lower()] then
-            return string.format("|cff%s%s|r", highlightHex, word)
+        local val = highlightSet[word:lower()]
+        if val then
+            if type(val) == "string" then
+                 return string.format("|c%s%s|r", val, word)
+            else
+                 return string.format("|cff%s%s|r", highlightHex, word)
+            end
         end
         return word -- Return original if no match
     end)
@@ -3165,6 +3232,32 @@ function AngryAssign:OutputDisplayed(id)
 
         -- Normalize Pipes
         output = output:gsub("||", "|")
+        
+        -- Mustache Templating
+        if LibMustache then
+            local ctx = self:GetTemplateContext()
+            
+            -- Merge Category Variables
+            if page.CategoryId then
+                local cat = AngryAssign:GetCat(page.CategoryId)
+                if cat and cat.Vars then
+                    local vars = app.ParseVariables(cat.Vars)
+                    for k, v in pairs(vars) do ctx[k] = v end
+                end
+            end
+            
+            -- Merge Page Variables
+            if page.Vars then
+                 local vars = app.ParseVariables(page.Vars)
+                 for k, v in pairs(vars) do ctx[k] = v end
+            end
+    
+            -- Render
+            local success, result = pcall(LibMustache.render, output, ctx)
+            if success then
+                output = result
+            end
+        end
 
         -- Process Tags (Icons, Spells, Class Names) - Single Pass
         -- We look for anything inside {} and replace it based on logic or table lookup
@@ -3807,6 +3900,7 @@ end
 function AngryAssign:GUILD_ROSTER_UPDATE(...)
     local canRequestRosterUpdate = ...
     self:ResetOfficerRank()
+    self:UpdateGuildColors()
     if canRequestRosterUpdate and isClassic then
         GuildRoster()
     end

@@ -14,6 +14,9 @@
 * Template System: Assignments now support Mustache templates for dynamic content based on raid composition.
   * Examples: `{{me}}`, `{{#classes.WARRIOR}}{{name}} {{/classes.WARRIOR}}`
   * Variables: Use "Edit Variables" in the menu to define custom JSON data (e.g. `{"MT": "TankName"}`) usable in templates as `{{MT}}`.
+  * Fix: Names in templates now correctly utilize Class Colors if the player is in the Raid or Guild.
+  * Fix: Chat Output (e.g. "Output" button) now correctly renders templates before sending.
+  * UI: Added visual indicator (‡) for pages/categories with custom variables.
 * Added templates for MC, BWL, AQ40 and Naxxramas
 * New Feature: Improved Backup system. Click "Restore" to browse and restore past versions.
 * New Feature: Added "Highlight" button to the editor. Automatically colorizes player names in your assignment based on their class.
