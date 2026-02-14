@@ -1,3 +1,8 @@
+## v2.1.1
+
+* Documentation: Updated README with comprehensive guide on Templates, Variables, and Markdown.
+* Credits: Added maintainer information.
+
 ## v2.1.0
 
 * New Feature: Template System. "Load Raid" menu now supports saving your own custom templates from existing categories, in addition to the standard raid templates.

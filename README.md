@@ -1,4 +1,4 @@
-This addon was written by the guild Angry (US-Illidan) to handle assignments during raids.  It provides a convenient way to store and share assignments for different bosses, allowing editing by multiple people (officers/raid assistants), and displaying the information to raiders in a configurable and readable format.
+This addon was originally written by the guild Angry (US-Illidan) to handle assignments during raids.  It was later rewritten and maintained by **Eblis** in <Pugs not drugs> (US-Pagle) to handle work in Classic Era and later Classic expansions.  It provides a convenient way to store and share assignments for different bosses, allowing editing by multiple people (officers2/raid assistants), and displaying the information to raiders in a configurable and readable format.
 
 Using AA as a raider
 ------------------------------
@@ -39,6 +39,46 @@ Within assignment pages, you can use raid symbols such as {rt1}, {rt2}, {circle}
 If someone else saves edits to a particular page while you are editing that page, you'll receive a pop-up box notifying you of the fact.  At that point, you can continue your edits and eventually overwrite their updated version by hitting "Accept", or alternatively you can hit "Revert" which will abandon your own edits, and instead bring up their updated version of the page.  (Tip: before you hit Revert, you might want to highlight the particular section you were working on, copy it with Ctrl+C, then hit Revert, highlight the same section in their version, and paste your changes on top of it with Ctrl+V).
 
 Individual pages are identified internally with unique IDs.  The names seen in the edit window are only used for display purposes, so there can be multiple pages with the same name.  Much like an edit, if someone renames a page, that rename is sent out to everyone in the guild who's online at the time (others will get the rename later, whenever that page is next edited or sent).  Deletes, however, are only done locally - so if you delete a page, others will still have it.  If you've deleted a page, and later on someone else edits it or sends it, you'll get it back again.
+
+Template System & Variables
+---------------------------
+
+AngryEra now supports **Mustache-style templating** to create dynamic assignments that adapt to your raid composition.
+
+**Basic Usage:**
+* `{{me}}`: Displays your own name.
+* `{{#classes.WARRIOR}} {{name}} {{/classes.WARRIOR}}`: Iterates through all Warriors in the raid.
+* `{{#groups.1}} {{name}} {{/groups.1}}`: Iterates through Group 1.
+
+**Custom Variables:**
+You can define custom variables for each page or category to simplify your templates.
+1. Right-click a Page or Category and select **Edit Variables**.
+2. Enter your variables in `Key=Value` format or JSON.
+   * Example:
+     ```
+     MT=Zessy
+     OT1=Kwayteow
+     Healer1=Eblis
+     ```
+3. Use them in your assignment text:
+   * `Main Tank: {{MT}}` -> Displays "Main Tank: Zessy"
+   * `Off Tank: {{OT1}}` -> Displays "Off Tank: Kwayteow"
+
+**Class Coloring:**
+Names of players in your Raid or Guild will automatically be **class-colored** when displayed in the assignment window.
+
+Markdown Support
+----------------
+
+You can use basic Markdown syntax to style your assignments:
+* **Headers**: `## Title` (Gold Color)
+* **Lists**: `- Item` (Bullet point)
+* **Bold**: `**Text**` (White Color)
+* **Italic**: `_Text_` (Grey Color)
+
+Chat Output
+-----------
+Clicking the **Output** button will render the assignment (including all templates and variables) and send it to the selected chat channel (Raid, Party, or Instance).
 
 Raid Shortcuts
 --------------------
@@ -96,3 +136,7 @@ The "/aa version" command (also available from the config menu) will perform a v
 The "/aa backup" command (also available from the config menu) will store the current version of every page for later "Restore" (similar to if you had just edited every page and made no actual changes).
 
 The "/aa deleteall" command will delete all pages you have stored.  This could be used occasionally to clean out old assignment pages that are no longer used, for example, when beginning a new tier.  Of course, if others in the guild still have those pages, and choose to edit them and/or send them out for display, you'll get them back if you're online at the time.
+
+Credits
+-------
+Maintained by **Eblis/Zessy/Kwayteow** on Pagle (Classic Era).
