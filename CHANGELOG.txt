@@ -1,5 +1,6 @@
 ## v2.0.11
 
+* New Feature: Improved Backup system. Click "Restore" to browse and restore past versions.
 * New Feature: Added "Highlight" button to the editor. Automatically colorizes player names in your assignment based on their class.
 * Refactoring: Moved static data (icons, colors, shortcuts) to `Data.lua` and cleaned up `Core.lua` logic.
 * Formatting: Expanded single-line code blocks for better readability.

@@ -311,6 +311,9 @@ function AngryAssign:ProcessMessage(sender, data)
             if data[PAGE_UpdateId] and page.UpdateId == data[PAGE_UpdateId] then return end 
 
             contents_updated = page.Contents ~= safeContents
+            if contents_updated then
+                self:PushHistory(page, page.Contents, sender)
+            end
             page.Name = safeName
             page.Contents = safeContents
             page.Updated = data[PAGE_Updated]
@@ -1131,17 +1134,43 @@ local function AngryAssign_TextEntered(widget, event, value)
 end
 
 local function AngryAssign_RestorePage(widget, event, value)
-    if not AngryAssign.window then
-        return
-    end
-    local page = AngryAssign_Pages[AngryAssign:SelectedId()]
-    if not page or not page.Backup then
-        return
+    local pageId = AngryAssign:SelectedId()
+    if not pageId then return end
+    local page = AngryAssign_Pages[pageId]
+    if not page then return end
+
+    if not AngryAssign_DropDown then
+        AngryAssign_DropDown = CreateFrame("Frame", "AngryAssignMenuFrame", UIParent, "UIDropDownMenuTemplate")
     end
     
-    AngryAssign.window.text:SetText( page.Backup )
-    AngryAssign.window.text.button:Enable()
-    AngryAssign_TextChanged(widget, event, value)
+    local menu = {
+        { text = "Restore Version", isTitle = true, notCheckable = true },
+    }
+    
+    if page.History then
+        for i, entry in ipairs(page.History) do
+            local dateStr = date("%m/%d %H:%M", entry.timestamp)
+            local author = entry.author or "?"
+            local contentPreview = entry.content:gsub("\n", " "):sub(1, 20)
+            
+            table.insert(menu, {
+                text = string.format("|cff999999%s|r |cffffd100%s|r: %s...", dateStr, author, contentPreview),
+                func = function() 
+                    AngryAssign:UpdateContents(pageId, entry.content)
+                    AngryAssign.window.text:SetText(entry.content)
+                    AngryAssign.window.text.button:Enable()
+                    AngryAssign_TextChanged(widget, event, value)
+                end,
+                notCheckable = true
+            })
+        end
+    end
+    
+    if #menu == 1 then
+        table.insert(menu, { text = "No history available", disabled = true, notCheckable = true })
+    end
+    
+    DDM.EasyMenu(menu, AngryAssign_DropDown, "cursor", 0, 0, "MENU")
 end
 
 local function AngryAssign_HighlightNames()
@@ -1442,7 +1471,8 @@ function AngryAssign:CreateWindow()
     button_revert:SetHeight(22)
     button_revert:ClearAllPoints()
     button_revert:SetDisabled(true)
-    button_revert:SetPoint("BOTTOMLEFT", text.button, "BOTTOMRIGHT", 6, 0)
+    -- Anchor to text frame (offset 100 to clear Accept button)
+    button_revert:SetPoint("BOTTOMLEFT", text.frame, "BOTTOMLEFT", 100, 4)
     button_revert:SetCallback("OnClick", AngryAssign_RevertPage)
     tree:AddChild(button_revert)
     window.button_revert = button_revert
@@ -1763,7 +1793,8 @@ function AngryAssign:UpdateSelected(destructive)
         self.window.button_revert:SetDisabled(not self.window.text.button:IsEnabled())
         self.window.button_display:SetDisabled(self.window.text.button:IsEnabled())
         self.window.button_output:SetDisabled(self.window.text.button:IsEnabled())
-        self.window.button_restore:SetDisabled(not self.window.text.button:IsEnabled() and page.Backup == page.Contents)
+        local hasHistory = (page.History and #page.History > 0)
+        self.window.button_restore:SetDisabled(not hasHistory)
         self.window.text:SetDisabled(false)
     else
         self.window.button_rename:SetDisabled(true)
@@ -2106,6 +2137,11 @@ function AngryAssign:UpdateContents(id, value)
 
     local new_content = value:gsub("^%s+", ""):gsub("%s+$", "")
     local contents_updated = new_content ~= page.Contents
+    
+    if contents_updated then
+        self:PushHistory(page, page.Contents, "Local")
+    end
+    
     page.Contents = new_content
     page.Backup = new_content
     page.Updated = time()
@@ -2119,6 +2155,26 @@ function AngryAssign:UpdateContents(id, value)
         if contents_updated then self:DisplayUpdateNotification() end
     end
 end
+
+function AngryAssign:PushHistory(page, content, author)
+    if not page or not content or content == "" then return end
+    if not page.History then page.History = {} end
+
+    -- Avoid duplicate consecutive entries
+    if #page.History > 0 and page.History[1].content == content then return end
+
+    table.insert(page.History, 1, {
+        timestamp = time(),
+        content = content,
+        author = author or "Unknown"
+    })
+
+    -- Cap history size (e.g. 10)
+    while #page.History > 10 do
+        table.remove(page.History)
+    end
+end
+
 
 function AngryAssign:CreateBackup()
     for _, page in pairs(AngryAssign_Pages) do
