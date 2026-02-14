@@ -826,6 +826,162 @@ function AngryAssign_ToggleLock()
     AngryAssign:ToggleLock()
 end
 
+local function AngryAssign_LoadTemplate(template)
+    if not template then return end
+    
+    -- Find or Create Category
+    local catId
+    local catName = template.name
+    
+    -- Check specific categories
+    for id, cat in pairs(AngryAssign_Categories) do
+        if cat.Name == catName then
+            catId = id
+            break
+        end
+    end
+    
+    if not catId then
+        local newId = 1
+        -- Find new positive ID
+        while AngryAssign_Categories[newId] do newId = newId + 1 end
+        
+        AngryAssign_Categories[newId] = { Id = newId, Name = catName, CategoryId = nil } -- Root category
+        catId = newId
+        AngryAssign:UpdateTree()
+    end
+    
+    -- Add Pages
+    if template.pages then
+        for _, tPage in ipairs(template.pages) do
+            -- Check if page exists in category
+            local exists = false
+             for _, page in pairs(AngryAssign_Pages) do
+                if page.CategoryId == catId and page.Name == tPage.name then
+                    exists = true
+                    break
+                end
+            end
+            
+            if not exists then
+                AngryAssign:CreatePage(tPage.name, tPage.content, catId)
+            end
+        end
+    end
+    
+    AngryAssign:UpdateTree()
+    AngryAssign:UpdateSelected()
+end
+
+function AngryAssign:SaveTemplate(name, catId)
+    if not name or name == "" then return false, "Invalid name" end
+    if not catId then return false, "Invalid category" end
+    
+    local pages = {}
+    for _, page in pairs(AngryAssign_Pages) do
+        if page.CategoryId == catId then
+            table.insert(pages, { name = page.Name, content = page.Contents })
+        end
+    end
+    
+    if #pages == 0 then return false, "Category is empty" end
+    
+    table.insert(AngryAssign_Templates, { name = name, pages = pages })
+    self:Print("Saved template: " .. name)
+    return true
+end
+
+function AngryAssign:DeleteTemplate(index)
+    if AngryAssign_Templates[index] then
+        local name = AngryAssign_Templates[index].name
+        table.remove(AngryAssign_Templates, index)
+        self:Print("Deleted template: " .. name)
+    end
+end
+
+local function AngryAssign_SaveTemplatePopup(catId)
+    local cat = AngryAssign:GetCat(catId)
+    if not cat then return end
+    
+    local popup_name = "AngryAssign_SaveTemplate"
+    if StaticPopupDialogs[popup_name] == nil then
+        StaticPopupDialogs[popup_name] = {
+            text = "Save Category as Template:",
+            button1 = SAVE,
+            button2 = CANCEL,
+            hasEditBox = true,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnShow = function(self)
+                local editBox = self.editBox or self.wideEditBox or self.EditBox
+                if editBox then
+                    editBox:SetText(self.data.defaultName)
+                    editBox:HighlightText()
+                end
+            end,
+            OnAccept = function(self)
+                local editBox = self.editBox or self.wideEditBox or self.EditBox
+                if editBox then
+                    local name = editBox:GetText()
+                    AngryAssign:SaveTemplate(name, self.data.catId)
+                end
+            end,
+            EditBoxOnEnterPressed = function(self)
+                local parent = self:GetParent()
+                local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
+                if editBox then
+                     local name = editBox:GetText()
+                     AngryAssign:SaveTemplate(name, parent.data.catId)
+                     parent:Hide()
+                end
+            end,
+            EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        }
+    end
+    StaticPopup_Show(popup_name, nil, nil, { catId = catId, defaultName = cat.Name })
+end
+
+local function AngryAssign_LoadRaidMenu()
+    if not AngryAssign_DropDown then
+        AngryAssign_DropDown = CreateFrame("Frame", "AngryAssignMenuFrame", UIParent, "UIDropDownMenuTemplate")
+    end
+    
+    local menu = {
+        { text = "Standard Raids", isTitle = true, notCheckable = true },
+    }
+    
+    if app.Templates then
+        for i, template in ipairs(app.Templates) do
+            table.insert(menu, {
+                text = template.name,
+                func = function() AngryAssign_LoadTemplate(template) end,
+                notCheckable = true
+            })
+        end
+    end
+    
+    if AngryAssign_Templates and #AngryAssign_Templates > 0 then
+        table.insert(menu, { text = " ", isTitle = true, notCheckable = true })
+        table.insert(menu, { text = "Custom Templates", isTitle = true, notCheckable = true })
+        
+        for i, template in ipairs(AngryAssign_Templates) do
+            local subMenu = {
+                { text = "Load", func = function() AngryAssign_LoadTemplate(template) end, notCheckable = true },
+                { text = "Delete", func = function() AngryAssign:DeleteTemplate(i) end, notCheckable = true }
+            }
+            table.insert(menu, {
+                text = template.name,
+                hasArrow = true,
+                menuList = subMenu,
+                notCheckable = true
+            })
+        end
+    end
+    
+    DDM.EasyMenu(menu, AngryAssign_DropDown, "cursor", 0, 0, "MENU")
+end
+
 local function AngryAssign_AddPage(widget, event, value)
     local popup_name = "AngryAssign_AddPage"
     
@@ -1329,22 +1485,26 @@ local function AngryAssign_CategoryMenu(catId)
         CategoriesDropDownList = {
             { notCheckable = true, isTitle = true },
             { text = "Rename", notCheckable = true, func = function(frame, pageId) AngryAssign_RenameCategory(pageId) end },
+            { text = "Save as Template", notCheckable = true, func = function(frame, pageId) AngryAssign_SaveTemplatePopup(pageId) end },
             { text = "Delete", notCheckable = true, func = function(frame, pageId) AngryAssign_DeleteCategory(pageId) end },
             { text = "Category", notCheckable = true, hasArrow = true },
         }
     end
     CategoriesDropDownList[1].text = cat.Name
     CategoriesDropDownList[2].arg1 = catId
-    CategoriesDropDownList[3].arg1 = catId
+    -- Save as Template (no arg needed for popup call wrapper, but function uses pageId as catId)
+    CategoriesDropDownList[3].arg1 = catId 
+    CategoriesDropDownList[4].arg1 = catId
+    CategoriesDropDownList[5].arg1 = catId
 
 
     local categories = AngryAssign_CategoryMenuList(-catId)
     if categories ~= nil then
-        CategoriesDropDownList[4].menuList = categories
-        CategoriesDropDownList[4].disabled = false
+        CategoriesDropDownList[5].menuList = categories
+        CategoriesDropDownList[5].disabled = false
     else
-        CategoriesDropDownList[4].menuList = {}
-        CategoriesDropDownList[4].disabled = true
+        CategoriesDropDownList[5].menuList = {}
+        CategoriesDropDownList[5].disabled = true
     end
 
     return CategoriesDropDownList
@@ -1512,7 +1672,7 @@ function AngryAssign:CreateWindow()
     window:PauseLayout()
     local button_add = AceGUI:Create("Button")
     button_add:SetText("Add")
-    button_add:SetWidth(80)
+    button_add:SetWidth(60)
     button_add:SetHeight(19)
     button_add:ClearAllPoints()
     button_add:SetPoint("BOTTOMLEFT", window.frame, "BOTTOMLEFT", 17, 18)
@@ -1522,7 +1682,7 @@ function AngryAssign:CreateWindow()
 
     local button_rename = AceGUI:Create("Button")
     button_rename:SetText("Rename")
-    button_rename:SetWidth(80)
+    button_rename:SetWidth(70)
     button_rename:SetHeight(19)
     button_rename:ClearAllPoints()
     button_rename:SetPoint("BOTTOMLEFT", button_add.frame, "BOTTOMRIGHT", 5, 0)
@@ -1532,7 +1692,7 @@ function AngryAssign:CreateWindow()
 
     local button_delete = AceGUI:Create("Button")
     button_delete:SetText("Delete")
-    button_delete:SetWidth(80)
+    button_delete:SetWidth(60)
     button_delete:SetHeight(19)
     button_delete:ClearAllPoints()
     button_delete:SetPoint("BOTTOMLEFT", button_rename.frame, "BOTTOMRIGHT", 5, 0)
@@ -1541,8 +1701,8 @@ function AngryAssign:CreateWindow()
     window.button_delete = button_delete
 
     local button_add_cat = AceGUI:Create("Button")
-    button_add_cat:SetText("Add Category")
-    button_add_cat:SetWidth(120)
+    button_add_cat:SetText("Add Cat")
+    button_add_cat:SetWidth(80)
     button_add_cat:SetHeight(19)
     button_add_cat:ClearAllPoints()
     button_add_cat:SetPoint("BOTTOMLEFT", button_delete.frame, "BOTTOMRIGHT", 5, 0)
@@ -1552,12 +1712,21 @@ function AngryAssign:CreateWindow()
 
     local button_manage = AceGUI:Create("Button")
     button_manage:SetText("Manage")
-    button_manage:SetWidth(80)
+    button_manage:SetWidth(60)
     button_manage:SetHeight(19)
     button_manage:ClearAllPoints()
     button_manage:SetPoint("BOTTOMLEFT", button_add_cat.frame, "BOTTOMRIGHT", 5, 0)
     button_manage:SetCallback("OnClick", function() AngryAssign:ShowBulkManagement() end)
     window:AddChild(button_manage)
+    
+    local button_load = AceGUI:Create("Button")
+    button_load:SetText("Load Raid")
+    button_load:SetWidth(80)
+    button_load:SetHeight(19)
+    button_load:ClearAllPoints()
+    button_load:SetPoint("BOTTOMLEFT", button_manage.frame, "BOTTOMRIGHT", 5, 0)
+    button_load:SetCallback("OnClick", function() AngryAssign_LoadRaidMenu() end)
+    window:AddChild(button_load)
 
     local button_clear = AceGUI:Create("Button")
     button_clear:SetText("Clear")
@@ -1793,8 +1962,8 @@ function AngryAssign:UpdateSelected(destructive)
         self.window.button_revert:SetDisabled(not self.window.text.button:IsEnabled())
         self.window.button_display:SetDisabled(self.window.text.button:IsEnabled())
         self.window.button_output:SetDisabled(self.window.text.button:IsEnabled())
-        local hasHistory = (page.History and #page.History > 0)
-        self.window.button_restore:SetDisabled(not hasHistory)
+        -- Always enable Restore button so users can see the menu (even if empty)
+        self.window.button_restore:SetDisabled(false)
         self.window.text:SetDisabled(false)
     else
         self.window.button_rename:SetDisabled(true)
@@ -1932,7 +2101,7 @@ local function ExtractAndValidateName(nameOrFrame)
     return cleanName
 end
 
-function AngryAssign:CreatePage(nameOrFrame)
+function AngryAssign:CreatePage(nameOrFrame, content, categoryId)
     -- Check Permissions first
     if not self:PermissionCheck() then
         return false, "Permission denied."
@@ -1943,6 +2112,8 @@ function AngryAssign:CreatePage(nameOrFrame)
     if not name then
         return false, err
     end
+    
+    if content and type(content) ~= "string" then content = "" end
 
     -- Original Business Logic
     local id = self:Hash("page", math.random(2000000000))
@@ -1950,15 +2121,24 @@ function AngryAssign:CreatePage(nameOrFrame)
     AngryAssign_Pages[id] = { 
         Id = id, 
         Updated = time(), 
-        UpdateId = self:Hash(name, ""), 
+        UpdateId = self:Hash(name, content or ""), 
         Name = name, 
-        Contents = "" 
+        Contents = content or "",
+        CategoryId = categoryId
     }
+    
+    if categoryId then
+       if AngryAssign_State.tree.groups then
+           if AngryAssign_State.tree.groups[categoryId] == nil then
+               AngryAssign_State.tree.groups[categoryId] = true
+           end
+       end
+    end
     
     self:UpdateTree(id)
     self:SendPage(id, true)
     
-    return true
+    return true, nil, id
 end
 
 function AngryAssign:RenamePage(id, nameOrFrame)
@@ -2922,6 +3102,7 @@ function AngryAssign:OnInitialize()
     end
     if AngryAssign_Pages == nil then AngryAssign_Pages = { } end
     if AngryAssign_Config == nil then AngryAssign_Config = { } end
+    if AngryAssign_Templates == nil then AngryAssign_Templates = {} end
     if AngryAssign_Categories == nil then
         AngryAssign_Categories = { }
     else

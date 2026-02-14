@@ -1,5 +1,7 @@
 ## v2.0.11
 
+* New Feature: Template System. "Load Raid" menu now supports saving your own custom templates from existing categories, in addition to the standard raid templates.
+* Added templates for MC, BWL, AQ40 and Naxxramas
 * New Feature: Improved Backup system. Click "Restore" to browse and restore past versions.
 * New Feature: Added "Highlight" button to the editor. Automatically colorizes player names in your assignment based on their class.
 * Refactoring: Moved static data (icons, colors, shortcuts) to `Data.lua` and cleaned up `Core.lua` logic.
