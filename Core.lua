@@ -221,16 +221,23 @@ end
 -------------------------
 
 function AngryAssign:ReceiveMessage(prefix, data, channel, sender)
-    if prefix ~= comPrefix then return end
+    if prefix ~= comPrefix then
+        return
+    end
     
-    local one = libCE:Decode(data) -- Decode the compressed data
+    local one = libCE:Decode(data)
+    local two, message = libC:Decompress(one)
     
-    local two, message = libC:Decompress(one) -- Decompress the decoded data
+    if not two then
+        error("Error decompressing: " .. message)
+        return
+    end
     
-    if not two then error("Error decompressing: " .. message); return end
-    
-    local success, final = libS:Deserialize(two) -- Deserialize the decompressed data
-    if not success then error("Error deserializing " .. final); return end
+    local success, final = libS:Deserialize(two)
+    if not success then
+        error("Error deserializing " .. final)
+        return
+    end
 
     self:ProcessMessage( sender, final )
 end
@@ -855,7 +862,9 @@ end
 
 local function AngryAssign_RenamePage(pageId)
     local page = AngryAssign:Get(pageId)
-    if not page then return end
+    if not page then
+        return
+    end
 
     -- FIX: Use a static name, do not append ID (prevents memory leak)
     local popup_name = "AngryAssign_RenamePage"
@@ -912,7 +921,9 @@ end
 
 local function AngryAssign_DeletePage(pageId)
     local page = AngryAssign:Get(pageId)
-    if not page then return end
+    if not page then
+        return
+    end
 
     local popup_name = "AngryAssign_DeletePage"
     
@@ -972,7 +983,9 @@ end
 
 local function AngryAssign_RenameCategory(catId)
     local cat = AngryAssign:GetCat(catId)
-    if not cat then return end
+    if not cat then
+        return
+    end
 
     local popup_name = "AngryAssign_RenameCategory"
     
@@ -1023,7 +1036,9 @@ end
 
 local function AngryAssign_DeleteCategory(catId)
     local cat = AngryAssign:GetCat(catId)
-    if not cat then return end
+    if not cat then
+        return
+    end
 
     local popup_name = "AngryAssign_DeleteCategory"
     
@@ -1052,7 +1067,9 @@ local function AngryAssign_AssignCategory(frame, entryId, catId)
 end
 
 local function AngryAssign_RevertPage(widget, event, value)
-    if not AngryAssign.window then return end
+    if not AngryAssign.window then
+        return
+    end
     AngryAssign:UpdateSelected(true)
 end
 
@@ -1066,7 +1083,9 @@ function AngryAssign:DisplayPageByName( name )
 end
 
 function AngryAssign:DisplayPage( id )
-    if not self:PermissionCheck() then return end
+    if not self:PermissionCheck() then
+        return
+    end
 
     self:TouchPage( id )
     self:SendPage( id, true )
@@ -1084,13 +1103,17 @@ function AngryAssign:DisplayPage( id )
 end
 
 local function AngryAssign_DisplayPage(widget, event, value)
-    if not AngryAssign:PermissionCheck() then return end
+    if not AngryAssign:PermissionCheck() then
+        return
+    end
     local id = AngryAssign:SelectedId()
     AngryAssign:DisplayPage( id )
 end
 
 local function AngryAssign_ClearPage(widget, event, value)
-    if not AngryAssign:PermissionCheck() then return end
+    if not AngryAssign:PermissionCheck() then
+        return
+    end
 
     AngryAssign:ClearDisplayed()
     AngryAssign:SendDisplay( nil, true )
@@ -1108,9 +1131,13 @@ local function AngryAssign_TextEntered(widget, event, value)
 end
 
 local function AngryAssign_RestorePage(widget, event, value)
-    if not AngryAssign.window then return end
+    if not AngryAssign.window then
+        return
+    end
     local page = AngryAssign_Pages[AngryAssign:SelectedId()]
-    if not page or not page.Backup then return end
+    if not page or not page.Backup then
+        return
+    end
     
     AngryAssign.window.text:SetText( page.Backup )
     AngryAssign.window.text.button:Enable()
@@ -1146,7 +1173,9 @@ end
 local PagesDropDownList
 function AngryAssign_PageMenu(pageId)
     local page = AngryAssign_Pages[pageId]
-    if not page then return end
+    if not page then
+        return
+    end
 
     if not PagesDropDownList then
         PagesDropDownList = {
@@ -1179,7 +1208,9 @@ end
 local CategoriesDropDownList
 local function AngryAssign_CategoryMenu(catId)
     local cat = AngryAssign_Categories[catId]
-    if not cat then return end
+    if not cat then
+        return
+    end
 
     if not CategoriesDropDownList then
         CategoriesDropDownList = {
@@ -1608,7 +1639,9 @@ function AngryAssign:GetTree()
 end
 
 function AngryAssign:UpdateTree(id)
-    if not self.window then return end
+    if not self.window then
+        return
+    end
     self.window.tree:SetTree( self:GetTree() )
     if id then
         self:SetSelectedId( id )
@@ -1616,7 +1649,9 @@ function AngryAssign:UpdateTree(id)
 end
 
 function AngryAssign:UpdateSelected(destructive)
-    if not self.window then return end
+    if not self.window then
+        return
+    end
     local page = AngryAssign_Pages[ self:SelectedId() ]
     local permission = self:PermissionCheck()
     if destructive or not self.window.text.button:IsEnabled() then
@@ -1666,7 +1701,9 @@ end
 
 function AngryAssign:NextPage(reverse)
     local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
-    if not page then return end
+    if not page then
+        return
+    end
     if not page.CategoryId then return end
 
     local tree = { }
@@ -1770,11 +1807,15 @@ end
 
 function AngryAssign:CreatePage(nameOrFrame)
     -- Check Permissions first
-    if not self:PermissionCheck() then return false, "Permission denied." end
+    if not self:PermissionCheck() then
+        return false, "Permission denied."
+    end
 
     -- Validate and Clean Input
     local name, err = ExtractAndValidateName(nameOrFrame)
-    if not name then return false, err end
+    if not name then
+        return false, err
+    end
 
     -- Original Business Logic
     local id = self:Hash("page", math.random(2000000000))
@@ -1796,14 +1837,20 @@ end
 function AngryAssign:RenamePage(id, nameOrFrame)
     -- Check Existence
     local page = self:Get(id)
-    if not page then return false, "Page not found." end
+    if not page then
+        return false, "Page not found."
+    end
 
     -- Check Permissions
-    if not self:PermissionCheck() then return false, "Permission denied." end
+    if not self:PermissionCheck() then
+        return false, "Permission denied."
+    end
 
     -- Validate and Clean Input
     local name, err = ExtractAndValidateName(nameOrFrame)
-    if not name then return false, err end
+    if not name then
+        return false, err
+    end
 
     -- Optimization: Skip if name hasn't changed
     if page.Name == name then return true end
@@ -1837,9 +1884,13 @@ function AngryAssign:DeletePage(id)
 end
 
 function AngryAssign:TouchPage(id)
-    if not self:PermissionCheck() then return end
+    if not self:PermissionCheck() then
+        return
+    end
     local page = self:Get(id)
-    if not page then return end
+    if not page then
+        return
+    end
 
     page.Updated = time()
 end
@@ -1847,7 +1898,9 @@ end
 function AngryAssign:CreateCategory(nameOrFrame)
     -- Validate and Clean Input using your new helper
     local name, err = ExtractAndValidateName(nameOrFrame)
-    if not name then return false, err end
+    if not name then
+        return false, err
+    end
 
     -- Generate ID and Save
     local id = self:Hash("cat", math.random(2000000000))
@@ -1864,11 +1917,15 @@ end
 
 function AngryAssign:RenameCategory(id, nameOrFrame)
     local cat = self:GetCat(id)
-    if not cat then return false, "Category not found." end
+    if not cat then
+        return false, "Category not found."
+    end
 
     -- Use the helper to validate input (Consistency with CreatePage/RenamePage)
     local name, err = ExtractAndValidateName(nameOrFrame)
-    if not name then return false, err end
+    if not name then
+        return false, err
+    end
 
     if cat.Name == name then return true end
 
@@ -1880,7 +1937,9 @@ end
 
 function AngryAssign:DeleteCategory(id)
     local cat = self:GetCat(id)
-    if not cat then return end
+    if not cat then
+        return
+    end
 
     local selectedId = self:SelectedId()
 
@@ -1941,9 +2000,13 @@ function AngryAssign:AssignCategory(entryId, parentId)
 end
 
 function AngryAssign:UpdateContents(id, value)
-    if not self:PermissionCheck() then return end
+    if not self:PermissionCheck() then
+        return
+    end
     local page = self:Get(id)
-    if not page then return end
+    if not page then
+        return
+    end
 
     local new_content = value:gsub("^%s+", ""):gsub("%s+$", "")
     local contents_updated = new_content ~= page.Contents
@@ -2455,7 +2518,9 @@ function AngryAssign:UpdateDisplayed()
         local lowerC = c:lower()
         
         -- Check for exact match first (Fastest)
-        if ColorTable[lowerC] then return ColorTable[lowerC] end
+        if ColorTable[lowerC] then
+            return ColorTable[lowerC]
+        end
 
         -- Check for partial matches (e.g. |cmageGrp -> |cmage + Grp)
         -- We loop backwards from the end of the string to find the longest valid color key
@@ -2568,15 +2633,21 @@ function AngryAssign:OutputDisplayed(id)
                 ["{evoker}"] = LOCALIZED_CLASS_NAMES_MALE["EVOKER"],
             }
 
-            if chatMap[lowerTag] then return chatMap[lowerTag] end
-            if UtilityChatMap[lowerTag] then return UtilityChatMap[lowerTag] end
+            if chatMap[lowerTag] then
+                return chatMap[lowerTag]
+            end
+            if UtilityChatMap[lowerTag] then
+                return UtilityChatMap[lowerTag]
+            end
 
             -- Handle Dynamic Tags (spell, boss, journal)
             local type, id = tagContent:match("^(%a+)%s+(%d+)$")
             if type then
                 type = type:lower()
                 id = tonumber(id)
-                if type == "spell" then return GetSpellLink(id) end
+                if type == "spell" then
+                    return GetSpellLink(id)
+                end
                 if type == "boss" and not isClassicTBC and not isClassicWrath then 
                     return select(5, EJ_GetEncounterInfo(id)) 
                 end
@@ -2586,7 +2657,9 @@ function AngryAssign:OutputDisplayed(id)
             end
             
             -- Strip Icon tags entirely for chat output
-            if tagContent:lower():match("^icon%s+") then return "" end
+            if tagContent:lower():match("^icon%s+") then
+                return ""
+            end
 
             -- Default: Return the tag as-is if we don't know it
             return "{"..tagContent.."}"
@@ -2596,7 +2669,9 @@ function AngryAssign:OutputDisplayed(id)
         output = output:gsub("(|c%w+)", function(c)
              local lowerC = c:lower()
              -- If it's a known custom color key, strip it (return empty), but keep the remainder
-             if ColorTable[lowerC] then return "" end
+             if ColorTable[lowerC] then
+                 return ""
+             end
              
              -- Peel back for attached text |cmageGrp
              for i = #c - 1, 3, -1 do
@@ -2608,7 +2683,9 @@ function AngryAssign:OutputDisplayed(id)
              end
              
              -- If it's a standard hex code |cff..., strip it entirely
-             if lowerC:match("^|c%x+$") then return "" end
+             if lowerC:match("^|c%x+$") then
+                 return ""
+             end
              
              return c
         end):gsub("|r", "")
@@ -2668,7 +2745,9 @@ function AngryAssign:RestoreDefaults()
 end
 
 function AngryAssign:CleanupOrphanedStates()
-    if not AngryAssign_State or not AngryAssign_State.tree or not AngryAssign_State.tree.groups then return end
+    if not AngryAssign_State or not AngryAssign_State.tree or not AngryAssign_State.tree.groups then
+        return
+    end
 
     local count = 0
     -- Iterate over the saved "expanded/collapsed" state of the tree
