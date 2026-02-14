@@ -21,6 +21,7 @@ local GetAddOnMetadata = GetAddOnMetadata or C_AddOns.GetAddOnMetadata
 local AngryAssign = LibStub("AceAddon-3.0"):NewAddon(appName, "AceConsole-3.0", "AceEvent-3.0", "AceComm-3.0", "AceTimer-3.0")
 local AceGUI = LibStub("AceGUI-3.0")
 local libS = LibStub("AceSerializer-3.0")
+local LibMustache = LibStub("LibMustache")
 local libC = LibStub("LibCompress")
 local lwin = LibStub("LibWindow-1.1")
 local libCE = libC:GetAddonEncodeTable()
@@ -105,6 +106,7 @@ local PAGE_Updated = 3
 local PAGE_Name = 4
 local PAGE_Contents = 5
 local PAGE_UpdateId = 6
+local PAGE_Vars = 7
 
 local REQUEST_PAGE_Id = 2
 
@@ -316,8 +318,9 @@ function AngryAssign:ProcessMessage(sender, data)
             end
             page.Name = safeName
             page.Contents = safeContents
+            page.Vars = ValidateString(data[PAGE_Vars], 5000, "Vars")
             page.Updated = data[PAGE_Updated]
-            page.UpdateId = data[PAGE_UpdateId] or self:Hash(page.Name, page.Contents)
+            page.UpdateId = data[PAGE_UpdateId] or self:Hash(page.Name, page.Contents, page.Vars)
 
             if self:SelectedId() == id then
                 self:SelectedUpdated(sender)
@@ -329,7 +332,8 @@ function AngryAssign:ProcessMessage(sender, data)
                 Updated = data[PAGE_Updated], 
                 UpdateId = data[PAGE_UpdateId], 
                 Name = safeName, 
-                Contents = safeContents 
+                Contents = safeContents,
+                Vars = ValidateString(data[PAGE_Vars], 5000, "Vars")
             }
         end
         if AngryAssign_State.displayed == id then
@@ -462,9 +466,9 @@ function AngryAssign:SendPageMessage(id)
         return
     end
     if not page.UpdateId then
-        page.UpdateId = self:Hash(page.Name, page.Contents)
+        page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
     end
-    self:SendOutMessage({ "PAGE", [PAGE_Id] = page.Id, [PAGE_Updated] = page.Updated, [PAGE_Name] = page.Name, [PAGE_Contents] = page.Contents, [PAGE_UpdateId] = page.UpdateId })
+    self:SendOutMessage({ "PAGE", [PAGE_Id] = page.Id, [PAGE_Updated] = page.Updated, [PAGE_Name] = page.Name, [PAGE_Contents] = page.Contents, [PAGE_UpdateId] = page.UpdateId, [PAGE_Vars] = page.Vars })
 end
 
 function AngryAssign:SendDisplay(id, force)
@@ -494,7 +498,7 @@ function AngryAssign:SendDisplayMessage(id)
     if not page then
         self:SendOutMessage({ "DISPLAY", [DISPLAY_Id] = nil, [DISPLAY_Updated] = nil, [DISPLAY_UpdateId] = nil }) 
     else
-        if not page.UpdateId then page.UpdateId = self:Hash(page.Name, page.Contents) end
+        if not page.UpdateId then page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars) end
         self:SendOutMessage({ "DISPLAY", [DISPLAY_Id] = page.Id, [DISPLAY_Updated] = page.Updated, [DISPLAY_UpdateId] = page.UpdateId }) 
     end
 end
@@ -1492,6 +1496,91 @@ local function AngryAssign_CategoryMenuList(entryId, parentId)
     end
 end
 
+function AngryAssign:CategoryUpdated(id)
+    self:UpdateTree()
+    self:UpdateDisplayed()
+end
+
+function AngryAssign:PageUpdated(id)
+    self:UpdateTree()
+    self:UpdateDisplayed()
+    -- Trigger sync if contents changed? 
+    -- Here we only changed Vars. 
+    -- We need to trigger SendPage if we want Vars to accept.
+    -- SendPage checks timestamp. We should update timestamp.
+    local page = AngryAssign_Pages[id]
+    if page then
+        page.Updated = time()
+        self:SendPage(id, true)
+    end
+end
+
+local function AngryAssign_EditVariables(id, type)
+    if not AngryAssign:PermissionCheck() then return end
+    
+    local vars = nil
+    if type == "category" then
+        local cat = AngryAssign:GetCat(id)
+        if cat then vars = cat.Vars end
+    else
+        local page = AngryAssign_Pages[id]
+        if page then vars = page.Vars end
+    end
+    
+    local DEFAULT_VARS_TEMPLATE = "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK="
+    if not vars or vars == "" or vars == "{}" then
+        vars = DEFAULT_VARS_TEMPLATE
+    end
+
+    local frame = AceGUI:Create("Window")
+    frame:SetTitle("Edit Template Variables")
+    frame:SetLayout("Flow")
+    frame:SetWidth(400)
+    frame:SetHeight(300)
+    frame:EnableResize(true)
+    _G["AngryAssign_EditVars_Window"] = frame.frame
+    table.insert(UISpecialFrames, "AngryAssign_EditVars_Window")
+
+    local editBox = AceGUI:Create("MultiLineEditBox")
+    editBox:SetLabel("Variables (JSON or Key=Value pairs)")
+    editBox:SetNumLines(15)
+    editBox:SetText(vars)
+    editBox:SetFullWidth(true)
+    editBox:SetFullHeight(true)
+    editBox:DisableButton(false)
+    editBox:SetCallback("OnEnterPressed", function(widget, event, text)
+        local check = app.ParseVariables(text)
+        
+        -- Normalize Line Endings
+        local normalized = text:gsub("\r\n", "\n")
+        
+        -- Don't save if unmodified default template
+        if normalized == "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK=" then
+            text = nil
+        elseif text == "" then
+            text = nil
+        end
+        
+        if type == "category" then
+            local cat = AngryAssign:GetCat(id)
+            if cat then 
+                cat.Vars = text 
+                AngryAssign:CategoryUpdated(id)
+            end
+        else
+            local page = AngryAssign_Pages[id]
+            if page then 
+                page.Vars = text
+                AngryAssign:PageUpdated(id)
+            end
+        end
+        frame:Hide()
+        AngryAssign:UpdateDisplayed()
+    end)
+    frame:AddChild(editBox)
+    frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
+end
+
 local PagesDropDownList
 function AngryAssign_PageMenu(pageId)
     local page = AngryAssign_Pages[pageId]
@@ -1504,6 +1593,7 @@ function AngryAssign_PageMenu(pageId)
             { notCheckable = true, isTitle = true },
             { text = "Rename", notCheckable = true, func = function(frame, pageId) AngryAssign_RenamePage(pageId) end },
             { text = "Delete", notCheckable = true, func = function(frame, pageId) AngryAssign_DeletePage(pageId) end },
+            { text = "Edit Variables", notCheckable = true, func = function(frame, pageId) AngryAssign_EditVariables(pageId, "page") end },
             { text = "Category", notCheckable = true, hasArrow = true },
         }
     end
@@ -1540,15 +1630,16 @@ local function AngryAssign_CategoryMenu(catId)
             { text = "Rename", notCheckable = true, func = function(frame, pageId) AngryAssign_RenameCategory(pageId) end },
             { text = "Save as Template", notCheckable = true, func = function(frame, pageId) AngryAssign_SaveTemplatePopup(pageId) end },
             { text = "Delete", notCheckable = true, func = function(frame, pageId) AngryAssign_DeleteCategory(pageId) end },
+            { text = "Edit Variables", notCheckable = true, func = function(frame, pageId) AngryAssign_EditVariables(pageId, "category") end },
             { text = "Category", notCheckable = true, hasArrow = true },
         }
     end
     CategoriesDropDownList[1].text = cat.Name
     CategoriesDropDownList[2].arg1 = catId
-    -- Save as Template (no arg needed for popup call wrapper, but function uses pageId as catId)
     CategoriesDropDownList[3].arg1 = catId 
     CategoriesDropDownList[4].arg1 = catId
     CategoriesDropDownList[5].arg1 = catId
+    CategoriesDropDownList[6].arg1 = catId
 
 
     local categories = AngryAssign_CategoryMenuList(-catId)
@@ -1910,10 +2001,14 @@ function AngryAssign:SelectedUpdated(sender)
 end
 
 local function GetTree_InsertPage(tree, page)
+    local name = page.Name
+    if page.Vars and page.Vars ~= "{}" and page.Vars ~= "" then
+        name = name .. " |cffaaaaaa‡|r"
+    end
     if page.Id == AngryAssign_State.displayed then
-        table.insert(tree, { value = page.Id, text = page.Name, icon = "Interface\\BUTTONS\\UI-GuildButton-MOTD-Up" })
+        table.insert(tree, { value = page.Id, text = name, icon = "Interface\\BUTTONS\\UI-GuildButton-MOTD-Up" })
     else
-        table.insert(tree, { value = page.Id, text = page.Name })
+        table.insert(tree, { value = page.Id, text = name })
     end
 end
 
@@ -1921,7 +2016,11 @@ local function GetTree_InsertChildren(categoryId, displayedPages)
     local tree = {}
     for _, cat in pairs(AngryAssign_Categories) do
         if cat.CategoryId == categoryId then
-            table.insert(tree, { value = -cat.Id, text = cat.Name, children = GetTree_InsertChildren(cat.Id, displayedPages) })
+            local name = cat.Name
+            if cat.Vars and cat.Vars ~= "{}" and cat.Vars ~= "" then
+                name = name .. " |cffaaaaaa‡|r"
+            end
+            table.insert(tree, { value = -cat.Id, text = name, children = GetTree_InsertChildren(cat.Id, displayedPages) })
         end
     end
 
@@ -1942,7 +2041,11 @@ function AngryAssign:GetTree()
 
     for _, cat in pairs(AngryAssign_Categories) do
         if not cat.CategoryId then
-            table.insert(tree, { value = -cat.Id, text = cat.Name, children = GetTree_InsertChildren(cat.Id, displayedPages) })
+            local name = cat.Name
+            if cat.Vars and cat.Vars ~= "{}" and cat.Vars ~= "" then
+                name = name .. " |cffaaaaaa‡|r"
+            end
+            table.insert(tree, { value = -cat.Id, text = name, children = GetTree_InsertChildren(cat.Id, displayedPages) })
         end
     end
 
@@ -2078,11 +2181,15 @@ function AngryAssign:GetCat(id)
     return AngryAssign_Categories[id]
 end
 
-function AngryAssign:Hash(name, contents)
+function AngryAssign:Hash(name, contents, vars)
     local code = libC:fcs32init()
     code = libC:fcs32update(code, name)
     code = libC:fcs32update(code, "\n")
     code = libC:fcs32update(code, contents)
+    if vars then
+        code = libC:fcs32update(code, "\n")
+        code = libC:fcs32update(code, vars)
+    end
     return libC:fcs32final(code)
 end
 
@@ -2180,7 +2287,7 @@ function AngryAssign:RenamePage(id, nameOrFrame)
     -- Original Business Logic
     page.Name = name
     page.Updated = time()
-    page.UpdateId = self:Hash(page.Name, page.Contents)
+    page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
 
     self:SendPage(id, true)
     self:UpdateTree()
@@ -2340,7 +2447,7 @@ function AngryAssign:UpdateContents(id, value)
     page.Contents = new_content
     page.Backup = new_content
     page.Updated = time()
-    page.UpdateId = self:Hash(page.Name, page.Contents)
+    page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
 
     self:SendPage(id, true)
     self:UpdateSelected(true)
@@ -2833,6 +2940,64 @@ function AngryAssign:UpdateDisplayedIfNewGroup()
     end
 end
 
+function AngryAssign:GetTemplateContext()
+    local ctx = {
+        classes = {},
+        groups = {},
+        me = UnitName("player"),
+    }
+    
+    -- Initialize structure
+    for i = 1, 8 do ctx.groups[i] = {} end
+    local standardClasses = {"WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "DEATHKNIGHT", "SHAMAN", "MAGE", "WARLOCK", "DRUID"}
+    for _, c in ipairs(standardClasses) do ctx.classes[c] = {} end
+
+    -- Gather Roster
+    local num = GetNumGroupMembers()
+    if num == 0 then
+        -- Solo testing
+        local name = UnitName("player")
+        local _, class = UnitClass("player")
+        if class then 
+            local unit = { name = name, class = class, colored_name = name } -- Basic fallback
+            if RAID_CLASS_COLORS[class] then
+                unit.colored_name = "|c" .. RAID_CLASS_COLORS[class].colorStr .. name .. "|r"
+            end
+            table.insert(ctx.classes[class], unit)
+            table.insert(ctx.groups[1], unit)
+        end
+        return ctx
+    end
+
+    for i = 1, num do
+        local name, _, subgroup, _, _, class, _, online, isDead = GetRaidRosterInfo(i)
+        if name then
+            local colorStr = "ffffffff"
+            if class and RAID_CLASS_COLORS[class] then colorStr = RAID_CLASS_COLORS[class].colorStr end
+            
+            local unit = {
+                name = name,
+                class = class,
+                online = online,
+                dead = isDead,
+                colored_name = "|c" .. colorStr .. name .. "|r"
+            }
+            
+            -- Insert into groups
+            if subgroup and ctx.groups[subgroup] then
+                table.insert(ctx.groups[subgroup], unit)
+            end
+
+            -- Insert into classes
+            if class and ctx.classes[class] then
+                table.insert(ctx.classes[class], unit)
+            end
+        end
+    end
+    
+    return ctx
+end
+
 function AngryAssign:ProcessMarkdown(text)
     -- Headers (## Header) -> Gold
     -- Lists (- Item) -> Bullet
@@ -2885,6 +3050,32 @@ function AngryAssign:UpdateDisplayed()
 
     -- Normalize Pipes
     text = text:gsub("||", "|")
+
+    -- Mustache Templating
+    if LibMustache then
+        local ctx = self:GetTemplateContext()
+        
+        -- Merge Category Variables
+        if page.CategoryId then
+            local cat = AngryAssign:GetCat(page.CategoryId)
+            if cat and cat.Vars then
+                local vars = app.ParseVariables(cat.Vars)
+                for k, v in pairs(vars) do ctx[k] = v end
+            end
+        end
+        
+        -- Merge Page Variables
+        if page.Vars then
+             local vars = app.ParseVariables(page.Vars)
+             for k, v in pairs(vars) do ctx[k] = v end
+        end
+
+        -- Use pcall to avoid crashing on template errors
+        local success, result = pcall(LibMustache.render, text, ctx)
+        if success then
+            text = result
+        end
+    end
 
     -- Markdown Support
     text = self:ProcessMarkdown(text)

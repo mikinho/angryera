@@ -10,6 +10,7 @@
 embeds.xml
 
 Libs\LibDropDownMenu\LibDropDownMenu.xml
+Libs\LibMustache\LibMustache.xml
 
 
 Data.lua

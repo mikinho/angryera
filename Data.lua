@@ -459,3 +459,178 @@ for category, items in pairs(AngryEra_RaidUtility) do
         app.UtilityChatMap[nameTag] = info.name
     end
 end
+-------------------------------------------------------------------------------
+-- JSON Utility
+-------------------------------------------------------------------------------
+
+local function scan(str, pos)
+	local char = str:sub(pos, pos)
+	if char == "{" then return "object", pos, "}" end
+	if char == "[" then return "array", pos, "]" end
+	if (char >= "0" and char <= "9") or char == "-" then return "number", pos end
+	if char == '"' then return "string", pos end
+	if str:sub(pos, pos+3) == "true" then return "boolean", pos, true end
+	if str:sub(pos, pos+4) == "false" then return "boolean", pos, false end
+	if str:sub(pos, pos+3) == "null" then return "null", pos, nil end
+	return nil, pos, "Syntax Error"
+end
+
+local function skip_ws(str, pos)
+	while true do
+        local c = str:sub(pos, pos)
+        if c == " " or c == "\t" or c == "\n" or c == "\r" then
+            pos = pos + 1
+        else
+            break
+        end
+    end
+	return pos
+end
+
+local function parse_string(str, pos)
+	local s = pos
+	while true do
+		local next_quote = str:find('"', s + 1)
+		if not next_quote then return nil, pos, "Unterminated String" end
+		-- Check escapes
+		local escaped = 0
+		local p = next_quote - 1
+		while str:sub(p, p) == "\\" do
+			escaped = escaped + 1
+			p = p - 1
+		end
+		if escaped % 2 == 0 then
+			return str:sub(pos+1, next_quote-1), next_quote + 1
+		end
+		s = next_quote
+	end
+end
+
+local function parse_number(str, pos)
+	local _, end_pos = str:find("^[%-%d%.eE]+", pos)
+	if not end_pos then return nil, pos, "Invalid Number" end
+	return tonumber(str:sub(pos, end_pos)), end_pos + 1
+end
+
+local function parse_object(str, pos)
+	local obj = {}
+	pos = skip_ws(str, pos + 1)
+	if str:sub(pos, pos) == "}" then return obj, pos + 1 end
+    
+    local key, val
+	while true do
+		if str:sub(pos, pos) ~= '"' then return nil, pos, "Expected String Key" end
+		key, pos = parse_string(str, pos)
+        
+		pos = skip_ws(str, pos)
+		if str:sub(pos, pos) ~= ":" then return nil, pos, "Expected ':'" end
+		pos = skip_ws(str, pos + 1)
+        
+        -- Parse Value (Recursive call needs helper or forward declare)
+        -- We'll inline logic or use forward declare
+        -- Since parse_value isn't defined yet, we define it inside or forward declare.
+        -- Let's put parsing logic in app namespace.
+        return nil, pos, "Not Implemented Recusion" 
+	end
+end
+
+-- Proper recursive implementation
+local parse_value
+
+local function parse_array(str, pos)
+	local arr = {}
+	pos = skip_ws(str, pos + 1)
+	if str:sub(pos, pos) == "]" then return arr, pos + 1 end
+	
+    local val
+	while true do
+		val, pos = parse_value(str, pos)
+		if not val and pos then return nil, pos, "Error in Array" end
+		table.insert(arr, val)
+		pos = skip_ws(str, pos)
+		if str:sub(pos, pos) == "]" then return arr, pos + 1 end
+		if str:sub(pos, pos) ~= "," then return nil, pos, "Expected ',' or ']'" end
+		pos = skip_ws(str, pos + 1)
+	end
+end
+
+local function parse_obj_impl(str, pos)
+	local obj = {}
+	pos = skip_ws(str, pos + 1)
+	if str:sub(pos, pos) == "}" then return obj, pos + 1 end
+	
+    local key, val
+	while true do
+		if str:sub(pos, pos) ~= '"' then return nil, pos, "Expected String Key" end
+		key, pos = parse_string(str, pos)
+		pos = skip_ws(str, pos)
+		if str:sub(pos, pos) ~= ":" then return nil, pos, "Expected ':'" end
+		pos = skip_ws(str, pos + 1)
+		
+		val, pos = parse_value(str, pos)
+		if not val and pos then return nil, pos, "Error in Object Value" end
+		obj[key] = val
+		
+		pos = skip_ws(str, pos)
+		if str:sub(pos, pos) == "}" then return obj, pos + 1 end
+		if str:sub(pos, pos) ~= "," then return nil, pos, "Expected ',' or '}'" end
+		pos = skip_ws(str, pos + 1)
+	end
+end
+
+parse_value = function(str, pos)
+	pos = skip_ws(str, pos)
+	local char = str:sub(pos, pos)
+	if char == "{" then return parse_obj_impl(str, pos) end
+	if char == "[" then return parse_array(str, pos) end
+	if char == '"' then return parse_string(str, pos) end
+	if (char >= "0" and char <= "9") or char == "-" then return parse_number(str, pos) end
+	if str:sub(pos, pos+3) == "true" then return true, pos + 4 end
+	if str:sub(pos, pos+4) == "false" then return false, pos + 5 end
+	if str:sub(pos, pos+3) == "null" then return nil, pos + 4 end
+	return nil, pos, "Syntax Error"
+end
+
+function app.JSON_Decode(str)
+    if not str or str == "" then return {} end
+    local success, res, pos, err = pcall(function() 
+        local v, p, e = parse_value(str, 1)
+        return v, p, e
+    end)
+    if success and res then return res end
+    return {}
+end
+
+function app.ParseVariables(str)
+    if not str or str == "" then return {} end
+    
+    -- Check for JSON
+    if str:find("^%s*[{[]") then
+        return app.JSON_Decode(str)
+    end
+    
+    -- Key=Value pairs
+    local obj = {}
+    for line in str:gmatch("[^\r\n]+") do
+        local key, val = line:match("^([^=]+)=(.*)")
+        if key then
+            -- Trim
+            key = key:match("^%s*(.-)%s*$")
+            val = val:match("^%s*(.-)%s*$")
+            if key ~= "" then
+                obj[key] = val
+                -- Construct number if possible? 
+                -- User request "key=value". JSON values are usually typed.
+                -- If val is "123", treats as string "123" or number?
+                -- Mustache is loose typing usually. But number vs string matters for math.
+                -- Let's try to convert to number if possible.
+                local n = tonumber(val)
+                if n then obj[key] = n end
+                -- Convert "true"/"false"?
+                if val == "true" then obj[key] = true
+                elseif val == "false" then obj[key] = false end
+            end
+        end
+    end
+    return obj
+end
