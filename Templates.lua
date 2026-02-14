@@ -48,7 +48,7 @@ app.Templates = {
             { name = "Anub'Rekhan", content = "{tank} Crypt Guards: " },
             { name = "Grand Widow Faerlina", content = "{priest} MC Rotation: " },
             { name = "Maexxna", content = "{tank} MT: \n{healer} Web Wrap: " },
-            { name = "Not the Plaguebringer", content = "{tank} Adds: \n{dispel} Curse: " },
+            { name = "Noth the Plaguebringer", content = "{tank} Adds: \n{dispel} Curse: " },
             { name = "Heigan the Unclean", content = "{tank} Dance: " },
             { name = "Loatheb", content = "{healer} Spore Rotation: " },
             { name = "Instructor Razuvious", content = "{priest} MC Rotation: " },
