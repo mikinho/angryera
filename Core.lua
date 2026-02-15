@@ -1359,7 +1359,6 @@ local function AngryAssign_ClearPage(widget, event, value)
 end
 
 local function AngryAssign_TextChanged(widget, event, value)
-    AngryAssign.window.button_revert:SetDisabled(false)
     AngryAssign.window.button_restore:SetDisabled(false)
     AngryAssign.window.button_display:SetDisabled(true)
     AngryAssign.window.button_output:SetDisabled(true)
