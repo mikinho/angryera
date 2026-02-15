@@ -1320,8 +1320,8 @@ local function AngryAssign_DeleteCategory(catId)
 end
 
 local function AngryAssign_AssignCategory(frame, entryId, catId)
-    HideDropDownMenu(1)
-
+    CloseDropDownMenus()
+    
     AngryAssign:AssignCategory(entryId, catId)
 end
 
@@ -2201,6 +2201,9 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
         newIndex = (targetObj.Index or 0) + 0.5
     end
 
+    -- Save old parent ID for cleanup
+    local oldCategoryId = sourceObj.CategoryId
+
     -- Apply Change
     sourceObj.CategoryId = newParentId
     sourceObj.Index = newIndex
@@ -2227,6 +2230,30 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
             AngryAssign:PageUpdated(obj.Id)
         elseif obj.Id and AngryAssign_Categories[obj.Id] == obj then
             AngryAssign:CategoryUpdated(obj.Id)
+        end
+    end
+    
+    -- Check if old parent is empty and collapse it
+    if oldCategoryId then
+        local hasChildren = false
+        for _, p in pairs(AngryAssign_Pages) do if p.CategoryId == oldCategoryId then hasChildren = true break end end
+        if not hasChildren then
+            for _, c in pairs(AngryAssign_Categories) do if c.CategoryId == oldCategoryId then hasChildren = true break end end
+        end
+        
+        if not hasChildren then
+             local groups = AngryAssign_State.tree.groups
+             if groups then
+                 local targetSuffix = "\001-"..oldCategoryId
+                 local targetRoot = -oldCategoryId
+                 for k, v in pairs(groups) do
+                     if k == targetRoot then
+                         groups[k] = nil
+                     elseif type(k) == "string" and string.sub(k, -string.len(targetSuffix)) == targetSuffix then
+                         groups[k] = nil
+                     end
+                 end
+             end
         end
     end
     
