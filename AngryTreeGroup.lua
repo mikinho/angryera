@@ -100,21 +100,21 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
          -- Our code had `local toggle = button.toggle` in line 68. Correct.
     end
     
+    local xOffset = (level == 1) and 7 or 0
     toggle:ClearAllPoints()
-    toggle:SetPoint("LEFT", (level - 1) * 8, 0)
+    toggle:SetPoint("LEFT", (level - 1) * 8 + xOffset, 1)
 
     -- Adjust Text & Icon
 	button.text:ClearAllPoints()
     
     if icon then
 		button.icon:SetTexture(icon)
-        -- User Request: "make the left icons instead of its parent field set"
         -- Interpreting as: Align icon with the toggle column (flat alignment relative to indentation)
-		button.icon:SetPoint("LEFT", (level - 1) * 8, (level == 1) and 0 or 1)
-        button.text:SetPoint("LEFT", button.icon, "RIGHT", 2, 2)
+		button.icon:SetPoint("LEFT", (level - 1) * 8 + xOffset, 1)
+        button.text:SetPoint("LEFT", button.icon, "RIGHT", 2, 0)
 	else
 		button.icon:SetTexture(nil)
-        button.text:SetPoint("LEFT", toggle, "RIGHT", 2, 2)
+        button.text:SetPoint("LEFT", toggle, "RIGHT", 2, 0)
 	end
 
     -- Ensure text doesn't overlap Menu Button
@@ -524,7 +524,7 @@ local methods = {
 				end
              end
         end)
-        menuBtn:SetPoint("RIGHT", button, "RIGHT", -2, 0)
+        menuBtn:SetPoint("RIGHT", button, "RIGHT", -9, 1)
         button.menuBtn = menuBtn
 
         button:RegisterForDrag("LeftButton")
