@@ -34,6 +34,7 @@ app.Templates = {
         pages = {
             { name = "The Prophet Skeram", content = "{tank} Platforms: \n{kick} Interrupts: " },
             { name = "Battleguard Sartura", content = "{tank} Adds: \n{stun} Stun Rotation: " },
+            { name = "The Silithid Royalty", content = "{tank} Lord Kri: \n{tank} Princess Yauj: \n{tank} Vem: \n{kick} Interrupts: " },
             { name = "Fankriss the Unyielding", content = "{tank} Worms: " },
             { name = "Princess Huhuran", content = "{hunter} Soothe: \n{healer} Poison Cleansing: " },
             { name = "Twin Emperors", content = "{warlock} Tank (Vek'lor): \n{tank} Tank (Vek'nilash): \n{healer} Healing Assignments: " },
