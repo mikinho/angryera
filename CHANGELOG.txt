@@ -1,3 +1,11 @@
+## v2.1.3
+
+* Core: Mustache templates are now rendered before sending to chat/other players. This ensures backward compatibility with clients that do not support templating (or if the sender leaves the raid).
+* Fix: Removed references to the deprecated "Revert" button which could cause errors.
+* Fix: The "Edit Variables" menu option for Categories functionality restored.
+* Data: Corrected "Sunder Armor" icon.
+* Data: Added "Holy Water" (Stratholme Holy Water) to consumables list.
+
 ## v2.1.2
 
 * Fix: Corrected spelling of "Noth the Plaguebringer" in Naxxramas templates.
