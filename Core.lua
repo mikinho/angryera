@@ -135,6 +135,14 @@ local function ProcessTag(tag)
     if IconTable[lowerTag] then
         return IconTable[lowerTag]
     end
+    
+    -- Check for {page} shortcut
+    if lowerTag == "{page}" then
+        local id = AngryAssign_State.displayed
+        if id and AngryAssign_Pages[id] then
+            return AngryAssign_Pages[id].Name
+        end
+    end
 
     -- Check dynamic patterns
     local type, id = lowerTag:match("{(%a+)%s+(%d+)}")
