@@ -1,3 +1,8 @@
+## v2.2.2
+
+* Support: Added `AngryEra_TBC.toc` for Burning Crusade Anniversary (20505) integration.
+* Documentation: Updated repository description.
+
 ## v2.2.1
 
 * New Feature: **Drag and Drop** reordering! You can now drag pages and categories within the tree view to reorder them or move them into other categories.
