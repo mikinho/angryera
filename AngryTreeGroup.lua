@@ -462,6 +462,17 @@ end
 --[[-----------------------------------------------------------------------------
 Methods
 -------------------------------------------------------------------------------]]
+---@class AngryTreeGroup : AceGUIWidget
+---@field tree table The data tree structure
+---@field filter string|boolean Filter function or state
+---@field searchKeyword string Search query
+---@field status table Persisted status (scroll, selected, groups)
+---@field localstatus table Default status if none provided
+---@field draggerLine Texture Visual line for drag operations
+---@field dragging string|nil UniqueValue of the item being dragged
+---@field dragPosition string|nil "before", "after", "into", "into_start"
+---@field buttons AceGUI_TreeGroupButton[] Recycled buttons
+---@field lines table[] Flattened list of visible tree lines
 local methods = {
 	["OnAcquire"] = function(self)
 		self:SetTreeWidth(DEFAULT_TREE_WIDTH, DEFAULT_TREE_SIZABLE)
@@ -495,6 +506,19 @@ local methods = {
 		self.enabletooltips = enable
 	end,
 
+	---@class AceGUI_TreeGroupButton : Button
+	---@field obj AngryTreeGroup
+	---@field uniquevalue string
+	---@field value any
+	---@field treeline table
+	---@field selected boolean
+	---@field level number
+	---@field toggle Button
+	---@field text FontString
+	---@field icon Texture
+	---@field menuBtn Button
+	
+	---@return AceGUI_TreeGroupButton
 	["CreateButton"] = function(self)
 		local num = AceGUI:GetNextWidgetNum("TreeGroupButton")
 		local button = CreateFrame("Button", ("AceGUI30TreeButton%d"):format(num), self.treeframe, "OptionsListButtonTemplate")

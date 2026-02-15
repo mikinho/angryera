@@ -18,6 +18,9 @@ local L = app.L;
 
 local GetAddOnMetadata = GetAddOnMetadata or C_AddOns.GetAddOnMetadata
 
+---@class AngryAssign: AceAddon, AceEvent-3.0, AceComm-3.0, AceConsole-3.0, AceTimer-3.0
+---@field window? AceGUIFrame The main configuration window
+---@field display_text? table fontstring/frame for display
 local AngryAssign = LibStub("AceAddon-3.0"):NewAddon(appName, "AceConsole-3.0", "AceEvent-3.0", "AceComm-3.0", "AceTimer-3.0")
 local AceGUI = LibStub("AceGUI-3.0")
 local libS = LibStub("AceSerializer-3.0")
@@ -76,11 +79,22 @@ local currentGroup = nil
 --         [Id] = { Id = 1231, Updated = time(), UpdateId = self:Hash(name, contents), Name = "Name", Contents = "...", Backup = "...", CategoryId = 123 },
 --        ...
 --     }
---     AngryAssign_Categories = {
---         [Id] = { Id = 1231, Name = "Name", CategoryId = 123 },
---        ...
---     }
---
+
+---@class Page
+---@field Id number Unique ID for the page
+---@field Name string Display name of the page
+---@field Contents string The raw text content of the assignment
+---@field Updated number Timestamp of last update
+---@field UpdateId string Hash of name and contents for versioning
+---@field Backup? string Previous version of contents (if reverted)
+---@field CategoryId? number ID of parent category
+---@field Index? number Sorting index within category
+
+---@class Category
+---@field Id number Unique ID for the category
+---@field Name string Display name of the category
+---@field CategoryId? number ID of parent category (if nested)
+---@field Index? number Sorting index within parent
 -- Format for our addon communication
 --
 -- { "PAGE", [Id], [Last Update Timestamp], [Name], [Contents], [Last Update Unique Id] }
@@ -3606,6 +3620,50 @@ function AngryAssign:CleanupOrphanedStates()
 end
 
 local blizOptionsPanel
+---@class AngryAssignState
+---@field tree table Tree view state (collapsed nodes etc)
+---@field window table Window position/size
+---@field display table Display frame position/size
+---@field displayed? number ID of the currently displayed page
+---@field locked boolean Whether the display is locked
+---@field directionUp boolean Growth direction
+
+---@class AngryAssignConfig
+---@field scale number Scale of the edit window
+---@field hideoncombat boolean Hide display in combat
+---@field highlight string Comma/space separated words to highlight
+---@field highlightColor string Hex color for highlights
+---@field backdropShow boolean Show backdrop
+---@field backdropColor string Hex color for backdrop
+---@field glowColor string Hex color for update notification
+---@field fontName string Font face
+---@field fontHeight number Font size
+---@field fontFlags string Font outline
+---@field color string Normal text color
+
+---@class AngryAssignTemplatePage
+---@field name string
+---@field content string
+
+---@class AngryAssignTemplate
+---@field name string
+---@field pages AngryAssignTemplatePage[]
+
+---@type table<number, Page> Dictionary of pages key=Id
+_G.AngryAssign_Pages = _G.AngryAssign_Pages
+
+---@type table<number, Category> Dictionary of categories key=Id
+_G.AngryAssign_Categories = _G.AngryAssign_Categories
+
+---@type AngryAssignState
+_G.AngryAssign_State = _G.AngryAssign_State
+
+---@type AngryAssignConfig
+_G.AngryAssign_Config = _G.AngryAssign_Config
+
+---@type AngryAssignTemplate[]
+_G.AngryAssign_Templates = _G.AngryAssign_Templates
+
 function AngryAssign:OnInitialize()
     if AngryAssign_State == nil then
         AngryAssign_State = { tree = {}, window = {}, display = {}, displayed = nil, locked = false, directionUp = false }
