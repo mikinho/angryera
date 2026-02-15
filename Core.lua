@@ -2155,26 +2155,30 @@ function AngryAssign:NextPage(reverse)
     end
     if not page.CategoryId then return end
 
-    local tree = { }
+    local destPage = nil
 
     for _, p in pairs(AngryAssign_Pages) do
-        if p.CategoryId and page.CategoryId == p.CategoryId then
-            table.insert(tree, p)
+        if p.CategoryId and p.CategoryId == page.CategoryId then
+            if reverse then
+                -- Previous: Largest Name < Current
+                if p.Name < page.Name then
+                    if (not destPage) or (p.Name > destPage.Name) then
+                        destPage = p
+                    end
+                end
+            else
+                -- Next: Smallest Name > Current
+                if p.Name > page.Name then
+                    if (not destPage) or (p.Name < destPage.Name) then
+                        destPage = p
+                    end
+                end
+            end
         end
     end
 
-    table.sort(tree, function(a, b) return a.Name < b.Name end)
-
-    for i = 1, #tree, 1 do
-        local p = tree[i]
-        if p.Id == page.Id then
-            local inc = 1
-            if reverse then inc = -1 end
-            local next = tree[i + inc]
-            if next then
-                return self:DisplayPage(next .Id)
-            end
-        end
+    if destPage then
+        return self:DisplayPage(destPage.Id)
     end
 end
 
