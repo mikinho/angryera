@@ -919,7 +919,7 @@ function AngryAssign_ToggleLock()
     AngryAssign:ToggleLock()
 end
 
-local function AngryAssign_LoadTemplate(template)
+local function AngryAssign_LoadTemplate(template, catIndex)
     if not template then return end
     
     -- Find or Create Category
@@ -939,14 +939,21 @@ local function AngryAssign_LoadTemplate(template)
         -- Find new positive ID
         while AngryAssign_Categories[newId] do newId = newId + 1 end
         
-        AngryAssign_Categories[newId] = { Id = newId, Name = catName, CategoryId = nil } -- Root category
+        AngryAssign_Categories[newId] = { Id = newId, Name = catName, CategoryId = nil, Index = catIndex } -- Root category
         catId = newId
         AngryAssign:UpdateTree()
+    else
+        -- Category exists, update index if none?
+        local cat = AngryAssign_Categories[catId]
+        if not cat.Index and catIndex then
+             cat.Index = catIndex
+             AngryAssign:CategoryUpdated(catId)
+        end
     end
     
     -- Add Pages
     if template.pages then
-        for _, tPage in ipairs(template.pages) do
+        for i, tPage in ipairs(template.pages) do
             -- Check if page exists in category
             local exists = false
              for _, page in pairs(AngryAssign_Pages) do
@@ -957,7 +964,7 @@ local function AngryAssign_LoadTemplate(template)
             end
             
             if not exists then
-                AngryAssign:CreatePage(tPage.name, tPage.content, catId)
+                AngryAssign:CreatePage(tPage.name, tPage.content, catId, i)
             end
         end
     end
@@ -1048,7 +1055,7 @@ local function AngryAssign_LoadRaidMenu()
         for i, template in ipairs(app.Templates) do
             table.insert(menu, {
                 text = template.name,
-                func = function() AngryAssign_LoadTemplate(template) end,
+                func = function() AngryAssign_LoadTemplate(template, i) end,
                 notCheckable = true
             })
         end
@@ -2398,7 +2405,7 @@ local function ExtractAndValidateName(nameOrFrame)
     return cleanName
 end
 
-function AngryAssign:CreatePage(nameOrFrame, content, categoryId)
+function AngryAssign:CreatePage(nameOrFrame, content, categoryId, index)
     -- Check Permissions first
     if not self:PermissionCheck() then
         return false, "Permission denied."
@@ -2421,7 +2428,8 @@ function AngryAssign:CreatePage(nameOrFrame, content, categoryId)
         UpdateId = self:Hash(name, content or ""), 
         Name = name, 
         Contents = content or "",
-        CategoryId = categoryId
+        CategoryId = categoryId,
+        Index = index
     }
     
     if categoryId then
