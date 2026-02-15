@@ -116,6 +116,10 @@ local AngryEra_RaidUtility = {
             ["name"] = "Free Action Potion",
             ["icon"] = "inv_potion_04"
         },
+        ["Holy Water"] = {
+            ["name"] = "Stratholme Holy Water",
+            ["icon"] = "inv_potion_75"
+        },
         ["LIP"] = {
             ["name"] = "Limited Invulnerability Potion",
             ["icon"] = "inv_potion_62"
