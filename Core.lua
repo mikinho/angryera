@@ -1679,11 +1679,11 @@ local function AngryAssign_CategoryMenu(catId)
 
     local categories = AngryAssign_CategoryMenuList(-catId)
     if categories ~= nil then
-        CategoriesDropDownList[5].menuList = categories
-        CategoriesDropDownList[5].disabled = false
+        CategoriesDropDownList[6].menuList = categories
+        CategoriesDropDownList[6].disabled = false
     else
-        CategoriesDropDownList[5].menuList = {}
-        CategoriesDropDownList[5].disabled = true
+        CategoriesDropDownList[6].menuList = {}
+        CategoriesDropDownList[6].disabled = true
     end
 
     return CategoriesDropDownList
