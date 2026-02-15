@@ -404,7 +404,7 @@ local AngryEra_RaidUtility = {
         },
         ["Sunder"] = {
             ["name"] = "Sunder Armor",
-            ["icon"] = "ability_warrior_sunderarmor"
+            ["icon"] = "ability_warrior_sunder"
         },
         ["SW"] = {
             ["name"] = "Shield Wall",
