@@ -320,6 +320,7 @@ end
 local function Button_OnDragStart(button)
     local self = button.obj
     self.dragging = button.uniquevalue
+    CloseDropDownMenus()
     SetCursor("Interface\\CURSOR\\Point.blp")
     self.treeframe:SetScript("OnUpdate", Drag_OnUpdate)
 end
