@@ -104,7 +104,17 @@ app.IconTable = {
     ["{rag}"]          = "|TInterface\\Icons\\INV_Hammer_Unique_Sulfuras:0|t",
     ["{sapph}"]        = "|TInterface\\Icons\\INV_Misc_Head_Dragon_Blue:0|t",
     ["{twins}"]        = "|TInterface\\Icons\\INV_Misc_QirajiCrystal_01:0|t",
-    ["{vashj}"]        = "|TInterface\\Icons\\INV_Misc_Head_Naga_01:0|t"
+    ["{vashj}"]        = "|TInterface\\Icons\\INV_Misc_Head_Naga_01:0|t",
+    
+    -- Directional Icons
+    ["{left}"]         = "|TInterface\\Buttons\\UI-SpellbookIcon-PrevPage-Up:16:16:0:0:32:32:5:27:5:27|t",
+    ["{right}"]        = "|TInterface\\Buttons\\UI-SpellbookIcon-NextPage-Up:16:16:0:0:32:32:5:27:5:27|t",
+    ["{up}"]           = "|TInterface\\ChatFrame\\UI-ChatIcon-ScrollUp-Up:16:16:0:0:32:32:5:27:5:27|t",
+    ["{down}"]         = "|TInterface\\ChatFrame\\UI-ChatIcon-ScrollDown-Up:16:16:0:0:32:32:5:27:5:27|t",
+    ["{+}"]            = "|TInterface\\Icons\\Spell_ChargePositive:0|t",
+    ["{-}"]            = "|TInterface\\Icons\\Spell_ChargeNegative:0|t",
+    ["{positive}"]     = "|TInterface\\Icons\\Spell_ChargePositive:0|t",
+    ["{negative}"]     = "|TInterface\\Icons\\Spell_ChargeNegative:0|t"
 }
 
 -----------------------
