@@ -1,3 +1,7 @@
+## v2.1.5
+
+* Optimization: Rewrote 'Next Page' and 'Previous Page' logic to be significantly faster (O(n) without table allocation/sorting).
+
 ## v2.1.4
 
 * Fix: Resolved a crash when moving pages to a category ("attempt to get length of local 'menuList'").
