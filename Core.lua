@@ -1676,7 +1676,6 @@ local function AngryAssign_CategoryMenu(catId)
     CategoriesDropDownList[5].arg1 = catId
     CategoriesDropDownList[6].arg1 = catId
 
-
     local categories = AngryAssign_CategoryMenuList(-catId)
     if categories ~= nil then
         CategoriesDropDownList[6].menuList = categories
