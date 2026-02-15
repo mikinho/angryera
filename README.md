@@ -24,7 +24,7 @@ Editing of assignment pages and changing of on-screen display is restricted to o
 
 You will likely want to configure a keybinding for "Toggle Window" in the game keybindings.  This brings up the edit window, which is what officers and raid assistants will use to modify the assignment pages.  The edit window can be scaled up or down via the "Scale" parameter in the configuration menu (or via "/aa scale").
 
-The edit window contains a list of assignment pages you have on the left.  When you select one, you'll see the current contents of that page on the right.  You can "Add", "Rename", and "Delete" pages via the buttons at the far bottom left.
+The edit window contains a list of assignment pages you have on the left.  When you select one, you'll see the current contents of that page on the right.  You can **drag and drop** pages and categories to reorder them or nest them inside folders. You can also "Add", "Rename", and "Delete" pages via the buttons at the far bottom left.
 
 When editing pages, you'll have several buttons of interest:
 
@@ -118,6 +118,11 @@ You can use the following shortcuts in your assignments to display icons for spe
 
 **Rogue**
 * `{Kick}` Kick, `{Feint}` Feint, `{Cloak}` Cloak of Shadows, `{Blind}` Blind
+
+**Directional & Mechanics**
+* `{left}`, `{right}`, `{up}`, `{down}` (Large Arrows)
+* `{+}`, `{-}`, `{positive}`, `{negative}` (Polarity/Charge)
+* `{page}` (Displays Title of Current Page)
 
 **Consumables**
 * `{LIP}`, `{Stone}` (Stoneshield), `{FAP}`, `{Petri}`

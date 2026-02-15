@@ -1,3 +1,21 @@
+## v2.2.0
+
+* New Feature: **Drag and Drop** reordering! You can now drag pages and categories within the tree view to reorder them or move them into other categories.
+* New Feature: **New Shortcuts**:
+  * Directional: `{left}`, `{right}`, `{up}`, `{down}` (High-visibility arrows)
+  * Polarity: `{+}`, `{-}`, `{positive}`, `{negative}` (Thaddius/Mechanic icons)
+  * Dynamic: `{page}` is replaced by the title of the currently displayed page.
+* Improvement: **Visual Polish**:
+  * Tree View icons (Expand/Collapse, Page, Settings) are now pixel-perfectly aligned.
+  * Dragging items now shows a visual insertion line using the raid cursor.
+  * Root and Nested items have optimized indentation for better hierarchy.
+* Improvement: **Templates**:
+  * Loading Raid Templates now preserves the correct boss order.
+  * All Raid Templates now automatically include a `## {page}` header.
+  * Added "The Silithid Royalty" to AQ40 template.
+* Fix: Dropdown menus now close automatically when starting a drag operation or moving items.
+* Fix: Resolved an issue where the Toggle Window keybinding could fail.
+
 ## v2.1.5
 
 * Optimization: Rewrote 'Next Page' and 'Previous Page' logic to be significantly faster (O(n) without table allocation/sorting).
