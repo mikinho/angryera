@@ -9,7 +9,7 @@
 -- version: 3
 -------------------------------------------------------------------------------
 
-local Type, Version = "AngryTreeGroup", 3
+local Type, Version = "AngryTreeGroup", 4
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then return end
 
@@ -231,6 +231,120 @@ local function Expand_OnClick(frame)
 	self:RefreshTree()
 end
 
+local function GetMouseFocus()
+    if _G.GetMouseFocus then
+        return _G.GetMouseFocus()
+    else
+        local foci = _G.GetMouseFoci and _G.GetMouseFoci()
+        return foci and foci[1]
+    end
+end
+
+local function GetButtonFromFrame(frame)
+    while frame do
+        if frame.obj and frame.treeline then return frame end
+        frame = frame:GetParent()
+        if frame == UIParent then break end
+    end
+    return nil
+end
+
+local function Drag_OnUpdate(frame)
+    local self = frame.obj
+    local dragging = self.dragging
+    if not dragging then return end
+    
+    local focus = GetMouseFocus()
+    local button = GetButtonFromFrame(focus)
+    local line = self.draggerLine
+    
+    if button and button.obj == self then
+        local top = button:GetTop()
+        local bottom = button:GetBottom()
+        if not top or not bottom then return end
+
+        local x, y = GetCursorPosition()
+        local scale = UIParent:GetEffectiveScale()
+        y = y / scale
+        
+        local cy = (top + bottom) / 2
+        local range = top - bottom
+        local ratio = (y - bottom) / range
+        
+        line:ClearAllPoints()
+        line:Show()
+        line:SetWidth(self.treeframe:GetWidth() - 20)
+        line:SetPoint("LEFT", self.treeframe, "LEFT", 10, 0)
+        
+        if ratio > 0.75 then
+            line:SetPoint("BOTTOM", button, "TOP", 0, 0)
+            self.dragPosition = "before"
+            line:SetColorTexture(1, 1, 1, 0.5)
+            line:SetHeight(2)
+        elseif ratio < 0.25 then
+            local isExpanded = false
+            if button.treeline.value < 0 and self.status and self.status.groups and self.status.groups[button.uniquevalue] then
+                isExpanded = true
+            end
+
+            if isExpanded then
+                 line:SetPoint("TOP", button, "BOTTOM", 0, 0)
+                 self.dragPosition = "into_start"
+                 line:SetColorTexture(1, 1, 1, 0.5)
+                 line:SetHeight(2)
+            else
+                 line:SetPoint("TOP", button, "BOTTOM", 0, 0)
+                 self.dragPosition = "after"
+                 line:SetColorTexture(1, 1, 1, 0.5)
+                 line:SetHeight(2)
+            end
+        else
+            if button.treeline.value < 0 then
+                self.dragPosition = "into"
+                line:SetPoint("CENTER", button, "CENTER", 0, 0)
+                line:SetColorTexture(0, 1, 0, 0.3)
+                line:SetHeight(button:GetHeight())
+            else
+                line:SetPoint("TOP", button, "BOTTOM", 0, 0)
+                self.dragPosition = "after"
+                line:SetColorTexture(1, 1, 1, 0.5)
+                line:SetHeight(2)
+            end
+        end
+    else
+        line:Hide()
+        self.dragPosition = nil
+    end
+end
+
+local function Button_OnDragStart(button)
+    local self = button.obj
+    self.dragging = button.uniquevalue
+    SetCursor("Interface\\CURSOR\\Point.blp")
+    self.treeframe:SetScript("OnUpdate", Drag_OnUpdate)
+end
+
+local function Button_OnDragStop(button)
+    local self = button.obj
+    self.dragging = nil
+    SetCursor(nil)
+    self.treeframe:SetScript("OnUpdate", nil)
+    if self.draggerLine then self.draggerLine:Hide() end
+    
+    local focus = GetMouseFocus()
+    local target = GetButtonFromFrame(focus)
+    
+    if target and target.obj == self then
+        self:Fire("OnTreeDragDrop", button.uniquevalue, target.uniquevalue, self.dragPosition)
+    end
+    self.dragPosition = nil
+end
+
+local function Button_OnReceiveDrag(button)
+    -- self:Fire("OnTreeDragDrop", ...)
+    -- Usually handled by OnDragStop of source.
+end
+
 local function Button_OnClick(frame, button)
 	local self = frame.obj
 	local result = self:Fire("OnClick", frame.uniquevalue, frame.selected, button)
@@ -412,6 +526,10 @@ local methods = {
         end)
         menuBtn:SetPoint("RIGHT", button, "RIGHT", -2, 0)
         button.menuBtn = menuBtn
+
+        button:RegisterForDrag("LeftButton")
+		button:SetScript("OnDragStart", Button_OnDragStart)
+		button:SetScript("OnDragStop", Button_OnDragStop)
 
 		button:SetScript("OnClick",Button_OnClick)
 		--button:SetScript("OnDoubleClick", Button_OnDoubleClick)
@@ -783,6 +901,12 @@ local function Constructor()
 	border:SetBackdropColor(0.1, 0.1, 0.1, 0.5)
 	border:SetBackdropBorderColor(0.4, 0.4, 0.4)
 
+    -- Drag Feedback Line
+    local draggerLine = treeframe:CreateTexture(nil, "OVERLAY")
+    draggerLine:SetHeight(2)
+    draggerLine:SetColorTexture(1, 1, 1, 1)
+    draggerLine:Hide()
+
 	--Container Support
 	local content = CreateFrame("Frame", nil, border)
 	content:SetPoint("TOPLEFT", 10, -10)
@@ -801,6 +925,7 @@ local function Constructor()
 		scrollbar    = scrollbar,
 		border       = border,
 		content      = content,
+        draggerLine  = draggerLine,
 		type         = Type
 	}
 	for method, func in pairs(methods) do

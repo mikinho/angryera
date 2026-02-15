@@ -1797,6 +1797,7 @@ function AngryAssign:CreateWindow()
     tree:SetFullHeight(true)
     tree:SetLayout("Flow")
     tree:SetCallback("OnGroupSelected", function(widget, event, value) AngryAssign:UpdateSelected(true) end)
+    tree:SetCallback("OnTreeDragDrop", function(widget, event, source, target, position) AngryAssign:MoveItem(source, target, position) end)
     tree:SetCallback("OnClick", AngryAssign_TreeClick)
     tree:SetCallback("OnButtonMenu", AngryAssign_TreeMenuClick)
     window:AddChild(tree)
@@ -2035,16 +2036,35 @@ function AngryAssign:SelectedUpdated(sender)
     end
 end
 
+local function GetTree_Sort(a, b)
+    if a.index and b.index then
+        if a.index == b.index then
+            return a.text < b.text
+        else
+            return a.index < b.index
+        end
+    elseif a.index then
+        return true -- a has index (priority), b does not (legacy/new?)
+        -- Actually, if we want un-indexed items to be at end:
+        -- return true 
+    elseif b.index then
+        return false
+    else
+        return a.text < b.text
+    end
+end
+
 local function GetTree_InsertPage(tree, page)
     local name = page.Name
     if page.Vars and page.Vars ~= "{}" and page.Vars ~= "" then
         name = name .. " |cffaaaaaa‡|r"
     end
+    -- Use page.Index
+    local item = { value = page.Id, text = name, index = page.Index }
     if page.Id == AngryAssign_State.displayed then
-        table.insert(tree, { value = page.Id, text = name, icon = "Interface\\BUTTONS\\UI-GuildButton-MOTD-Up" })
-    else
-        table.insert(tree, { value = page.Id, text = name })
+        item.icon = "Interface\\BUTTONS\\UI-GuildButton-MOTD-Up"
     end
+    table.insert(tree, item)
 end
 
 local function GetTree_InsertChildren(categoryId, displayedPages)
@@ -2055,7 +2075,7 @@ local function GetTree_InsertChildren(categoryId, displayedPages)
             if cat.Vars and cat.Vars ~= "{}" and cat.Vars ~= "" then
                 name = name .. " |cffaaaaaa‡|r"
             end
-            table.insert(tree, { value = -cat.Id, text = name, children = GetTree_InsertChildren(cat.Id, displayedPages) })
+            table.insert(tree, { value = -cat.Id, text = name, index = cat.Index, children = GetTree_InsertChildren(cat.Id, displayedPages) })
         end
     end
 
@@ -2066,7 +2086,7 @@ local function GetTree_InsertChildren(categoryId, displayedPages)
         end
     end
 
-    table.sort(tree, function(a,b) return a.text < b.text end)
+    table.sort(tree, GetTree_Sort)
     return tree
 end
 
@@ -2080,7 +2100,7 @@ function AngryAssign:GetTree()
             if cat.Vars and cat.Vars ~= "{}" and cat.Vars ~= "" then
                 name = name .. " |cffaaaaaa‡|r"
             end
-            table.insert(tree, { value = -cat.Id, text = name, children = GetTree_InsertChildren(cat.Id, displayedPages) })
+            table.insert(tree, { value = -cat.Id, text = name, index = cat.Index, children = GetTree_InsertChildren(cat.Id, displayedPages) })
         end
     end
 
@@ -2090,9 +2110,120 @@ function AngryAssign:GetTree()
         end
     end
 
-    table.sort(tree, function(a,b) return a.text < b.text end)
+    table.sort(tree, GetTree_Sort)
 
     return tree
+end
+
+function AngryAssign:MoveItem(sourceValue, targetValue, position)
+    if not sourceValue or not targetValue then return end
+    if sourceValue == targetValue then return end
+
+    local sourceId = selectedLastValue(sourceValue)
+    local targetId = selectedLastValue(targetValue)
+    if sourceId == targetId then return end
+
+    local sourceObj, sourceType
+    if sourceId > 0 then
+        sourceObj = AngryAssign_Pages[sourceId]
+        sourceType = "page"
+    else
+        sourceObj = AngryAssign_Categories[-sourceId]
+        sourceType = "category"
+    end
+    if not sourceObj then return end
+
+    local targetObj, targetType
+    if targetId > 0 then
+        targetObj = AngryAssign_Pages[targetId]
+        targetType = "page"
+    else
+        targetObj = AngryAssign_Categories[-targetId]
+        targetType = "category"
+    end
+    if not targetObj then return end
+    
+    -- Circular Dependency Check
+    if sourceType == "category" then
+        if position == "into" then
+            if targetType ~= "category" then return end
+            -- Check if target is descendant of source
+             local cid = targetObj.Id
+             while cid do
+                 if cid == sourceObj.Id then self:Print("Cannot move into self.") return end
+                 local p = AngryAssign_Categories[cid]
+                 if p then cid = p.CategoryId else cid = nil end
+             end
+        else
+            -- Sibling check
+            local cid = targetObj.CategoryId
+            while cid do
+                if cid == sourceObj.Id then self:Print("Cannot move into self.") return end
+                local p = AngryAssign_Categories[cid]
+                if p then cid = p.CategoryId else cid = nil end
+            end
+        end
+    end
+
+    local newParentId, newIndex
+    position = position or "after"
+    
+    if position == "into" and targetType == "category" then
+        newParentId = targetObj.Id
+        local maxIdx = 0
+        for _, p in pairs(AngryAssign_Pages) do
+            if p.CategoryId == newParentId and (p.Index or 0) > maxIdx then maxIdx = p.Index or 0 end
+        end
+        for _, c in pairs(AngryAssign_Categories) do
+            if c.CategoryId == newParentId and (c.Index or 0) > maxIdx then maxIdx = c.Index or 0 end
+        end
+        newIndex = maxIdx + 1
+    elseif position == "into_start" and targetType == "category" then
+        newParentId = targetObj.Id
+        local minIdx = 0
+        -- Find min index? Just set to something low like -1, sort will handle it.
+        -- But searching existing min is safer if we want to be clean.
+        -- Actually, indices are normalized 1..N. So 0 is safe.
+        -- Or 0.5.
+        newIndex = 0
+    elseif position == "before" then
+        newParentId = targetObj.CategoryId
+        newIndex = (targetObj.Index or 0) - 0.5
+    else -- "after"
+        newParentId = targetObj.CategoryId
+        newIndex = (targetObj.Index or 0) + 0.5
+    end
+
+    -- Apply Change
+    sourceObj.CategoryId = newParentId
+    sourceObj.Index = newIndex
+    
+    -- Normalize Indices
+    local siblings = {}
+    for _, p in pairs(AngryAssign_Pages) do
+        if p.CategoryId == newParentId then table.insert(siblings, p) end
+    end
+    for _, c in pairs(AngryAssign_Categories) do
+        if c.CategoryId == newParentId then table.insert(siblings, c) end
+    end
+    
+    table.sort(siblings, function(a, b) 
+        local ia = a.Index or 0
+        local ib = b.Index or 0
+        if ia == ib then return a.Name < b.Name end
+        return ia < ib
+    end)
+    
+    for i, obj in ipairs(siblings) do
+        obj.Index = i
+        if obj.Id and AngryAssign_Pages[obj.Id] == obj then
+            AngryAssign:PageUpdated(obj.Id)
+        elseif obj.Id and AngryAssign_Categories[obj.Id] == obj then
+            AngryAssign:CategoryUpdated(obj.Id)
+        end
+    end
+    
+    self:UpdateTree()
 end
 
 function AngryAssign:UpdateTree(id)
@@ -2155,30 +2286,35 @@ function AngryAssign:NextPage(reverse)
     end
     if not page.CategoryId then return end
 
-    local destPage = nil
-
+    local siblings = {}
     for _, p in pairs(AngryAssign_Pages) do
         if p.CategoryId and p.CategoryId == page.CategoryId then
-            if reverse then
-                -- Previous: Largest Name < Current
-                if p.Name < page.Name then
-                    if (not destPage) or (p.Name > destPage.Name) then
-                        destPage = p
-                    end
-                end
-            else
-                -- Next: Smallest Name > Current
-                if p.Name > page.Name then
-                    if (not destPage) or (p.Name < destPage.Name) then
-                        destPage = p
-                    end
-                end
-            end
+            table.insert(siblings, p)
         end
     end
 
-    if destPage then
-        return self:DisplayPage(destPage.Id)
+    -- Use the same sort order as the Tree
+    table.sort(siblings, function(a, b)
+        local ia = a.Index
+        local ib = b.Index
+        if ia and ib then
+            if ia == ib then return a.Name < b.Name end
+            return ia < ib
+        elseif ia then return true
+        elseif ib then return false
+        else return a.Name < b.Name end
+    end)
+
+    for i, p in ipairs(siblings) do
+        if p.Id == page.Id then
+            local dest = siblings[reverse and (i - 1) or (i + 1)]
+            if dest then
+                self:DisplayPage(dest.Id)
+            else
+                self:Print(reverse and "Already at first page." or "Already at last page.")
+            end
+            return
+        end
     end
 end
 
@@ -2695,7 +2831,6 @@ function AngryAssign:ToggleDisplay()
         self:ShowDisplay()
     end
 end
-
 
 function AngryAssign:CreateDisplay()
     local frame = CreateFrame("Frame", nil, UIParent)
