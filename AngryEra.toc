@@ -2,6 +2,7 @@
 ## Title: Angry Era
 ## Author: Mikinho
 ## X-Original-Author: Ermad
+## Notes: Powerful raid assignment tool for Classic Era. Features dynamic templates, drag-and-drop organization, and markdown support.
 ## Version: @project-version@
 ## X-Timestamp: @project-date-integer@
 ## SavedVariables: AngryAssign_Pages,AngryAssign_Categories,AngryAssign_State,AngryAssign_Config,AngryAssign_Templates

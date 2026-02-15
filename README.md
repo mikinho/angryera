@@ -1,6 +1,17 @@
-This addon was originally written by the guild Angry (US-Illidan) to handle assignments during raids.  It was later rewritten and maintained by **Eblis** in <Pugs not drugs> (US-Pagle) to handle work in Classic Era and later Classic expansions.  It provides a convenient way to store and share assignments for different bosses, allowing editing by multiple people (officers2/raid assistants), and displaying the information to raiders in a configurable and readable format.
+**AngryEra** is a modern fork of the legendary AngryAssignments. While initially restored to optimize the experience for **Classic Era, Hardcore, and Season of Discovery**, it is fully compatible with **all versions of World of Warcraft** (Retail, Cataclysm, Classic).
 
-Using AA as a raider
+Designed for raid leaders who demand flexibility and speed, AngryEra revitalizes assignment management:
+
+*   **Dynamic Variables**: Define key roles (e.g., `MT=PlayerName`) once, and watch every boss assignment update instantly.
+*   **Mustache Logic**: Automate assignments with logic like `{{#classes.WARRIOR}}` based on your live raid roster.
+*   **Drag & Drop**: Effortlessly organize pages and categories with intuitive drag-and-drop controls.
+*   **Markdown Support**: Create clear, formatted strategies with headers, bold text, and lists.
+*   **Raid Templates**: Includes pre-loaded, optimized strategies for MC, BWL, AQ40, and Naxxramas.
+*   **Modern UI**: A polished interface with pixel-perfect alignment and smarter context menus.
+
+Ensure your team knows exactly what to do, whether you're organizing a PUG or leading a hardcore progression guild.
+
+Using AngryEra as a raider
 ------------------------------
 First, you'll likely want to configure a keybinding for the "Toggle Display" function (it should appear under "Angry Assignments" in your game keybindings menu), this will let you easily show/hide the on-screen assignments display during raids.  
 
