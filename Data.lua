@@ -264,6 +264,7 @@ local AngryEra_RaidUtility = {
         },
         ["JoL"] = {
             ["name"] = "Judgement of Light",
+            ["shortName"] = "JoL",
             ["icon"] = "spell_holy_healingaura"
         },
         ["JoW"] = {
@@ -465,7 +466,7 @@ for category, items in pairs(AngryEra_RaidUtility) do
         -- Register abbreviation (e.g. {sw})
         local tag = "{" .. key:lower() .. "}"
         app.IconTable[tag] = iconTexture
-        app.UtilityChatMap[tag] = info.name
+        app.UtilityChatMap[tag] = info.shortName or info.name
 
         -- Register full name (e.g. {shield wall})
         local nameTag = "{" .. info.name:lower() .. "}"
