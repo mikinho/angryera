@@ -173,7 +173,7 @@ local function ProcessTag(tag)
     end
 
     -- Check named icon {icon name}
-    local iconName = lowerTag:match("{icon%s+([%w_]+)}")
+    local iconName = lowerTag:match("^{icon%s+([%w_%-]+)%s*}$")
     if iconName then
         return "|TInterface\\Icons\\"..iconName..":0|t"
     end

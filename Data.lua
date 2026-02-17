@@ -264,11 +264,11 @@ local AngryEra_RaidUtility = {
         },
         ["JoL"] = {
             ["name"] = "Judgement of Light",
-            ["icon"] = "spell_holy_judgmentoflight"
+            ["icon"] = "spell_holy_healingaura"
         },
         ["JoW"] = {
             ["name"] = "Judgement of Wisdom",
-            ["icon"] = "spell_holy_judgmentofwisdom"
+            ["icon"] = "spell_holy_righteousnessaura"
         },
         ["LoH"] = {
             ["name"] = "Lay on Hands",
@@ -294,7 +294,7 @@ local AngryEra_RaidUtility = {
         },
         ["Fade"] = {
             ["name"] = "Fade",
-            ["icon"] = "spell_magic_lesserinvisibilty"
+            ["icon"] = "spell_magic_lesserinvisibility"
         },
         ["Fort"] = {
             ["name"] = "Power Word: Fortitude",
@@ -376,7 +376,7 @@ local AngryEra_RaidUtility = {
         },
         ["CoE"] = {
             ["name"] = "Curse of Elements",
-            ["icon"] = "spell_shadow_curseofelementals"
+            ["icon"] = "spell_shadow_chilltouch"
         },
         ["CoR"] = {
             ["name"] = "Curse of Recklessness",
@@ -384,7 +384,7 @@ local AngryEra_RaidUtility = {
         },
         ["CoS"] = {
             ["name"] = "Curse of Shadow",
-            ["icon"] = "spell_shadow_curseofshadow"
+            ["icon"] = "spell_shadow_curseofachimonde"
         },
         ["HS"] = {
             ["name"] = "Healthstone",
