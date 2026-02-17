@@ -140,6 +140,7 @@ local VERSION_ValidRaid = 4
 local ColorTable = app.ColorTable
 local IconTable = app.IconTable
 local UtilityChatMap = app.UtilityChatMap
+local UtilityChatData = app.UtilityChatData
 
 -- Ensure ProcessTag uses this table correctly
 local function ProcessTag(tag)
@@ -3769,6 +3770,15 @@ function AngryAssign:ProcessPageForOutput(page)
             return chatMap[lowerTag] 
         end
 
+        if UtilityChatData and UtilityChatData[lowerTag] then
+            local data = UtilityChatData[lowerTag]
+            if AngryAssign:GetConfig("chatoutput") == "Acronym" then
+                return data.key
+            else
+                return data.name
+            end
+        end
+
         if UtilityChatMap[lowerTag] then 
             return UtilityChatMap[lowerTag] 
         end
@@ -3947,6 +3957,7 @@ local configDefaults = {
     backdropColor = "00000080",
     glowColor = "FF0000",
     editBoxFont = false,
+    chatoutput = "Acronym",
 }
 
 function AngryAssign:GetConfig(key)
@@ -4233,6 +4244,17 @@ function AngryAssign:OnInitialize()
                         get = function(info) return self:GetConfig("hideoncombat") end,
                         set = function(info, val)
                             self:SetConfig("hideoncombat", val)
+                        end
+                    },
+                    chatoutput = {
+                        type = "select",
+                        order = 3.5,
+                        name = "Chat Output Format",
+                        desc = "How spells should be displayed when outputting to chat (e.g. {jol})",
+                        values = { ["Name"] = "Spell Name", ["Acronym"] = "Acronym" },
+                        get = function(info) return self:GetConfig("chatoutput") end,
+                        set = function(info, val)
+                            self:SetConfig("chatoutput", val)
                         end
                     },
                     scale = {

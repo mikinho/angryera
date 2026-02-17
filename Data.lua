@@ -264,7 +264,6 @@ local AngryEra_RaidUtility = {
         },
         ["JoL"] = {
             ["name"] = "Judgement of Light",
-            ["shortName"] = "JoL",
             ["icon"] = "spell_holy_healingaura"
         },
         ["JoW"] = {
@@ -459,6 +458,7 @@ if isTBC then
 end
 
 app.UtilityChatMap = {}
+app.UtilityChatData = {}
 for category, items in pairs(AngryEra_RaidUtility) do
     for key, info in pairs(items) do
         local iconTexture = "|TInterface\\Icons\\" .. info.icon .. ":0|t"
@@ -466,12 +466,14 @@ for category, items in pairs(AngryEra_RaidUtility) do
         -- Register abbreviation (e.g. {sw})
         local tag = "{" .. key:lower() .. "}"
         app.IconTable[tag] = iconTexture
-        app.UtilityChatMap[tag] = info.shortName or info.name
+        app.UtilityChatMap[tag] = info.name
+        app.UtilityChatData[tag] = { name = info.name, key = key }
 
         -- Register full name (e.g. {shield wall})
         local nameTag = "{" .. info.name:lower() .. "}"
         app.IconTable[nameTag] = iconTexture
         app.UtilityChatMap[nameTag] = info.name
+        app.UtilityChatData[nameTag] = { name = info.name, key = key }
     end
 end
 -------------------------------------------------------------------------------
