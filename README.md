@@ -78,6 +78,18 @@ You can define custom variables for each page or category to simplify your templ
 **Class Coloring:**
 Names of players in your Raid or Guild will automatically be **class-colored** when displayed in the assignment window.
 
+Importing
+---------
+
+You can import pages and categories by string. This is useful for sharing assignments or backing them up.
+
+1. Click standard **Menu** button at the bottom left of the window.
+2. Select **Import Page**.
+3. Paste your content.
+   * If the content contains headers (lines starting with `# `), a **Category** will be created with individual pages for each header.
+   * If no headers are found, a single **Page** will be created.
+4. Enter a name. If importing a category, this will be the Category Name. If importing a single page, this will be the Page Name.
+
 Markdown Support
 ----------------
 

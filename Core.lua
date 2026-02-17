@@ -1766,6 +1766,180 @@ local function AngryAssign_TreeMenuClick(widget, event, uniquevalue)
     end
 end
 
+local function AngryAssign_ImportPage()
+    local frame = AceGUI:Create("Window")
+    frame:SetTitle("Import Category or Page")
+    frame:SetLayout("Flow")
+    frame:SetWidth(500)
+    frame:SetHeight(400)
+    frame:EnableResize(true)
+    
+    frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
+    
+    local nameBox = AceGUI:Create("EditBox")
+    nameBox:SetLabel("Name")
+    nameBox:SetFullWidth(true)
+    nameBox:SetFocus()
+    frame:AddChild(nameBox)
+    
+    local contentBox = AceGUI:Create("MultiLineEditBox")
+    contentBox:SetLabel("Content")
+    contentBox:SetFullWidth(true)
+    contentBox:SetNumLines(15) 
+    frame:AddChild(contentBox)
+    
+    local importBtn = AceGUI:Create("Button")
+    importBtn:SetText("Import")
+    importBtn:SetFullWidth(true)
+    
+    -- Move logic to separate function for re-use in confirmation callback
+    -- Move logic to separate function for re-use in confirmation callback
+    local function DoImport(nameStr, contentStr)
+        if not nameStr or nameStr:match("^%s*$") then
+            print("Please enter a name.")
+            return
+        end
+        if not contentStr then contentStr = "" end
+        
+        -- Logic: Check for headers
+        local headers = {}
+        -- Prepend newline to ensure start of string match
+        local searchStr = "\n" .. contentStr
+        
+        -- Find all headers: newline + # + space + title
+        -- searchStr has prepended \n.
+        -- Match `\n# `
+        for startPos, title in searchStr:gmatch("()\n# ([^\n]+)") do
+            if #headers > 0 then
+                -- Previous header ends before this new header starts (at the newline)
+                headers[#headers].contentEnd = startPos - 1
+            end
+            
+            table.insert(headers, { 
+                title = title:match("^%s*(.-)%s*$"), 
+                headerStart = startPos + 1 -- Skip the newline, start at #
+            })
+        end
+        
+        -- Close last header
+        if #headers > 0 then
+            headers[#headers].contentEnd = #searchStr
+        end
+        
+        if #headers == 0 then
+            -- Single Page
+            -- Check if it exists for overwrite logic
+            local existingId
+            for _, page in pairs(AngryAssign_Pages) do
+                if page.Name == nameStr and not page.CategoryId then
+                    existingId = page.Id
+                    break
+                end
+            end
+
+            if existingId then
+                 -- Update existing
+                 AngryAssign:UpdateContents(existingId, contentStr)
+                 AngryAssign:RenamePage(existingId, nameStr) -- Updates timestamp/hash
+            else
+                 local success, err = AngryAssign:CreatePage(nameStr, contentStr, nil, nil)
+                 if not success then print("Error: "..(err or "")) end
+            end
+            frame:Hide()
+        else
+            -- Category
+            local catId
+            for _, cat in pairs(AngryAssign_Categories) do
+                if cat.Name == nameStr then
+                    catId = cat.Id
+                    break
+                end
+            end
+            
+            if not catId then
+                local success, err, newId = AngryAssign:CreateCategory(nameStr)
+                if success then 
+                    catId = newId
+                else
+                    print("Error creating category: " .. (err or ""))
+                    return
+                end
+            end
+            
+            if catId then
+                for i, h in ipairs(headers) do
+                    local block = searchStr:sub(h.headerStart, h.contentEnd)
+                    
+                    -- Check if page exists in this category
+                    local pageId
+                    for _, p in pairs(AngryAssign_Pages) do
+                        if p.CategoryId == catId and p.Name == h.title then
+                            pageId = p.Id
+                            break
+                        end
+                    end
+                    
+                    if pageId then
+                        AngryAssign:UpdateContents(pageId, block)
+                        AngryAssign_Pages[pageId].Index = i -- Update index
+                        AngryAssign:PageUpdated(pageId)
+                    else
+                        AngryAssign:CreatePage(h.title, block, catId, i)
+                    end
+                end
+                frame:Hide()
+            end
+        end
+        AngryAssign:UpdateTree()
+    end
+
+    importBtn:SetCallback("OnClick", function()
+        nameStr = nameBox:GetText()
+        contentStr = contentBox:GetText()
+
+        if not nameStr or nameStr:match("^%s*$") then
+            print("Please enter a name.")
+            return
+        end
+        
+        -- Check if exists
+        local exists = false
+        -- Check headers to know if we are looking for a Category or a Page
+        local hasHeaders = contentStr:match("\n# ") or contentStr:match("^# ")
+        
+        if hasHeaders then
+            -- Category Check
+            for _, cat in pairs(AngryAssign_Categories) do
+                if cat.Name == nameStr then exists = true break end
+            end
+        else
+            -- Page Check (Root only)
+            for _, page in pairs(AngryAssign_Pages) do
+                if page.Name == nameStr and not page.CategoryId then exists = true break end
+            end
+        end
+        
+        if exists then
+            local popup_name = "AngryAssign_ImportOverwrite"
+            if StaticPopupDialogs[popup_name] == nil then
+                StaticPopupDialogs[popup_name] = {
+                    text = "A %s named \"%s\" already exists.\nOverwrite?",
+                    button1 = YES,
+                    button2 = NO,
+                    whileDead = true,
+                    hideOnEscape = true,
+                    timeout = 0,
+                    OnAccept = function() DoImport(nameStr, contentStr) end,
+                }
+            end
+            StaticPopup_Show(popup_name, hasHeaders and "category" or "page", nameStr)
+        else
+            DoImport(nameStr, contentStr)
+        end
+    end)
+    frame:AddChild(importBtn)
+end
+
 local function AngryAssign_MainMenu(frame)
     if not AngryAssign_DropDown then
         AngryAssign_DropDown = CreateFrame("Frame", "AngryAssignMenuFrame", UIParent, "UIDropDownMenuTemplate")
@@ -1774,6 +1948,7 @@ local function AngryAssign_MainMenu(frame)
     local menu = {
         { text = "Add Page", func = AngryAssign_AddPage, notCheckable = true },
         { text = "Add Category", func = AngryAssign_AddCategory, notCheckable = true },
+        { text = "Import...", func = AngryAssign_ImportPage, notCheckable = true },
         { text = "Load Raid Template", func = AngryAssign_LoadRaidMenu, notCheckable = true },
         { text = " ", isTitle = true, notCheckable = true },
         { text = "Manage Pages", func = function() AngryAssign:ShowBulkManagement() end, notCheckable = true },
@@ -2073,9 +2248,7 @@ local function GetTree_Sort(a, b)
             return a.index < b.index
         end
     elseif a.index then
-        return true -- a has index (priority), b does not (legacy/new?)
-        -- Actually, if we want un-indexed items to be at end:
-        -- return true 
+        return true 
     elseif b.index then
         return false
     else
@@ -2572,8 +2745,8 @@ function AngryAssign:CreateCategory(nameOrFrame)
         AngryAssign_State.tree.groups[ -id ] = true
     end
     self:UpdateTree()
-    
-    return true
+
+    return true, nil, id
 end
 
 function AngryAssign:RenameCategory(id, nameOrFrame)
@@ -2769,7 +2942,6 @@ function AngryAssign:IsGuildRaid()
     
     return false
 end
-    
     
 function AngryAssign:IsValidRaid()
     if self:GetConfig("allowall") then
@@ -3356,8 +3528,6 @@ function AngryAssign:UpdateDisplayed()
         end
     end
     
-
-
     -- Markdown Support
     text = self:ProcessMarkdown(text)
 
