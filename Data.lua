@@ -202,7 +202,7 @@ local AngryEra_RaidUtility = {
         },
         ["Amplify"] = {
             ["name"] = "Amplify Magic",
-            ["icon"] = "spell_nature_abolishmagic"
+            ["icon"] = "spell_holy_flashheal"
         },
         ["Block"] = {
             ["name"] = "Ice Block",
@@ -248,7 +248,7 @@ local AngryEra_RaidUtility = {
         },
         ["Cleanse"] = {
             ["name"] = "Cleanse",
-            ["icon"] = "spell_holy_renew"
+            ["icon"] = "spell_holy_purify"
         },
         ["DI"] = {
             ["name"] = "Divine Intervention",
@@ -372,7 +372,7 @@ local AngryEra_RaidUtility = {
     ["Warlock"] = {
         ["Banish"] = {
             ["name"] = "Banish",
-            ["icon"] = "spell_shadow_cripple"
+            ["icon"] = "spell_shadow_banish"
         },
         ["CoE"] = {
             ["name"] = "Curse of Elements",
