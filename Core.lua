@@ -1658,6 +1658,11 @@ function AngryAssign_PageMenu(pageId)
             { text = "Rename", notCheckable = true, func = function(frame, pageId) AngryAssign_RenamePage(pageId) end },
             { text = "Delete", notCheckable = true, func = function(frame, pageId) AngryAssign_DeletePage(pageId) end },
             { text = "Edit Variables", notCheckable = true, func = function(frame, pageId) AngryAssign_EditVariables(pageId, "page") end },
+            { text = "Export", notCheckable = true, hasArrow = true, menuList = {
+                { text = "JSON", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "page", "JSON") end },
+                { text = "Markdown", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "page", "Markdown") end },
+                { text = "Output", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "page", "Output") end },
+            } },
             { text = "Category", notCheckable = true, hasArrow = true },
         }
     end
@@ -1669,14 +1674,15 @@ function AngryAssign_PageMenu(pageId)
     PagesDropDownList[2].disabled = not permission
     PagesDropDownList[3].arg1 = pageId
     PagesDropDownList[4].arg1 = pageId
+    for _, item in ipairs(PagesDropDownList[5].menuList) do item.arg1 = pageId end
 
     local categories = AngryAssign_CategoryMenuList(pageId)
     if categories ~= nil then
-        PagesDropDownList[5].menuList = categories
-        PagesDropDownList[5].disabled = false
+        PagesDropDownList[6].menuList = categories
+        PagesDropDownList[6].disabled = false
     else
-        PagesDropDownList[5].menuList = {}
-        PagesDropDownList[5].disabled = true
+        PagesDropDownList[6].menuList = {}
+        PagesDropDownList[6].disabled = true
     end
 
     return PagesDropDownList
@@ -1696,6 +1702,11 @@ local function AngryAssign_CategoryMenu(catId)
             { text = "Save as Template", notCheckable = true, func = function(frame, pageId) AngryAssign_SaveTemplatePopup(pageId) end },
             { text = "Delete", notCheckable = true, func = function(frame, pageId) AngryAssign_DeleteCategory(pageId) end },
             { text = "Edit Variables", notCheckable = true, func = function(frame, pageId) AngryAssign_EditVariables(pageId, "category") end },
+            { text = "Export", notCheckable = true, hasArrow = true, menuList = {
+                { text = "JSON", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "JSON") end },
+                { text = "Markdown", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "Markdown") end },
+                { text = "Output", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "Output") end },
+            } },
             { text = "Category", notCheckable = true, hasArrow = true },
         }
     end
@@ -1704,15 +1715,15 @@ local function AngryAssign_CategoryMenu(catId)
     CategoriesDropDownList[3].arg1 = catId 
     CategoriesDropDownList[4].arg1 = catId
     CategoriesDropDownList[5].arg1 = catId
-    CategoriesDropDownList[6].arg1 = catId
+    for _, item in ipairs(CategoriesDropDownList[6].menuList) do item.arg1 = catId end
 
     local categories = AngryAssign_CategoryMenuList(-catId)
     if categories ~= nil then
-        CategoriesDropDownList[6].menuList = categories
-        CategoriesDropDownList[6].disabled = false
+        CategoriesDropDownList[7].menuList = categories
+        CategoriesDropDownList[7].disabled = false
     else
-        CategoriesDropDownList[6].menuList = {}
-        CategoriesDropDownList[6].disabled = true
+        CategoriesDropDownList[7].menuList = {}
+        CategoriesDropDownList[7].disabled = true
     end
 
     return CategoriesDropDownList
@@ -3623,8 +3634,6 @@ function AngryAssign:OutputDisplayed(id)
         local renderedText, _ = self:RenderPageContent(page, ctx)
         output = renderedText
         
-
-
         -- Process Tags (Icons, Spells, Class Names) - Single Pass
         -- We look for anything inside {} and replace it based on logic or table lookup
         output = output:gsub("{(.-)}", function(tagContent)
@@ -3634,9 +3643,6 @@ function AngryAssign:OutputDisplayed(id)
             -- We can reuse IconTable keys, but we need to map them to Chat-Friendly strings
             -- Since IconTable maps to TEXTURES (|T...|t), we need a specific chat map here.
             local chatMap = {
-                ["{star}"] = "{rt1}", ["{circle}"] = "{rt2}", ["{diamond}"] = "{rt3}",
-                ["{triangle}"] = "{rt4}", ["{moon}"] = "{rt5}", ["{square}"] = "{rt6}",
-                ["{cross}"] = "{rt7}", ["{x}"] = "{rt7}", ["{skull}"] = "{rt8}",
                 ["{healthstone}"] = "{hs}", ["{hs}"] = "Healthstone",
                 ["{damage}"] = "Damage", ["{dps}"] = "Damage",
                 ["{tank}"] = "Tanks", ["{healer}"] = "Healers",
@@ -3723,6 +3729,202 @@ function AngryAssign:OutputDisplayed(id)
             end
         end
     end
+end
+
+function AngryAssign:ProcessPageForOutput(page)
+    local output = page.Contents
+    local ctx = self:GetTemplateContext()
+    local renderedText, _ = self:RenderPageContent(page, ctx)
+    output = renderedText
+    
+    -- Process Tags (Icons, Spells, Class Names) - Single Pass
+    output = output:gsub("{(.-)}", function(tagContent)
+        local lowerTag = "{"..tagContent:lower().."}"
+
+        -- Direct Icon Replacements (star -> rt1, etc.)
+        local chatMap = {
+            ["{healthstone}"] = "{hs}", ["{hs}"] = "Healthstone",
+            ["{damage}"] = "Damage", ["{dps}"] = "Damage",
+            ["{tank}"] = "Tanks", ["{healer}"] = "Healers",
+            ["{bloodlust}"] = "Bloodlust", ["{bl}"] = "Bloodlust",
+            ["{hero}"] = "Heroism", ["{heroism}"] = "Heroism",
+            ["{hunter}"] = LOCALIZED_CLASS_NAMES_MALE["HUNTER"],
+            ["{warrior}"] = LOCALIZED_CLASS_NAMES_MALE["WARRIOR"],
+            ["{rogue}"] = LOCALIZED_CLASS_NAMES_MALE["ROGUE"],
+            ["{mage}"] = LOCALIZED_CLASS_NAMES_MALE["MAGE"],
+            ["{priest}"] = LOCALIZED_CLASS_NAMES_MALE["PRIEST"],
+            ["{warlock}"] = LOCALIZED_CLASS_NAMES_MALE["WARLOCK"],
+            ["{paladin}"] = LOCALIZED_CLASS_NAMES_MALE["PALADIN"],
+            ["{druid}"] = LOCALIZED_CLASS_NAMES_MALE["DRUID"],
+            ["{shaman}"] = LOCALIZED_CLASS_NAMES_MALE["SHAMAN"],
+            ["{dk}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
+            ["{deathknight}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
+            ["{monk}"] = LOCALIZED_CLASS_NAMES_MALE["MONK"],
+            ["{dh}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
+            ["{demonhunter}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
+            ["{evoker}"] = LOCALIZED_CLASS_NAMES_MALE["EVOKER"],
+        }
+
+        if chatMap[lowerTag] then 
+            return chatMap[lowerTag] 
+        end
+
+        if UtilityChatMap[lowerTag] then 
+            return UtilityChatMap[lowerTag] 
+        end
+
+        -- Handle Dynamic Tags (spell, boss, journal)
+        local type, id = tagContent:match("^(%a+)%s+(%d+)$")
+        if type then
+            type = type:lower()
+            id = tonumber(id)
+            if type == "spell" then return GetSpellLink(id) end
+            if type == "boss" and not isClassicTBC and not isClassicWrath then return select(5, EJ_GetEncounterInfo(id)) end
+            if type == "journal" and not isClassicTBC and not isClassicWrath then return C_EncounterJournal.GetSectionInfo(id) and C_EncounterJournal.GetSectionInfo(id).link end
+        end
+        
+        -- Strip Icon tags entirely for chat output
+        if tagContent:lower():match("^icon%s+") then return "" end
+
+        -- Default
+        return "{"..tagContent.."}"
+    end)
+
+    -- Strip Colors
+    output = output:gsub("(|c%w+)", function(c)
+         local lowerC = c:lower()
+         if ColorTable[lowerC] then return "" end
+         for i = #c - 1, 3, -1 do
+             local sub = lowerC:sub(1, i)
+             if ColorTable[sub] then return c:sub(i + 1) end
+         end
+         if lowerC:match("^|c%x+$") then return "" end
+         return c
+    end):gsub("|r", "")
+    
+    return output
+end
+
+-----------------
+-- Export Logic
+-----------------
+
+local function SerializeJSON(val)
+    if type(val) == "string" then
+        return string.format("%q", val):gsub("\\\n", "\\n")
+    elseif type(val) == "number" then
+        return tostring(val)
+    elseif type(val) == "boolean" then
+        return tostring(val)
+    elseif type(val) == "table" then
+        local parts = {}
+        local isArray = (#val > 0)
+        if isArray then
+            for _, v in ipairs(val) do table.insert(parts, SerializeJSON(v)) end
+            return "[" .. table.concat(parts, ",") .. "]"
+        else
+            -- Sort keys for stability
+            local keys = {}
+            for k in pairs(val) do table.insert(keys, k) end
+            table.sort(keys)
+            for _, k in ipairs(keys) do
+                table.insert(parts, string.format("%q:%s", k, SerializeJSON(val[k])))
+            end
+            return "{" .. table.concat(parts, ",") .. "}"
+        end
+    else
+        return "null"
+    end
+end
+
+local function AngryAssign_ShowExportWindow(text, title)
+    local frame = AceGUI:Create("Window")
+    frame:SetTitle("Export " .. title)
+    frame:SetLayout("Flow")
+    frame:SetWidth(600)
+    frame:SetHeight(500)
+    frame:EnableResize(true)
+    
+    frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
+    
+    local editBox = AceGUI:Create("MultiLineEditBox")
+    editBox:SetLabel("Copy the text below (Ctrl+C / Cmd+C)")
+    editBox:SetFullWidth(true)
+    editBox:SetFullHeight(true)
+    editBox:SetText(text)
+    editBox:DisableButton(true)
+    editBox:SetFocus()
+    frame:AddChild(editBox)
+end
+
+function AngryAssign:Export(id, type, format)
+    local exportText = ""
+    local title = ""
+    
+    if type == "page" then
+        local page = AngryAssign_Pages[id]
+        if not page then return end
+        title = page.Name
+        
+        if format == "JSON" then
+            local data = { name = page.Name, content = page.Contents }
+            exportText = SerializeJSON(data)
+        elseif format == "Markdown" then
+            local content = page.Contents
+            if not content:match("^# ") then
+                content = "# " .. page.Name .. "\n\n" .. content
+            end
+            exportText = content
+        elseif format == "Output" then
+            exportText = self:ProcessPageForOutput(page)
+        end
+        
+    elseif type == "category" then
+        local cat = AngryAssign_Categories[id]
+        if not cat then return end
+        title = cat.Name
+        
+        -- Gather Pages in Order
+        local pages = {}
+        for _, p in pairs(AngryAssign_Pages) do
+            if p.CategoryId == id then
+                table.insert(pages, p)
+            end
+        end
+        table.sort(pages, function(a,b) 
+            if a.Index and b.Index then return a.Index < b.Index end
+            return a.Name < b.Name 
+        end)
+        
+        if format == "JSON" then
+            local data = { name = cat.Name, pages = {} }
+            for _, p in ipairs(pages) do
+                table.insert(data.pages, { name = p.Name, content = p.Contents })
+            end
+            exportText = SerializeJSON(data)
+            
+        elseif format == "Markdown" then
+            local chunks = {}
+            for _, p in ipairs(pages) do
+                local content = p.Contents
+                if not content:match("^# ") then
+                    content = "# " .. p.Name .. "\n\n" .. content
+                end
+                table.insert(chunks, content)
+            end
+            exportText = table.concat(chunks, "\n\n")
+            
+        elseif format == "Output" then
+            local chunks = {}
+            for _, p in ipairs(pages) do
+                local processed = self:ProcessPageForOutput(p)
+                table.insert(chunks, processed)
+            end
+            exportText = table.concat(chunks, "\n\n")
+        end
+    end
+    
+    AngryAssign_ShowExportWindow(exportText, title .. " (" .. format .. ")")
 end
 
 -----------------

@@ -90,6 +90,14 @@ You can import pages and categories by string. This is useful for sharing assign
    * If no headers are found, a single **Page** will be created.
 4. Enter a name. If importing a category, this will be the Category Name. If importing a single page, this will be the Page Name.
 
+Exporting
+---------
+
+Right-click any page or category to **Export** it in one of three formats:
+* **JSON**: Used for backups or sharing full data structures.
+* **Markdown**: Raw text format. Great for sharing with other Raid Leaders.
+* **Output**: Processed text (with variables resolved and icons converted). Ideal for copying into Discord.
+
 Markdown Support
 ----------------
 
