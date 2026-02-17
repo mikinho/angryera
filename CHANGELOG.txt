@@ -1,5 +1,8 @@
-## v2.2.2
+## v2.3.0
 
+* New Feature: **Import/Export**:
+  * Easily **Import** pages or categories from text strings via the Menu. Supports automatically creating categories from headers (`# Header`).
+  * **Export** pages or categories to **JSON** (backup), **Markdown** (raw text), or **Output** (processed text for Discord).
 * Support: Added `AngryEra_TBC.toc` for Burning Crusade Anniversary (20505) integration.
 * Documentation: Updated repository description.
 
