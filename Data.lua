@@ -348,7 +348,7 @@ local AngryEra_RaidUtility = {
         },
         ["Cheap"] = {
             ["name"] = "Cheap Shot",
-            ["icon"] = "ability_rogue_cheapshot"
+            ["icon"] = "ability_cheapshot"
         },
         ["Feint"] = {
             ["name"] = "Feint",
