@@ -220,9 +220,17 @@ local AngryEra_RaidUtility = {
             ["name"] = "Remove Lesser Curse",
             ["icon"] = "spell_nature_removecurse"
         },
+        ["Pig"] = {
+            ["name"] = "Polymorph: Pig",
+            ["icon"] = "spell_magic_polymorphpig"
+        },
         ["Sheep"] = {
             ["name"] = "Polymorph",
             ["icon"] = "spell_nature_polymorph"
+        },
+        ["Turtle"] = {
+            ["name"] = "Polymorph: Turtle",
+            ["icon"] = "ability_hunter_pet_turtle"
         }
     },
     ["Paladin"] = {
@@ -338,6 +346,10 @@ local AngryEra_RaidUtility = {
             ["name"] = "Blind",
             ["icon"] = "spell_shadow_mindsteal"
         },
+        ["Cheap"] = {
+            ["name"] = "Cheap Shot",
+            ["icon"] = "ability_rogue_cheapshot"
+        },
         ["Feint"] = {
             ["name"] = "Feint",
             ["icon"] = "ability_rogue_feint"
@@ -345,6 +357,10 @@ local AngryEra_RaidUtility = {
         ["Kick"] = {
             ["name"] = "Kick",
             ["icon"] = "ability_kick"
+        },
+        ["Kidney"] = {
+            ["name"] = "Kidney Shot",
+            ["icon"] = "ability_rogue_kidneyshot"
         }
     },
     ["Shaman"] = {
