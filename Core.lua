@@ -1778,6 +1778,95 @@ local function AngryAssign_TreeMenuClick(widget, event, uniquevalue)
     end
 end
 
+local function AngryAssign_ParseJSON(str)
+    if type(str) ~= "string" then return nil end
+    local pos = 1
+    local len = #str
+    
+    local function skip()
+        while pos <= len and str:match("^%s", pos) do pos = pos + 1 end
+    end
+    
+    local function parseValue()
+        skip()
+        if pos > len then return nil end
+        local char = str:sub(pos, pos)
+        
+        if char == '"' then
+             pos = pos + 1
+             local start = pos
+             while pos <= len do
+                 local c = str:sub(pos, pos)
+                 if c == '"' then
+                     local val = str:sub(start, pos - 1)
+                     pos = pos + 1
+                     return val:gsub("\\\"", "\""):gsub("\\\\", "\\"):gsub("\\n", "\n")
+                 elseif c == "\\" then
+                     pos = pos + 2
+                 else
+                     pos = pos + 1
+                 end
+             end
+             return nil
+             
+        elseif char == '{' then
+             pos = pos + 1
+             skip()
+             local obj = {}
+             if str:sub(pos, pos) == '}' then pos = pos + 1 return obj end
+             while true do
+                 local key = parseValue() 
+                 if not key or type(key) ~= "string" then return nil end
+                 skip()
+                 if str:sub(pos, pos) ~= ':' then return nil end
+                 pos = pos + 1
+                 local val = parseValue()
+                 if val == nil then return nil end
+                 obj[key] = val
+                 skip()
+                 local nextC = str:sub(pos, pos)
+                 if nextC == '}' then pos = pos + 1 return obj end
+                 if nextC ~= ',' then return nil end
+                 pos = pos + 1
+             end
+             
+        elseif char == '[' then
+             pos = pos + 1
+             skip()
+             local arr = {}
+             if str:sub(pos, pos) == ']' then pos = pos + 1 return arr end
+             while true do
+                 local val = parseValue()
+                 if val == nil then return nil end
+                 table.insert(arr, val)
+                 skip()
+                 local nextC = str:sub(pos, pos)
+                 if nextC == ']' then pos = pos + 1 return arr end
+                 if nextC ~= ',' then return nil end
+                 pos = pos + 1
+             end
+             
+        elseif char == 't' then
+             if str:sub(pos, pos+3) == "true" then pos = pos + 4 return true end
+        elseif char == 'f' then
+             if str:sub(pos, pos+4) == "false" then pos = pos + 5 return false end
+        elseif char == 'n' then
+             if str:sub(pos, pos+3) == "null" then pos = pos + 4 return nil end
+        else
+             local start = pos
+             if char == '-' then pos = pos + 1 end
+             while pos <= len and str:match("^%d", pos) do pos = pos + 1 end
+             if str:sub(pos, pos) == '.' then
+                 pos = pos + 1
+                 while pos <= len and str:match("^%d", pos) do pos = pos + 1 end
+             end
+             return tonumber(str:sub(start, pos-1))
+        end
+    end
+    
+    return parseValue()
+end
+
 local function AngryAssign_ImportPage()
     local frame = AceGUI:Create("Window")
     frame:SetTitle("Import Category or Page")
@@ -1804,43 +1893,100 @@ local function AngryAssign_ImportPage()
     importBtn:SetText("Import")
     importBtn:SetFullWidth(true)
     
-    -- Move logic to separate function for re-use in confirmation callback
-    -- Move logic to separate function for re-use in confirmation callback
-    local function DoImport(nameStr, contentStr)
-        if not nameStr or nameStr:match("^%s*$") then
-            print("Please enter a name.")
+    local function DoImport(nameStr, contentStr, jsonData)
+        if jsonData then
+            if not nameStr or nameStr:match("^%s*$") then nameStr = jsonData.name end
+            if not nameStr or nameStr:match("^%s*$") then nameStr = "Imported" end
+
+            if jsonData.pages then
+                -- Category Import
+                local title = nameStr
+                local catId
+                for _, cat in pairs(AngryAssign_Categories) do
+                    if cat.Name == title then
+                        catId = cat.Id
+                        break
+                    end
+                end
+                
+                if not catId then
+                    local success, err, newId = AngryAssign:CreateCategory(title)
+                    if success then 
+                        catId = newId
+                    else
+                        print("Error creating category: " .. (err or ""))
+                        return
+                    end
+                end
+                
+                if catId then
+                    for i, pData in ipairs(jsonData.pages) do
+                        local pName = pData.name
+                        local pContent = pData.content or ""
+                        
+                        local pageId
+                        for _, p in pairs(AngryAssign_Pages) do
+                            if p.CategoryId == catId and p.Name == pName then
+                                pageId = p.Id
+                                break
+                            end
+                        end
+                         
+                        if pageId then
+                            AngryAssign:UpdateContents(pageId, pContent)
+                            AngryAssign_Pages[pageId].Index = i
+                            AngryAssign:PageUpdated(pageId)
+                        else
+                            AngryAssign:CreatePage(pName, pContent, catId, i)
+                        end
+                    end
+                    frame:Hide()
+                end
+            else
+                -- Single Page Import
+                local title = nameStr
+                local existingId
+                for _, page in pairs(AngryAssign_Pages) do
+                    if page.Name == title and not page.CategoryId then
+                        existingId = page.Id
+                        break
+                    end
+                end
+
+                if existingId then
+                    AngryAssign:UpdateContents(existingId, jsonData.content or "")
+                    AngryAssign:RenamePage(existingId, title)
+                    frame:Hide()
+                else
+                    local success, err = AngryAssign:CreatePage(title, jsonData.content or "", nil, nil)
+                    if not success then 
+                        print("Error: "..(err or ""))
+                    else
+                        frame:Hide()
+                    end
+                end
+            end
+            AngryAssign:UpdateTree()
             return
         end
-        if not contentStr then contentStr = "" end
-        
-        -- Logic: Check for headers
-        local headers = {}
-        -- Prepend newline to ensure start of string match
+
         local searchStr = "\n" .. contentStr
-        
-        -- Find all headers: newline + # + space + title
-        -- searchStr has prepended \n.
-        -- Match `\n# `
+        local headers = {}
         for startPos, title in searchStr:gmatch("()\n# ([^\n]+)") do
             if #headers > 0 then
-                -- Previous header ends before this new header starts (at the newline)
                 headers[#headers].contentEnd = startPos - 1
             end
-            
             table.insert(headers, { 
                 title = title:match("^%s*(.-)%s*$"), 
-                headerStart = startPos + 1 -- Skip the newline, start at #
+                headerStart = startPos + 1
             })
         end
-        
-        -- Close last header
         if #headers > 0 then
             headers[#headers].contentEnd = #searchStr
         end
         
         if #headers == 0 then
             -- Single Page
-            -- Check if it exists for overwrite logic
             local existingId
             for _, page in pairs(AngryAssign_Pages) do
                 if page.Name == nameStr and not page.CategoryId then
@@ -1850,9 +1996,8 @@ local function AngryAssign_ImportPage()
             end
 
             if existingId then
-                 -- Update existing
                  AngryAssign:UpdateContents(existingId, contentStr)
-                 AngryAssign:RenamePage(existingId, nameStr) -- Updates timestamp/hash
+                 AngryAssign:RenamePage(existingId, nameStr) 
             else
                  local success, err = AngryAssign:CreatePage(nameStr, contentStr, nil, nil)
                  if not success then print("Error: "..(err or "")) end
@@ -1881,8 +2026,6 @@ local function AngryAssign_ImportPage()
             if catId then
                 for i, h in ipairs(headers) do
                     local block = searchStr:sub(h.headerStart, h.contentEnd)
-                    
-                    -- Check if page exists in this category
                     local pageId
                     for _, p in pairs(AngryAssign_Pages) do
                         if p.CategoryId == catId and p.Name == h.title then
@@ -1893,7 +2036,7 @@ local function AngryAssign_ImportPage()
                     
                     if pageId then
                         AngryAssign:UpdateContents(pageId, block)
-                        AngryAssign_Pages[pageId].Index = i -- Update index
+                        AngryAssign_Pages[pageId].Index = i
                         AngryAssign:PageUpdated(pageId)
                     else
                         AngryAssign:CreatePage(h.title, block, catId, i)
@@ -1906,28 +2049,46 @@ local function AngryAssign_ImportPage()
     end
 
     importBtn:SetCallback("OnClick", function()
-        nameStr = nameBox:GetText()
-        contentStr = contentBox:GetText()
+        local nameStr = nameBox:GetText()
+        local contentStr = contentBox:GetText()
+        if not contentStr then contentStr = "" end
 
-        if not nameStr or nameStr:match("^%s*$") then
+        local jsonData
+        if contentStr:match("^%s*[{[]") then
+             jsonData = AngryAssign_ParseJSON(contentStr)
+        end
+        
+        if jsonData then
+            if not nameStr or nameStr == "" then nameStr = jsonData.name end
+        end
+
+        if (not nameStr or nameStr:match("^%s*$")) and not jsonData then
             print("Please enter a name.")
             return
         end
+        if not nameStr or nameStr:match("^%s*$") then nameStr = "Imported" end
         
-        -- Check if exists
         local exists = false
-        -- Check headers to know if we are looking for a Category or a Page
-        local hasHeaders = contentStr:match("\n# ") or contentStr:match("^# ")
-        
-        if hasHeaders then
-            -- Category Check
-            for _, cat in pairs(AngryAssign_Categories) do
-                if cat.Name == nameStr then exists = true break end
-            end
+        if jsonData then
+             if jsonData.pages then
+                 for _, cat in pairs(AngryAssign_Categories) do
+                     if cat.Name == nameStr then exists = true break end
+                 end
+             else
+                 for _, page in pairs(AngryAssign_Pages) do
+                     if page.Name == nameStr and not page.CategoryId then exists = true break end
+                 end
+             end
         else
-            -- Page Check (Root only)
-            for _, page in pairs(AngryAssign_Pages) do
-                if page.Name == nameStr and not page.CategoryId then exists = true break end
+            local hasHeaders = contentStr:match("\n# ") or contentStr:match("^# ")
+            if hasHeaders then
+                for _, cat in pairs(AngryAssign_Categories) do
+                    if cat.Name == nameStr then exists = true break end
+                end
+            else
+                for _, page in pairs(AngryAssign_Pages) do
+                    if page.Name == nameStr and not page.CategoryId then exists = true break end
+                end
             end
         end
         
@@ -1941,12 +2102,16 @@ local function AngryAssign_ImportPage()
                     whileDead = true,
                     hideOnEscape = true,
                     timeout = 0,
-                    OnAccept = function() DoImport(nameStr, contentStr) end,
+                    OnAccept = function() DoImport(nameStr, contentStr, jsonData) end,
                 }
             end
-            StaticPopup_Show(popup_name, hasHeaders and "category" or "page", nameStr)
+            local typeStr = "page"
+            if jsonData and jsonData.pages then typeStr = "category"
+            elseif not jsonData and (contentStr:match("\n# ") or contentStr:match("^# ")) then typeStr = "category" end
+            
+            StaticPopup_Show(popup_name, typeStr, nameStr)
         else
-            DoImport(nameStr, contentStr)
+            DoImport(nameStr, contentStr, jsonData)
         end
     end)
     frame:AddChild(importBtn)
