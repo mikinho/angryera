@@ -1,6 +1,24 @@
-## v2.3.0
+## v2.5.0
 
-* New Feature: **Import/Export**:
+* New Feature: **Recursive Category Export/Import**! Full categories with all sub-categories and pages can now be exported and imported as a single **Encoded AA** string.
+* New Feature: **Smart Import Conflict Resolution**. When importing a page or category that already exists, you can now choose to:
+    * **Replace** the existing item (preserving its exact position and sort order).
+    * **Import as New** (automatically appends a unique suffix like `(1)` to the name).
+* Improvement: **Import/Export Reliability**. Page and Category strings now use a shorter **AA:** prefix (`AA:Page:1:`) for efficiency.
+* Improvement: **UI Polish**:
+    * **Centralized Import**: Main menu now has a single "Import" category with sub-menus for **Encoded AA** and **JSON**.
+    * Added a **Search Box** with a clear icon to the tree view for easier navigation.
+    * Improved category and page **indentation** in the tree.
+    * Categories and pages now use distinct colors in the tree.
+
+## v2.4.0
+
+* New Feature: Added configuration option for chat output format (Name only or Acronym).
+* Fix: Improved permission checks for guild officer ranks.
+
+## v2.3.9
+
+* New Feature: **JSON Import/Export**:
   * Easily **Import** pages or categories from text strings via the Menu. Supports automatically creating categories from headers (`# Header`).
   * **Export** pages or categories to **JSON** (backup), **Markdown** (raw text), or **Output** (processed text for Discord).
 * Support: Added `AngryEra_TBC.toc` for Burning Crusade Anniversary (20505) integration.

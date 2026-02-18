@@ -89,28 +89,16 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 	local line = button.line
 	button.level = level
     
-    -- Force Toggle Position to Left (indented)
-    local toggle = button.toggle
-    if not toggle then
-         -- OptionsListButtonTemplate creates "toggle" key? 
-         -- Or maybe it's just a child? 
-         -- Actually AceGUI uses explicit toggle handling sometimes.
-         -- But CreateButton above uses OptionsListButtonTemplate which has $parentToggle.
-         -- And assigns button.toggle = _G[name.."Toggle"] usually?
-         -- Our code had `local toggle = button.toggle` in line 68. Correct.
-    end
-    
-    local xOffset = (level == 1) and 7 or 0
+    local indent = (level - 1) * 7 + 2
     toggle:ClearAllPoints()
-    toggle:SetPoint("LEFT", (level - 1) * 8 + xOffset, 1)
+    toggle:SetPoint("LEFT", indent, 1)
 
     -- Adjust Text & Icon
 	button.text:ClearAllPoints()
-    
+
     if icon then
 		button.icon:SetTexture(icon)
-        -- Interpreting as: Align icon with the toggle column (flat alignment relative to indentation)
-		button.icon:SetPoint("LEFT", (level - 1) * 8 + xOffset, 1)
+		button.icon:SetPoint("LEFT", indent, 1)
         button.text:SetPoint("LEFT", button.icon, "RIGHT", 2, 0)
 	else
 		button.icon:SetTexture(nil)
@@ -144,7 +132,7 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
         end
     end
 	
-	if canExpand or level == 1 then
+	if value < 0 then
 		button:SetNormalFontObject("GameFontNormal")
 		button:SetHighlightFontObject("GameFontHighlight")
 	else
@@ -611,7 +599,7 @@ local methods = {
 					end
 				end
 			elseif (v.visible ~= false or not self.filter) and
-			       (self.searchKeyword == nil or self.searchKeyword == "" or string.find(v.text, self.searchKeyword)) then
+			       (self.searchKeyword == nil or self.searchKeyword == "" or string.find(v.text:lower(), self.searchKeyword:lower(), 1, true)) then
 				addLine(self, v, tree, level, parent)
 			end
 		end
