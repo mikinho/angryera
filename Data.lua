@@ -416,6 +416,10 @@ local AngryEra_RaidUtility = {
             ["name"] = "Pummel",
             ["icon"] = "inv_gauntlets_04"
         },
+        ["Shout"] = {
+            ["name"] = "Challenging Shout",
+            ["icon"] = "ability_bullrush" -- This is the AoE Taunt
+        },
         ["Sunder"] = {
             ["name"] = "Sunder Armor",
             ["icon"] = "ability_warrior_sunder"
