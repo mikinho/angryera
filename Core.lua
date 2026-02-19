@@ -4401,6 +4401,7 @@ local function AngryAssign_ShowExportWindow(text, title)
     editBox:SetText(text)
     editBox:DisableButton(true)
     editBox:SetFocus()
+    editBox:HighlightText()
     frame:AddChild(editBox)
 end
 
