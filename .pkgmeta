@@ -50,3 +50,6 @@ externals:
 	libs/LibDropDownMenu:
 		url: https://github.com/HizurosWoWAddOns/LibDropDownMenu
 		tag: latest
+	libs/LibDeflate:
+		url: https://github.com/SafeteeWoW/LibDeflate
+		tag: latest
