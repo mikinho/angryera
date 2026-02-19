@@ -1,3 +1,7 @@
+## v2.6.2
+
+* Packaging: Further refined `LibDeflate` exclusions to ensure blacklisted files are not included.
+
 ## v2.6.1
 
 * Packaging: Excluded `LibDeflate` documentation and example files to resolve CurseForge upload issues.
