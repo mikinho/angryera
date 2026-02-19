@@ -1,3 +1,7 @@
+## v2.5.2
+
+* Improvement: Deleting a category now offers two options — **Delete Category Only** (pages and sub-categories are re-parented) or **Delete Category & Pages** (recursively removes all contents). Escape and Cancel safely dismiss the dialog.
+
 ## v2.5.1
 
 * Fix: Resolved a visual bug where the display background would appear offset during initialization.
