@@ -3962,6 +3962,11 @@ function AngryAssign:RenderPageContent(page, ctx)
         -- Merge Page Variables (Override Category)
         MergeAppVars(page.Vars)
 
+        -- Add Variables to Context for Mustache
+        for k, v in pairs(mergedVars) do
+             ctx[k] = v
+        end
+
         -- Render
         local success, result = pcall(LibMustache.render, text, ctx)
         if success then
@@ -3988,8 +3993,9 @@ function AngryAssign:ProcessMarkdown(text)
     -- Bold **text** -> White
     text = text:gsub("%*%*(.-)%*%*", "|cffffffff%1|r")
 
-    -- Italic _text_ -> Grey
-    text = text:gsub("_(.-)_", "|cffaaaaaa%1|r")
+    -- Italic *text* -> Grey (Changed from _text_ to avoid conflicts with icon/texture names)
+    -- Prevent matching across newlines to avoid breaking lists or other structures
+    text = text:gsub("%*([^\n*]-)%*", "|cffaaaaaa%1|r")
 
     return text
 end
