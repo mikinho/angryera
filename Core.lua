@@ -4346,7 +4346,6 @@ local function SerializeJSON(val)
     elseif type(val) == "boolean" then
         return tostring(val)
     elseif type(val) == "table" then
-    elseif type(val) == "table" then
         local parts = {}
         -- Detect array vs object
         local isArray = false
