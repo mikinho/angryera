@@ -2417,17 +2417,15 @@ local function AngryAssign_ImportPage()
         
         if exists then
             local popup_name = "AngryAssign_ImportOverwrite"
-            if StaticPopupDialogs[popup_name] == nil then
-                StaticPopupDialogs[popup_name] = {
-                    text = "A %s named \"%s\" already exists.\nOverwrite?",
-                    button1 = YES,
-                    button2 = NO,
-                    whileDead = true,
-                    hideOnEscape = true,
-                    timeout = 0,
-                    OnAccept = function() DoImport(nameStr, contentStr, jsonData) end,
-                }
-            end
+            StaticPopupDialogs[popup_name] = {
+                text = "A %s named \"%s\" already exists.\nOverwrite?",
+                button1 = YES,
+                button2 = NO,
+                whileDead = true,
+                hideOnEscape = true,
+                timeout = 0,
+                OnAccept = function() DoImport(nameStr, contentStr, jsonData) end,
+            }
             local typeStr = "page"
             if jsonData and jsonData.pages then typeStr = "category"
             elseif not jsonData and (contentStr:match("\n# ") or contentStr:match("^# ")) then typeStr = "category" end
