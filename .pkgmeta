@@ -59,6 +59,9 @@ enable-nolib-creation: no
 ignore:
   - README.md
   - CONTRIBUTING.md
-  - libs/LibDeflate/*/
+  - libs/LibDeflate/dev_docs
+  - libs/LibDeflate/docs
+  - libs/LibDeflate/examples
+  - libs/LibDeflate/tests
+  - libs/LibDeflate/tools
   - libs/LibDeflate/*.md
-  - libs/LibDeflate/.*
