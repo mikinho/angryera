@@ -1586,7 +1586,7 @@ local function AngryAssign_EditVariables(id, type)
 
     local vars = nil
     if type == "category" then
-        local cat = AngryAssign:GetCat(id)
+        local cat = AngryAssign_Categories[id]
         if cat then vars = cat.Vars end
     else
         local page = AngryAssign_Pages[id]
@@ -1628,7 +1628,7 @@ local function AngryAssign_EditVariables(id, type)
         end
 
         if type == "category" then
-            local cat = AngryAssign:GetCat(id)
+            local cat = AngryAssign_Categories[id]
             if cat then
                 cat.Vars = text
                 AngryAssign:CategoryUpdated(id)
@@ -3894,7 +3894,7 @@ function AngryAssign:GetTemplateContext()
                 unit.colored_name = "|c" .. RAID_CLASS_COLORS[class].colorStr .. name .. "|r"
                 ctx.rosterColors[name] = RAID_CLASS_COLORS[class].colorStr
             end
-            table.insert(ctx.classes[class], unit)
+            if ctx.classes[class] then table.insert(ctx.classes[class], unit) end
             table.insert(ctx.groups[1], unit)
         end
         return ctx
@@ -3938,33 +3938,29 @@ function AngryAssign:GetTemplateContext()
 end
 
 function AngryAssign:RenderPageContent(page, ctx)
-    local text = page.Contents
-    -- Normalize Pipes
-    text = text:gsub("||", "|")
+    local text = page.Contents:gsub("||", "|")
 
     local mergedVars = {}
+
+    -- Helper to merge variables strings
+    local function MergeAppVars(varStr)
+        if varStr and varStr ~= "" and varStr ~= "{}" then
+            local vars = app.ParseVariables(varStr)
+            for k, v in pairs(vars) do
+                mergedVars[k] = v
+            end
+        end
+    end
 
     if LibMustache then
         -- Merge Category Variables
         if page.CategoryId then
-            local cat = AngryAssign:GetCat(page.CategoryId)
-            if cat and cat.Vars then
-                local vars = app.ParseVariables(cat.Vars)
-                for k, v in pairs(vars) do
-                    ctx[k] = v
-                    mergedVars[k] = v
-                end
-            end
+            local cat = AngryAssign_Categories[page.CategoryId]
+            if cat then MergeAppVars(cat.Vars) end
         end
 
         -- Merge Page Variables (Override Category)
-        if page.Vars then
-             local vars = app.ParseVariables(page.Vars)
-             for k, v in pairs(vars) do
-                 ctx[k] = v
-                 mergedVars[k] = v
-             end
-        end
+        MergeAppVars(page.Vars)
 
         -- Render
         local success, result = pcall(LibMustache.render, text, ctx)
@@ -3977,26 +3973,22 @@ function AngryAssign:RenderPageContent(page, ctx)
 end
 
 function AngryAssign:ProcessMarkdown(text)
-    -- Headers (## Header) -> Gold
-    -- Lists (- Item) -> Bullet
-    local lines = {strsplit("\n", text)}
-    for i, line in ipairs(lines) do
-        local hLevel, content = line:match("^(#+)%s+(.*)")
-        if hLevel then
-            lines[i] = "|cffffd200" .. content:upper() .. "|r"
-        elseif line:match("^%-%s+") then
-             -- List items "- Item" -> Bullet
-             lines[i] = "  |cffffd200*|r " .. line:match("^%-%s+(.*)")
-        end
-    end
-    text = table.concat(lines, "\n")
+    -- Process Headers: # Header
+    -- Start of string
+    text = text:gsub("^(#+)%s+([^\n]+)", function(l, c) return "|cffffd200"..c:upper().."|r" end)
+    -- Start of line
+    text = text:gsub("\n(#+)%s+([^\n]+)", function(l, c) return "\n|cffffd200"..c:upper().."|r" end)
+
+    -- Process Lists: - Item
+    -- Start of string
+    text = text:gsub("^%-%s+([^\n]+)", "  |cffffd200*|r %1")
+    -- Start of line
+    text = text:gsub("\n%-%s+([^\n]+)", "\n  |cffffd200*|r %1")
 
     -- Bold **text** -> White
     text = text:gsub("%*%*(.-)%*%*", "|cffffffff%1|r")
 
-    -- Italic *text* -> Grey (Use _ for italic to avoid * conflict?)
-    -- Strict Markdown allows * or _.
-    -- Let's support _text_ for italics to be safe
+    -- Italic _text_ -> Grey
     text = text:gsub("_(.-)_", "|cffaaaaaa%1|r")
 
     return text
@@ -4012,7 +4004,7 @@ function AngryAssign:UpdateDisplayed()
 
     local text = page.Contents
 
-    -- Prepare Highlight Map (Optimization: O(1) lookup)
+    -- Prepare Highlight Map
     local highlightSet = {}
     local currentGroupStr = "g" .. (self:GetCurrentGroup() or 0)
 
@@ -4024,34 +4016,43 @@ function AngryAssign:UpdateDisplayed()
             highlightSet[token] = true
         end
     end
-    local highlightHex = self:GetConfig("highlightColor")
 
-    -- Mustache Templating & Merging
-    local ctx = self:GetTemplateContext()
-    local renderedText, mergedVars = self:RenderPageContent(page, ctx)
-    text = renderedText
-
-    -- Add Variables to Highlight Set (Generic)
-    for k, v in pairs(mergedVars) do
-         if type(v) == "string" and #v > 2 then
-             for word in v:gmatch("[^%s%p]+") do
-                 if #word > 2 then highlightSet[word:lower()] = true end
-             end
-         end
-    end
-
-    -- Add Guild Colors (Override generic)
+    -- Add Guild Colors
     if self.GuildColors then
         for name, color in pairs(self.GuildColors) do
             highlightSet[name:lower()] = color
         end
     end
 
-    -- Add Roster Colors to Highlight Set (LAST priority to override vars with Class Colors)
-    if ctx.rosterColors then
+    -- Add Roster Colors
+    local ctx = self:GetTemplateContext()
+    if ctx and ctx.rosterColors then
         for name, color in pairs(ctx.rosterColors) do
             highlightSet[name:lower()] = color
         end
+    end
+
+    local highlightHex = self:GetConfig("highlightColor")
+
+    -- Mustache Templating & Merging
+    local renderedText, mergedVars = self:RenderPageContent(page, ctx)
+    text = renderedText
+
+    local hasHighlight = next(highlightSet) ~= nil
+
+    -- Add Variables to Highlight Set (Generic)
+    for k, v in pairs(mergedVars) do
+         if type(v) == "string" and #v > 2 then
+             for word in v:gmatch("[^%s%p]+") do
+                 if #word > 2 then
+                     local lowerWord = word:lower()
+                     if highlightSet[lowerWord] == nil then
+                         highlightSet[lowerWord] = true
+                         hasHighlight = true
+                     end
+                 end
+             end
+         end
     end
     
     -- Markdown Support
@@ -4088,18 +4089,20 @@ function AngryAssign:UpdateDisplayed()
     text = text:gsub("(%b{})", ProcessTag)
 
     -- Process Highlights (Word Scan)
-    -- We only replace if the word exists in our highlightSet
-    text = text:gsub("([^%s%p]+)", function(word)
-        local val = highlightSet[word:lower()]
-        if val then
-            if type(val) == "string" then
-                 return string.format("|c%s%s|r", val, word)
-            else
-                 return string.format("|cff%s%s|r", highlightHex, word)
+    -- Optimization: Only scan if we actually have things to highlight
+    if hasHighlight then
+        text = text:gsub("([^%s%p]+)", function(word)
+            local val = highlightSet[word:lower()]
+            if val then
+                if type(val) == "string" then
+                     return string.format("|c%s%s|r", val, word)
+                else
+                     return string.format("|cff%s%s|r", highlightHex, word)
+                end
             end
-        end
-        return word -- Return original if no match
-    end)
+            return word -- Return original if no match
+        end)
+    end
 
     -- Render
     self.display_text:Clear()
@@ -4621,6 +4624,7 @@ function AngryAssign:OnInitialize()
         end
     end
 
+
     -- Run cleanup once on load
     self:CleanupOrphanedStates()
 
@@ -5082,10 +5086,20 @@ function AngryAssign:PLAYER_GUILD_UPDATE()
     self:PermissionsUpdated()
 end
 
+local guildUpdatePending = false
 function AngryAssign:GUILD_ROSTER_UPDATE(...)
     local canRequestRosterUpdate = ...
     self:ResetOfficerRank()
     self:UpdateGuildColors()
+    
+    if not guildUpdatePending then
+        guildUpdatePending = true
+        C_Timer.After(2, function()
+            guildUpdatePending = false
+            self:UpdateDisplayed()
+        end)
+    end
+
     if canRequestRosterUpdate and isClassic then
         GuildRoster()
     end
