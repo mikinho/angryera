@@ -2054,9 +2054,21 @@ local function AngryAssign_CategoryMenu(catId)
 end
 
 local AngryAssign_DropDown
+local clickTime = 0
+local clickValue = nil
 local function AngryAssign_TreeClick(widget, event, value, selected, button)
     HideDropDownMenu(1)
     local selectedId = selectedLastValue(value)
+
+    if button == "LeftButton" and selectedId > 0 then
+        if clickValue == value and (GetTime() - clickTime) < 0.3 then
+             AngryAssign_DisplayPage()
+             clickValue = nil
+             return false
+        end
+        clickTime = GetTime()
+        clickValue = value
+    end
     if selectedId < 0 then
         if button == "RightButton" then
             if not AngryAssign_DropDown then
