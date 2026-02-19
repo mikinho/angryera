@@ -348,7 +348,6 @@ end
 
 local function Button_OnDoubleClick(button)
 	local self = button.obj
-	local status = self.status or self.localstatus
 	local status = (self.status or self.localstatus).groups
 	status[button.uniquevalue] = not status[button.uniquevalue]
 	self:RefreshTree()
