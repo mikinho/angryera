@@ -1327,14 +1327,19 @@ local function AngryAssign_DeleteCategory(catId)
 
     if StaticPopupDialogs[popup_name] == nil then
         StaticPopupDialogs[popup_name] = {
-            button1 = OKAY,
-            button2 = CANCEL,
+            button1 = "Delete Category Only",
+            button2 = "Delete Category & Pages",
+            button3 = CANCEL,
             whileDead = true,
             hideOnEscape = true,
             preferredIndex = 3,
             OnAccept = function(self)
                 local id = self.data
                 AngryAssign:DeleteCategory(id)
+            end,
+            OnCancel = function(self)
+                local id = self.data
+                AngryAssign:DeleteCategoryAndChildren(id)
             end,
         }
     end
@@ -2105,16 +2110,16 @@ local function AngryAssign_ParseJSON(str)
     if type(str) ~= "string" then return nil end
     local pos = 1
     local len = #str
-    
+
     local function skip()
         while pos <= len and str:match("^%s", pos) do pos = pos + 1 end
     end
-    
+
     local function parseValue()
         skip()
         if pos > len then return nil end
         local char = str:sub(pos, pos)
-        
+
         if char == '"' then
              pos = pos + 1
              local start = pos
@@ -2131,14 +2136,14 @@ local function AngryAssign_ParseJSON(str)
                  end
              end
              return nil
-             
+
         elseif char == '{' then
              pos = pos + 1
              skip()
              local obj = {}
              if str:sub(pos, pos) == '}' then pos = pos + 1 return obj end
              while true do
-                 local key = parseValue() 
+                 local key = parseValue()
                  if not key or type(key) ~= "string" then return nil end
                  skip()
                  if str:sub(pos, pos) ~= ':' then return nil end
@@ -2152,7 +2157,7 @@ local function AngryAssign_ParseJSON(str)
                  if nextC ~= ',' then return nil end
                  pos = pos + 1
              end
-             
+
         elseif char == '[' then
              pos = pos + 1
              skip()
@@ -2168,7 +2173,7 @@ local function AngryAssign_ParseJSON(str)
                  if nextC ~= ',' then return nil end
                  pos = pos + 1
              end
-             
+
         elseif char == 't' then
              if str:sub(pos, pos+3) == "true" then pos = pos + 4 return true end
         elseif char == 'f' then
@@ -2186,7 +2191,7 @@ local function AngryAssign_ParseJSON(str)
              return tonumber(str:sub(start, pos-1))
         end
     end
-    
+
     return parseValue()
 end
 
@@ -2197,25 +2202,25 @@ local function AngryAssign_ImportPage()
     frame:SetWidth(500)
     frame:SetHeight(400)
     frame:EnableResize(true)
-    
+
     frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
-    
+
     local nameBox = AceGUI:Create("EditBox")
     nameBox:SetLabel("Name")
     nameBox:SetFullWidth(true)
     nameBox:SetFocus()
     frame:AddChild(nameBox)
-    
+
     local contentBox = AceGUI:Create("MultiLineEditBox")
     contentBox:SetLabel("Content")
     contentBox:SetFullWidth(true)
-    contentBox:SetNumLines(15) 
+    contentBox:SetNumLines(15)
     frame:AddChild(contentBox)
-    
+
     local importBtn = AceGUI:Create("Button")
     importBtn:SetText("Import")
     importBtn:SetFullWidth(true)
-    
+
     local function DoImport(nameStr, contentStr, jsonData)
         if jsonData then
             if not nameStr or nameStr:match("^%s*$") then nameStr = jsonData.name end
@@ -2231,22 +2236,22 @@ local function AngryAssign_ImportPage()
                         break
                     end
                 end
-                
+
                 if not catId then
                     local success, err, newId = AngryAssign:CreateCategory(title)
-                    if success then 
+                    if success then
                         catId = newId
                     else
                         print("Error creating category: " .. (err or ""))
                         return
                     end
                 end
-                
+
                 if catId then
                     for i, pData in ipairs(jsonData.pages) do
                         local pName = pData.name
                         local pContent = pData.content or ""
-                        
+
                         local pageId
                         for _, p in pairs(AngryAssign_Pages) do
                             if p.CategoryId == catId and p.Name == pName then
@@ -2254,7 +2259,7 @@ local function AngryAssign_ImportPage()
                                 break
                             end
                         end
-                         
+
                         if pageId then
                             AngryAssign:UpdateContents(pageId, pContent)
                             AngryAssign_Pages[pageId].Index = i
@@ -2282,7 +2287,7 @@ local function AngryAssign_ImportPage()
                     frame:Hide()
                 else
                     local success, err = AngryAssign:CreatePage(title, jsonData.content or "", nil, nil)
-                    if not success then 
+                    if not success then
                         print("Error: "..(err or ""))
                     else
                         frame:Hide()
@@ -2299,15 +2304,15 @@ local function AngryAssign_ImportPage()
             if #headers > 0 then
                 headers[#headers].contentEnd = startPos - 1
             end
-            table.insert(headers, { 
-                title = title:match("^%s*(.-)%s*$"), 
+            table.insert(headers, {
+                title = title:match("^%s*(.-)%s*$"),
                 headerStart = startPos + 1
             })
         end
         if #headers > 0 then
             headers[#headers].contentEnd = #searchStr
         end
-        
+
         if #headers == 0 then
             -- Single Page
             local existingId
@@ -2320,7 +2325,7 @@ local function AngryAssign_ImportPage()
 
             if existingId then
                  AngryAssign:UpdateContents(existingId, contentStr)
-                 AngryAssign:RenamePage(existingId, nameStr) 
+                 AngryAssign:RenamePage(existingId, nameStr)
             else
                  local success, err = AngryAssign:CreatePage(nameStr, contentStr, nil, nil)
                  if not success then print("Error: "..(err or "")) end
@@ -2335,17 +2340,17 @@ local function AngryAssign_ImportPage()
                     break
                 end
             end
-            
+
             if not catId then
                 local success, err, newId = AngryAssign:CreateCategory(nameStr)
-                if success then 
+                if success then
                     catId = newId
                 else
                     print("Error creating category: " .. (err or ""))
                     return
                 end
             end
-            
+
             if catId then
                 for i, h in ipairs(headers) do
                     local block = searchStr:sub(h.headerStart, h.contentEnd)
@@ -2356,7 +2361,7 @@ local function AngryAssign_ImportPage()
                             break
                         end
                     end
-                    
+
                     if pageId then
                         AngryAssign:UpdateContents(pageId, block)
                         AngryAssign_Pages[pageId].Index = i
@@ -2380,7 +2385,7 @@ local function AngryAssign_ImportPage()
         if contentStr:match("^%s*[{[]") then
              jsonData = AngryAssign_ParseJSON(contentStr)
         end
-        
+
         if jsonData then
             if not nameStr or nameStr == "" then nameStr = jsonData.name end
         end
@@ -2390,7 +2395,7 @@ local function AngryAssign_ImportPage()
             return
         end
         if not nameStr or nameStr:match("^%s*$") then nameStr = "Imported" end
-        
+
         local exists = false
         if jsonData then
              if jsonData.pages then
@@ -2414,7 +2419,7 @@ local function AngryAssign_ImportPage()
                 end
             end
         end
-        
+
         if exists then
             local popup_name = "AngryAssign_ImportOverwrite"
             StaticPopupDialogs[popup_name] = {
@@ -2429,7 +2434,7 @@ local function AngryAssign_ImportPage()
             local typeStr = "page"
             if jsonData and jsonData.pages then typeStr = "category"
             elseif not jsonData and (contentStr:match("\n# ") or contentStr:match("^# ")) then typeStr = "category" end
-            
+
             StaticPopup_Show(popup_name, typeStr, nameStr)
         else
             DoImport(nameStr, contentStr, jsonData)
@@ -2774,7 +2779,7 @@ local function GetTree_Sort(a, b)
             return a.index < b.index
         end
     elseif a.index then
-        return true 
+        return true
     elseif b.index then
         return false
     else
@@ -3326,6 +3331,24 @@ function AngryAssign:DeleteCategory(id)
     self:SetSelectedId(selectedId)
 end
 
+function AngryAssign:DeleteCategoryAndChildren(id)
+    local cat = self:GetCat(id)
+    if not cat then return end
+
+    local selectedId = self:SelectedId()
+
+    self:DeleteCategoryChildren(id)
+
+    if AngryAssign_State.tree.groups then
+        AngryAssign_State.tree.groups[-id] = nil
+    end
+
+    AngryAssign_Categories[id] = nil
+
+    self:UpdateTree()
+    self:SetSelectedId(selectedId)
+end
+
 function AngryAssign:AssignCategory(entryId, parentId)
     local page, cat
     if entryId > 0 then
@@ -3468,7 +3491,7 @@ function AngryAssign:IsGuildRaid()
 
     return false
 end
-    
+
 function AngryAssign:IsValidRaid()
     if self:GetConfig("allowall") then
         return true
@@ -4053,7 +4076,7 @@ function AngryAssign:UpdateDisplayed()
             highlightSet[name:lower()] = color
         end
     end
-    
+
     -- Markdown Support
     text = self:ProcessMarkdown(text)
 
@@ -4148,7 +4171,7 @@ function AngryAssign:OutputDisplayed(id)
         local ctx = self:GetTemplateContext()
         local renderedText, _ = self:RenderPageContent(page, ctx)
         output = renderedText
-        
+
         -- Process Tags (Icons, Spells, Class Names) - Single Pass
         -- We look for anything inside {} and replace it based on logic or table lookup
         output = output:gsub("{(.-)}", function(tagContent)
@@ -4251,7 +4274,7 @@ function AngryAssign:ProcessPageForOutput(page)
     local ctx = self:GetTemplateContext()
     local renderedText, _ = self:RenderPageContent(page, ctx)
     output = renderedText
-    
+
     -- Process Tags (Icons, Spells, Class Names) - Single Pass
     output = output:gsub("{(.-)}", function(tagContent)
         local lowerTag = "{"..tagContent:lower().."}"
@@ -4280,8 +4303,8 @@ function AngryAssign:ProcessPageForOutput(page)
             ["{evoker}"] = LOCALIZED_CLASS_NAMES_MALE["EVOKER"],
         }
 
-        if chatMap[lowerTag] then 
-            return chatMap[lowerTag] 
+        if chatMap[lowerTag] then
+            return chatMap[lowerTag]
         end
 
         if UtilityChatData and UtilityChatData[lowerTag] then
@@ -4293,8 +4316,8 @@ function AngryAssign:ProcessPageForOutput(page)
             end
         end
 
-        if UtilityChatMap[lowerTag] then 
-            return UtilityChatMap[lowerTag] 
+        if UtilityChatMap[lowerTag] then
+            return UtilityChatMap[lowerTag]
         end
 
         -- Handle Dynamic Tags (spell, boss, journal)
@@ -4306,7 +4329,7 @@ function AngryAssign:ProcessPageForOutput(page)
             if type == "boss" and not isClassicTBC and not isClassicWrath then return select(5, EJ_GetEncounterInfo(id)) end
             if type == "journal" and not isClassicTBC and not isClassicWrath then return C_EncounterJournal.GetSectionInfo(id) and C_EncounterJournal.GetSectionInfo(id).link end
         end
-        
+
         -- Strip Icon tags entirely for chat output
         if tagContent:lower():match("^icon%s+") then return "" end
 
@@ -4325,7 +4348,7 @@ function AngryAssign:ProcessPageForOutput(page)
          if lowerC:match("^|c%x+$") then return "" end
          return c
     end):gsub("|r", "")
-    
+
     return output
 end
 
@@ -4391,9 +4414,9 @@ local function AngryAssign_ShowExportWindow(text, title)
     frame:SetWidth(600)
     frame:SetHeight(500)
     frame:EnableResize(true)
-    
+
     frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
-    
+
     local editBox = AceGUI:Create("MultiLineEditBox")
     editBox:SetLabel("Copy the text below (Ctrl+C / Cmd+C)")
     editBox:SetFullWidth(true)
@@ -4408,12 +4431,12 @@ end
 function AngryAssign:Export(id, type, format)
     local exportText = ""
     local title = ""
-    
+
     if type == "page" then
         local page = AngryAssign_Pages[id]
         if not page then return end
         title = page.Name
-        
+
         if format == "Encoded AA" then
             local data = { Name = page.Name, Contents = page.Contents }
             if page.Vars and page.Vars ~= "" and page.Vars ~= "{}" then data.Vars = page.Vars end
@@ -4433,12 +4456,12 @@ function AngryAssign:Export(id, type, format)
         elseif format == "Output" then
             exportText = self:ProcessPageForOutput(page)
         end
-        
+
     elseif type == "category" then
         local cat = AngryAssign_Categories[id]
         if not cat then return end
         title = cat.Name
-        
+
         -- Gather Pages in Order
         local pages = {}
         for _, p in pairs(AngryAssign_Pages) do
@@ -4446,11 +4469,11 @@ function AngryAssign:Export(id, type, format)
                 table.insert(pages, p)
             end
         end
-        table.sort(pages, function(a,b) 
+        table.sort(pages, function(a,b)
             if a.Index and b.Index then return a.Index < b.Index end
-            return a.Name < b.Name 
+            return a.Name < b.Name
         end)
-        
+
         if format == "Encoded AA" then
             local data = self:GetCategoryExportData(id)
             local serialized = libS:Serialize(data)
@@ -4463,7 +4486,7 @@ function AngryAssign:Export(id, type, format)
                 table.insert(data.pages, { name = p.Name, content = p.Contents })
             end
             exportText = SerializeJSON(data)
-            
+
         elseif format == "Markdown" then
             local chunks = {}
             for _, p in ipairs(pages) do
@@ -4474,7 +4497,7 @@ function AngryAssign:Export(id, type, format)
                 table.insert(chunks, content)
             end
             exportText = table.concat(chunks, "\n\n")
-            
+
         elseif format == "Output" then
             local chunks = {}
             for _, p in ipairs(pages) do
@@ -4484,7 +4507,7 @@ function AngryAssign:Export(id, type, format)
             exportText = table.concat(chunks, "\n\n")
         end
     end
-    
+
     AngryAssign_ShowExportWindow(exportText, title .. " (" .. format .. ")")
 end
 
