@@ -1328,8 +1328,8 @@ local function AngryAssign_DeleteCategory(catId)
     if StaticPopupDialogs[popup_name] == nil then
         StaticPopupDialogs[popup_name] = {
             button1 = "Delete Category Only",
-            button2 = "Delete Category & Pages",
-            button3 = CANCEL,
+            button2 = CANCEL,
+            button3 = "Delete Category & Pages",
             whileDead = true,
             hideOnEscape = true,
             preferredIndex = 3,
@@ -1337,7 +1337,7 @@ local function AngryAssign_DeleteCategory(catId)
                 local id = self.data
                 AngryAssign:DeleteCategory(id)
             end,
-            OnCancel = function(self)
+            OnAlt = function(self)
                 local id = self.data
                 AngryAssign:DeleteCategoryAndChildren(id)
             end,
