@@ -2502,7 +2502,7 @@ function AngryAssign:CreateWindow()
     local searchBox = AceGUI:Create("EditBox")
     searchBox:DisableButton(true)
     searchBox:SetWidth(175)
-    searchBox:SetCallback("OnTextChanged", function(_, _, v) AngryAssign.window.tree:SetSearchKeyword(v) end)
+    searchBox:SetCallback("OnTextChanged", function(_, _, v) if AngryAssign.window.tree then AngryAssign.window.tree:SetSearchKeyword(v) end end)
     header:AddChild(searchBox)
     window.searchBox = searchBox
 
