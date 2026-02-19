@@ -1,3 +1,7 @@
+## v2.5.1
+
+* Fix: Resolved a visual bug where the display background would appear offset during initialization.
+
 ## v2.5.0
 
 * New Feature: **Recursive Category Export/Import**! Full categories with all sub-categories and pages can now be exported and imported as a single **Encoded AA** string.
