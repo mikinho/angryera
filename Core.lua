@@ -2446,12 +2446,12 @@ local function AngryAssign_MainMenu(frame)
     local menu = {
         { text = "Add Page", func = AngryAssign_AddPage, notCheckable = true },
         { text = "Add Category", func = AngryAssign_AddCategory, notCheckable = true },
-        { text = "Import...", func = AngryAssign_ImportPage, notCheckable = true },
         { text = "Load Raid Template", func = AngryAssign_LoadRaidMenu, notCheckable = true },
         { text = " ", isTitle = true, notCheckable = true },
         { text = "Import", hasArrow = true, notCheckable = true, menuList = {
             { text = "Encoded AA", func = function() AngryAssign:ShowImportWindow() end, notCheckable = true },
             { text = "JSON", func = function() AngryAssign_ImportPage() end, notCheckable = true },
+            { text = "Markdown", func = function() AngryAssign_ImportPage() end, notCheckable = true },
         } },
         { text = " ", isTitle = true, notCheckable = true },
         { text = "Manage Pages", func = function() AngryAssign:ShowBulkManagement() end, notCheckable = true },
