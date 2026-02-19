@@ -4335,7 +4335,12 @@ end
 
 local function SerializeJSON(val)
     if type(val) == "string" then
-        return string.format("%q", val):gsub("\\\n", "\\n")
+        val = val:gsub("\\", "\\\\")
+        val = val:gsub("\"", "\\\"")
+        val = val:gsub("\n", "\\n")
+        val = val:gsub("\r", "\\r")
+        val = val:gsub("\t", "\\t")
+        return "\"" .. val .. "\""
     elseif type(val) == "number" then
         return tostring(val)
     elseif type(val) == "boolean" then
