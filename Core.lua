@@ -4346,8 +4346,19 @@ local function SerializeJSON(val)
     elseif type(val) == "boolean" then
         return tostring(val)
     elseif type(val) == "table" then
+    elseif type(val) == "table" then
         local parts = {}
-        local isArray = (#val > 0)
+        -- Detect array vs object
+        local isArray = false
+        if val[1] ~= nil or next(val) == nil then isArray = true end
+        -- Check if it's a mixed table (has string keys) -> Force Object
+        for k in pairs(val) do
+            if type(k) ~= "number" then
+                isArray = false
+                break
+            end
+        end
+
         if isArray then
             for _, v in ipairs(val) do table.insert(parts, SerializeJSON(v)) end
             return "[" .. table.concat(parts, ",") .. "]"
@@ -4357,7 +4368,15 @@ local function SerializeJSON(val)
             for k in pairs(val) do table.insert(keys, k) end
             table.sort(keys)
             for _, k in ipairs(keys) do
-                table.insert(parts, string.format("%q:%s", k, SerializeJSON(val[k])))
+                -- Serialize key as string
+                local keyStr = k
+                if type(k) == "string" then
+                    keyStr = k:gsub("\\", "\\\\"):gsub("\"", "\\\""):gsub("\n", "\\n"):gsub("\r", "\\r"):gsub("\t", "\\t")
+                    keyStr = "\"" .. keyStr .. "\""
+                else
+                    keyStr = "\"" .. tostring(k) .. "\""
+                end
+                table.insert(parts, string.format("%s:%s", keyStr, SerializeJSON(val[k])))
             end
             return "{" .. table.concat(parts, ",") .. "}"
         end
