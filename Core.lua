@@ -3800,7 +3800,7 @@ function AngryAssign:UpdateMedia()
         end
     end
 
-    self:UpdateBackdrop()
+    C_Timer.After(0.01, function() self:UpdateBackdrop() end)
 end
 
 local updateFlasher, updateFlasher2 = nil, nil
@@ -4117,7 +4117,7 @@ function AngryAssign:UpdateDisplayed()
         self.display_text:AddMessage(line)
     end
 
-    self:UpdateBackdrop()
+    C_Timer.After(0.01, function() self:UpdateBackdrop() end)
 end
 
 function AngryAssign_OutputDisplayed()
