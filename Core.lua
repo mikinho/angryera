@@ -139,7 +139,6 @@ local VERSION_ValidRaid = 4
 
 
 local ColorTable = app.ColorTable
-local IconTable = app.IconTable
 local UtilityChatMap = app.UtilityChatMap
 local UtilityChatData = app.UtilityChatData
 
@@ -148,8 +147,8 @@ local function ProcessTag(tag)
     local lowerTag = tag:lower()
 
     -- Check static table first (This now returns the texture directly)
-    if IconTable[lowerTag] then
-        return IconTable[lowerTag]
+    if UtilityChatData and UtilityChatData[lowerTag] and UtilityChatData[lowerTag].texture then
+        return UtilityChatData[lowerTag].texture
     end
 
     -- Check for {page} shortcut
