@@ -1,3 +1,8 @@
+## v2.6.4
+
+* New Feature: Added `/aa first` slash command (and keybind macro) to easily toggle to the first page of the current category, tracking the previous page so you can jump back.
+* Improvement: Ensured the Edit Window will dynamically jump to the actively `displayed` page upon opening (if one is set).
+
 ## v2.6.3
 
 * Packaging: Explicitly excluded all unnecessary `LibDeflate` directories (tests, tools, etc.) to resolve persistent blacklist issues.
