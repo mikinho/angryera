@@ -37,17 +37,16 @@ app.ColorTable = {
     ["|cyellow"]      = "|cfffaf318"
 }
 
-
-
 -----------------------
 -- Raid Utility
 -----------------------
 local AngryEra_RaidUtility = {
     ["Targeting"] = {
-        ["Star"]     = { ["name"] = "{rt1}",
-        ["icon"] = "UI-RaidTargetingIcon_1",
-        ["path"] = "Interface\\TargetingFrame\\"
-    },
+        ["Star"] = { 
+            ["name"] = "{rt1}",
+            ["icon"] = "UI-RaidTargetingIcon_1",
+            ["path"] = "Interface\\TargetingFrame\\"
+        },
         ["rt1"] = {
             ["name"] = "{rt1}",
             ["icon"] = "UI-RaidTargetingIcon_1",
@@ -130,18 +129,20 @@ local AngryEra_RaidUtility = {
         }
     },
     ["Factions"] = {
-        ["alliance"]    = { ["name"] = "Alliance",
-        ["icon"] = "INV_BannerPVP_02"
-    },
+        ["alliance"] = { 
+            ["name"] = "Alliance",
+            ["icon"] = "INV_BannerPVP_02"
+        },
         ["horde"] = {
             ["name"] = "Horde",
             ["icon"] = "INV_BannerPVP_01"
         }
     },
     ["General"] = {
-        ["healthstone"] = { ["name"] = "Healthstone",
-        ["icon"] = "inv_stone_04"
-    },
+        ["healthstone"] = { 
+            ["name"] = "Healthstone",
+            ["icon"] = "inv_stone_04"
+        },
         ["hs"] = {
             ["name"] = "Healthstone",
             ["icon"] = "inv_stone_04"
@@ -196,9 +197,10 @@ local AngryEra_RaidUtility = {
         }
     },
     ["Classes"] = {
-        ["deathknight"] = { ["name"] = "Death Knight",
-        ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t"
-    },
+        ["deathknight"] = { 
+            ["name"] = "Death Knight",
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t"
+        },
         ["dk"] = {
             ["name"] = "Death Knight",
             ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t"
@@ -257,9 +259,10 @@ local AngryEra_RaidUtility = {
         }
     },
     ["Bosses"] = {
-        ["4hm"]         = { ["name"] = "4 Horsemen",
-        ["texture"] = "|TInterface\\Icons\\INV_Helmet_09:0|t"
-    },
+        ["4hm"] = { 
+            ["name"] = "4 Horsemen",
+            ["texture"] = "|TInterface\\Icons\\INV_Helmet_09:0|t"
+        },
         ["archi"] = {
             ["name"] = "Archimonde",
             ["texture"] = "|TInterface\\Icons\\Spell_Shadow_DeathCoil:0|t"

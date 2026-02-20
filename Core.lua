@@ -2649,10 +2649,10 @@ local function AngryAssign_IconPicker_Clicked(widget, event)
     local position = AngryAssign.window.text.editBox:GetCursorPosition()
     if position > 0 then
         local text = AngryAssign.window.text:GetText()
-        AngryAssign.window.text:SetText( strsub(text, 1, position)..icon..strsub(text, position+1, AngryAssign.window.text.editBox:GetNumLetters()) )
-        AngryAssign.window.text.editBox:SetCursorPosition( position, string.len(text) )
+        AngryAssign.window.text:SetText(strsub(text, 1, position)..icon..strsub(text, position+1, AngryAssign.window.text.editBox:GetNumLetters()))
+        AngryAssign.window.text.editBox:SetCursorPosition(position, string.len(text))
     else
-        AngryAssign.window.text:SetText( AngryAssign.window.text:GetText()..icon)
+        AngryAssign.window.text:SetText(AngryAssign.window.text:GetText()..icon)
     end
 
     AngryAssign.window.text.button:Enable()
