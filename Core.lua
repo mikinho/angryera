@@ -46,7 +46,7 @@ _G["BINDING_NAME_" .. appName .. "_HIDE_DISPLAY"] = "Hide Display"
 _G["BINDING_NAME_" .. appName .. "_OUTPUT"] = "Output Assignment to Chat"
 _G["BINDING_NAME_" .. appName .. "_PREV_PAGE"] = "Previous Page"
 _G["BINDING_NAME_" .. appName .. "_NEXT_PAGE"] = "Next Page"
-_G["BINDING_NAME_" .. appName .. "_OUTPUT"] = "Output Assignment to Chat"
+_G["BINDING_NAME_" .. appName .. "_FIRST_PAGE"] = "First Page"
 
 local isClassicVanilla = WOW_PROJECT_ID == WOW_PROJECT_CLASSIC
 local isClassicTBC = WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC
@@ -3084,6 +3084,47 @@ function AngryAssign:NextPage(reverse)
     end
 end
 
+function AngryAssign:FirstPage()
+    local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
+    if not page or not page.CategoryId then return end
+
+    local siblings = {}
+    for _, p in pairs(AngryAssign_Pages) do
+        if p.CategoryId == page.CategoryId then
+            table.insert(siblings, p)
+        end
+    end
+
+    if #siblings == 0 then return end
+
+    -- Use the same sort order as the Tree
+    table.sort(siblings, function(a, b)
+        local ia = a.Index
+        local ib = b.Index
+        if ia and ib then
+            if ia == ib then return a.Name < b.Name end
+            return ia < ib
+        elseif ia then return true
+        elseif ib then return false
+        else return a.Name < b.Name end
+    end)
+
+    local firstSib = siblings[1]
+    
+    if page.Id == firstSib.Id then
+        -- We are already on the first page. Snap back to the last selected page?
+        if self.lastNonFirstPageId and siblings[self.lastNonFirstPageId] then
+            self:DisplayPage(self.lastNonFirstPageId)
+            self.lastNonFirstPageId = nil
+        else
+            self:Print("Already on the first page.")
+        end
+    else
+        self.lastNonFirstPageId = page.Id
+        self:DisplayPage(firstSib.Id)
+    end
+end
+
 function AngryAssign:SelectedId()
     return selectedLastValue( AngryAssign_State.tree.selected )
 end
@@ -4705,6 +4746,17 @@ function AngryAssign:OnInitialize()
                     self:OutputDisplayed()
                 end
             },
+            first = {
+                type = "execute",
+                name = "First Page",
+                desc = "Toggles to and from the first page in the current category",
+                order = 11.5,
+                hidden = true,
+                cmdHidden = false,
+                func = function()
+                    self:FirstPage()
+                end
+            },
             send = {
                 type = "input",
                 name = "Send and Display",
@@ -5026,7 +5078,12 @@ function AngryAssign:ChatCommand(input)
         InterfaceOptionsFrame_OpenToCategory(blizOptionsPanel)
     end
   else
-    LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryAssign", input)
+    local command = input:trim():lower()
+    if command == "first" then
+        self:FirstPage()
+    else
+        LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryAssign", input)
+    end
   end
 end
 

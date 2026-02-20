@@ -735,10 +735,10 @@ for category, items in pairs(AngryEra_RaidUtility) do
         app.UtilityChatData[nameTag] = { name = info.name, key = key, texture = iconTexture }
     end
 end
+
 -------------------------------------------------------------------------------
 -- JSON Utility
 -------------------------------------------------------------------------------
-
 local function skip_ws(str, pos)
 	while true do
         local c = str:sub(pos, pos)

@@ -14,6 +14,9 @@
 	<Binding name="AngryEra_NEXT_PAGE" category="BINDING_HEADER_AngryEra">
 		AngryAssign_NextPage()
 	</Binding>
+	<Binding name="AngryEra_FIRST_PAGE" category="BINDING_HEADER_AngryEra">
+		AngryAssign_FirstPage()
+	</Binding>
 	<Binding name="AngryEra_LOCK" category="BINDING_HEADER_AngryEra">
 		AngryAssign_ToggleLock()
 	</Binding>
