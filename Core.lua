@@ -3620,6 +3620,10 @@ function AngryAssign_NextPage()
     AngryAssign:NextPage()
 end
 
+function AngryAssign_FirstPage()
+    AngryAssign:FirstPage()
+end
+
 function AngryAssign:ShowDisplay()
     self.display_text:Show()
     self:UpdateBackdrop()
