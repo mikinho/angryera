@@ -3113,7 +3113,8 @@ function AngryAssign:FirstPage()
     
     if page.Id == firstSib.Id then
         -- We are already on the first page. Snap back to the last selected page?
-        if self.lastNonFirstPageId and siblings[self.lastNonFirstPageId] then
+        local lastPage = self.lastNonFirstPageId and AngryAssign_Pages[self.lastNonFirstPageId]
+        if lastPage and lastPage.CategoryId == page.CategoryId then
             self:DisplayPage(self.lastNonFirstPageId)
             self.lastNonFirstPageId = nil
         else
