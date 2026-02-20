@@ -65,6 +65,7 @@ app.IconTable = {
     ["{dps}"]          = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41|t",
     ["{tank}"]         = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:0:19:22:41|t",
     ["{healer}"]       = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:1:20|t",
+    ["{engineer}"]     = "|TInterface\\Icons\\trade_engineering:0|t",
 
     -- Class Icons
     ["{deathknight}"]  = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
@@ -500,18 +501,6 @@ end
 -- JSON Utility
 -------------------------------------------------------------------------------
 
-local function scan(str, pos)
-	local char = str:sub(pos, pos)
-	if char == "{" then return "object", pos, "}" end
-	if char == "[" then return "array", pos, "]" end
-	if (char >= "0" and char <= "9") or char == "-" then return "number", pos end
-	if char == '"' then return "string", pos end
-	if str:sub(pos, pos+3) == "true" then return "boolean", pos, true end
-	if str:sub(pos, pos+4) == "false" then return "boolean", pos, false end
-	if str:sub(pos, pos+3) == "null" then return "null", pos, nil end
-	return nil, pos, "Syntax Error"
-end
-
 local function skip_ws(str, pos)
 	while true do
         local c = str:sub(pos, pos)
@@ -547,28 +536,6 @@ local function parse_number(str, pos)
 	local _, end_pos = str:find("^[%-%d%.eE]+", pos)
 	if not end_pos then return nil, pos, "Invalid Number" end
 	return tonumber(str:sub(pos, end_pos)), end_pos + 1
-end
-
-local function parse_object(str, pos)
-	local obj = {}
-	pos = skip_ws(str, pos + 1)
-	if str:sub(pos, pos) == "}" then return obj, pos + 1 end
-    
-    local key, val
-	while true do
-		if str:sub(pos, pos) ~= '"' then return nil, pos, "Expected String Key" end
-		key, pos = parse_string(str, pos)
-        
-		pos = skip_ws(str, pos)
-		if str:sub(pos, pos) ~= ":" then return nil, pos, "Expected ':'" end
-		pos = skip_ws(str, pos + 1)
-        
-        -- Parse Value (Recursive call needs helper or forward declare)
-        -- We'll inline logic or use forward declare
-        -- Since parse_value isn't defined yet, we define it inside or forward declare.
-        -- Let's put parsing logic in app namespace.
-        return nil, pos, "Not Implemented Recusion" 
-	end
 end
 
 -- Proper recursive implementation
