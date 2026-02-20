@@ -1,3 +1,7 @@
+## v2.7.0
+
+* **BREAKING CHANGE**: Changed the underlying message broadcasting system. `PAGE` packets will now pass the raw template syntax (`{{MT}}`) across the network directly, along with a payload containing resolved Category Variables. This ensures your local templates won't be silently overwritten by the Raid Leader. Older versions of standard `AngryAssignments` in your raid without AngryEra may see raw bracket formats instead of resolved names on initial receipt.
+
 ## v2.6.4
 
 * New Feature: Added `/aa first` slash command (and keybind macro) to easily toggle to the first page of the current category, tracking the previous page so you can jump back.

@@ -356,7 +356,14 @@ function AngryAssign:ProcessMessage(sender, data)
 
         local page = AngryAssign_Pages[id]
         if page then
-            if data[PAGE_UpdateId] and page.UpdateId == data[PAGE_UpdateId] then return end
+            if data[PAGE_UpdateId] and page.UpdateId == data[PAGE_UpdateId] then
+                local newCatVars = ValidateString(data[8], 5000, "CatVars")
+                if page.CatVars ~= newCatVars then
+                    page.CatVars = newCatVars
+                    if AngryAssign_State.displayed == id then self:UpdateDisplayed() end
+                end
+                return
+            end
 
             contents_updated = page.Contents ~= safeContents
             if contents_updated then
@@ -365,6 +372,7 @@ function AngryAssign:ProcessMessage(sender, data)
             page.Name = safeName
             page.Contents = safeContents
             page.Vars = ValidateString(data[PAGE_Vars], 5000, "Vars")
+            page.CatVars = ValidateString(data[8], 5000, "CatVars")
             page.Updated = data[PAGE_Updated]
             page.UpdateId = data[PAGE_UpdateId] or self:Hash(page.Name, page.Contents, page.Vars)
 
@@ -379,7 +387,8 @@ function AngryAssign:ProcessMessage(sender, data)
                 UpdateId = data[PAGE_UpdateId],
                 Name = safeName,
                 Contents = safeContents,
-                Vars = ValidateString(data[PAGE_Vars], 5000, "Vars")
+                Vars = ValidateString(data[PAGE_Vars], 5000, "Vars"),
+                CatVars = ValidateString(data[8], 5000, "CatVars")
             }
         end
         if AngryAssign_State.displayed == id then
@@ -515,19 +524,21 @@ function AngryAssign:SendPageMessage(id)
         page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
     end
 
-    -- Render template (if Mustache available) before sending
-    -- This ensures clients without Mustache support still see correct names
-    local limitContents = page.Contents
-    local limitUpdateId = page.UpdateId
-
-    if LibMustache then
-        local ctx = self:GetTemplateContext()
-        local rendered, _ = self:RenderPageContent(page, ctx)
-        limitContents = rendered
-        limitUpdateId = self:Hash(page.Name, limitContents, page.Vars)
+    local catVars = nil
+    if page.CategoryId then
+        local cat = AngryAssign_Categories[page.CategoryId]
+        if cat and cat.Vars then catVars = cat.Vars end
     end
 
-    self:SendOutMessage({ "PAGE", [PAGE_Id] = page.Id, [PAGE_Updated] = page.Updated, [PAGE_Name] = page.Name, [PAGE_Contents] = limitContents, [PAGE_UpdateId] = limitUpdateId, [PAGE_Vars] = page.Vars })
+    self:SendOutMessage({ "PAGE",
+        [PAGE_Id] = page.Id,
+        [PAGE_Updated] = page.Updated,
+        [PAGE_Name] = page.Name,
+        [PAGE_Contents] = page.Contents,
+        [PAGE_UpdateId] = page.UpdateId,
+        [PAGE_Vars] = page.Vars,
+        [8] = catVars
+    })
 end
 
 function AngryAssign:SendDisplay(id, force)
@@ -4040,6 +4051,8 @@ function AngryAssign:RenderPageContent(page, ctx)
         if page.CategoryId then
             local cat = AngryAssign_Categories[page.CategoryId]
             if cat then MergeAppVars(cat.Vars) end
+        elseif page.CatVars then
+            MergeAppVars(page.CatVars)
         end
 
         -- Merge Page Variables (Override Category)
