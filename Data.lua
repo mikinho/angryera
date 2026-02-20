@@ -62,6 +62,10 @@ local AngryEra_RaidUtility = {
         ["Skull"]    = { ["name"] = "{rt8}", ["icon"] = "UI-RaidTargetingIcon_8", ["path"] = "Interface\\TargetingFrame\\" },
         ["rt8"]      = { ["name"] = "{rt8}", ["icon"] = "UI-RaidTargetingIcon_8", ["path"] = "Interface\\TargetingFrame\\" }
     },
+    ["Factions"] = {
+        ["alliance"]    = { ["name"] = "Alliance", ["icon"] = "INV_BannerPVP_02" },
+        ["horde"]       = { ["name"] = "Horde", ["icon"] = "INV_BannerPVP_01" }
+    },
     ["General"] = {
         ["healthstone"] = { ["name"] = "Healthstone", ["icon"] = "inv_stone_04" },
         ["hs"]          = { ["name"] = "Healthstone", ["icon"] = "inv_stone_04" },
@@ -622,10 +626,6 @@ function app.ParseVariables(str)
             val = val:match("^%s*(.-)%s*$")
             if key ~= "" then
                 obj[key] = val
-                -- Construct number if possible? 
-                -- User request "key=value". JSON values are usually typed.
-                -- If val is "123", treats as string "123" or number?
-                -- Mustache is loose typing usually. But number vs string matters for math.
                 -- Let's try to convert to number if possible.
                 local n = tonumber(val)
                 if n then obj[key] = n end
