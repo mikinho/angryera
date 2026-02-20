@@ -122,6 +122,40 @@ app.IconTable = {
 -- Raid Utility
 -----------------------
 local AngryEra_RaidUtility = {
+    ["Targeting"] = {
+        ["Star"]     = { ["name"] = "{rt1}", ["icon"] = "UI-RaidTargetingIcon_1", ["path"] = "Interface\\TargetingFrame\\" },
+        ["rt1"]      = { ["name"] = "{rt1}", ["icon"] = "UI-RaidTargetingIcon_1", ["path"] = "Interface\\TargetingFrame\\" },
+        ["Circle"]   = { ["name"] = "{rt2}", ["icon"] = "UI-RaidTargetingIcon_2", ["path"] = "Interface\\TargetingFrame\\" },
+        ["rt2"]      = { ["name"] = "{rt2}", ["icon"] = "UI-RaidTargetingIcon_2", ["path"] = "Interface\\TargetingFrame\\" },
+        ["Diamond"]  = { ["name"] = "{rt3}", ["icon"] = "UI-RaidTargetingIcon_3", ["path"] = "Interface\\TargetingFrame\\" },
+        ["rt3"]      = { ["name"] = "{rt3}", ["icon"] = "UI-RaidTargetingIcon_3", ["path"] = "Interface\\TargetingFrame\\" },
+        ["Triangle"] = { ["name"] = "{rt4}", ["icon"] = "UI-RaidTargetingIcon_4", ["path"] = "Interface\\TargetingFrame\\" },
+        ["rt4"]      = { ["name"] = "{rt4}", ["icon"] = "UI-RaidTargetingIcon_4", ["path"] = "Interface\\TargetingFrame\\" },
+        ["Moon"]     = { ["name"] = "{rt5}", ["icon"] = "UI-RaidTargetingIcon_5", ["path"] = "Interface\\TargetingFrame\\" },
+        ["rt5"]      = { ["name"] = "{rt5}", ["icon"] = "UI-RaidTargetingIcon_5", ["path"] = "Interface\\TargetingFrame\\" },
+        ["Square"]   = { ["name"] = "{rt6}", ["icon"] = "UI-RaidTargetingIcon_6", ["path"] = "Interface\\TargetingFrame\\" },
+        ["rt6"]      = { ["name"] = "{rt6}", ["icon"] = "UI-RaidTargetingIcon_6", ["path"] = "Interface\\TargetingFrame\\" },
+        ["Cross"]    = { ["name"] = "{rt7}", ["icon"] = "UI-RaidTargetingIcon_7", ["path"] = "Interface\\TargetingFrame\\" },
+        ["x"]        = { ["name"] = "{rt7}", ["icon"] = "UI-RaidTargetingIcon_7", ["path"] = "Interface\\TargetingFrame\\" },
+        ["rt7"]      = { ["name"] = "{rt7}", ["icon"] = "UI-RaidTargetingIcon_7", ["path"] = "Interface\\TargetingFrame\\" },
+        ["Skull"]    = { ["name"] = "{rt8}", ["icon"] = "UI-RaidTargetingIcon_8", ["path"] = "Interface\\TargetingFrame\\" },
+        ["rt8"]      = { ["name"] = "{rt8}", ["icon"] = "UI-RaidTargetingIcon_8", ["path"] = "Interface\\TargetingFrame\\" }
+    },
+    ["General"] = {
+        ["healthstone"] = { ["name"] = "Healthstone", ["icon"] = "inv_stone_04" },
+        ["hs"]          = { ["name"] = "Healthstone", ["icon"] = "inv_stone_04" },
+        ["damage"]      = { ["name"] = "Damage", ["icon"] = "UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41", ["path"] = "Interface\\LFGFrame\\" },
+        ["dps"]         = { ["name"] = "Damage", ["icon"] = "UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41", ["path"] = "Interface\\LFGFrame\\" },
+        ["tank"]        = { ["name"] = "Tanks", ["icon"] = "UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:0:19:22:41", ["path"] = "Interface\\LFGFrame\\" },
+        ["healer"]      = { ["name"] = "Healers", ["icon"] = "UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:1:20", ["path"] = "Interface\\LFGFrame\\" },
+        ["bloodlust"]   = { ["name"] = "Bloodlust", ["icon"] = "spell_nature_bloodlust" },
+        ["bl"]          = { ["name"] = "Bloodlust", ["icon"] = "spell_nature_bloodlust" },
+        ["hero"]        = { ["name"] = "Heroism", ["icon"] = "ability_shaman_heroism" },
+        ["heroism"]     = { ["name"] = "Heroism", ["icon"] = "ability_shaman_heroism" },
+        ["stun"]        = { ["name"] = "Stun", ["icon"] = "spell_frost_stun" },
+        ["frost"]       = { ["name"] = "Frost", ["icon"] = "spell_frost_frostbolt02" },
+        ["engineer"]    = { ["name"] = "Engineer", ["icon"] = "trade_engineering" }
+    },
     ["Consumables"] = {
         ["FAP"] = {
             ["name"] = "Free Action Potion",
@@ -482,7 +516,8 @@ app.UtilityChatMap = {}
 app.UtilityChatData = {}
 for category, items in pairs(AngryEra_RaidUtility) do
     for key, info in pairs(items) do
-        local iconTexture = "|TInterface\\Icons\\" .. info.icon .. ":0|t"
+        local path = info.path or "Interface\\Icons\\"
+        local iconTexture = "|T" .. path .. info.icon .. ":0|t"
 
         -- Register abbreviation (e.g. {sw})
         local tag = "{" .. key:lower() .. "}"

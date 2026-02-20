@@ -4175,21 +4175,7 @@ function AngryAssign:OutputDisplayed(id)
         output = output:gsub("{(.-)}", function(tagContent)
             local lowerTag = "{"..tagContent:lower().."}"
 
-            -- Direct Icon Replacements (star -> rt1, etc.)
-            -- We can reuse IconTable keys, but we need to map them to Chat-Friendly strings
-            -- Since IconTable maps to TEXTURES (|T...|t), we need a specific chat map here.
             local chatMap = {
-                ["{healthstone}"] = "{hs}",
-                ["{hs}"] = "Healthstone",
-                ["{damage}"] = "Damage",
-                ["{dps}"] = "Damage",
-                ["{tank}"] = "Tanks",
-                ["{healer}"] = "Healers",
-                ["{bloodlust}"] = "Bloodlust",
-                ["{bl}"] = "Bloodlust",
-                ["{hero}"] = "Heroism",
-                ["{heroism}"] = "Heroism",
-                ["{engineer}"] = "Engineer",
                 ["{hunter}"] = LOCALIZED_CLASS_NAMES_MALE["HUNTER"],
                 ["{warrior}"] = LOCALIZED_CLASS_NAMES_MALE["WARRIOR"],
                 ["{rogue}"] = LOCALIZED_CLASS_NAMES_MALE["ROGUE"],
@@ -4283,19 +4269,7 @@ function AngryAssign:ProcessPageForOutput(page)
     output = output:gsub("{(.-)}", function(tagContent)
         local lowerTag = "{"..tagContent:lower().."}"
 
-        -- Direct Icon Replacements (star -> rt1, etc.)
         local chatMap = {
-            ["{healthstone}"] = "{hs}",
-            ["{hs}"] = "Healthstone",
-            ["{damage}"] = "Damage",
-            ["{dps}"] = "Damage",
-            ["{tank}"] = "Tanks",
-            ["{healer}"] = "Healers",
-            ["{bloodlust}"] = "Bloodlust",
-            ["{bl}"] = "Bloodlust",
-            ["{hero}"] = "Heroism",
-            ["{heroism}"] = "Heroism",
-            ["{engineer}"] = "Engineer",
             ["{hunter}"] = LOCALIZED_CLASS_NAMES_MALE["HUNTER"],
             ["{warrior}"] = LOCALIZED_CLASS_NAMES_MALE["WARRIOR"],
             ["{rogue}"] = LOCALIZED_CLASS_NAMES_MALE["ROGUE"],
