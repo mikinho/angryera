@@ -934,6 +934,9 @@ function AngryAssign_ToggleWindow()
     if AngryAssign.window:IsShown() then
         AngryAssign.window:Hide()
     else
+        if AngryAssign_State.displayed and AngryAssign_Pages[AngryAssign_State.displayed] then
+            AngryAssign:SetSelectedId(AngryAssign_State.displayed)
+        end
         AngryAssign.window:Show()
     end
 end
