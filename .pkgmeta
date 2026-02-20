@@ -53,3 +53,15 @@ externals:
 	libs/LibDeflate:
 		url: https://github.com/SafeteeWoW/LibDeflate
 		tag: latest
+
+enable-nolib-creation: no
+
+ignore:
+  - README.md
+  - CONTRIBUTING.md
+  - libs/LibDeflate/dev_docs
+  - libs/LibDeflate/docs
+  - libs/LibDeflate/examples
+  - libs/LibDeflate/tests
+  - libs/LibDeflate/tools
+  - libs/LibDeflate/*.md

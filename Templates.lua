@@ -59,7 +59,7 @@ app.Templates = {
             { name = "Grobbulus", content = "## {page}\n\n{tank} Kite Path: " },
             { name = "Gluth", content = "## {page}\n\n{tank} Zombie Kiting: " },
             { name = "Thaddius", content = "## {page}\n\n{tank} Stalagg: \n{tank} Feugen: " },
-            { name = "Sapphiron", content = "## {page}\n\n{dispell} Curse: \n{healer} Frost Aura: " },
+            { name = "Sapphiron", content = "## {page}\n\n{dispel} Curse: \n{healer} Frost Aura: " },
             { name = "Kel'Thuzad", content = "## {page}\n\n{tank} Abominations: \n{kick} Interrupts: \n{mage} Sheep (MC): " }
         }
     }

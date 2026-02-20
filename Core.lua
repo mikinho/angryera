@@ -46,7 +46,7 @@ _G["BINDING_NAME_" .. appName .. "_HIDE_DISPLAY"] = "Hide Display"
 _G["BINDING_NAME_" .. appName .. "_OUTPUT"] = "Output Assignment to Chat"
 _G["BINDING_NAME_" .. appName .. "_PREV_PAGE"] = "Previous Page"
 _G["BINDING_NAME_" .. appName .. "_NEXT_PAGE"] = "Next Page"
-_G["BINDING_NAME_" .. appName .. "_OUTPUT"] = "Output Assignment to Chat"
+_G["BINDING_NAME_" .. appName .. "_FIRST_PAGE"] = "First Page"
 
 local isClassicVanilla = WOW_PROJECT_ID == WOW_PROJECT_CLASSIC
 local isClassicTBC = WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC
@@ -139,7 +139,6 @@ local VERSION_ValidRaid = 4
 
 
 local ColorTable = app.ColorTable
-local IconTable = app.IconTable
 local UtilityChatMap = app.UtilityChatMap
 local UtilityChatData = app.UtilityChatData
 
@@ -148,8 +147,8 @@ local function ProcessTag(tag)
     local lowerTag = tag:lower()
 
     -- Check static table first (This now returns the texture directly)
-    if IconTable[lowerTag] then
-        return IconTable[lowerTag]
+    if UtilityChatData and UtilityChatData[lowerTag] and UtilityChatData[lowerTag].texture then
+        return UtilityChatData[lowerTag].texture
     end
 
     -- Check for {page} shortcut
@@ -935,6 +934,9 @@ function AngryAssign_ToggleWindow()
     if AngryAssign.window:IsShown() then
         AngryAssign.window:Hide()
     else
+        if AngryAssign_State.displayed and AngryAssign_Pages[AngryAssign_State.displayed] then
+            AngryAssign:SetSelectedId(AngryAssign_State.displayed)
+        end
         AngryAssign.window:Show()
     end
 end
@@ -1591,7 +1593,7 @@ local function AngryAssign_EditVariables(id, type)
 
     local vars = nil
     if type == "category" then
-        local cat = AngryAssign:GetCat(id)
+        local cat = AngryAssign_Categories[id]
         if cat then vars = cat.Vars end
     else
         local page = AngryAssign_Pages[id]
@@ -1633,7 +1635,7 @@ local function AngryAssign_EditVariables(id, type)
         end
 
         if type == "category" then
-            local cat = AngryAssign:GetCat(id)
+            local cat = AngryAssign_Categories[id]
             if cat then
                 cat.Vars = text
                 AngryAssign:CategoryUpdated(id)
@@ -2059,9 +2061,21 @@ local function AngryAssign_CategoryMenu(catId)
 end
 
 local AngryAssign_DropDown
+local clickTime = 0
+local clickValue = nil
 local function AngryAssign_TreeClick(widget, event, value, selected, button)
     HideDropDownMenu(1)
     local selectedId = selectedLastValue(value)
+
+    if button == "LeftButton" and selectedId > 0 then
+        if clickValue == value and (GetTime() - clickTime) < 0.3 then
+             AngryAssign_DisplayPage()
+             clickValue = nil
+             return false
+        end
+        clickTime = GetTime()
+        clickValue = value
+    end
     if selectedId < 0 then
         if button == "RightButton" then
             if not AngryAssign_DropDown then
@@ -2643,10 +2657,10 @@ local function AngryAssign_IconPicker_Clicked(widget, event)
     local position = AngryAssign.window.text.editBox:GetCursorPosition()
     if position > 0 then
         local text = AngryAssign.window.text:GetText()
-        AngryAssign.window.text:SetText( strsub(text, 1, position)..icon..strsub(text, position+1, AngryAssign.window.text.editBox:GetNumLetters()) )
-        AngryAssign.window.text.editBox:SetCursorPosition( position, string.len(text) )
+        AngryAssign.window.text:SetText(strsub(text, 1, position)..icon..strsub(text, position+1, AngryAssign.window.text.editBox:GetNumLetters()))
+        AngryAssign.window.text.editBox:SetCursorPosition(position, string.len(text))
     else
-        AngryAssign.window.text:SetText( AngryAssign.window.text:GetText()..icon)
+        AngryAssign.window.text:SetText(AngryAssign.window.text:GetText()..icon)
     end
 
     AngryAssign.window.text.button:Enable()
@@ -3075,6 +3089,48 @@ function AngryAssign:NextPage(reverse)
             end
             return
         end
+    end
+end
+
+function AngryAssign:FirstPage()
+    local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
+    if not page or not page.CategoryId then return end
+
+    local siblings = {}
+    for _, p in pairs(AngryAssign_Pages) do
+        if p.CategoryId == page.CategoryId then
+            table.insert(siblings, p)
+        end
+    end
+
+    if #siblings == 0 then return end
+
+    -- Use the same sort order as the Tree
+    table.sort(siblings, function(a, b)
+        local ia = a.Index
+        local ib = b.Index
+        if ia and ib then
+            if ia == ib then return a.Name < b.Name end
+            return ia < ib
+        elseif ia then return true
+        elseif ib then return false
+        else return a.Name < b.Name end
+    end)
+
+    local firstSib = siblings[1]
+    
+    if page.Id == firstSib.Id then
+        -- We are already on the first page. Snap back to the last selected page?
+        local lastPage = self.lastNonFirstPageId and AngryAssign_Pages[self.lastNonFirstPageId]
+        if lastPage and lastPage.CategoryId == page.CategoryId then
+            self:DisplayPage(self.lastNonFirstPageId)
+            self.lastNonFirstPageId = nil
+        else
+            self:Print("Already on the first page.")
+        end
+    else
+        self.lastNonFirstPageId = page.Id
+        self:DisplayPage(firstSib.Id)
     end
 end
 
@@ -3591,6 +3647,10 @@ function AngryAssign_NextPage()
     AngryAssign:NextPage()
 end
 
+function AngryAssign_FirstPage()
+    AngryAssign:FirstPage()
+end
+
 function AngryAssign:ShowDisplay()
     self.display_text:Show()
     self:UpdateBackdrop()
@@ -3917,7 +3977,7 @@ function AngryAssign:GetTemplateContext()
                 unit.colored_name = "|c" .. RAID_CLASS_COLORS[class].colorStr .. name .. "|r"
                 ctx.rosterColors[name] = RAID_CLASS_COLORS[class].colorStr
             end
-            table.insert(ctx.classes[class], unit)
+            if ctx.classes[class] then table.insert(ctx.classes[class], unit) end
             table.insert(ctx.groups[1], unit)
         end
         return ctx
@@ -3961,32 +4021,33 @@ function AngryAssign:GetTemplateContext()
 end
 
 function AngryAssign:RenderPageContent(page, ctx)
-    local text = page.Contents
-    -- Normalize Pipes
-    text = text:gsub("||", "|")
+    local text = page.Contents:gsub("||", "|")
 
     local mergedVars = {}
+
+    -- Helper to merge variables strings
+    local function MergeAppVars(varStr)
+        if varStr and varStr ~= "" and varStr ~= "{}" then
+            local vars = app.ParseVariables(varStr)
+            for k, v in pairs(vars) do
+                mergedVars[k] = v
+            end
+        end
+    end
 
     if LibMustache then
         -- Merge Category Variables
         if page.CategoryId then
-            local cat = AngryAssign:GetCat(page.CategoryId)
-            if cat and cat.Vars then
-                local vars = app.ParseVariables(cat.Vars)
-                for k, v in pairs(vars) do
-                    ctx[k] = v
-                    mergedVars[k] = v
-                end
-            end
+            local cat = AngryAssign_Categories[page.CategoryId]
+            if cat then MergeAppVars(cat.Vars) end
         end
 
         -- Merge Page Variables (Override Category)
-        if page.Vars then
-             local vars = app.ParseVariables(page.Vars)
-             for k, v in pairs(vars) do
-                 ctx[k] = v
-                 mergedVars[k] = v
-             end
+        MergeAppVars(page.Vars)
+
+        -- Add Variables to Context for Mustache
+        for k, v in pairs(mergedVars) do
+             ctx[k] = v
         end
 
         -- Render
@@ -4000,27 +4061,24 @@ function AngryAssign:RenderPageContent(page, ctx)
 end
 
 function AngryAssign:ProcessMarkdown(text)
-    -- Headers (## Header) -> Gold
-    -- Lists (- Item) -> Bullet
-    local lines = {strsplit("\n", text)}
-    for i, line in ipairs(lines) do
-        local hLevel, content = line:match("^(#+)%s+(.*)")
-        if hLevel then
-            lines[i] = "|cffffd200" .. content:upper() .. "|r"
-        elseif line:match("^%-%s+") then
-             -- List items "- Item" -> Bullet
-             lines[i] = "  |cffffd200*|r " .. line:match("^%-%s+(.*)")
-        end
-    end
-    text = table.concat(lines, "\n")
+    -- Process Headers: # Header
+    -- Start of string
+    text = text:gsub("^(#+)%s+([^\n]+)", function(l, c) return "|cffffd200"..c:upper().."|r" end)
+    -- Start of line
+    text = text:gsub("\n(#+)%s+([^\n]+)", function(l, c) return "\n|cffffd200"..c:upper().."|r" end)
+
+    -- Process Lists: - Item
+    -- Start of string
+    text = text:gsub("^%-%s+([^\n]+)", "  |cffffd200*|r %1")
+    -- Start of line
+    text = text:gsub("\n%-%s+([^\n]+)", "\n  |cffffd200*|r %1")
 
     -- Bold **text** -> White
     text = text:gsub("%*%*(.-)%*%*", "|cffffffff%1|r")
 
-    -- Italic *text* -> Grey (Use _ for italic to avoid * conflict?)
-    -- Strict Markdown allows * or _.
-    -- Let's support _text_ for italics to be safe
-    text = text:gsub("_(.-)_", "|cffaaaaaa%1|r")
+    -- Italic *text* -> Grey (Changed from _text_ to avoid conflicts with icon/texture names)
+    -- Prevent matching across newlines to avoid breaking lists or other structures
+    text = text:gsub("%*([^\n*]-)%*", "|cffaaaaaa%1|r")
 
     return text
 end
@@ -4035,7 +4093,7 @@ function AngryAssign:UpdateDisplayed()
 
     local text = page.Contents
 
-    -- Prepare Highlight Map (Optimization: O(1) lookup)
+    -- Prepare Highlight Map
     local highlightSet = {}
     local currentGroupStr = "g" .. (self:GetCurrentGroup() or 0)
 
@@ -4047,34 +4105,43 @@ function AngryAssign:UpdateDisplayed()
             highlightSet[token] = true
         end
     end
-    local highlightHex = self:GetConfig("highlightColor")
 
-    -- Mustache Templating & Merging
-    local ctx = self:GetTemplateContext()
-    local renderedText, mergedVars = self:RenderPageContent(page, ctx)
-    text = renderedText
-
-    -- Add Variables to Highlight Set (Generic)
-    for k, v in pairs(mergedVars) do
-         if type(v) == "string" and #v > 2 then
-             for word in v:gmatch("[^%s%p]+") do
-                 if #word > 2 then highlightSet[word:lower()] = true end
-             end
-         end
-    end
-
-    -- Add Guild Colors (Override generic)
+    -- Add Guild Colors
     if self.GuildColors then
         for name, color in pairs(self.GuildColors) do
             highlightSet[name:lower()] = color
         end
     end
 
-    -- Add Roster Colors to Highlight Set (LAST priority to override vars with Class Colors)
-    if ctx.rosterColors then
+    -- Add Roster Colors
+    local ctx = self:GetTemplateContext()
+    if ctx and ctx.rosterColors then
         for name, color in pairs(ctx.rosterColors) do
             highlightSet[name:lower()] = color
         end
+    end
+
+    local highlightHex = self:GetConfig("highlightColor")
+
+    -- Mustache Templating & Merging
+    local renderedText, mergedVars = self:RenderPageContent(page, ctx)
+    text = renderedText
+
+    local hasHighlight = next(highlightSet) ~= nil
+
+    -- Add Variables to Highlight Set (Generic)
+    for k, v in pairs(mergedVars) do
+         if type(v) == "string" and #v > 2 then
+             for word in v:gmatch("[^%s%p]+") do
+                 if #word > 2 then
+                     local lowerWord = word:lower()
+                     if highlightSet[lowerWord] == nil then
+                         highlightSet[lowerWord] = true
+                         hasHighlight = true
+                     end
+                 end
+             end
+         end
     end
 
     -- Markdown Support
@@ -4111,18 +4178,20 @@ function AngryAssign:UpdateDisplayed()
     text = text:gsub("(%b{})", ProcessTag)
 
     -- Process Highlights (Word Scan)
-    -- We only replace if the word exists in our highlightSet
-    text = text:gsub("([^%s%p]+)", function(word)
-        local val = highlightSet[word:lower()]
-        if val then
-            if type(val) == "string" then
-                 return string.format("|c%s%s|r", val, word)
-            else
-                 return string.format("|cff%s%s|r", highlightHex, word)
+    -- Optimization: Only scan if we actually have things to highlight
+    if hasHighlight then
+        text = text:gsub("([^%s%p]+)", function(word)
+            local val = highlightSet[word:lower()]
+            if val then
+                if type(val) == "string" then
+                     return string.format("|c%s%s|r", val, word)
+                else
+                     return string.format("|cff%s%s|r", highlightHex, word)
+                end
             end
-        end
-        return word -- Return original if no match
-    end)
+            return word -- Return original if no match
+        end)
+    end
 
     -- Render
     self.display_text:Clear()
@@ -4177,15 +4246,7 @@ function AngryAssign:OutputDisplayed(id)
         output = output:gsub("{(.-)}", function(tagContent)
             local lowerTag = "{"..tagContent:lower().."}"
 
-            -- Direct Icon Replacements (star -> rt1, etc.)
-            -- We can reuse IconTable keys, but we need to map them to Chat-Friendly strings
-            -- Since IconTable maps to TEXTURES (|T...|t), we need a specific chat map here.
             local chatMap = {
-                ["{healthstone}"] = "{hs}", ["{hs}"] = "Healthstone",
-                ["{damage}"] = "Damage", ["{dps}"] = "Damage",
-                ["{tank}"] = "Tanks", ["{healer}"] = "Healers",
-                ["{bloodlust}"] = "Bloodlust", ["{bl}"] = "Bloodlust",
-                ["{hero}"] = "Heroism", ["{heroism}"] = "Heroism",
                 ["{hunter}"] = LOCALIZED_CLASS_NAMES_MALE["HUNTER"],
                 ["{warrior}"] = LOCALIZED_CLASS_NAMES_MALE["WARRIOR"],
                 ["{rogue}"] = LOCALIZED_CLASS_NAMES_MALE["ROGUE"],
@@ -4279,13 +4340,7 @@ function AngryAssign:ProcessPageForOutput(page)
     output = output:gsub("{(.-)}", function(tagContent)
         local lowerTag = "{"..tagContent:lower().."}"
 
-        -- Direct Icon Replacements (star -> rt1, etc.)
         local chatMap = {
-            ["{healthstone}"] = "{hs}", ["{hs}"] = "Healthstone",
-            ["{damage}"] = "Damage", ["{dps}"] = "Damage",
-            ["{tank}"] = "Tanks", ["{healer}"] = "Healers",
-            ["{bloodlust}"] = "Bloodlust", ["{bl}"] = "Bloodlust",
-            ["{hero}"] = "Heroism", ["{heroism}"] = "Heroism",
             ["{hunter}"] = LOCALIZED_CLASS_NAMES_MALE["HUNTER"],
             ["{warrior}"] = LOCALIZED_CLASS_NAMES_MALE["WARRIOR"],
             ["{rogue}"] = LOCALIZED_CLASS_NAMES_MALE["ROGUE"],
@@ -4644,6 +4699,7 @@ function AngryAssign:OnInitialize()
         end
     end
 
+
     -- Run cleanup once on load
     self:CleanupOrphanedStates()
 
@@ -4719,6 +4775,17 @@ function AngryAssign:OnInitialize()
                 confirm = true,
                 func = function()
                     self:OutputDisplayed()
+                end
+            },
+            first = {
+                type = "execute",
+                name = "First Page",
+                desc = "Toggles to and from the first page in the current category",
+                order = 11.5,
+                hidden = true,
+                cmdHidden = false,
+                func = function()
+                    self:FirstPage()
                 end
             },
             send = {
@@ -5042,7 +5109,12 @@ function AngryAssign:ChatCommand(input)
         InterfaceOptionsFrame_OpenToCategory(blizOptionsPanel)
     end
   else
-    LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryAssign", input)
+    local command = input:trim():lower()
+    if command == "first" then
+        self:FirstPage()
+    else
+        LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryAssign", input)
+    end
   end
 end
 
@@ -5105,10 +5177,20 @@ function AngryAssign:PLAYER_GUILD_UPDATE()
     self:PermissionsUpdated()
 end
 
+local guildUpdatePending = false
 function AngryAssign:GUILD_ROSTER_UPDATE(...)
     local canRequestRosterUpdate = ...
     self:ResetOfficerRank()
     self:UpdateGuildColors()
+    
+    if not guildUpdatePending then
+        guildUpdatePending = true
+        C_Timer.After(2, function()
+            guildUpdatePending = false
+            self:UpdateDisplayed()
+        end)
+    end
+
     if canRequestRosterUpdate and isClassic then
         GuildRoster()
     end
