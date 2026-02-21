@@ -74,6 +74,7 @@ local comStarted = false
 local warnedPermission = false
 
 local currentGroup = nil
+local AngryAssign_DropDown
 
 -- Pages Saved Variable Format
 --     AngryAssign_Pages = {
@@ -586,9 +587,9 @@ function AngryAssign:SendVersion(force)
     if versionLastUpdate and (curTime - versionLastUpdate <= updateFrequency) then
         if not versionTimerId then
             if force then
-                self:SendVersionMessage(id)
+                self:SendVersionMessage()
             else
-                versionTimerId = self:ScheduleTimer("SendVersionMessage", updateFrequency - (curTime - versionLastUpdate), id)
+                versionTimerId = self:ScheduleTimer("SendVersionMessage", updateFrequency - (curTime - versionLastUpdate))
             end
         elseif force then
             self:CancelTimer( versionTimerId )
@@ -1774,7 +1775,65 @@ function AngryAssign:ShowExportWindow(exportString, pageName)
 	end)
 end
 
+local function ValidateEncodedPagePayload(data, path)
+    if type(data) ~= "table" then
+        return false, path .. " must be a table."
+    end
+    if type(data.Name) ~= "string" or data.Name:match("^%s*$") then
+        return false, path .. ".Name must be a non-empty string."
+    end
+    if type(data.Contents) ~= "string" then
+        return false, path .. ".Contents must be a string."
+    end
+    if data.Vars ~= nil and type(data.Vars) ~= "string" then
+        return false, path .. ".Vars must be a string when provided."
+    end
+    return true
+end
+
+local ValidateEncodedCategoryPayload
+ValidateEncodedCategoryPayload = function(data, path)
+    if type(data) ~= "table" then
+        return false, path .. " must be a table."
+    end
+    if type(data.Name) ~= "string" or data.Name:match("^%s*$") then
+        return false, path .. ".Name must be a non-empty string."
+    end
+    if type(data.Children) ~= "table" then
+        return false, path .. ".Children must be a table."
+    end
+
+    for key in pairs(data.Children) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
+            return false, path .. ".Children must be an array."
+        end
+    end
+
+    for index, child in ipairs(data.Children) do
+        local childPath = string.format("%s.Children[%d]", path, index)
+        local childType = child and child.Type
+        if childType == "Category" or (childType == nil and type(child) == "table" and type(child.Children) == "table") then
+            local ok, err = ValidateEncodedCategoryPayload(child, childPath)
+            if not ok then
+                return false, err
+            end
+        elseif childType == "Page" or (childType == nil and type(child) == "table" and type(child.Contents) == "string") then
+            local ok, err = ValidateEncodedPagePayload(child, childPath)
+            if not ok then
+                return false, err
+            end
+        else
+            return false, childPath .. " has an invalid Type value."
+        end
+    end
+
+    return true
+end
+
 function AngryAssign:ParseImportString(str)
+    if type(str) ~= "string" then
+        return false, "Import text must be a string"
+    end
 	str = str:match("^%s*(.-)%s*$")
 	local prefix, version, encoded
 	if str:match("^AA:Page:(%d+):") then
@@ -1785,6 +1844,13 @@ function AngryAssign:ParseImportString(str)
 		return false, "Not a valid AA export string"
 	end
 
+	if version ~= "1" then
+		return false, "Unsupported export version: " .. tostring(version)
+	end
+	if not encoded or encoded == "" then
+		return false, "Missing encoded payload"
+	end
+
 	local compressed = libD:DecodeForPrint(encoded)
 	if not compressed then return false, "Decode failed" end
 	local serialized, err = libD:DecompressDeflate(compressed)
@@ -1793,12 +1859,14 @@ function AngryAssign:ParseImportString(str)
 	if not ok then return false, "Deserialize failed" end
 
 	if prefix == "Page" then
-		if type(data.Name) ~= "string" or type(data.Contents) ~= "string" then
-			return false, "Missing required fields (Name, Contents)"
+		local valid, validationError = ValidateEncodedPagePayload(data, "Page")
+		if not valid then
+			return false, validationError
 		end
 	elseif prefix == "Category" then
-		if type(data.Name) ~= "string" or type(data.Children) ~= "table" then
-			return false, "Missing required fields (Name, Children)"
+		local valid, validationError = ValidateEncodedCategoryPayload(data, "Category")
+		if not valid then
+			return false, validationError
 		end
 	end
 
@@ -2071,7 +2139,6 @@ local function AngryAssign_CategoryMenu(catId)
 	return CategoriesDropDownList
 end
 
-local AngryAssign_DropDown
 local clickTime = 0
 local clickValue = nil
 local function AngryAssign_TreeClick(widget, event, value, selected, button)
@@ -2131,93 +2198,48 @@ local function AngryAssign_TreeMenuClick(widget, event, uniquevalue)
     end
 end
 
-local function AngryAssign_ParseJSON(str)
-    if type(str) ~= "string" then return nil end
-    local pos = 1
-    local len = #str
-
-    local function skip()
-        while pos <= len and str:match("^%s", pos) do pos = pos + 1 end
+local function ValidateJSONImportData(data)
+    if type(data) ~= "table" then
+        return false, "Invalid JSON import: root value must be an object."
     end
 
-    local function parseValue()
-        skip()
-        if pos > len then return nil end
-        local char = str:sub(pos, pos)
-
-        if char == '"' then
-             pos = pos + 1
-             local start = pos
-             while pos <= len do
-                 local c = str:sub(pos, pos)
-                 if c == '"' then
-                     local val = str:sub(start, pos - 1)
-                     pos = pos + 1
-                     return val:gsub("\\\"", "\""):gsub("\\\\", "\\"):gsub("\\n", "\n")
-                 elseif c == "\\" then
-                     pos = pos + 2
-                 else
-                     pos = pos + 1
-                 end
-             end
-             return nil
-
-        elseif char == '{' then
-             pos = pos + 1
-             skip()
-             local obj = {}
-             if str:sub(pos, pos) == '}' then pos = pos + 1 return obj end
-             while true do
-                 local key = parseValue()
-                 if not key or type(key) ~= "string" then return nil end
-                 skip()
-                 if str:sub(pos, pos) ~= ':' then return nil end
-                 pos = pos + 1
-                 local val = parseValue()
-                 if val == nil then return nil end
-                 obj[key] = val
-                 skip()
-                 local nextC = str:sub(pos, pos)
-                 if nextC == '}' then pos = pos + 1 return obj end
-                 if nextC ~= ',' then return nil end
-                 pos = pos + 1
-             end
-
-        elseif char == '[' then
-             pos = pos + 1
-             skip()
-             local arr = {}
-             if str:sub(pos, pos) == ']' then pos = pos + 1 return arr end
-             while true do
-                 local val = parseValue()
-                 if val == nil then return nil end
-                 table.insert(arr, val)
-                 skip()
-                 local nextC = str:sub(pos, pos)
-                 if nextC == ']' then pos = pos + 1 return arr end
-                 if nextC ~= ',' then return nil end
-                 pos = pos + 1
-             end
-
-        elseif char == 't' then
-             if str:sub(pos, pos+3) == "true" then pos = pos + 4 return true end
-        elseif char == 'f' then
-             if str:sub(pos, pos+4) == "false" then pos = pos + 5 return false end
-        elseif char == 'n' then
-             if str:sub(pos, pos+3) == "null" then pos = pos + 4 return nil end
-        else
-             local start = pos
-             if char == '-' then pos = pos + 1 end
-             while pos <= len and str:match("^%d", pos) do pos = pos + 1 end
-             if str:sub(pos, pos) == '.' then
-                 pos = pos + 1
-                 while pos <= len and str:match("^%d", pos) do pos = pos + 1 end
-             end
-             return tonumber(str:sub(start, pos-1))
+    if data.pages ~= nil then
+        if type(data.pages) ~= "table" then
+            return false, "Invalid JSON import: \"pages\" must be an array."
         end
+        for key in pairs(data.pages) do
+            if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
+                return false, "Invalid JSON import: \"pages\" must be an array."
+            end
+        end
+        if data.name ~= nil and type(data.name) ~= "string" then
+            return false, "Invalid JSON import: \"name\" must be a string when provided."
+        end
+        for index, page in ipairs(data.pages) do
+            if type(page) ~= "table" then
+                return false, string.format("Invalid JSON import: pages[%d] must be an object.", index)
+            end
+            if type(page.name) ~= "string" or page.name:match("^%s*$") then
+                return false, string.format("Invalid JSON import: pages[%d].name must be a non-empty string.", index)
+            end
+            if page.content ~= nil and type(page.content) ~= "string" then
+                return false, string.format("Invalid JSON import: pages[%d].content must be a string when provided.", index)
+            end
+        end
+        return true
     end
 
-    return parseValue()
+    if data.name ~= nil and type(data.name) ~= "string" then
+        return false, "Invalid JSON import: \"name\" must be a string when provided."
+    end
+    if data.content ~= nil and type(data.content) ~= "string" then
+        return false, "Invalid JSON import: \"content\" must be a string when provided."
+    end
+    if data.name == nil and data.content == nil then
+        return false, "Invalid JSON import: expected \"pages\" for categories or \"name\"/\"content\" for pages."
+    end
+
+    return true
 end
 
 local function AngryAssign_ImportPage()
@@ -2246,10 +2268,14 @@ local function AngryAssign_ImportPage()
     importBtn:SetText("Import")
     importBtn:SetFullWidth(true)
 
-    local function DoImport(nameStr, contentStr, jsonData)
+    local function DoImport(nameStr, s, jsonData)
         if jsonData then
-            if not nameStr or nameStr:match("^%s*$") then nameStr = jsonData.name end
-            if not nameStr or nameStr:match("^%s*$") then nameStr = "Imported" end
+            if not nameStr or nameStr:match("^%s*$") then
+                nameStr = jsonData.name
+            end
+            if not nameStr or nameStr:match("^%s*$") then
+                nameStr = "Imported"
+            end
 
             if jsonData.pages then
                 -- Category Import
@@ -2323,7 +2349,7 @@ local function AngryAssign_ImportPage()
             return
         end
 
-        local searchStr = "\n" .. contentStr
+        local searchStr = "\n" .. s
         local headers = {}
         for startPos, title in searchStr:gmatch("()\n# ([^\n]+)") do
             if #headers > 0 then
@@ -2349,10 +2375,10 @@ local function AngryAssign_ImportPage()
             end
 
             if existingId then
-                 AngryAssign:UpdateContents(existingId, contentStr)
+                 AngryAssign:UpdateContents(existingId, s)
                  AngryAssign:RenamePage(existingId, nameStr)
             else
-                 local success, err = AngryAssign:CreatePage(nameStr, contentStr, nil, nil)
+                 local success, err = AngryAssign:CreatePage(nameStr, s, nil, nil)
                  if not success then print("Error: "..(err or "")) end
             end
             frame:Hide()
@@ -2403,23 +2429,40 @@ local function AngryAssign_ImportPage()
 
     importBtn:SetCallback("OnClick", function()
         local nameStr = nameBox:GetText()
-        local contentStr = contentBox:GetText()
-        if not contentStr then contentStr = "" end
+        local s = contentBox:GetText()
+        if not s then
+            s = ""
+        end
 
         local jsonData
-        if contentStr:match("^%s*[{[]") then
-             jsonData = AngryAssign_ParseJSON(contentStr)
+        local looksLikeJSON = s:match("^%s*[{[]") ~= nil
+        if looksLikeJSON then
+            local decoded = app.JSON_TryDecode(s)
+            if decoded == nil then
+                print("Invalid JSON. Check syntax and try again.")
+                return
+            end
+            local valid, validationError = ValidateJSONImportData(decoded)
+            if not valid then
+                print(validationError)
+                return
+            end
+            jsonData = decoded
         end
 
         if jsonData then
-            if not nameStr or nameStr == "" then nameStr = jsonData.name end
+            if not nameStr or nameStr == "" then
+                nameStr = jsonData.name
+            end
         end
 
         if (not nameStr or nameStr:match("^%s*$")) and not jsonData then
             print("Please enter a name.")
             return
         end
-        if not nameStr or nameStr:match("^%s*$") then nameStr = "Imported" end
+        if not nameStr or nameStr:match("^%s*$") then
+            nameStr = "Imported"
+        end
 
         local exists = false
         if jsonData then
@@ -2433,7 +2476,7 @@ local function AngryAssign_ImportPage()
                  end
              end
         else
-            local hasHeaders = contentStr:match("\n# ") or contentStr:match("^# ")
+            local hasHeaders = s:match("\n# ") or s:match("^# ")
             if hasHeaders then
                 for _, cat in pairs(AngryAssign_Categories) do
                     if cat.Name == nameStr then exists = true break end
@@ -2454,15 +2497,15 @@ local function AngryAssign_ImportPage()
                 whileDead = true,
                 hideOnEscape = true,
                 timeout = 0,
-                OnAccept = function() DoImport(nameStr, contentStr, jsonData) end,
+                OnAccept = function() DoImport(nameStr, s, jsonData) end,
             }
             local typeStr = "page"
             if jsonData and jsonData.pages then typeStr = "category"
-            elseif not jsonData and (contentStr:match("\n# ") or contentStr:match("^# ")) then typeStr = "category" end
+            elseif not jsonData and (s:match("\n# ") or s:match("^# ")) then typeStr = "category" end
 
             StaticPopup_Show(popup_name, typeStr, nameStr)
         else
-            DoImport(nameStr, contentStr, jsonData)
+            DoImport(nameStr, s, jsonData)
         end
     end)
     frame:AddChild(importBtn)

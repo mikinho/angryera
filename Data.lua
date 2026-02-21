@@ -784,10 +784,10 @@ local function parse_array(str, pos)
 	pos = skip_ws(str, pos + 1)
 	if str:sub(pos, pos) == "]" then return arr, pos + 1 end
 	
-    local val
+    local val, parseError
 	while true do
-		val, pos = parse_value(str, pos)
-		if not val and pos then return nil, pos, "Error in Array" end
+		val, pos, parseError = parse_value(str, pos)
+		if parseError then return nil, pos, parseError end
 		table.insert(arr, val)
 		pos = skip_ws(str, pos)
 		if str:sub(pos, pos) == "]" then return arr, pos + 1 end
@@ -801,7 +801,7 @@ local function parse_obj_impl(str, pos)
 	pos = skip_ws(str, pos + 1)
 	if str:sub(pos, pos) == "}" then return obj, pos + 1 end
 	
-    local key, val
+    local key, val, parseError
 	while true do
 		if str:sub(pos, pos) ~= '"' then return nil, pos, "Expected String Key" end
 		key, pos = parse_string(str, pos)
@@ -809,8 +809,8 @@ local function parse_obj_impl(str, pos)
 		if str:sub(pos, pos) ~= ":" then return nil, pos, "Expected ':'" end
 		pos = skip_ws(str, pos + 1)
 		
-		val, pos = parse_value(str, pos)
-		if not val and pos then return nil, pos, "Error in Object Value" end
+		val, pos, parseError = parse_value(str, pos)
+		if parseError then return nil, pos, parseError end
 		obj[key] = val
 		
 		pos = skip_ws(str, pos)
@@ -833,13 +833,40 @@ parse_value = function(str, pos)
 	return nil, pos, "Syntax Error"
 end
 
-function app.JSON_Decode(str)
-    if not str or str == "" then return {} end
-    local success, res, pos, err = pcall(function() 
-        local v, p, e = parse_value(str, 1)
-        return v, p, e
+-- Strict JSON decode:
+-- Returns decoded Lua value on success.
+-- Returns nil on parse failure or trailing garbage.
+function app.JSON_TryDecode(str)
+    if type(str) ~= "string" or str == "" then
+        return nil
+    end
+
+    local success, value, pos, parseError = pcall(function()
+        local decodedValue, nextPos, err = parse_value(str, 1)
+        return decodedValue, nextPos, err
     end)
-    if success and res then return res end
+
+    if not success or parseError then
+        return nil
+    end
+
+    if not pos then
+        return nil
+    end
+
+    local nextPos = skip_ws(str, pos)
+    if nextPos <= #str then
+        return nil
+    end
+
+    return value
+end
+
+function app.JSON_Decode(str)
+    local decoded = app.JSON_TryDecode(str)
+    if decoded ~= nil then
+        return decoded
+    end
     return {}
 end
 
