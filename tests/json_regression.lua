@@ -66,6 +66,28 @@ do
     assert_equal(decoded, nil, "Expected JSON_TryDecode to reject trailing non-whitespace")
 end
 
+-- Numeric parser should accept valid JSON exponent formats.
+do
+    local decoded = app.JSON_TryDecode("{\"a\":1e+2,\"b\":-2.5E-1}")
+    assert_truthy(decoded, "Expected JSON_TryDecode to parse valid exponent numbers")
+    assert_equal(decoded.a, 100, "Expected 1e+2 to decode to 100")
+    assert_equal(decoded.b, -0.25, "Expected -2.5E-1 to decode to -0.25")
+end
+
+-- Numeric parser should reject invalid JSON number formats.
+do
+    local invalid = {
+        "{\"a\":1e}",
+        "{\"a\":-}",
+        "{\"a\":01}",
+        "[1e]",
+    }
+    for _, sample in ipairs(invalid) do
+        local decoded = app.JSON_TryDecode(sample)
+        assert_equal(decoded, nil, "Expected invalid JSON number to be rejected: " .. sample)
+    end
+end
+
 -- Encode should preserve JSON null semantics and escaped newlines.
 do
     local encoded = app.JSON_Encode({

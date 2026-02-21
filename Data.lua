@@ -851,11 +851,65 @@ local function parse_string(str, pos)
 end
 
 local function parse_number(str, pos)
-    local _, end_pos = str:find("^[%-%d%.eE]+", pos)
-    if not end_pos then
+    local i = pos
+
+    if str:sub(i, i) == "-" then
+        i = i + 1
+    end
+
+    local function is_digit(ch)
+        return ch ~= "" and ch:match("%d") ~= nil
+    end
+
+    local ch = str:sub(i, i)
+    if ch == "0" then
+        i = i + 1
+        if is_digit(str:sub(i, i)) then
+            return nil, pos, "Invalid Number"
+        end
+    elseif is_digit(ch) then
+        repeat
+            i = i + 1
+            ch = str:sub(i, i)
+        until not is_digit(ch)
+    else
         return nil, pos, "Invalid Number"
     end
-    return tonumber(str:sub(pos, end_pos)), end_pos + 1
+
+    if str:sub(i, i) == "." then
+        i = i + 1
+        if not is_digit(str:sub(i, i)) then
+            return nil, pos, "Invalid Number"
+        end
+        repeat
+            i = i + 1
+            ch = str:sub(i, i)
+        until not is_digit(ch)
+    end
+
+    ch = str:sub(i, i)
+    if ch == "e" or ch == "E" then
+        i = i + 1
+        ch = str:sub(i, i)
+        if ch == "+" or ch == "-" then
+            i = i + 1
+        end
+        if not is_digit(str:sub(i, i)) then
+            return nil, pos, "Invalid Number"
+        end
+        repeat
+            i = i + 1
+            ch = str:sub(i, i)
+        until not is_digit(ch)
+    end
+
+    local token = str:sub(pos, i - 1)
+    local number = tonumber(token)
+    if number == nil then
+        return nil, pos, "Invalid Number"
+    end
+
+    return number, i
 end
 
 -- Proper recursive implementation
