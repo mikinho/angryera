@@ -280,17 +280,22 @@ function AngryAssign:ReceiveMessage(prefix, data, channel, sender)
         return
     end
 
-    local one = libCE:Decode(data)
-    local two, message = libC:Decompress(one)
-
-    if not two then
-        error("Error decompressing: " .. message)
+    if type(data) ~= "string" or data == "" then
         return
     end
 
-    local success, final = libS:Deserialize(two)
-    if not success then
-        error("Error deserializing " .. final)
+    local okDecode, one = pcall(libCE.Decode, libCE, data)
+    if not okDecode or type(one) ~= "string" then
+        return
+    end
+
+    local okDecompress, two = pcall(libC.Decompress, libC, one)
+    if not okDecompress or not two then
+        return
+    end
+
+    local okDeserialize, success, final = pcall(libS.Deserialize, libS, two)
+    if not okDeserialize or not success or type(final) ~= "table" then
         return
     end
 
