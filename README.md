@@ -173,6 +173,28 @@ The "/aa backup" command (also available from the config menu) will store the cu
 
 The "/aa deleteall" command will delete all pages you have stored.  This could be used occasionally to clean out old assignment pages that are no longer used, for example, when beginning a new tier.  Of course, if others in the guild still have those pages, and choose to edit them and/or send them out for display, you'll get them back if you're online at the time.
 
+Developer Documentation (LDoc)
+--------------------
+
+This repository includes an LDoc configuration file at `.ldoc`.
+
+Generate API documentation:
+
+1. Install [LDoc](https://github.com/lunarmodules/LDoc) (for example via LuaRocks).
+2. Run from the repo root:
+   ```
+   make docs
+   ```
+   Or directly:
+   ```
+   ldoc .
+   ```
+3. Open generated docs in `docs/ldoc/` (HTML and Markdown output, depending on LDoc setup).
+4. To remove generated docs:
+   ```
+   make docs-clean
+   ```
+
 Credits
 -------
 Maintained by **Eblis/Zessy/Kwayteow** on Pagle (Classic Era).

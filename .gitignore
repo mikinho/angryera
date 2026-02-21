@@ -3,3 +3,7 @@
 .vscode/
 .claude/
 CLAUDE.md
+
+# Generated documentation artifacts
+/docs/ldoc/
+/doc/

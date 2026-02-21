@@ -11,6 +11,10 @@
 -- Updated for Classic Era by: AngryEra Maintainers
 -------------------------------------------------------------------------------
 
+-- Core runtime module for AngryEra.
+-- Handles addon lifecycle, communication sync, import/export, permissions, and
+-- on-screen assignment rendering.
+
 local _G = _G
 
 local appName, app = ...;
@@ -18,9 +22,9 @@ local L = app.L;
 
 local GetAddOnMetadata = GetAddOnMetadata or C_AddOns.GetAddOnMetadata
 
----@class AngryAssign: AceAddon, AceEvent-3.0, AceComm-3.0, AceConsole-3.0, AceTimer-3.0
----@field window? AceGUIFrame The main configuration window
----@field display_text? table fontstring/frame for display
+-- class AngryAssign
+-- field window? AceGUIFrame The main configuration window
+-- field display_text? table fontstring/frame for display
 local AngryAssign = LibStub("AceAddon-3.0"):NewAddon(appName, "AceConsole-3.0", "AceEvent-3.0", "AceComm-3.0", "AceTimer-3.0")
 local AceGUI = LibStub("AceGUI-3.0")
 local libS = LibStub("AceSerializer-3.0")
@@ -82,21 +86,21 @@ local AngryAssign_DropDown
 --        ...
 --     }
 
----@class Page
----@field Id number Unique ID for the page
----@field Name string Display name of the page
----@field Contents string The raw text content of the assignment
----@field Updated number Timestamp of last update
----@field UpdateId string Hash of name and contents for versioning
----@field Backup? string Previous version of contents (if reverted)
----@field CategoryId? number ID of parent category
----@field Index? number Sorting index within category
+-- class Page
+-- field Id number Unique ID for the page
+-- field Name string Display name of the page
+-- field Contents string The raw text content of the assignment
+-- field Updated number Timestamp of last update
+-- field UpdateId string Hash of name and contents for versioning
+-- field Backup? string Previous version of contents (if reverted)
+-- field CategoryId? number ID of parent category
+-- field Index? number Sorting index within category
 
----@class Category
----@field Id number Unique ID for the category
----@field Name string Display name of the category
----@field CategoryId? number ID of parent category (if nested)
----@field Index? number Sorting index within parent
+-- class Category
+-- field Id number Unique ID for the category
+-- field Name string Display name of the category
+-- field CategoryId? number ID of parent category (if nested)
+-- field Index? number Sorting index within parent
 -- Format for our addon communication
 --
 -- { "PAGE", [Id], [Last Update Timestamp], [Name], [Contents], [Last Update Unique Id] }
@@ -238,6 +242,8 @@ end
 
 AngryAssign.GuildColors = {}
 
+--- Rebuilds the guild name-to-class-color cache.
+-- This cache is later used for display highlighting.
 function AngryAssign:UpdateGuildColors()
     if not IsInGuild() then
         return
@@ -265,9 +271,9 @@ local function HexToRGB(hex)
     end
 end
 
--------------------------
+-- -------------------------
 -- Addon Communication --
--------------------------
+-- -------------------------
 
 function AngryAssign:ReceiveMessage(prefix, data, channel, sender)
     if prefix ~= comPrefix then
@@ -291,6 +297,12 @@ function AngryAssign:ReceiveMessage(prefix, data, channel, sender)
     self:ProcessMessage( sender, final )
 end
 
+--- Sends a serialized addon message to raid/party/instance chat.
+-- If `channel` is omitted, the function auto-selects the best current group channel.
+-- @tparam table data Message table to serialize.
+-- @tparam[opt] string channel Channel override such as `"RAID"` or `"WHISPER"`.
+-- @tparam[opt] string target Whisper target when `channel` is `"WHISPER"`.
+-- @treturn boolean|nil Returns `true` when sent, or `nil` when no channel is available.
 function AngryAssign:SendOutMessage(data, channel, target)
     local one = libS:Serialize( data )
     local two = libC:CompressHuffman(one)
@@ -332,6 +344,10 @@ local function ValidateString(str, maxLength, fieldName)
     return str
 end
 
+--- Processes a decoded message command from another client.
+-- Applies permission checks, updates local state, and triggers UI sync.
+-- @tparam string sender Sender player name.
+-- @tparam table data Decoded command payload.
 function AngryAssign:ProcessMessage(sender, data)
     local cmd = data[COMMAND]
     sender = EnsureUnitFullName(sender)
@@ -491,6 +507,9 @@ function AngryAssign:PermissionCheckFailError(sender)
     end
 end
 
+--- Sends a page update with throttling.
+-- @tparam number id Page id.
+-- @tparam[opt=false] boolean force When `true`, bypasses throttle delay.
 function AngryAssign:SendPage(id, force)
     local lastUpdate = pageLastUpdate[id]
     local timerId = pageTimerId[id]
@@ -542,6 +561,9 @@ function AngryAssign:SendPageMessage(id)
     })
 end
 
+--- Sends display selection updates with throttling.
+-- @tparam[opt] number id Page id to display, or `nil` to clear.
+-- @tparam[opt=false] boolean force When `true`, bypasses throttle delay.
 function AngryAssign:SendDisplay(id, force)
     local curTime = time()
 
@@ -574,6 +596,7 @@ function AngryAssign:SendDisplayMessage(id)
     end
 end
 
+--- Requests current displayed page from the active raid leader.
 function AngryAssign:SendRequestDisplay()
     if (IsInRaid() or IsInGroup()) then
         local to = self:GetRaidLeader(true)
@@ -581,6 +604,8 @@ function AngryAssign:SendRequestDisplay()
     end
 end
 
+--- Sends addon version information with throttling.
+-- @tparam[opt=false] boolean force When `true`, bypasses throttle delay.
 function AngryAssign:SendVersion(force)
     local curTime = time()
 
@@ -613,10 +638,14 @@ function AngryAssign:SendVersionMessage()
 end
 
 
+--- Broadcasts a version query to nearby addon users.
 function AngryAssign:SendVerQuery()
     self:SendOutMessage({ "VER_QUERY" })
 end
 
+--- Requests a specific page from leader (or explicit target).
+-- @tparam number id Requested page id.
+-- @tparam[opt] string to Explicit whisper target.
 function AngryAssign:SendRequestPage(id, to)
     if (IsInRaid() or IsInGroup()) or to then
         if not to then to = self:GetRaidLeader(true) end
@@ -624,6 +653,9 @@ function AngryAssign:SendRequestPage(id, to)
     end
 end
 
+--- Returns the current raid leader full name.
+-- @tparam[opt=false] boolean online_only Require leader to be online.
+-- @treturn string|nil Leader name in `Name-Realm` format when available.
 function AngryAssign:GetRaidLeader(online_only)
     if (IsInRaid() or IsInGroup()) then
         for i = 1, GetNumGroupMembers() do
@@ -640,6 +672,8 @@ function AngryAssign:GetRaidLeader(online_only)
     return nil
 end
 
+--- Finds the player's current raid subgroup.
+-- @treturn number|nil Raid subgroup index (1..8) when grouped.
 function AngryAssign:GetCurrentGroup()
     local player = PlayerFullName()
     if (IsInRaid() or IsInGroup()) then
@@ -1375,6 +1409,9 @@ local function AngryAssign_RevertPage(widget, event, value)
     AngryAssign:UpdateSelected(true)
 end
 
+--- Displays a page by its exact name.
+-- @tparam string name Page name.
+-- @treturn boolean|nil `true` when displayed, `false` when not found, or `nil` on permission failure.
 function AngryAssign:DisplayPageByName( name )
     for id, page in pairs(AngryAssign_Pages) do
         if page.Name == name then
@@ -1384,6 +1421,10 @@ function AngryAssign:DisplayPageByName( name )
     return false
 end
 
+--- Displays a page for the group and marks it updated.
+-- Sends both page and display sync payloads.
+-- @tparam number id Page id.
+-- @treturn boolean|nil `true` on success, or `nil` when permission fails.
 function AngryAssign:DisplayPage( id )
     if not self:PermissionCheck() then
         return
@@ -1668,6 +1709,10 @@ end
 
 -- ── Import Helper Functions ──────────────────────────────────────────────────
 
+--- Returns the id of a page or category by exact name.
+-- @tparam string name Entity name.
+-- @tparam string type Either `"Page"` or `"Category"`.
+-- @treturn number|nil Matching entity id.
 function AngryAssign:GetEntityByName(name, type)
 	if type == "Page" then
 		for id, page in pairs(AngryAssign_Pages) do
@@ -1681,6 +1726,10 @@ function AngryAssign:GetEntityByName(name, type)
 	return nil
 end
 
+--- Produces a unique name by appending ` (n)` suffixes when needed.
+-- @tparam string name Base name.
+-- @tparam string type Either `"Page"` or `"Category"`.
+-- @treturn string Unique name.
 function AngryAssign:GetUniqueEntityName(name, type)
 	local newName = name
 	local n = 1
@@ -1691,6 +1740,8 @@ function AngryAssign:GetUniqueEntityName(name, type)
 	return newName
 end
 
+--- Deletes all nested categories and pages under a category id.
+-- @tparam number catId Category id to recursively clear.
 function AngryAssign:DeleteCategoryChildren(catId)
 	-- Delete sub-categories recursively
 	for id, cat in pairs(AngryAssign_Categories) do
@@ -1711,6 +1762,9 @@ end
 
 -- ── Export / Import ──────────────────────────────────────────────────────────
 
+--- Builds recursive export payload data for a category.
+-- @tparam number catId Category id.
+-- @treturn table|nil Structured export payload for encoded export/import.
 function AngryAssign:GetCategoryExportData(catId)
 	local cat = self:GetCat(catId)
 	if not cat then return nil end
@@ -1830,6 +1884,12 @@ ValidateEncodedCategoryPayload = function(data, path)
     return true
 end
 
+--- Parses an encoded `AA:Page` or `AA:Category` payload.
+-- Performs decode/decompress/deserialize and schema validation.
+-- @tparam string str Encoded import string.
+-- @treturn boolean ok Parse result.
+-- @treturn table|string data Parsed table on success, or error string on failure.
+-- @treturn string|nil prefix `"Page"` or `"Category"` when successful.
 function AngryAssign:ParseImportString(str)
     if type(str) ~= "string" then
         return false, "Import text must be a string"
@@ -1915,6 +1975,11 @@ function AngryAssign:ConfirmImportPage(data)
 	end
 end
 
+--- Imports (or overwrites) a single page payload.
+-- @tparam table data Page payload.
+-- @tparam[opt] number parentId Optional parent category id.
+-- @tparam[opt] number overwriteId Existing page id to overwrite.
+-- @treturn number Imported page id.
 function AngryAssign:DoImportPage(data, parentId, overwriteId)
 	local id = overwriteId or self:Hash("page", math.random(2000000000))
 	local existing = overwriteId and AngryAssign_Pages[overwriteId]
@@ -1986,6 +2051,11 @@ function AngryAssign:ConfirmImportCategory(data)
 	end
 end
 
+--- Imports (or overwrites) a category payload and its descendants.
+-- @tparam table data Category payload.
+-- @tparam[opt] number parentId Optional parent category id.
+-- @tparam[opt] number overwriteId Existing category id to overwrite.
+-- @treturn number Imported category id.
 function AngryAssign:DoImportCategory(data, parentId, overwriteId)
 	local id = overwriteId or self:Hash("cat", math.random(2000000000))
 	local existing = overwriteId and AngryAssign_Categories[overwriteId]
@@ -2013,6 +2083,7 @@ function AngryAssign:DoImportCategory(data, parentId, overwriteId)
 	return id
 end
 
+--- Opens the encoded-import window (`AA:Page` / `AA:Category`).
 function AngryAssign:ShowImportWindow()
 	local frame = AceGUI:Create("Window")
 	frame:SetTitle("Import")
@@ -3172,7 +3243,7 @@ function AngryAssign:FirstPage()
     end)
 
     local firstSib = siblings[1]
-    
+
     if page.Id == firstSib.Id then
         -- We are already on the first page. Snap back to the last selected page?
         local lastPage = self.lastNonFirstPageId and AngryAssign_Pages[self.lastNonFirstPageId]
@@ -3217,15 +3288,26 @@ function AngryAssign:SetSelectedId(selectedId)
     end
 end
 
+--- Returns a page by id or current selection.
+-- @tparam[opt] number id Page id, defaults to selected id.
+-- @treturn table|nil Page table.
 function AngryAssign:Get(id)
     if id == nil then id = self:SelectedId() end
     return AngryAssign_Pages[id]
 end
 
+--- Returns a category by id.
+-- @tparam number id Category id.
+-- @treturn table|nil Category table.
 function AngryAssign:GetCat(id)
     return AngryAssign_Categories[id]
 end
 
+--- Computes a stable FCS32 update hash for page identity/versioning.
+-- @tparam string name Page name.
+-- @tparam string contents Page contents.
+-- @tparam[opt] string vars Page variable string.
+-- @treturn string Hash string.
 function AngryAssign:Hash(name, contents, vars)
     local code = libC:fcs32init()
     code = libC:fcs32update(code, name)
@@ -3268,6 +3350,14 @@ local function ExtractAndValidateName(nameOrFrame)
     return cleanName
 end
 
+--- Creates a page and syncs it to the group.
+-- @tparam string|table nameOrFrame Name text or popup/editbox frame.
+-- @tparam[opt=""] string content Initial page content.
+-- @tparam[opt] number categoryId Parent category id.
+-- @tparam[opt] number index Sort index override.
+-- @treturn boolean ok
+-- @treturn string|nil err Error message on failure.
+-- @treturn number|nil id New page id on success.
 function AngryAssign:CreatePage(nameOrFrame, content, categoryId, index)
     -- Check Permissions first
     if not self:PermissionCheck() then
@@ -3309,6 +3399,11 @@ function AngryAssign:CreatePage(nameOrFrame, content, categoryId, index)
     return true, nil, id
 end
 
+--- Renames a page and broadcasts the update.
+-- @tparam number id Page id.
+-- @tparam string|table nameOrFrame New name text or popup/editbox frame.
+-- @treturn boolean ok
+-- @treturn string|nil err Error message when rename fails.
 function AngryAssign:RenamePage(id, nameOrFrame)
     -- Check Existence
     local page = self:Get(id)
@@ -3346,6 +3441,8 @@ function AngryAssign:RenamePage(id, nameOrFrame)
     return true
 end
 
+--- Deletes a page from local storage and selection state.
+-- @tparam number id Page id.
 function AngryAssign:DeletePage(id)
     AngryAssign_Pages[id] = nil
     if self.window and self:SelectedId() == id then
@@ -3370,6 +3467,11 @@ function AngryAssign:TouchPage(id)
     page.Updated = time()
 end
 
+--- Creates a category.
+-- @tparam string|table nameOrFrame Category name text or popup/editbox frame.
+-- @treturn boolean ok
+-- @treturn string|nil err Error message on failure.
+-- @treturn number|nil id New category id on success.
 function AngryAssign:CreateCategory(nameOrFrame)
     -- Validate and Clean Input using your new helper
     local name, err = ExtractAndValidateName(nameOrFrame)
@@ -3390,6 +3492,11 @@ function AngryAssign:CreateCategory(nameOrFrame)
     return true, nil, id
 end
 
+--- Renames a category.
+-- @tparam number id Category id.
+-- @tparam string|table nameOrFrame New name text or popup/editbox frame.
+-- @treturn boolean ok
+-- @treturn string|nil err Error message when rename fails.
 function AngryAssign:RenameCategory(id, nameOrFrame)
     local cat = self:GetCat(id)
     if not cat then
@@ -3410,6 +3517,8 @@ function AngryAssign:RenameCategory(id, nameOrFrame)
     return true
 end
 
+--- Deletes a category but keeps its descendants by moving them upward.
+-- @tparam number id Category id.
 function AngryAssign:DeleteCategory(id)
     local cat = self:GetCat(id)
     if not cat then
@@ -3441,6 +3550,8 @@ function AngryAssign:DeleteCategory(id)
     self:SetSelectedId(selectedId)
 end
 
+--- Deletes a category and all descendants.
+-- @tparam number id Category id.
 function AngryAssign:DeleteCategoryAndChildren(id)
     local cat = self:GetCat(id)
     if not cat then return end
@@ -3459,6 +3570,9 @@ function AngryAssign:DeleteCategoryAndChildren(id)
     self:SetSelectedId(selectedId)
 end
 
+--- Assigns a page/category into a category (or toggles back to root).
+-- @tparam number entryId Positive for page id, negative for category id.
+-- @tparam number parentId Target category id.
 function AngryAssign:AssignCategory(entryId, parentId)
     local page, cat
     if entryId > 0 then
@@ -3492,6 +3606,9 @@ function AngryAssign:AssignCategory(entryId, parentId)
     end
 end
 
+--- Updates a page's contents, history, hash, and sync state.
+-- @tparam number id Page id.
+-- @tparam string value New page content.
 function AngryAssign:UpdateContents(id, value)
     if not self:PermissionCheck() then
         return
@@ -3548,6 +3665,7 @@ function AngryAssign:CreateBackup()
     end
     self:UpdateSelected()
 end
+--- Clears the currently displayed page selection.
 function AngryAssign:ClearDisplayed()
     AngryAssign_State.displayed = nil
     self:UpdateDisplayed()
@@ -3602,6 +3720,8 @@ function AngryAssign:IsGuildRaid()
     return false
 end
 
+--- Returns whether the configured leader/officer rules allow modifications.
+-- @treturn boolean valid
 function AngryAssign:IsValidRaid()
     if self:GetConfig("allowall") then
         return true
@@ -3626,6 +3746,9 @@ function AngryAssign:IsValidRaid()
     return false
 end
 
+--- Checks whether a sender is allowed to modify page/display state.
+-- @tparam[opt] string sender Sender full name, defaults to current player.
+-- @treturn boolean allowed
 function AngryAssign:PermissionCheck(sender)
     if not sender then sender = PlayerFullName() end
 
@@ -3651,7 +3774,10 @@ end
 -- Displaying Page --
 ---------------------
 
-local function DragHandle_MouseDown(frame) frame:GetParent():GetParent():StartSizing("RIGHT") end
+local function DragHandle_MouseDown(frame)
+    frame:GetParent():GetParent():StartSizing("RIGHT")
+end
+
 local function DragHandle_MouseUp(frame)
     local display = frame:GetParent():GetParent()
     display:StopMovingOrSizing()
@@ -3659,13 +3785,18 @@ local function DragHandle_MouseUp(frame)
     lwin.SavePosition(display)
     AngryAssign:UpdateBackdrop()
 end
-local function Mover_MouseDown(frame) frame:GetParent():StartMoving() end
+
+local function Mover_MouseDown(frame)
+    frame:GetParent():StartMoving()
+end
+
 local function Mover_MouseUp(frame)
     local display = frame:GetParent()
     display:StopMovingOrSizing()
     lwin.SavePosition(display)
 end
 
+--- Resets display frame position, lock state, and direction settings.
 function AngryAssign:ResetPosition()
     AngryAssign_State.display = {}
     AngryAssign_State.directionUp = false
@@ -3705,17 +3836,20 @@ function AngryAssign_FirstPage()
     AngryAssign:FirstPage()
 end
 
+--- Shows the on-screen assignment display.
 function AngryAssign:ShowDisplay()
     self.display_text:Show()
     self:UpdateBackdrop()
     AngryAssign_State.display.hidden = false
 end
 
+--- Hides the on-screen assignment display.
 function AngryAssign:HideDisplay()
     self.display_text:Hide()
     AngryAssign_State.display.hidden = true
 end
 
+--- Toggles the on-screen assignment display visibility.
 function AngryAssign:ToggleDisplay()
     if self.display_text:IsShown() then
         self:HideDisplay()
@@ -3724,6 +3858,7 @@ function AngryAssign:ToggleDisplay()
     end
 end
 
+--- Creates and initializes the on-screen assignment frame/mover widgets.
 function AngryAssign:CreateDisplay()
     local frame = CreateFrame("Frame", nil, UIParent)
     frame:SetPoint("CENTER",0,0)
@@ -3998,6 +4133,7 @@ local function ci_pattern(pattern)
     return p
 end
 
+--- Re-renders display when group membership context changes.
 function AngryAssign:UpdateDisplayedIfNewGroup()
     local newGroup = self:GetCurrentGroup()
     if newGroup ~= currentGroup then
@@ -4006,6 +4142,8 @@ function AngryAssign:UpdateDisplayedIfNewGroup()
     end
 end
 
+--- Builds Mustache context from current roster/classes/groups.
+-- @treturn table ctx Template context table.
 function AngryAssign:GetTemplateContext()
     local ctx = {
         classes = {},
@@ -4074,6 +4212,11 @@ function AngryAssign:GetTemplateContext()
     return ctx
 end
 
+--- Renders a page with merged category/page variables and Mustache.
+-- @tparam table page Page table.
+-- @tparam table ctx Template context table.
+-- @treturn string text Rendered text.
+-- @treturn table mergedVars Merged variable map used for rendering.
 function AngryAssign:RenderPageContent(page, ctx)
     local text = page.Contents:gsub("||", "|")
 
@@ -4116,6 +4259,9 @@ function AngryAssign:RenderPageContent(page, ctx)
     return text, mergedVars
 end
 
+--- Applies lightweight markdown transformations used by the display layer.
+-- @tparam string text Source text.
+-- @treturn string formattedText
 function AngryAssign:ProcessMarkdown(text)
     -- Process Headers: # Header
     -- Start of string
@@ -4139,6 +4285,7 @@ function AngryAssign:ProcessMarkdown(text)
     return text
 end
 
+--- Rebuilds and draws the active display page.
 function AngryAssign:UpdateDisplayed()
     local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
     if not page then
@@ -4272,6 +4419,8 @@ function AngryAssign_OutputDisplayed()
     return AngryAssign:OutputDisplayed( AngryAssign:SelectedId() )
 end
 
+--- Outputs rendered page content to current group chat channel.
+-- @tparam[opt] number id Page id, defaults to currently displayed id.
 function AngryAssign:OutputDisplayed(id)
     if not self:PermissionCheck() then
         self:Print( RED_FONT_COLOR_CODE .. "You don't have permission to output a page.|r" )
@@ -4539,6 +4688,10 @@ local function AngryAssign_ShowExportWindow(text, title)
     frame:AddChild(editBox)
 end
 
+--- Exports a page or category in one of the supported formats.
+-- @tparam number id Entity id.
+-- @tparam string type `"page"` or `"category"`.
+-- @tparam string format `"Encoded AA"`, `"JSON"`, `"Markdown"`, or `"Output"`.
 function AngryAssign:Export(id, type, format)
     local exportText = ""
     local title = ""
@@ -4645,6 +4798,9 @@ local configDefaults = {
     chatoutput = "Acronym",
 }
 
+--- Gets a config value with fallback to defaults.
+-- @tparam string key Config key.
+-- @treturn any value
 function AngryAssign:GetConfig(key)
     if AngryAssign_Config[key] == nil then
         return configDefaults[key]
@@ -4653,6 +4809,9 @@ function AngryAssign:GetConfig(key)
     end
 end
 
+--- Sets a config value, storing `nil` for default-equivalent values.
+-- @tparam string key Config key.
+-- @tparam any value Config value.
 function AngryAssign:SetConfig(key, value)
     if configDefaults[key] == value then
         AngryAssign_Config[key] = nil
@@ -4661,6 +4820,7 @@ function AngryAssign:SetConfig(key, value)
     end
 end
 
+--- Restores all config options to defaults and refreshes display/media.
 function AngryAssign:RestoreDefaults()
     AngryAssign_Config = {}
     self:UpdateMedia()
@@ -4688,50 +4848,52 @@ function AngryAssign:CleanupOrphanedStates()
 end
 
 local blizOptionsPanel
----@class AngryAssignState
----@field tree table Tree view state (collapsed nodes etc)
----@field window table Window position/size
----@field display table Display frame position/size
----@field displayed? number ID of the currently displayed page
----@field locked boolean Whether the display is locked
----@field directionUp boolean Growth direction
+-- class AngryAssignState
+-- field tree table Tree view state (collapsed nodes etc)
+-- field window table Window position/size
+-- field display table Display frame position/size
+-- field displayed? number ID of the currently displayed page
+-- field locked boolean Whether the display is locked
+-- field directionUp boolean Growth direction
 
----@class AngryAssignConfig
----@field scale number Scale of the edit window
----@field hideoncombat boolean Hide display in combat
----@field highlight string Comma/space separated words to highlight
----@field highlightColor string Hex color for highlights
----@field backdropShow boolean Show backdrop
----@field backdropColor string Hex color for backdrop
----@field glowColor string Hex color for update notification
----@field fontName string Font face
----@field fontHeight number Font size
----@field fontFlags string Font outline
----@field color string Normal text color
+-- class AngryAssignConfig
+-- field scale number Scale of the edit window
+-- field hideoncombat boolean Hide display in combat
+-- field highlight string Comma/space separated words to highlight
+-- field highlightColor string Hex color for highlights
+-- field backdropShow boolean Show backdrop
+-- field backdropColor string Hex color for backdrop
+-- field glowColor string Hex color for update notification
+-- field fontName string Font face
+-- field fontHeight number Font size
+-- field fontFlags string Font outline
+-- field color string Normal text color
 
----@class AngryAssignTemplatePage
----@field name string
----@field content string
+-- class AngryAssignTemplatePage
+-- field name string
+-- field content string
 
----@class AngryAssignTemplate
----@field name string
----@field pages AngryAssignTemplatePage[]
+-- class AngryAssignTemplate
+-- field name string
+-- field pages AngryAssignTemplatePage[]
 
----@type table<number, Page> Dictionary of pages key=Id
+-- type table<number, Page> Dictionary of pages key=Id
 _G.AngryAssign_Pages = _G.AngryAssign_Pages
 
----@type table<number, Category> Dictionary of categories key=Id
+-- type table<number, Category> Dictionary of categories key=Id
 _G.AngryAssign_Categories = _G.AngryAssign_Categories
 
----@type AngryAssignState
+-- type AngryAssignState
 _G.AngryAssign_State = _G.AngryAssign_State
 
----@type AngryAssignConfig
+-- type AngryAssignConfig
 _G.AngryAssign_Config = _G.AngryAssign_Config
 
----@type AngryAssignTemplate[]
+-- type AngryAssignTemplate[]
 _G.AngryAssign_Templates = _G.AngryAssign_Templates
 
+--- Addon initialization hook.
+-- Creates saved variable tables, migrates legacy category data, and registers options.
 function AngryAssign:OnInitialize()
     if AngryAssign_State == nil then
         AngryAssign_State = { tree = {}, window = {}, display = {}, displayed = nil, locked = false, directionUp = false }
@@ -5157,6 +5319,8 @@ function AngryAssign:OnInitialize()
     blizOptionsPanel.default = function() self:RestoreDefaults() end
 end
 
+--- Slash command entry point (`/aa`).
+-- @tparam string input Raw slash command arguments.
 function AngryAssign:ChatCommand(input)
   if not input or input:trim() == "" then
     if Settings and Settings.OpenToCategory then
@@ -5174,6 +5338,8 @@ function AngryAssign:ChatCommand(input)
   end
 end
 
+--- Addon enable hook.
+-- Initializes display and core event listeners.
 function AngryAssign:OnEnable()
     self:ResetOfficerRank()
     self:CreateDisplay()
@@ -5238,7 +5404,7 @@ function AngryAssign:GUILD_ROSTER_UPDATE(...)
     local canRequestRosterUpdate = ...
     self:ResetOfficerRank()
     self:UpdateGuildColors()
-    
+
     if not guildUpdatePending then
         guildUpdatePending = true
         C_Timer.After(2, function()
@@ -5252,6 +5418,7 @@ function AngryAssign:GUILD_ROSTER_UPDATE(...)
     end
 end
 
+--- Post-enable delayed setup hook for communication/event wiring.
 function AngryAssign:AfterEnable()
     self:RegisterComm(comPrefix, "ReceiveMessage")
     comStarted = true

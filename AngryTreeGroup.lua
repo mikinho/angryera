@@ -1,13 +1,7 @@
--------------------------------------------------------------------------------
--- Angry Era: AngryTreeGroup.lua
---
--- Custom AceGUI Widget: TreeGroup container.
--- Features:
--- 1. Search filter support.
--- 2. Custom font rendering for items.
--- 3. Visible Resizing Handle.
--- version: 3
--------------------------------------------------------------------------------
+--- Custom AceGUI TreeGroup container used by AngryEra.
+-- Adds search filtering, drag-and-drop ordering, per-row menu actions, and
+-- a visible resize handle over the base AceGUI TreeGroup behavior.
+-- @module AngryTreeGroup
 
 local Type, Version = "AngryTreeGroup", 4
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
@@ -43,7 +37,7 @@ do
 	function del(t)
 		for k in pairs(t) do
 			t[k] = nil
-		end	
+		end
 		pool[t] = true
 	end
 end
@@ -54,6 +48,9 @@ local DEFAULT_TREE_SIZABLE = true
 --[[-----------------------------------------------------------------------------
 Support functions
 -------------------------------------------------------------------------------]]
+--- Builds the full unique path key for a line.
+-- @tparam table line Tree line entry.
+-- @treturn string Unique value using internal `\001` separators.
 local function GetButtonUniqueValue(line)
 	local parent = line.parent
 	if parent and parent.value then
@@ -63,6 +60,12 @@ local function GetButtonUniqueValue(line)
 	end
 end
 
+--- Applies tree-line data and visual state to a row button.
+-- @tparam table button Tree row button.
+-- @tparam table treeline Flattened line metadata.
+-- @tparam boolean selected Whether the row is selected.
+-- @tparam boolean canExpand Whether the row has children.
+-- @tparam boolean isExpanded Whether children are currently expanded.
 local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 	local self = button.obj
 	local toggle = button.toggle
@@ -74,7 +77,7 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 	local value = treeline.value
 	local uniquevalue = treeline.uniquevalue
 	local disabled = treeline.disabled
-	
+
 	button.treeline = treeline
 	button.value = value
 	button.uniquevalue = uniquevalue
@@ -88,7 +91,7 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 	local normalTexture = button:GetNormalTexture()
 	local line = button.line
 	button.level = level
-    
+
     local indent = (level - 1) * 7 + 2
     toggle:ClearAllPoints()
     toggle:SetPoint("LEFT", indent, 1)
@@ -107,7 +110,7 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 
     -- Ensure text doesn't overlap Menu Button
     button.text:SetPoint("RIGHT", button.menuBtn, "LEFT", -2, 0)
-	
+
 	if disabled then
 		button:EnableMouse(false)
 		button.text:SetText("|cff808080"..text..FONT_COLOR_CODE_CLOSE)
@@ -115,8 +118,8 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
 		button.text:SetText(text)
 		button:EnableMouse(true)
 	end
-	
-	
+
+
 	if iconCoords then
 		button.icon:SetTexCoord(unpack(iconCoords))
 	else
@@ -131,7 +134,7 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
             button.menuBtn:Hide()
         end
     end
-	
+
 	if value < 0 then
 		button:SetNormalFontObject("GameFontNormal")
 		button:SetHighlightFontObject("GameFontHighlight")
@@ -158,6 +161,9 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
     end
 end
 
+--- Returns true when a level has at least one visible leaf.
+-- @tparam table tree Nested tree node list.
+-- @treturn boolean visible
 local function ShouldDisplayLevel(tree)
 	local result = false
 	for k, v in ipairs(tree) do
@@ -171,6 +177,13 @@ local function ShouldDisplayLevel(tree)
 	return false
 end
 
+--- Adds one visible line entry to the flattened tree cache.
+-- @tparam table self Widget instance.
+-- @tparam table v Source tree node.
+-- @tparam table tree Sibling list containing `v`.
+-- @tparam number level Display nesting level.
+-- @tparam[opt] table parent Parent flattened line.
+-- @treturn table line Flattened line entry.
 local function addLine(self, v, tree, level, parent)
 	local line = new()
 	line.value = v.value
@@ -199,6 +212,9 @@ local function FirstFrameUpdate(frame)
 	self:RefreshTree()
 end
 
+--- Builds a path key from one or more path segments.
+-- @tparam string ... Path segments.
+-- @treturn string Unique key using internal `\001` separators.
 local function BuildUniqueValue(...)
 	local n = select('#', ...)
 	if n == 1 then
@@ -241,11 +257,11 @@ local function Drag_OnUpdate(frame)
     local self = frame.obj
     local dragging = self.dragging
     if not dragging then return end
-    
+
     local focus = GetMouseFocus()
     local button = GetButtonFromFrame(focus)
     local line = self.draggerLine
-    
+
     if button and button.obj == self then
         local top = button:GetTop()
         local bottom = button:GetBottom()
@@ -254,16 +270,16 @@ local function Drag_OnUpdate(frame)
         local x, y = GetCursorPosition()
         local scale = UIParent:GetEffectiveScale()
         y = y / scale
-        
+
         local cy = (top + bottom) / 2
         local range = top - bottom
         local ratio = (y - bottom) / range
-        
+
         line:ClearAllPoints()
         line:Show()
         line:SetWidth(self.treeframe:GetWidth() - 20)
         line:SetPoint("LEFT", self.treeframe, "LEFT", 10, 0)
-        
+
         if ratio > 0.75 then
             line:SetPoint("BOTTOM", button, "TOP", 0, 0)
             self.dragPosition = "before"
@@ -319,10 +335,10 @@ local function Button_OnDragStop(button)
     SetCursor(nil)
     self.treeframe:SetScript("OnUpdate", nil)
     if self.draggerLine then self.draggerLine:Hide() end
-    
+
     local focus = GetMouseFocus()
     local target = GetButtonFromFrame(focus)
-    
+
     if target and target.obj == self then
         self:Fire("OnTreeDragDrop", button.uniquevalue, target.uniquevalue, self.dragPosition)
     end
@@ -356,9 +372,9 @@ end
 local function Button_OnEnter(frame)
 	local self = frame.obj
 	self:Fire("OnButtonEnter", frame.uniquevalue, frame)
-    
-	if frame.menuBtn then 
-		frame.menuBtn:Show() 
+
+	if frame.menuBtn then
+		frame.menuBtn:Show()
 	end
 
 	if self.enabletooltips then
@@ -374,8 +390,8 @@ local function Button_OnLeave(frame)
 	local self = frame.obj
 	self:Fire("OnButtonLeave", frame.uniquevalue, frame)
 
-	if frame.menuBtn and not frame.menuBtn:IsMouseOver() then 
-		frame.menuBtn:Hide() 
+	if frame.menuBtn and not frame.menuBtn:IsMouseOver() then
+		frame.menuBtn:Hide()
 	end
 
 	if self.enabletooltips then
@@ -384,7 +400,7 @@ local function Button_OnLeave(frame)
 end
 
 local function OnScrollValueChanged(frame, value)
-	if frame.obj.noupdate then 
+	if frame.obj.noupdate then
 		return
 	end
 	local self = frame.obj
@@ -435,10 +451,10 @@ local function Dragger_OnMouseUp(frame)
 	treeframe:SetHeight(0)
 	treeframe:SetPoint("TOPLEFT", frame, "TOPLEFT",0,0)
 	treeframe:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT",0,0)
-	
+
 	local status = self.status or self.localstatus
 	status.treewidth = treeframe:GetWidth()
-	
+
 	treeframe.obj:Fire("OnTreeResize",treeframe:GetWidth())
 	-- recalculate the content width
 	treeframe.obj:OnWidthSet(status.fullwidth)
@@ -449,17 +465,8 @@ end
 --[[-----------------------------------------------------------------------------
 Methods
 -------------------------------------------------------------------------------]]
----@class AngryTreeGroup : AceGUIWidget
----@field tree table The data tree structure
----@field filter string|boolean Filter function or state
----@field searchKeyword string Search query
----@field status table Persisted status (scroll, selected, groups)
----@field localstatus table Default status if none provided
----@field draggerLine Texture Visual line for drag operations
----@field dragging string|nil UniqueValue of the item being dragged
----@field dragPosition string|nil "before", "after", "into", "into_start"
----@field buttons AceGUI_TreeGroupButton[] Recycled buttons
----@field lines table[] Flattened list of visible tree lines
+-- AngryTreeGroup widget method table.
+-- Methods are attached to the widget instance in `Constructor`.
 local methods = {
 	["OnAcquire"] = function(self)
 		self:SetTreeWidth(DEFAULT_TREE_WIDTH, DEFAULT_TREE_SIZABLE)
@@ -493,19 +500,7 @@ local methods = {
 		self.enabletooltips = enable
 	end,
 
-	---@class AceGUI_TreeGroupButton : Button
-	---@field obj AngryTreeGroup
-	---@field uniquevalue string
-	---@field value any
-	---@field treeline table
-	---@field selected boolean
-	---@field level number
-	---@field toggle Button
-	---@field text FontString
-	---@field icon Texture
-	---@field menuBtn Button
-	
-	---@return AceGUI_TreeGroupButton
+	-- Creates a reusable row button for one tree line.
 	["CreateButton"] = function(self)
 		local num = AceGUI:GetNextWidgetNum("TreeGroupButton")
 		local button = CreateFrame("Button", ("AceGUI30TreeButton%d"):format(num), self.treeframe, "OptionsListButtonTemplate")
@@ -515,7 +510,7 @@ local methods = {
 		icon:SetWidth(14)
 		icon:SetHeight(14)
 		button.icon = icon
-        
+
         -- Menu Button
         local menuBtn = CreateFrame("Button", nil, button)
         menuBtn:SetWidth(12)
@@ -531,8 +526,8 @@ local methods = {
         menuBtn:SetScript("OnLeave", function(this)
              if not button:IsMouseOver() then
                 this:Hide()
-				if not button.selected then 
-					button:UnlockHighlight() 
+				if not button.selected then
+					button:UnlockHighlight()
 				end
              end
         end)
@@ -578,8 +573,8 @@ local methods = {
 	--sets the tree to be displayed
 	["SetTree"] = function(self, tree, filter)
 		self.filter = filter
-		if tree then 
-			assert(type(tree) == "table") 
+		if tree then
+			assert(type(tree) == "table")
 		end
 		self.tree = tree
 		self:RefreshTree()
@@ -588,7 +583,7 @@ local methods = {
 	["BuildLevel"] = function(self, tree, level, parent)
 		local groups = (self.status or self.localstatus).groups
 		local hasChildren = self.hasChildren
-		
+
 		for i, v in ipairs(tree) do
 			if v.children then
 				if not self.filter or ShouldDisplayLevel(v.children) then
@@ -605,7 +600,7 @@ local methods = {
 	end,
 
 	["RefreshTree"] = function(self,scrollToSelection)
-		local buttons = self.buttons 
+		local buttons = self.buttons
 		local lines = self.lines
 
 		for i, v in ipairs(buttons) do
@@ -626,7 +621,7 @@ local methods = {
 		local tree = self.tree
 
 		local treeframe = self.treeframe
-		
+
 		status.scrollToSelection = status.scrollToSelection or scrollToSelection	-- needs to be cached in case the control hasn't been drawn yet (code bails out below)
 
 		self:BuildLevel(tree, 1)
@@ -637,7 +632,7 @@ local methods = {
 		if maxlines <= 0 then return end
 
 		local first, last
-		
+
 		scrollToSelection = status.scrollToSelection
 		status.scrollToSelection = nil
 
@@ -713,9 +708,9 @@ local methods = {
 			button:Show()
 			buttonnum = buttonnum + 1
 		end
-		
+
 	end,
-	
+
 	["SetSelected"] = function(self, value)
 		local status = self.status or self.localstatus
 		if status.selected ~= value then
@@ -765,16 +760,16 @@ local methods = {
 		local treeframe = self.treeframe
 		local status = self.status or self.localstatus
 		status.fullwidth = width
-		
+
 		local contentwidth = width - status.treewidth - 20
 		if contentwidth < 0 then
 			contentwidth = 0
 		end
 		content:SetWidth(contentwidth)
 		content.width = contentwidth
-		
+
 		local maxtreewidth = math_min(400, width - 50)
-		
+
 		if maxtreewidth > 100 and status.treewidth > maxtreewidth then
 			self:SetTreeWidth(maxtreewidth, status.treesizable)
 		end
@@ -804,16 +799,16 @@ local methods = {
 				treewidth = DEFAULT_TREE_WIDTH
 			else
 				resizable = false
-				treewidth = DEFAULT_TREE_WIDTH 
+				treewidth = DEFAULT_TREE_WIDTH
 			end
 		end
 		self.treeframe:SetWidth(treewidth)
 		self.dragger:EnableMouse(resizable)
-		
+
 		local status = self.status or self.localstatus
 		status.treewidth = treewidth
 		status.treesizable = resizable
-		
+
 		-- recalculate the content width
 		if status.fullwidth then
 			self:OnWidthSet(status.fullwidth)
@@ -853,6 +848,8 @@ local DraggerBackdrop  = {
 	insets = { left = 3, right = 3, top = 7, bottom = 7 }
 }
 
+--- Constructs and registers the `AngryTreeGroup` AceGUI widget instance.
+-- @treturn table widget AceGUI container instance.
 local function Constructor()
 	local num = AceGUI:GetNextWidgetNum(Type)
 	local frame = CreateFrame("Frame", nil, UIParent)

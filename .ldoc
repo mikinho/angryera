@@ -1,0 +1,14 @@
+project = "AngryEra"
+title = "AngryEra API Documentation"
+description = "LDoc configuration for AngryEra addon source documentation."
+format = "markdown"
+dir = "docs/ldoc"
+file = {
+    "AngryTreeGroup.lua",
+    "Core.lua",
+    "Data.lua"
+}
+readme = "README.md"
+sort = true
+merge = true
+all = false

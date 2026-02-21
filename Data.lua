@@ -7,6 +7,9 @@
 -- 3. Raid Utility Shortcuts (e.g. {Sunder}, {LIP}).
 -------------------------------------------------------------------------------
 
+-- Shared data tables and parsing helpers for AngryEra.
+-- Provides utility tag maps, class/color lookup data, and variable decoding.
+
 local appName, app = ...
 
 -----------------------
@@ -42,7 +45,7 @@ app.ColorTable = {
 -----------------------
 local AngryEra_RaidUtility = {
     ["Targeting"] = {
-        ["Star"] = { 
+        ["Star"] = {
             ["name"] = "{rt1}",
             ["icon"] = "UI-RaidTargetingIcon_1",
             ["path"] = "Interface\\TargetingFrame\\"
@@ -129,7 +132,7 @@ local AngryEra_RaidUtility = {
         }
     },
     ["Factions"] = {
-        ["alliance"] = { 
+        ["alliance"] = {
             ["name"] = "Alliance",
             ["icon"] = "INV_BannerPVP_02"
         },
@@ -139,7 +142,7 @@ local AngryEra_RaidUtility = {
         }
     },
     ["General"] = {
-        ["healthstone"] = { 
+        ["healthstone"] = {
             ["name"] = "Healthstone",
             ["icon"] = "inv_stone_04"
         },
@@ -197,7 +200,7 @@ local AngryEra_RaidUtility = {
         }
     },
     ["Classes"] = {
-        ["deathknight"] = { 
+        ["deathknight"] = {
             ["name"] = "Death Knight",
             ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t"
         },
@@ -259,7 +262,7 @@ local AngryEra_RaidUtility = {
         }
     },
     ["Bosses"] = {
-        ["4hm"] = { 
+        ["4hm"] = {
             ["name"] = "4 Horsemen",
             ["texture"] = "|TInterface\\Icons\\INV_Helmet_09:0|t"
         },
@@ -701,7 +704,7 @@ local isTBC = select(4, GetBuildInfo()) >= 20000
 if isTBC then
     -- Warrior
     AngryEra_RaidUtility.Warrior.Reflect = { ["name"] = "Spell Reflection", ["icon"] = "ability_warrior_shieldreflection" }
-    
+
     -- Priest
     AngryEra_RaidUtility.Priest.MDS = { ["name"] = "Mass Dispel", ["icon"] = "spell_arcane_massdispel" }
 
@@ -713,7 +716,7 @@ if isTBC then
 
     -- Rogue
     AngryEra_RaidUtility.Rogue.Cloak = { ["name"] = "Cloak of Shadows", ["icon"] = "spell_shadow_nethercloak" }
-    
+
     -- Shaman (Bloodlust/Heroism are TBC+, usually)
     -- Leaving BL/Hero in main table for now as they are often used in generic macros, but could move here.
 end
@@ -783,7 +786,7 @@ local function parse_array(str, pos)
 	local arr = {}
 	pos = skip_ws(str, pos + 1)
 	if str:sub(pos, pos) == "]" then return arr, pos + 1 end
-	
+
     local val, parseError
 	while true do
 		val, pos, parseError = parse_value(str, pos)
@@ -800,7 +803,7 @@ local function parse_obj_impl(str, pos)
 	local obj = {}
 	pos = skip_ws(str, pos + 1)
 	if str:sub(pos, pos) == "}" then return obj, pos + 1 end
-	
+
     local key, val, parseError
 	while true do
 		if str:sub(pos, pos) ~= '"' then return nil, pos, "Expected String Key" end
@@ -808,11 +811,11 @@ local function parse_obj_impl(str, pos)
 		pos = skip_ws(str, pos)
 		if str:sub(pos, pos) ~= ":" then return nil, pos, "Expected ':'" end
 		pos = skip_ws(str, pos + 1)
-		
+
 		val, pos, parseError = parse_value(str, pos)
 		if parseError then return nil, pos, parseError end
 		obj[key] = val
-		
+
 		pos = skip_ws(str, pos)
 		if str:sub(pos, pos) == "}" then return obj, pos + 1 end
 		if str:sub(pos, pos) ~= "," then return nil, pos, "Expected ',' or '}'" end
@@ -836,6 +839,10 @@ end
 -- Strict JSON decode:
 -- Returns decoded Lua value on success.
 -- Returns nil on parse failure or trailing garbage.
+--- Attempts strict JSON decoding.
+-- Returns `nil` if the value is invalid JSON or has trailing non-whitespace.
+-- @tparam string str JSON input string.
+-- @treturn any|nil Decoded Lua value on success.
 function app.JSON_TryDecode(str)
     if type(str) ~= "string" or str == "" then
         return nil
@@ -862,6 +869,9 @@ function app.JSON_TryDecode(str)
     return value
 end
 
+--- Decodes JSON into Lua with a safe fallback.
+-- @tparam string str JSON input string.
+-- @treturn table|any Decoded value on success, or `{}` when invalid.
 function app.JSON_Decode(str)
     local decoded = app.JSON_TryDecode(str)
     if decoded ~= nil then
@@ -870,14 +880,17 @@ function app.JSON_Decode(str)
     return {}
 end
 
+--- Parses variables from either JSON or `key=value` lines.
+-- @tparam string str Variable text.
+-- @treturn table Parsed key/value table.
 function app.ParseVariables(str)
     if not str or str == "" then return {} end
-    
+
     -- Check for JSON
     if str:find("^%s*[{[]") then
         return app.JSON_Decode(str)
     end
-    
+
     -- Key=Value pairs
     local obj = {}
     for line in str:gmatch("[^\r\n]+") do
