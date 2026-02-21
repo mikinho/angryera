@@ -583,6 +583,10 @@ local methods = {
 	["BuildLevel"] = function(self, tree, level, parent)
 		local groups = (self.status or self.localstatus).groups
 		local hasChildren = self.hasChildren
+		local keywordLower = nil
+		if type(self.searchKeyword) == "string" and self.searchKeyword ~= "" then
+			keywordLower = self.searchKeyword:lower()
+		end
 
 		for i, v in ipairs(tree) do
 			if v.children then
@@ -593,7 +597,7 @@ local methods = {
 					end
 				end
 			elseif (v.visible ~= false or not self.filter) and
-			       (self.searchKeyword == nil or self.searchKeyword == "" or string.find(v.text:lower(), self.searchKeyword:lower(), 1, true)) then
+			       (not keywordLower or string.find(tostring(v.text or ""):lower(), keywordLower, 1, true)) then
 				addLine(self, v, tree, level, parent)
 			end
 		end
