@@ -1,20 +1,20 @@
--------------------------------------------------------------------------------
+-- -------------------------------------------------------------------------------
 -- Angry Era: Data.lua
 --
 -- Static data definitions, including:
 -- 1. Class and Role Color tables.
 -- 2. Icon Texture mapping ({icon} -> |T...|t).
 -- 3. Raid Utility Shortcuts (e.g. {Sunder}, {LIP}).
--------------------------------------------------------------------------------
+-- -------------------------------------------------------------------------------
 
 -- Shared data tables and parsing helpers for AngryEra.
 -- Provides utility tag maps, class/color lookup data, and variable decoding.
 
 local appName, app = ...
 
------------------------
+-- -----------------------
 -- Color Table
------------------------
+-- -----------------------
 app.ColorTable = {
     ["|cblue"]        = "|cff00cbf4",
     ["|cdeathknight"] = "|cffc41f3b",
@@ -40,9 +40,9 @@ app.ColorTable = {
     ["|cyellow"]      = "|cfffaf318"
 }
 
------------------------
+-- -----------------------
 -- Raid Utility
------------------------
+-- -----------------------
 local AngryEra_RaidUtility = {
     ["Targeting"] = {
         ["Star"] = {
@@ -739,9 +739,9 @@ for category, items in pairs(AngryEra_RaidUtility) do
     end
 end
 
--------------------------------------------------------------------------------
+-- -------------------------------------------------------------------------------
 -- JSON Utility
--------------------------------------------------------------------------------
+-- -------------------------------------------------------------------------------
 local function skip_ws(str, pos)
 	while true do
         local c = str:sub(pos, pos)

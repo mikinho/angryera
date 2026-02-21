@@ -1,4 +1,4 @@
--------------------------------------------------------------------------------
+-- -------------------------------------------------------------------------------
 -- Angry Era: Core.lua
 --
 -- Main application logic, responsible for:
@@ -9,7 +9,7 @@
 --
 -- Original Author: AngryAssignments Team
 -- Updated for Classic Era by: AngryEra Maintainers
--------------------------------------------------------------------------------
+-- -------------------------------------------------------------------------------
 
 -- Core runtime module for AngryEra.
 -- Handles addon lifecycle, communication sync, import/export, permissions, and
@@ -138,9 +138,9 @@ local VERSION_Version = 2
 local VERSION_Timestamp = 3
 local VERSION_ValidRaid = 4
 
------------------------
+-- -----------------------
 -- Utility Functions --
------------------------
+-- -----------------------
 
 
 local ColorTable = app.ColorTable
@@ -738,9 +738,9 @@ function AngryAssign:VersionCheckOutput()
     end
 end
 
---------------------------
+-- --------------------------
 -- Bulk Management      --
---------------------------
+-- --------------------------
 
 function AngryAssign:ShowBulkManagement()
     -- CHANGE: Use "Window" instead of "Frame" for better dialog behavior
@@ -977,9 +977,9 @@ function AngryAssign:ShowBulkManagement()
     btnGroup:AddChild(closeBtn)
 end
 
---------------------------
+-- --------------------------
 -- Editing Pages Window --
---------------------------
+-- --------------------------
 
 function AngryAssign_ToggleWindow()
     if not AngryAssign.window then AngryAssign:CreateWindow() end
@@ -3176,9 +3176,9 @@ function AngryAssign:UpdateSelected(destructive)
     end
 end
 
-----------------------------------
+-- ----------------------------------
 -- Performing changes functions --
-----------------------------------
+-- ----------------------------------
 
 function AngryAssign:PrevPage()
     self:NextPage(true);
@@ -3783,9 +3783,9 @@ function AngryAssign:PermissionsUpdated()
     end
 end
 
----------------------
+-- ---------------------
 -- Displaying Page --
----------------------
+-- ---------------------
 
 local function DragHandle_MouseDown(frame)
     frame:GetParent():GetParent():StartSizing("RIGHT")
@@ -4625,9 +4625,9 @@ function AngryAssign:ProcessPageForOutput(page)
     return output
 end
 
------------------
+-- -----------------
 -- Export Logic
------------------
+-- -----------------
 
 local function SerializeJSON(val)
     if type(val) == "string" then
@@ -4788,9 +4788,9 @@ function AngryAssign:Export(id, type, format)
     AngryAssign_ShowExportWindow(exportText, title .. " (" .. format .. ")")
 end
 
------------------
+-- -----------------
 -- Addon Setup --
------------------
+-- -----------------
 
 local configDefaults = {
     scale = 1,
