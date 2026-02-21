@@ -537,14 +537,15 @@ function AngryAssign:SendPage(id, force)
 end
 
 function AngryAssign:SendPageMessage(id)
-    pageLastUpdate[id] = time()
     pageTimerId[id] = nil
 
     local page = AngryAssign_Pages[ id ]
     if not page then
-        error("Can't send page, does not exist")
+        pageLastUpdate[id] = nil
         return
     end
+
+    pageLastUpdate[id] = time()
     if not page.UpdateId then
         page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
     end
@@ -3449,6 +3450,13 @@ end
 --- Deletes a page from local storage and selection state.
 -- @tparam number id Page id.
 function AngryAssign:DeletePage(id)
+    local timerId = pageTimerId[id]
+    if timerId then
+        self:CancelTimer(timerId)
+        pageTimerId[id] = nil
+    end
+    pageLastUpdate[id] = nil
+
     AngryAssign_Pages[id] = nil
     if self.window and self:SelectedId() == id then
         self:SetSelectedId(nil)
