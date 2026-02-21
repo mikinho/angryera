@@ -234,6 +234,12 @@ Run local quality checks from the repo root:
    ```
    This validates JSON import/export edge cases, including escaped newlines and
    preserved `null` values.
+6. Run strict CI-style verification:
+   ```
+   make check-strict
+   ```
+   This uses strict formatter/linter checks (`stylua` + `luacheck`) and is
+   intended for PR/CI gating.
 
 Credits
 -------

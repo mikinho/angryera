@@ -10,7 +10,7 @@
 -- Shared data tables and parsing helpers for AngryEra.
 -- Provides utility tag maps, class/color lookup data, and variable decoding.
 
-local appName, app = ...
+local _, app = ...
 
 -- -----------------------
 -- Color Table

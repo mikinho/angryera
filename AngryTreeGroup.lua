@@ -71,7 +71,6 @@ end
 local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
     local self = button.obj
     local toggle = button.toggle
-    local frame = self.frame
     local text = treeline.text or ""
     local icon = treeline.icon
     local iconCoords = treeline.iconCoords
@@ -90,8 +89,6 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
         button:UnlockHighlight()
         button.selected = false
     end
-    local normalTexture = button:GetNormalTexture()
-    local line = button.line
     button.level = level
 
     local indent = (level - 1) * 7 + 2
@@ -279,11 +276,10 @@ local function Drag_OnUpdate(frame)
             return
         end
 
-        local x, y = GetCursorPosition()
+        local _, y = GetCursorPosition()
         local scale = UIParent:GetEffectiveScale()
         y = y / scale
 
-        local cy = (top + bottom) / 2
         local range = top - bottom
         local ratio = (y - bottom) / range
 
@@ -359,11 +355,6 @@ local function Button_OnDragStop(button)
     self.dragPosition = nil
 end
 
-local function Button_OnReceiveDrag(button)
-    -- self:Fire("OnTreeDragDrop", ...)
-    -- Usually handled by OnDragStop of source.
-end
-
 local function Button_OnClick(frame, button)
     local self = frame.obj
     local result = self:Fire("OnClick", frame.uniquevalue, frame.selected, button)
@@ -374,13 +365,6 @@ local function Button_OnClick(frame, button)
         self:RefreshTree()
     end
     AceGUI:ClearFocus()
-end
-
-local function Button_OnDoubleClick(button)
-    local self = button.obj
-    local status = (self.status or self.localstatus).groups
-    status[button.uniquevalue] = not status[button.uniquevalue]
-    self:RefreshTree()
 end
 
 local function Button_OnEnter(frame)
@@ -457,14 +441,14 @@ end
 local function Dragger_OnMouseUp(frame)
     local treeframe = frame:GetParent()
     local self = treeframe.obj
-    local frame = treeframe:GetParent()
+    local parentFrame = treeframe:GetParent()
     treeframe:StopMovingOrSizing()
     --treeframe:SetScript("OnUpdate", nil)
     treeframe:SetUserPlaced(false)
     --Without this :GetHeight will get stuck on the current height, causing the tree contents to not resize
     treeframe:SetHeight(0)
-    treeframe:SetPoint("TOPLEFT", frame, "TOPLEFT",0,0)
-    treeframe:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT",0,0)
+    treeframe:SetPoint("TOPLEFT", parentFrame, "TOPLEFT",0,0)
+    treeframe:SetPoint("BOTTOMLEFT", parentFrame, "BOTTOMLEFT",0,0)
 
     local status = self.status or self.localstatus
     status.treewidth = treeframe:GetWidth()
@@ -596,7 +580,6 @@ local methods = {
 
     ["BuildLevel"] = function(self, tree, level, parent)
         local groups = (self.status or self.localstatus).groups
-        local hasChildren = self.hasChildren
         local keywordLower = nil
         if type(self.searchKeyword) == "string" and self.searchKeyword ~= "" then
             keywordLower = self.searchKeyword:lower()
@@ -682,11 +665,7 @@ local methods = {
                         show=i
                     end
                 end
-                if not show then
-                    -- selection was deleted or something?
-                elseif show>=first and show<=last then
-                    -- all good
-                else
+                if show and (show < first or show > last) then
                     -- scrolling needed!
                     if show<first then
                         status.scrollvalue = show-1

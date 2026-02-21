@@ -1,4 +1,4 @@
-.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression check
+.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression check check-strict
 
 LDOC ?= ldoc
 LDOC_CONFIG ?= .ldoc
@@ -66,3 +66,5 @@ test-json-regression:
 	@$(LUA_RUN) tests/json_regression.lua
 
 check: lint test docs
+
+check-strict: lint-syntax lint-style lint-stylua-strict lint-luacheck-strict test docs

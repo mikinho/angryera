@@ -18,7 +18,6 @@
 local _G = _G
 
 local appName, app = ...;
-local L = app.L;
 
 local GetAddOnMetadata = GetAddOnMetadata or C_AddOns.GetAddOnMetadata
 
@@ -293,6 +292,12 @@ end
 -- Addon Communication --
 -- -------------------------
 
+--- Receives and validates incoming addon communication payloads.
+-- Performs decode/decompress/deserialize and dispatches valid messages.
+-- @tparam string prefix Message prefix.
+-- @tparam string data Encoded wire payload.
+-- @tparam string channel Source chat channel.
+-- @tparam string sender Sender unit name.
 function AngryAssign:ReceiveMessage(prefix, data, channel, sender)
     if prefix ~= comPrefix then
         return
@@ -551,6 +556,8 @@ function AngryAssign:ProcessMessage(sender, data)
     end
 end
 
+--- Prints a one-time warning when an inbound update fails permission checks.
+-- @tparam string sender Sender unit name.
 function AngryAssign:PermissionCheckFailError(sender)
     if not warnedPermission then
         self:Print( RED_FONT_COLOR_CODE .. "You have received a page update from "..Ambiguate(sender, "none").." that was rejected due to insufficient permissions. If you wish to see this page, please adjust your permission settings.|r" )
@@ -582,6 +589,8 @@ function AngryAssign:SendPage(id, force)
     end
 end
 
+--- Sends one PAGE payload for the supplied page id.
+-- @tparam number id Page id.
 function AngryAssign:SendPageMessage(id)
     pageTimerId[id] = nil
 
@@ -637,6 +646,8 @@ function AngryAssign:SendDisplay(id, force)
     end
 end
 
+--- Sends one DISPLAY payload.
+-- @tparam[opt] number id Page id to display, or `nil` to clear.
 function AngryAssign:SendDisplayMessage(id)
     displayLastUpdate = time()
     displayTimerId = nil
@@ -683,11 +694,11 @@ function AngryAssign:SendVersion(force)
     end
 end
 
+--- Sends one VERSION payload with current addon metadata.
 function AngryAssign:SendVersionMessage()
     versionLastUpdate = time()
     versionTimerId = nil
 
-    local revToSend
     local timestampToSend
     local verToSend
     if AngryAssign_Version:sub(1,1) == "@" then
@@ -729,8 +740,9 @@ end
 function AngryAssign:GetRaidLeader(online_only)
     if (IsInRaid() or IsInGroup()) then
         for i = 1, GetNumGroupMembers() do
-            local name, rank, subgroup, level, class, fileName, zone, online, isDead, role, isML = GetRaidRosterInfo(i)
+            local name, rank = GetRaidRosterInfo(i)
             if rank == 2 then
+                local online = select(8, GetRaidRosterInfo(i))
                 if (not online_only) or online then
                     return EnsureUnitFullName(name)
                 else
@@ -757,6 +769,7 @@ function AngryAssign:GetCurrentGroup()
     return nil
 end
 
+--- Prints categorized addon version-check results for current group members.
 function AngryAssign:VersionCheckOutput()
     local missing_addon = {}
     local invalid_raid = {}
@@ -808,6 +821,7 @@ end
 -- Bulk Management      --
 -- --------------------------
 
+--- Opens the bulk-management UI for selecting and deleting pages/categories.
 function AngryAssign:ShowBulkManagement()
     -- CHANGE: Use "Window" instead of "Frame" for better dialog behavior
     local frame = AceGUI:Create("Window")
@@ -881,7 +895,6 @@ function AngryAssign:ShowBulkManagement()
 
         -- Registry for direct updates
         local pageCheckboxes = {} -- [pageId] = widget
-        local catCheckboxes = {} -- [catId] = widget
 
         -- A. Gather Data
         local sortedCats = {}
@@ -924,17 +937,17 @@ function AngryAssign:ShowBulkManagement()
                 else
                     -- Attempting to Uncheck. Check Logic:
                     -- Check if ALL children are ALREADY selected?
-                    local allSelected = true
+                    local allChildrenSelected = true
                     if #catPages == 0 then
-                        allSelected = false
+                        allChildrenSelected = false
                     end
                     for _, p in ipairs(catPages) do
                          if not selectedToDelete.pages[p.Id] then
-                             allSelected = false break
+                             allChildrenSelected = false break
                          end
                     end
 
-                    if not allSelected and #catPages > 0 then
+                    if not allChildrenSelected and #catPages > 0 then
                         -- State 1 -> 2: Select All Children
                         selectedToDelete.categories[cat.Id] = true
                         catCheck:SetValue(true) -- Keep checked
@@ -958,7 +971,6 @@ function AngryAssign:ShowBulkManagement()
             end)
 
             catGroup:AddChild(catCheck)
-            catCheckboxes[cat.Id] = catCheck
 
             -- Render Children
             for _, page in ipairs(catPages) do
@@ -1516,13 +1528,6 @@ local function AngryAssign_AssignCategory(frame, entryId, catId)
     AngryAssign:AssignCategory(entryId, catId)
 end
 
-local function AngryAssign_RevertPage(widget, event, value)
-    if not AngryAssign.window then
-        return
-    end
-    AngryAssign:UpdateSelected(true)
-end
-
 --- Displays a page by its exact name.
 -- @tparam string name Page name.
 -- @treturn boolean|nil `true` when displayed, `false` when not found, or `nil` on permission failure.
@@ -1803,8 +1808,6 @@ local function AngryAssign_EditVariables(id, type)
     editBox:SetFullHeight(true)
     editBox:DisableButton(false)
     editBox:SetCallback("OnEnterPressed", function(widget, event, text)
-        local check = app.ParseVariables(text)
-
         -- Normalize Line Endings
         local normalized = text:gsub("\r\n", "\n")
 
@@ -2081,6 +2084,8 @@ function AngryAssign:ParseImportString(str)
     return true, data, prefix
 end
 
+--- Shows import confirmation/overwrite UI for a validated page payload.
+-- @tparam table data Page payload.
 function AngryAssign:ConfirmImportPage(data)
     local existingId = self:GetEntityByName(data.Name, "Page")
     local preview = data.Contents:sub(1, 120)
@@ -2097,12 +2102,12 @@ function AngryAssign:ConfirmImportPage(data)
             whileDead = true,
             hideOnEscape = true,
             preferredIndex = 3,
-            OnAccept = function(self)
-                AngryAssign:DoImportPage(self.data, nil, existingId)
+            OnAccept = function(popup)
+                AngryAssign:DoImportPage(popup.data, nil, existingId)
             end,
-            OnCancel = function(self, data, reason)
+            OnCancel = function(popup, _, reason)
                 if reason == "clicked" then
-                    local newData = { Name = self.data.Name, Contents = self.data.Contents, Vars = self.data.Vars, Index = self.data.Index }
+                    local newData = { Name = popup.data.Name, Contents = popup.data.Contents, Vars = popup.data.Vars, Index = popup.data.Index }
                     newData.Name = AngryAssign:GetUniqueEntityName(newData.Name, "Page")
                     AngryAssign:DoImportPage(newData)
                 end
@@ -2117,8 +2122,8 @@ function AngryAssign:ConfirmImportPage(data)
             whileDead = true,
             hideOnEscape = true,
             preferredIndex = 3,
-            OnAccept = function(self)
-                AngryAssign:DoImportPage(self.data)
+            OnAccept = function(popup)
+                AngryAssign:DoImportPage(popup.data)
             end,
         }
         StaticPopup_Show("AngryAssign_ImportConfirmPage", nil, nil, data)
@@ -2148,6 +2153,8 @@ function AngryAssign:DoImportPage(data, parentId, overwriteId)
     return id
 end
 
+--- Shows import confirmation/overwrite UI for a validated category payload.
+-- @tparam table data Category payload.
 function AngryAssign:ConfirmImportCategory(data)
     local existingId = self:GetEntityByName(data.Name, "Category")
     local pageCount = 0
@@ -2173,12 +2180,12 @@ function AngryAssign:ConfirmImportCategory(data)
             whileDead = true,
             hideOnEscape = true,
             preferredIndex = 3,
-            OnAccept = function(self)
-                AngryAssign:DoImportCategory(self.data, nil, existingId)
+            OnAccept = function(popup)
+                AngryAssign:DoImportCategory(popup.data, nil, existingId)
             end,
-            OnCancel = function(self, data, reason)
+            OnCancel = function(popup, _, reason)
                 if reason == "clicked" then
-                    local newData = { Name = self.data.Name, Children = self.data.Children, Index = self.data.Index }
+                    local newData = { Name = popup.data.Name, Children = popup.data.Children, Index = popup.data.Index }
                     newData.Name = AngryAssign:GetUniqueEntityName(newData.Name, "Category")
                     AngryAssign:DoImportCategory(newData)
                 end
@@ -2193,8 +2200,8 @@ function AngryAssign:ConfirmImportCategory(data)
             whileDead = true,
             hideOnEscape = true,
             preferredIndex = 3,
-            OnAccept = function(self)
-                AngryAssign:DoImportCategory(self.data)
+            OnAccept = function(popup)
+                AngryAssign:DoImportCategory(popup.data)
             end,
         }
         StaticPopup_Show("AngryAssign_ImportConfirmCat", nil, nil, data)
@@ -2283,9 +2290,9 @@ function AngryAssign_PageMenu(pageId)
     if not PagesDropDownList then
         PagesDropDownList = {
             { notCheckable = true, isTitle = true },
-            { text = "Rename", notCheckable = true, func = function(frame, pageId) AngryAssign_RenamePage(pageId) end },
-            { text = "Delete", notCheckable = true, func = function(frame, pageId) AngryAssign_DeletePage(pageId) end },
-            { text = "Edit Variables", notCheckable = true, func = function(frame, pageId) AngryAssign_EditVariables(pageId, "page") end },
+            { text = "Rename", notCheckable = true, func = function(_, clickedPageId) AngryAssign_RenamePage(clickedPageId) end },
+            { text = "Delete", notCheckable = true, func = function(_, clickedPageId) AngryAssign_DeletePage(clickedPageId) end },
+            { text = "Edit Variables", notCheckable = true, func = function(_, clickedPageId) AngryAssign_EditVariables(clickedPageId, "page") end },
             { text = "Export", notCheckable = true, hasArrow = true, menuList = {
                 { text = "Encoded AA", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "page", "Encoded AA") end },
                 { text = "JSON", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "page", "JSON") end },
@@ -2328,10 +2335,10 @@ local function AngryAssign_CategoryMenu(catId)
     if not CategoriesDropDownList then
         CategoriesDropDownList = {
             { notCheckable = true, isTitle = true },
-            { text = "Rename", notCheckable = true, func = function(frame, pageId) AngryAssign_RenameCategory(pageId) end },
-            { text = "Save as Template", notCheckable = true, func = function(frame, pageId) AngryAssign_SaveTemplatePopup(pageId) end },
-            { text = "Delete", notCheckable = true, func = function(frame, pageId) AngryAssign_DeleteCategory(pageId) end },
-            { text = "Edit Variables", notCheckable = true, func = function(frame, pageId) AngryAssign_EditVariables(pageId, "category") end },
+            { text = "Rename", notCheckable = true, func = function(_, clickedCategoryId) AngryAssign_RenameCategory(clickedCategoryId) end },
+            { text = "Save as Template", notCheckable = true, func = function(_, clickedCategoryId) AngryAssign_SaveTemplatePopup(clickedCategoryId) end },
+            { text = "Delete", notCheckable = true, func = function(_, clickedCategoryId) AngryAssign_DeleteCategory(clickedCategoryId) end },
+            { text = "Edit Variables", notCheckable = true, func = function(_, clickedCategoryId) AngryAssign_EditVariables(clickedCategoryId, "category") end },
             { text = "Export", notCheckable = true, hasArrow = true, menuList = {
                 { text = "Encoded AA", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "Encoded AA") end },
                 { text = "JSON", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "JSON") end },
@@ -2812,8 +2819,8 @@ function AngryAssign:CreateWindow()
     window.content:ClearAllPoints()
     window.content:SetPoint("TOPLEFT", window.frame, "TOPLEFT", 17, -7)
     window.content:SetPoint("BOTTOMRIGHT", window.frame, "BOTTOMRIGHT", -17, 40)
-    window.OnHeightSet = function(self, height)
-        local content = self.content
+    window.OnHeightSet = function(frameWidget, height)
+        local content = frameWidget.content
         local contentheight = height - 37
         if contentheight < 0 then
             contentheight = 0
@@ -2880,12 +2887,12 @@ function AngryAssign:CreateWindow()
     -- Enable delete key for tree
     tree.treeframe:EnableKeyboard(true)
     tree.treeframe:SetPropagateKeyboardInput(true)
-    tree.treeframe:SetScript("OnKeyDown", function(self, key)
+    tree.treeframe:SetScript("OnKeyDown", function(treeFrame, key)
         if key == "DELETE" then
             local selectedId = AngryAssign:SelectedId()
             if selectedId and selectedId > 0 then
                 AngryAssign_DeletePage(selectedId)
-                self:SetPropagateKeyboardInput(false)
+                treeFrame:SetPropagateKeyboardInput(false)
             end
         end
     end)
@@ -2970,7 +2977,6 @@ function AngryAssign:CreateWindow()
 end
 
 local function AngryAssign_IconPicker_Clicked(widget, event)
-    local texture
     local icon
 
     if widget:GetUserData("name") then
@@ -3282,10 +3288,6 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
         newIndex = maxIdx + 1
     elseif position == "into_start" and targetType == "category" then
         newParentId = targetObj.Id
-        local minIdx = 0
-        -- Find min index? Just set to something low like -1, sort will handle it.
-        -- But searching existing min is safer if we want to be clean.
-        -- Actually, indices are normalized 1..N. So 0 is safe.
         -- Or 0.5.
         newIndex = 0
     elseif position == "before" then
@@ -4421,17 +4423,6 @@ function AngryAssign:DisplayUpdateNotification()
     updateFlasher2:Play()
 end
 
-local function ci_pattern(pattern)
-    local p = pattern:gsub("(%%?)(.)", function(percent, letter)
-        if percent ~= "" or not letter:match("%a") then
-            return percent .. letter
-        else
-            return string.format("[%s%s]", letter:lower(), letter:upper())
-        end
-    end)
-    return p
-end
-
 --- Re-renders display when group membership context changes.
 function AngryAssign:UpdateDisplayedIfNewGroup()
     local newGroup = self:GetCurrentGroup()
@@ -4597,8 +4588,6 @@ function AngryAssign:UpdateDisplayed()
         return
     end
 
-    local text = page.Contents
-
     -- Prepare Highlight Map
     local highlightSet = {}
     local currentGroupStr = "g" .. (self:GetCurrentGroup() or 0)
@@ -4631,7 +4620,7 @@ function AngryAssign:UpdateDisplayed()
 
     -- Mustache Templating & Merging
     local renderedText, mergedVars = self:RenderPageContent(page, ctx)
-    text = renderedText
+    local text = renderedText or page.Contents or ""
 
     local hasHighlight = next(highlightSet) ~= nil
 
@@ -4785,6 +4774,10 @@ local function StripChatOutputColors(text)
     end):gsub("|r", "")
 end
 
+--- Renders a page into chat-ready plain output.
+-- Applies variable rendering, tag substitution, and custom color stripping.
+-- @tparam[opt] table page Page object.
+-- @treturn string output Chat-ready text.
 function AngryAssign:RenderPageForChatOutput(page)
     if not page then
         return ""
@@ -4835,6 +4828,9 @@ function AngryAssign:OutputDisplayed(id)
     end
 end
 
+--- Renders a page for export format `"Output"`.
+-- @tparam[opt] table page Page object.
+-- @treturn string output Chat-ready text.
 function AngryAssign:ProcessPageForOutput(page)
     return self:RenderPageForChatOutput(page)
 end
