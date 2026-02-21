@@ -147,6 +147,24 @@ local ColorTable = app.ColorTable
 local UtilityChatMap = app.UtilityChatMap
 local UtilityChatData = app.UtilityChatData
 
+local ChatOutputClassMap = {
+    ["{hunter}"] = LOCALIZED_CLASS_NAMES_MALE["HUNTER"],
+    ["{warrior}"] = LOCALIZED_CLASS_NAMES_MALE["WARRIOR"],
+    ["{rogue}"] = LOCALIZED_CLASS_NAMES_MALE["ROGUE"],
+    ["{mage}"] = LOCALIZED_CLASS_NAMES_MALE["MAGE"],
+    ["{priest}"] = LOCALIZED_CLASS_NAMES_MALE["PRIEST"],
+    ["{warlock}"] = LOCALIZED_CLASS_NAMES_MALE["WARLOCK"],
+    ["{paladin}"] = LOCALIZED_CLASS_NAMES_MALE["PALADIN"],
+    ["{druid}"] = LOCALIZED_CLASS_NAMES_MALE["DRUID"],
+    ["{shaman}"] = LOCALIZED_CLASS_NAMES_MALE["SHAMAN"],
+    ["{dk}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
+    ["{deathknight}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
+    ["{monk}"] = LOCALIZED_CLASS_NAMES_MALE["MONK"],
+    ["{dh}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
+    ["{demonhunter}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
+    ["{evoker}"] = LOCALIZED_CLASS_NAMES_MALE["EVOKER"],
+}
+
 -- Ensure ProcessTag uses this table correctly
 local function ProcessTag(tag)
     local lowerTag = tag:lower()
@@ -4706,6 +4724,83 @@ function AngryAssign_OutputDisplayed()
     return AngryAssign:OutputDisplayed( AngryAssign:SelectedId() )
 end
 
+local function ResolveChatOutputTag(self, tagContent)
+    local lowerTag = "{" .. tagContent:lower() .. "}"
+
+    if ChatOutputClassMap[lowerTag] then
+        return ChatOutputClassMap[lowerTag]
+    end
+
+    if UtilityChatData and UtilityChatData[lowerTag] then
+        local data = UtilityChatData[lowerTag]
+        if self:GetConfig("chatoutput") == "Acronym" and data.key then
+            return data.key
+        end
+        return data.name or data.key or UtilityChatMap[lowerTag]
+    end
+
+    if UtilityChatMap[lowerTag] then
+        return UtilityChatMap[lowerTag]
+    end
+
+    local tagType, tagId = tagContent:match("^(%a+)%s+(%d+)$")
+    if tagType then
+        local numericId = tonumber(tagId)
+        tagType = tagType:lower()
+        if tagType == "spell" then
+            return GetSpellLink(numericId)
+        end
+        if tagType == "boss" and not isClassicTBC and not isClassicWrath then
+            return select(5, EJ_GetEncounterInfo(numericId))
+        end
+        if tagType == "journal" and not isClassicTBC and not isClassicWrath then
+            local section = C_EncounterJournal.GetSectionInfo(numericId)
+            return section and section.link
+        end
+    end
+
+    if tagContent:lower():match("^icon%s+") then
+        return ""
+    end
+
+    return "{" .. tagContent .. "}"
+end
+
+local function StripChatOutputColors(text)
+    return text:gsub("(|c%w+)", function(c)
+        local lowerC = c:lower()
+        if ColorTable[lowerC] then
+            return ""
+        end
+        for i = #c - 1, 3, -1 do
+            local sub = lowerC:sub(1, i)
+            if ColorTable[sub] then
+                return c:sub(i + 1)
+            end
+        end
+        if lowerC:match("^|c%x+$") then
+            return ""
+        end
+        return c
+    end):gsub("|r", "")
+end
+
+function AngryAssign:RenderPageForChatOutput(page)
+    if not page then
+        return ""
+    end
+
+    local ctx = self:GetTemplateContext()
+    local renderedText, _ = self:RenderPageContent(page, ctx)
+    local output = renderedText or page.Contents or ""
+
+    output = output:gsub("{(.-)}", function(tagContent)
+        return ResolveChatOutputTag(self, tagContent)
+    end)
+
+    return StripChatOutputColors(output)
+end
+
 --- Outputs rendered page content to current group chat channel.
 -- @tparam[opt] number id Page id, defaults to currently displayed id.
 function AngryAssign:OutputDisplayed(id)
@@ -4729,91 +4824,7 @@ function AngryAssign:OutputDisplayed(id)
     end
 
     if channel and page then
-        local output = page.Contents
-
-        local ctx = self:GetTemplateContext()
-        local renderedText, _ = self:RenderPageContent(page, ctx)
-        output = renderedText
-
-        -- Process Tags (Icons, Spells, Class Names) - Single Pass
-        -- We look for anything inside {} and replace it based on logic or table lookup
-        output = output:gsub("{(.-)}", function(tagContent)
-            local lowerTag = "{"..tagContent:lower().."}"
-
-            local chatMap = {
-                ["{hunter}"] = LOCALIZED_CLASS_NAMES_MALE["HUNTER"],
-                ["{warrior}"] = LOCALIZED_CLASS_NAMES_MALE["WARRIOR"],
-                ["{rogue}"] = LOCALIZED_CLASS_NAMES_MALE["ROGUE"],
-                ["{mage}"] = LOCALIZED_CLASS_NAMES_MALE["MAGE"],
-                ["{priest}"] = LOCALIZED_CLASS_NAMES_MALE["PRIEST"],
-                ["{warlock}"] = LOCALIZED_CLASS_NAMES_MALE["WARLOCK"],
-                ["{paladin}"] = LOCALIZED_CLASS_NAMES_MALE["PALADIN"],
-                ["{druid}"] = LOCALIZED_CLASS_NAMES_MALE["DRUID"],
-                ["{shaman}"] = LOCALIZED_CLASS_NAMES_MALE["SHAMAN"],
-                ["{dk}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
-                ["{deathknight}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
-                ["{monk}"] = LOCALIZED_CLASS_NAMES_MALE["MONK"],
-                ["{dh}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
-                ["{demonhunter}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
-                ["{evoker}"] = LOCALIZED_CLASS_NAMES_MALE["EVOKER"],
-            }
-
-            if chatMap[lowerTag] then
-                return chatMap[lowerTag]
-            end
-            if UtilityChatMap[lowerTag] then
-                return UtilityChatMap[lowerTag]
-            end
-
-            -- Handle Dynamic Tags (spell, boss, journal)
-            local type, id = tagContent:match("^(%a+)%s+(%d+)$")
-            if type then
-                type = type:lower()
-                id = tonumber(id)
-                if type == "spell" then
-                    return GetSpellLink(id)
-                end
-                if type == "boss" and not isClassicTBC and not isClassicWrath then
-                    return select(5, EJ_GetEncounterInfo(id))
-                end
-                if type == "journal" and not isClassicTBC and not isClassicWrath then
-                    return C_EncounterJournal.GetSectionInfo(id) and C_EncounterJournal.GetSectionInfo(id).link
-                end
-            end
-
-            -- Strip Icon tags entirely for chat output
-            if tagContent:lower():match("^icon%s+") then
-                return ""
-            end
-
-            -- Default: Return the tag as-is if we don't know it
-            return "{"..tagContent.."}"
-        end)
-
-        -- Strip Colors (Using the same Peel-Back logic to correctly remove |cmageGrp)
-        output = output:gsub("(|c%w+)", function(c)
-             local lowerC = c:lower()
-             -- If it's a known custom color key, strip it (return empty), but keep the remainder
-             if ColorTable[lowerC] then
-                 return ""
-             end
-
-             -- Peel back for attached text |cmageGrp
-             for i = #c - 1, 3, -1 do
-                 local sub = lowerC:sub(1, i)
-                 if ColorTable[sub] then
-                     -- Found color |cmage, return just the remainder "Grp"
-                     return c:sub(i + 1)
-                 end
-             end
-
-             -- If it's a standard hex code |cff..., strip it entirely
-             if lowerC:match("^|c%x+$") then
-                 return ""
-             end
-
-             return c
-        end):gsub("|r", "")
+        local output = self:RenderPageForChatOutput(page)
 
         local lines = { strsplit("\n", output) }
         for _, line in ipairs(lines) do
@@ -4825,94 +4836,7 @@ function AngryAssign:OutputDisplayed(id)
 end
 
 function AngryAssign:ProcessPageForOutput(page)
-    local output = page.Contents
-    local ctx = self:GetTemplateContext()
-    local renderedText, _ = self:RenderPageContent(page, ctx)
-    output = renderedText
-
-    -- Process Tags (Icons, Spells, Class Names) - Single Pass
-    output = output:gsub("{(.-)}", function(tagContent)
-        local lowerTag = "{"..tagContent:lower().."}"
-
-        local chatMap = {
-            ["{hunter}"] = LOCALIZED_CLASS_NAMES_MALE["HUNTER"],
-            ["{warrior}"] = LOCALIZED_CLASS_NAMES_MALE["WARRIOR"],
-            ["{rogue}"] = LOCALIZED_CLASS_NAMES_MALE["ROGUE"],
-            ["{mage}"] = LOCALIZED_CLASS_NAMES_MALE["MAGE"],
-            ["{priest}"] = LOCALIZED_CLASS_NAMES_MALE["PRIEST"],
-            ["{warlock}"] = LOCALIZED_CLASS_NAMES_MALE["WARLOCK"],
-            ["{paladin}"] = LOCALIZED_CLASS_NAMES_MALE["PALADIN"],
-            ["{druid}"] = LOCALIZED_CLASS_NAMES_MALE["DRUID"],
-            ["{shaman}"] = LOCALIZED_CLASS_NAMES_MALE["SHAMAN"],
-            ["{dk}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
-            ["{deathknight}"] = LOCALIZED_CLASS_NAMES_MALE["DEATHKNIGHT"],
-            ["{monk}"] = LOCALIZED_CLASS_NAMES_MALE["MONK"],
-            ["{dh}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
-            ["{demonhunter}"] = LOCALIZED_CLASS_NAMES_MALE["DEMONHUNTER"],
-            ["{evoker}"] = LOCALIZED_CLASS_NAMES_MALE["EVOKER"],
-        }
-
-        if chatMap[lowerTag] then
-            return chatMap[lowerTag]
-        end
-
-        if UtilityChatData and UtilityChatData[lowerTag] then
-            local data = UtilityChatData[lowerTag]
-            if AngryAssign:GetConfig("chatoutput") == "Acronym" then
-                return data.key
-            else
-                return data.name
-            end
-        end
-
-        if UtilityChatMap[lowerTag] then
-            return UtilityChatMap[lowerTag]
-        end
-
-        -- Handle Dynamic Tags (spell, boss, journal)
-        local type, id = tagContent:match("^(%a+)%s+(%d+)$")
-        if type then
-            type = type:lower()
-            id = tonumber(id)
-            if type == "spell" then
-                return GetSpellLink(id)
-            end
-            if type == "boss" and not isClassicTBC and not isClassicWrath then
-                return select(5, EJ_GetEncounterInfo(id))
-            end
-            if type == "journal" and not isClassicTBC and not isClassicWrath then
-                return C_EncounterJournal.GetSectionInfo(id) and C_EncounterJournal.GetSectionInfo(id).link
-            end
-        end
-
-        -- Strip Icon tags entirely for chat output
-        if tagContent:lower():match("^icon%s+") then
-            return ""
-        end
-
-        -- Default
-        return "{"..tagContent.."}"
-    end)
-
-    -- Strip Colors
-    output = output:gsub("(|c%w+)", function(c)
-         local lowerC = c:lower()
-         if ColorTable[lowerC] then
-             return ""
-         end
-         for i = #c - 1, 3, -1 do
-             local sub = lowerC:sub(1, i)
-             if ColorTable[sub] then
-                 return c:sub(i + 1)
-             end
-         end
-         if lowerC:match("^|c%x+$") then
-             return ""
-         end
-         return c
-    end):gsub("|r", "")
-
-    return output
+    return self:RenderPageForChatOutput(page)
 end
 
 -- -----------------
