@@ -207,7 +207,9 @@ Run local quality checks from the repo root:
    This runs:
    - Lua syntax validation (`luac -p`) on all `*.lua` files.
    - Style checks for trailing whitespace and CRLF line endings.
-   - `luacheck` with WoW-focused noise filters when installed.
+   - `stylua --check` with repo settings from `.stylua.toml` (when installed).
+     In `make lint`, stylua is advisory (differences do not fail the target).
+   - `luacheck` with repo settings from `.luacheckrc` when installed.
      In `make lint`, luacheck is advisory (warnings do not fail the target).
      Note: luacheck is not fully WoW-API-aware in this repo yet, but it still
      helps surface glaring issues and cleanup opportunities.
@@ -216,7 +218,12 @@ Run local quality checks from the repo root:
    make lint-luacheck-strict
    ```
    This fails on luacheck warnings and is useful for incremental cleanup.
-3. Run full local verification:
+3. Run strict formatting check:
+   ```
+   make lint-stylua-strict
+   ```
+   This fails when code formatting differs from `.stylua.toml`.
+4. Run full local verification:
    ```
    make check
    ```

@@ -1,11 +1,13 @@
-.PHONY: docs docs-clean lint lint-syntax lint-style lint-luacheck lint-luacheck-strict check
+.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict check
 
 LDOC ?= ldoc
 LDOC_CONFIG ?= .ldoc
 DOCS_DIR ?= docs/ldoc
 LUA ?= luac
 LUACHECK ?= luacheck
-LUACHECK_FLAGS ?= --codes --ranges --ignore 111 --ignore 112 --ignore 113 --ignore 212 --ignore 631
+LUACHECK_CONFIG ?= .luacheckrc
+STYLUA ?= stylua
+STYLUA_CONFIG ?= .stylua.toml
 LUA_FILES := $(shell rg --files -g '*.lua' 2>/dev/null || find . -maxdepth 1 -type f -name '*.lua' -print | sed 's|^\./||')
 
 docs:
@@ -14,7 +16,7 @@ docs:
 docs-clean:
 	rm -rf $(DOCS_DIR) doc
 
-lint: lint-syntax lint-style lint-luacheck
+lint: lint-syntax lint-style lint-stylua lint-luacheck
 
 lint-syntax:
 	@command -v $(LUA) >/dev/null 2>&1 || { echo "Error: $(LUA) not found."; exit 1; }
@@ -32,9 +34,21 @@ lint-style:
 	fi
 	@echo "Style check passed."
 
+lint-stylua:
+	@if command -v $(STYLUA) >/dev/null 2>&1; then \
+		$(STYLUA) --config-path $(STYLUA_CONFIG) --check $(LUA_FILES) || \
+		echo "stylua reported formatting differences (advisory in make lint)."; \
+	else \
+		echo "stylua not installed; skipping stylua check (optional)."; \
+	fi
+
+lint-stylua-strict:
+	@command -v $(STYLUA) >/dev/null 2>&1 || { echo "Error: $(STYLUA) not found."; exit 1; }
+	@$(STYLUA) --config-path $(STYLUA_CONFIG) --check $(LUA_FILES)
+
 lint-luacheck:
 	@if command -v $(LUACHECK) >/dev/null 2>&1; then \
-		$(LUACHECK) $(LUACHECK_FLAGS) -- $(LUA_FILES) || \
+		$(LUACHECK) --config $(LUACHECK_CONFIG) -- $(LUA_FILES) || \
 		echo "luacheck reported warnings (advisory in make lint)."; \
 	else \
 		echo "luacheck not installed; skipping luacheck (optional)."; \
@@ -42,6 +56,6 @@ lint-luacheck:
 
 lint-luacheck-strict:
 	@command -v $(LUACHECK) >/dev/null 2>&1 || { echo "Error: $(LUACHECK) not found."; exit 1; }
-	@$(LUACHECK) $(LUACHECK_FLAGS) -- $(LUA_FILES)
+	@$(LUACHECK) --config $(LUACHECK_CONFIG) -- $(LUA_FILES)
 
 check: lint docs
