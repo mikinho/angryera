@@ -2134,8 +2134,9 @@ end
 -- @tparam table data Page payload.
 -- @tparam[opt] number parentId Optional parent category id.
 -- @tparam[opt] number overwriteId Existing page id to overwrite.
+-- @tparam[opt=false] boolean suppressTreeUpdate Skip immediate tree refresh when `true`.
 -- @treturn number Imported page id.
-function AngryAssign:DoImportPage(data, parentId, overwriteId)
+function AngryAssign:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
     local id = overwriteId or self:Hash("page", math.random(2000000000))
     local existing = overwriteId and AngryAssign_Pages[overwriteId]
 
@@ -2149,7 +2150,9 @@ function AngryAssign:DoImportPage(data, parentId, overwriteId)
         CategoryId = (existing and existing.CategoryId) or parentId,
         Index = (existing and existing.Index) or data.Index
     }
-    self:UpdateTree(id)
+    if not suppressTreeUpdate then
+        self:UpdateTree(id)
+    end
     return id
 end
 
@@ -2212,8 +2215,9 @@ end
 -- @tparam table data Category payload.
 -- @tparam[opt] number parentId Optional parent category id.
 -- @tparam[opt] number overwriteId Existing category id to overwrite.
+-- @tparam[opt=false] boolean suppressTreeUpdate Skip immediate tree refresh when `true`.
 -- @treturn number Imported category id.
-function AngryAssign:DoImportCategory(data, parentId, overwriteId)
+function AngryAssign:DoImportCategory(data, parentId, overwriteId, suppressTreeUpdate)
     local id = overwriteId or self:Hash("cat", math.random(2000000000))
     local existing = overwriteId and AngryAssign_Categories[overwriteId]
 
@@ -2230,13 +2234,15 @@ function AngryAssign:DoImportCategory(data, parentId, overwriteId)
 
     for _, child in ipairs(data.Children or {}) do
         if child.Type == "Category" then
-            self:DoImportCategory(child, id)
+            self:DoImportCategory(child, id, nil, true)
         else
-            self:DoImportPage(child, id)
+            self:DoImportPage(child, id, nil, true)
         end
     end
 
-    self:UpdateTree()
+    if not suppressTreeUpdate then
+        self:UpdateTree()
+    end
     return id
 end
 
