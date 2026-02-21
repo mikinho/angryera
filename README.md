@@ -195,6 +195,33 @@ Generate API documentation:
    make docs-clean
    ```
 
+Developer Checks
+--------------------
+
+Run local quality checks from the repo root:
+
+1. Run lint checks:
+   ```
+   make lint
+   ```
+   This runs:
+   - Lua syntax validation (`luac -p`) on all `*.lua` files.
+   - Style checks for trailing whitespace and CRLF line endings.
+   - `luacheck` with WoW-focused noise filters when installed.
+     In `make lint`, luacheck is advisory (warnings do not fail the target).
+     Note: luacheck is not fully WoW-API-aware in this repo yet, but it still
+     helps surface glaring issues and cleanup opportunities.
+2. Run strict luacheck:
+   ```
+   make lint-luacheck-strict
+   ```
+   This fails on luacheck warnings and is useful for incremental cleanup.
+3. Run full local verification:
+   ```
+   make check
+   ```
+   This runs both `make lint` and `make docs`.
+
 Credits
 -------
 Maintained by **Eblis/Zessy/Kwayteow** on Pagle (Classic Era).
