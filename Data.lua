@@ -750,27 +750,104 @@ local function skip_ws(str, pos)
         else
             break
         end
-    end
+	end
 	return pos
 end
 
+local function codepoint_to_utf8(codepoint)
+    if codepoint <= 0x7F then
+        return string.char(codepoint)
+    elseif codepoint <= 0x7FF then
+        local b1 = 0xC0 + math.floor(codepoint / 0x40)
+        local b2 = 0x80 + (codepoint % 0x40)
+        return string.char(b1, b2)
+    elseif codepoint <= 0xFFFF then
+        local b1 = 0xE0 + math.floor(codepoint / 0x1000)
+        local b2 = 0x80 + (math.floor(codepoint / 0x40) % 0x40)
+        local b3 = 0x80 + (codepoint % 0x40)
+        return string.char(b1, b2, b3)
+    end
+
+    local b1 = 0xF0 + math.floor(codepoint / 0x40000)
+    local b2 = 0x80 + (math.floor(codepoint / 0x1000) % 0x40)
+    local b3 = 0x80 + (math.floor(codepoint / 0x40) % 0x40)
+    local b4 = 0x80 + (codepoint % 0x40)
+    return string.char(b1, b2, b3, b4)
+end
+
 local function parse_string(str, pos)
-	local s = pos
-	while true do
-		local next_quote = str:find('"', s + 1)
-		if not next_quote then return nil, pos, "Unterminated String" end
-		-- Check escapes
-		local escaped = 0
-		local p = next_quote - 1
-		while str:sub(p, p) == "\\" do
-			escaped = escaped + 1
-			p = p - 1
-		end
-		if escaped % 2 == 0 then
-			return str:sub(pos+1, next_quote-1), next_quote + 1
-		end
-		s = next_quote
-	end
+    local i = pos + 1
+    local chunkStart = i
+    local out = {}
+    local outCount = 0
+    local len = #str
+
+    while i <= len do
+        local c = str:sub(i, i)
+        if c == '"' then
+            if i > chunkStart then
+                outCount = outCount + 1
+                out[outCount] = str:sub(chunkStart, i - 1)
+            end
+            return table.concat(out), i + 1
+        end
+
+        if c == "\\" then
+            if i > chunkStart then
+                outCount = outCount + 1
+                out[outCount] = str:sub(chunkStart, i - 1)
+            end
+
+            local esc = str:sub(i + 1, i + 1)
+            if esc == "" then
+                return nil, i, "Unterminated escape sequence"
+            end
+
+            if esc == '"' or esc == "\\" or esc == "/" then
+                outCount = outCount + 1
+                out[outCount] = esc
+                i = i + 2
+            elseif esc == "b" then
+                outCount = outCount + 1
+                out[outCount] = "\b"
+                i = i + 2
+            elseif esc == "f" then
+                outCount = outCount + 1
+                out[outCount] = "\f"
+                i = i + 2
+            elseif esc == "n" then
+                outCount = outCount + 1
+                out[outCount] = "\n"
+                i = i + 2
+            elseif esc == "r" then
+                outCount = outCount + 1
+                out[outCount] = "\r"
+                i = i + 2
+            elseif esc == "t" then
+                outCount = outCount + 1
+                out[outCount] = "\t"
+                i = i + 2
+            elseif esc == "u" then
+                local hex = str:sub(i + 2, i + 5)
+                if #hex ~= 4 or not hex:match("^[0-9a-fA-F]+$") then
+                    return nil, i, "Invalid unicode escape"
+                end
+
+                local codepoint = tonumber(hex, 16)
+                outCount = outCount + 1
+                out[outCount] = codepoint_to_utf8(codepoint)
+                i = i + 6
+            else
+                return nil, i, "Invalid escape sequence"
+            end
+
+            chunkStart = i
+        else
+            i = i + 1
+        end
+    end
+
+    return nil, pos, "Unterminated String"
 end
 
 local function parse_number(str, pos)
@@ -807,7 +884,8 @@ local function parse_obj_impl(str, pos)
     local key, val, parseError
 	while true do
 		if str:sub(pos, pos) ~= '"' then return nil, pos, "Expected String Key" end
-		key, pos = parse_string(str, pos)
+		key, pos, parseError = parse_string(str, pos)
+		if parseError then return nil, pos, parseError end
 		pos = skip_ws(str, pos)
 		if str:sub(pos, pos) ~= ":" then return nil, pos, "Expected ':'" end
 		pos = skip_ws(str, pos + 1)
