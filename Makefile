@@ -1,4 +1,4 @@
-.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict check
+.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression check
 
 LDOC ?= ldoc
 LDOC_CONFIG ?= .ldoc
@@ -8,6 +8,7 @@ LUACHECK ?= luacheck
 LUACHECK_CONFIG ?= .luacheckrc
 STYLUA ?= stylua
 STYLUA_CONFIG ?= .stylua.toml
+LUA_RUN ?= lua
 LUA_FILES := $(shell rg --files -g '*.lua' 2>/dev/null || find . -maxdepth 1 -type f -name '*.lua' -print | sed 's|^\./||')
 
 docs:
@@ -58,4 +59,10 @@ lint-luacheck-strict:
 	@command -v $(LUACHECK) >/dev/null 2>&1 || { echo "Error: $(LUACHECK) not found."; exit 1; }
 	@$(LUACHECK) --config $(LUACHECK_CONFIG) -- $(LUA_FILES)
 
-check: lint docs
+test: test-json-regression
+
+test-json-regression:
+	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
+	@$(LUA_RUN) tests/json_regression.lua
+
+check: lint test docs

@@ -1000,6 +1000,73 @@ function app.JSON_Decode(str)
     return {}
 end
 
+local function encode_json_string(value)
+    value = value:gsub("\\", "\\\\")
+    value = value:gsub("\"", "\\\"")
+    value = value:gsub("\n", "\\n")
+    value = value:gsub("\r", "\\r")
+    value = value:gsub("\t", "\\t")
+    return "\"" .. value .. "\""
+end
+
+local function encode_json_value(value)
+    if value == JSON_NULL then
+        return "null"
+    end
+
+    local valueType = type(value)
+    if valueType == "string" then
+        return encode_json_string(value)
+    end
+    if valueType == "number" then
+        return tostring(value)
+    end
+    if valueType == "boolean" then
+        return tostring(value)
+    end
+    if valueType == "table" then
+        local parts = {}
+        local isArray = (value[1] ~= nil or next(value) == nil)
+        for key in pairs(value) do
+            if type(key) ~= "number" then
+                isArray = false
+                break
+            end
+        end
+
+        if isArray then
+            for _, element in ipairs(value) do
+                table.insert(parts, encode_json_value(element))
+            end
+            return "[" .. table.concat(parts, ",") .. "]"
+        end
+
+        local keys = {}
+        for key in pairs(value) do
+            table.insert(keys, key)
+        end
+        table.sort(keys, function(a, b)
+            return tostring(a) < tostring(b)
+        end)
+
+        for _, key in ipairs(keys) do
+            local encodedKey = encode_json_string(tostring(key))
+            table.insert(parts, string.format("%s:%s", encodedKey, encode_json_value(value[key])))
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+
+    return "null"
+end
+
+--- Encodes a Lua value to JSON.
+-- `app.JSON_NULL` is encoded as `null`.
+-- @tparam any value Lua value to encode.
+-- @treturn string JSON-encoded value.
+function app.JSON_Encode(value)
+    return encode_json_value(value)
+end
+
 --- Parses variables from either JSON or `key=value` lines.
 -- @tparam string str Variable text.
 -- @treturn table Parsed key/value table.

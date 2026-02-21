@@ -227,7 +227,13 @@ Run local quality checks from the repo root:
    ```
    make check
    ```
-   This runs both `make lint` and `make docs`.
+   This runs `make lint`, `make test`, and `make docs`.
+5. Run JSON regression tests directly:
+   ```
+   make test
+   ```
+   This validates JSON import/export edge cases, including escaped newlines and
+   preserved `null` values.
 
 Credits
 -------

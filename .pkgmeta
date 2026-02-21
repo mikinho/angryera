@@ -65,3 +65,5 @@ ignore:
   - libs/LibDeflate/tests
   - libs/LibDeflate/tools
   - libs/LibDeflate/*.md
+  - /docs
+  - /tests
