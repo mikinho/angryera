@@ -860,6 +860,9 @@ end
 
 -- Proper recursive implementation
 local parse_value
+-- Sentinel used to preserve JSON `null` values in decoded tables.
+local JSON_NULL = {}
+app.JSON_NULL = JSON_NULL
 
 local function parse_array(str, pos)
     local arr = {}
@@ -947,7 +950,7 @@ parse_value = function(str, pos)
         return false, pos + 5
     end
     if str:sub(pos, pos+3) == "null" then
-        return nil, pos + 4
+        return JSON_NULL, pos + 4
     end
     return nil, pos, "Syntax Error"
 end
@@ -957,6 +960,7 @@ end
 -- Returns nil on parse failure or trailing garbage.
 --- Attempts strict JSON decoding.
 -- Returns `nil` if the value is invalid JSON or has trailing non-whitespace.
+-- JSON `null` values are returned as `app.JSON_NULL`.
 -- @tparam string str JSON input string.
 -- @treturn any|nil Decoded Lua value on success.
 function app.JSON_TryDecode(str)

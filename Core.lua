@@ -2403,12 +2403,27 @@ local function AngryAssign_TreeMenuClick(widget, event, uniquevalue)
     end
 end
 
+local function IsJSONNull(value)
+    return value == app.JSON_NULL
+end
+
+local function IsJSONNilLike(value)
+    return value == nil or IsJSONNull(value)
+end
+
+local function JSONValueOrNil(value)
+    if IsJSONNull(value) then
+        return nil
+    end
+    return value
+end
+
 local function ValidateJSONImportData(data)
     if type(data) ~= "table" then
         return false, "Invalid JSON import: root value must be an object."
     end
 
-    if data.pages ~= nil then
+    if not IsJSONNilLike(data.pages) then
         if type(data.pages) ~= "table" then
             return false, "Invalid JSON import: \"pages\" must be an array."
         end
@@ -2417,30 +2432,35 @@ local function ValidateJSONImportData(data)
                 return false, "Invalid JSON import: \"pages\" must be an array."
             end
         end
-        if data.name ~= nil and type(data.name) ~= "string" then
+        if not IsJSONNilLike(data.name) and type(data.name) ~= "string" then
             return false, "Invalid JSON import: \"name\" must be a string when provided."
         end
         for index, page in ipairs(data.pages) do
             if type(page) ~= "table" then
                 return false, string.format("Invalid JSON import: pages[%d] must be an object.", index)
             end
-            if type(page.name) ~= "string" or page.name:match("^%s*$") then
+            local pageName = JSONValueOrNil(page.name)
+            if type(pageName) ~= "string" or pageName:match("^%s*$") then
                 return false, string.format("Invalid JSON import: pages[%d].name must be a non-empty string.", index)
             end
-            if page.content ~= nil and type(page.content) ~= "string" then
+            local pageContent = JSONValueOrNil(page.content)
+            if pageContent ~= nil and type(pageContent) ~= "string" then
                 return false, string.format("Invalid JSON import: pages[%d].content must be a string when provided.", index)
             end
         end
         return true
     end
 
-    if data.name ~= nil and type(data.name) ~= "string" then
+    local rootName = JSONValueOrNil(data.name)
+    local rootContent = JSONValueOrNil(data.content)
+
+    if rootName ~= nil and type(rootName) ~= "string" then
         return false, "Invalid JSON import: \"name\" must be a string when provided."
     end
-    if data.content ~= nil and type(data.content) ~= "string" then
+    if rootContent ~= nil and type(rootContent) ~= "string" then
         return false, "Invalid JSON import: \"content\" must be a string when provided."
     end
-    if data.name == nil and data.content == nil then
+    if rootName == nil and rootContent == nil then
         return false, "Invalid JSON import: expected \"pages\" for categories or \"name\"/\"content\" for pages."
     end
 
@@ -2475,14 +2495,15 @@ local function AngryAssign_ImportPage()
 
     local function DoImport(nameStr, s, jsonData)
         if jsonData then
-            if not nameStr or nameStr:match("^%s*$") then
-                nameStr = jsonData.name
+            if not nameStr or type(nameStr) ~= "string" or nameStr:match("^%s*$") then
+                nameStr = JSONValueOrNil(jsonData.name)
             end
-            if not nameStr or nameStr:match("^%s*$") then
+            if type(nameStr) ~= "string" or nameStr:match("^%s*$") then
                 nameStr = "Imported"
             end
 
-            if jsonData.pages then
+            local jsonPages = JSONValueOrNil(jsonData.pages)
+            if jsonPages then
                 -- Category Import
                 local title = nameStr
                 local catId
@@ -2504,9 +2525,9 @@ local function AngryAssign_ImportPage()
                 end
 
                 if catId then
-                    for i, pData in ipairs(jsonData.pages) do
-                        local pName = pData.name
-                        local pContent = pData.content or ""
+                    for i, pData in ipairs(jsonPages) do
+                        local pName = JSONValueOrNil(pData.name)
+                        local pContent = JSONValueOrNil(pData.content) or ""
 
                         local pageId
                         for _, p in pairs(AngryAssign_Pages) do
@@ -2529,6 +2550,7 @@ local function AngryAssign_ImportPage()
             else
                 -- Single Page Import
                 local title = nameStr
+                local pageContent = JSONValueOrNil(jsonData.content) or ""
                 local existingId
                 for _, page in pairs(AngryAssign_Pages) do
                     if page.Name == title and not page.CategoryId then
@@ -2538,11 +2560,11 @@ local function AngryAssign_ImportPage()
                 end
 
                 if existingId then
-                    AngryAssign:UpdateContents(existingId, jsonData.content or "")
+                    AngryAssign:UpdateContents(existingId, pageContent)
                     AngryAssign:RenamePage(existingId, title)
                     frame:Hide()
                 else
-                    local success, err = AngryAssign:CreatePage(title, jsonData.content or "", nil, nil)
+                    local success, err = AngryAssign:CreatePage(title, pageContent, nil, nil)
                     if not success then
                         print("Error: "..(err or ""))
                     else
@@ -2659,8 +2681,12 @@ local function AngryAssign_ImportPage()
 
         if jsonData then
             if not nameStr or nameStr == "" then
-                nameStr = jsonData.name
+                nameStr = JSONValueOrNil(jsonData.name)
             end
+        end
+
+        if type(nameStr) ~= "string" then
+            nameStr = nil
         end
 
         if (not nameStr or nameStr:match("^%s*$")) and not jsonData then
@@ -2673,7 +2699,8 @@ local function AngryAssign_ImportPage()
 
         local exists = false
         if jsonData then
-             if jsonData.pages then
+             local jsonPages = JSONValueOrNil(jsonData.pages)
+             if jsonPages then
                  for _, cat in pairs(AngryAssign_Categories) do
                      if cat.Name == nameStr then
                          exists = true break
@@ -2715,7 +2742,7 @@ local function AngryAssign_ImportPage()
                 OnAccept = function() DoImport(nameStr, s, jsonData) end,
             }
             local typeStr = "page"
-            if jsonData and jsonData.pages then
+            if jsonData and JSONValueOrNil(jsonData.pages) then
                 typeStr = "category"
             elseif not jsonData and (s:match("\n# ") or s:match("^# ")) then
                 typeStr = "category"
