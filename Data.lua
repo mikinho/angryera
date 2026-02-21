@@ -743,15 +743,15 @@ end
 -- JSON Utility
 -- -------------------------------------------------------------------------------
 local function skip_ws(str, pos)
-	while true do
+    while true do
         local c = str:sub(pos, pos)
         if c == " " or c == "\t" or c == "\n" or c == "\r" then
             pos = pos + 1
         else
             break
         end
-	end
-	return pos
+    end
+    return pos
 end
 
 local function codepoint_to_utf8(codepoint)
@@ -784,7 +784,7 @@ local function parse_string(str, pos)
 
     while i <= len do
         local c = str:sub(i, i)
-        if c == '"' then
+        if c == "\"" then
             if i > chunkStart then
                 outCount = outCount + 1
                 out[outCount] = str:sub(chunkStart, i - 1)
@@ -803,7 +803,7 @@ local function parse_string(str, pos)
                 return nil, i, "Unterminated escape sequence"
             end
 
-            if esc == '"' or esc == "\\" or esc == "/" then
+            if esc == "\"" or esc == "\\" or esc == "/" then
                 outCount = outCount + 1
                 out[outCount] = esc
                 i = i + 2
@@ -851,67 +851,105 @@ local function parse_string(str, pos)
 end
 
 local function parse_number(str, pos)
-	local _, end_pos = str:find("^[%-%d%.eE]+", pos)
-	if not end_pos then return nil, pos, "Invalid Number" end
-	return tonumber(str:sub(pos, end_pos)), end_pos + 1
+    local _, end_pos = str:find("^[%-%d%.eE]+", pos)
+    if not end_pos then
+        return nil, pos, "Invalid Number"
+    end
+    return tonumber(str:sub(pos, end_pos)), end_pos + 1
 end
 
 -- Proper recursive implementation
 local parse_value
 
 local function parse_array(str, pos)
-	local arr = {}
-	pos = skip_ws(str, pos + 1)
-	if str:sub(pos, pos) == "]" then return arr, pos + 1 end
+    local arr = {}
+    pos = skip_ws(str, pos + 1)
+    if str:sub(pos, pos) == "]" then
+        return arr, pos + 1
+    end
 
     local val, parseError
-	while true do
-		val, pos, parseError = parse_value(str, pos)
-		if parseError then return nil, pos, parseError end
-		table.insert(arr, val)
-		pos = skip_ws(str, pos)
-		if str:sub(pos, pos) == "]" then return arr, pos + 1 end
-		if str:sub(pos, pos) ~= "," then return nil, pos, "Expected ',' or ']'" end
-		pos = skip_ws(str, pos + 1)
-	end
+    while true do
+        val, pos, parseError = parse_value(str, pos)
+        if parseError then
+            return nil, pos, parseError
+        end
+        table.insert(arr, val)
+        pos = skip_ws(str, pos)
+        if str:sub(pos, pos) == "]" then
+            return arr, pos + 1
+        end
+        if str:sub(pos, pos) ~= "," then
+            return nil, pos, "Expected ',' or ']'"
+        end
+        pos = skip_ws(str, pos + 1)
+    end
 end
 
 local function parse_obj_impl(str, pos)
-	local obj = {}
-	pos = skip_ws(str, pos + 1)
-	if str:sub(pos, pos) == "}" then return obj, pos + 1 end
+    local obj = {}
+    pos = skip_ws(str, pos + 1)
+    if str:sub(pos, pos) == "}" then
+        return obj, pos + 1
+    end
 
     local key, val, parseError
-	while true do
-		if str:sub(pos, pos) ~= '"' then return nil, pos, "Expected String Key" end
-		key, pos, parseError = parse_string(str, pos)
-		if parseError then return nil, pos, parseError end
-		pos = skip_ws(str, pos)
-		if str:sub(pos, pos) ~= ":" then return nil, pos, "Expected ':'" end
-		pos = skip_ws(str, pos + 1)
+    while true do
+        if str:sub(pos, pos) ~= "\"" then
+            return nil, pos, "Expected String Key"
+        end
+        key, pos, parseError = parse_string(str, pos)
+        if parseError then
+            return nil, pos, parseError
+        end
+        pos = skip_ws(str, pos)
+        if str:sub(pos, pos) ~= ":" then
+            return nil, pos, "Expected ':'"
+        end
+        pos = skip_ws(str, pos + 1)
 
-		val, pos, parseError = parse_value(str, pos)
-		if parseError then return nil, pos, parseError end
-		obj[key] = val
+        val, pos, parseError = parse_value(str, pos)
+        if parseError then
+            return nil, pos, parseError
+        end
+        obj[key] = val
 
-		pos = skip_ws(str, pos)
-		if str:sub(pos, pos) == "}" then return obj, pos + 1 end
-		if str:sub(pos, pos) ~= "," then return nil, pos, "Expected ',' or '}'" end
-		pos = skip_ws(str, pos + 1)
-	end
+        pos = skip_ws(str, pos)
+        if str:sub(pos, pos) == "}" then
+            return obj, pos + 1
+        end
+        if str:sub(pos, pos) ~= "," then
+            return nil, pos, "Expected ',' or '}'"
+        end
+        pos = skip_ws(str, pos + 1)
+    end
 end
 
 parse_value = function(str, pos)
-	pos = skip_ws(str, pos)
-	local char = str:sub(pos, pos)
-	if char == "{" then return parse_obj_impl(str, pos) end
-	if char == "[" then return parse_array(str, pos) end
-	if char == '"' then return parse_string(str, pos) end
-	if (char >= "0" and char <= "9") or char == "-" then return parse_number(str, pos) end
-	if str:sub(pos, pos+3) == "true" then return true, pos + 4 end
-	if str:sub(pos, pos+4) == "false" then return false, pos + 5 end
-	if str:sub(pos, pos+3) == "null" then return nil, pos + 4 end
-	return nil, pos, "Syntax Error"
+    pos = skip_ws(str, pos)
+    local char = str:sub(pos, pos)
+    if char == "{" then
+        return parse_obj_impl(str, pos)
+    end
+    if char == "[" then
+        return parse_array(str, pos)
+    end
+    if char == "\"" then
+        return parse_string(str, pos)
+    end
+    if (char >= "0" and char <= "9") or char == "-" then
+        return parse_number(str, pos)
+    end
+    if str:sub(pos, pos+3) == "true" then
+        return true, pos + 4
+    end
+    if str:sub(pos, pos+4) == "false" then
+        return false, pos + 5
+    end
+    if str:sub(pos, pos+3) == "null" then
+        return nil, pos + 4
+    end
+    return nil, pos, "Syntax Error"
 end
 
 -- Strict JSON decode:
@@ -962,7 +1000,9 @@ end
 -- @tparam string str Variable text.
 -- @treturn table Parsed key/value table.
 function app.ParseVariables(str)
-    if not str or str == "" then return {} end
+    if not str or str == "" then
+        return {}
+    end
 
     -- Check for JSON
     if str:find("^%s*[{[]") then
@@ -981,10 +1021,15 @@ function app.ParseVariables(str)
                 obj[key] = val
                 -- Let's try to convert to number if possible.
                 local n = tonumber(val)
-                if n then obj[key] = n end
+                if n then
+                    obj[key] = n
+                end
                 -- Convert "true"/"false"?
-                if val == "true" then obj[key] = true
-                elseif val == "false" then obj[key] = false end
+                if val == "true" then
+                    obj[key] = true
+                elseif val == "false" then
+                    obj[key] = false
+                end
             end
         end
     end

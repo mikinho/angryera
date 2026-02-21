@@ -322,7 +322,9 @@ function AngryAssign:SendOutMessage(data, channel, target)
         end
     end
 
-    if not channel then return end
+    if not channel then
+        return
+    end
 
     -- self:Print("Sending "..data[COMMAND].." over "..channel.." to "..tostring(target))
     self:SendCommMessage(comPrefix, final, channel, target, "NORMAL")
@@ -359,7 +361,9 @@ function AngryAssign:ProcessMessage(sender, data)
 
     -- self:Print("Received "..data[COMMAND].." from "..sender)
     if cmd == "PAGE" then
-        if sender == PlayerFullName() then return end
+        if sender == PlayerFullName() then
+            return
+        end
         if not self:PermissionCheck(sender) then
             self:PermissionCheckFailError(sender)
             return
@@ -374,7 +378,9 @@ function AngryAssign:ProcessMessage(sender, data)
         local id = data[PAGE_Id]
 
         -- Type check ID to prevent table index errors
-        if type(id) ~= "number" then return end
+        if type(id) ~= "number" then
+            return
+        end
 
         local page = AngryAssign_Pages[id]
         if page then
@@ -382,7 +388,9 @@ function AngryAssign:ProcessMessage(sender, data)
                 local newCatVars = ValidateString(data[8], 5000, "CatVars")
                 if page.CatVars ~= newCatVars then
                     page.CatVars = newCatVars
-                    if AngryAssign_State.displayed == id then self:UpdateDisplayed() end
+                    if AngryAssign_State.displayed == id then
+                        self:UpdateDisplayed()
+                    end
                 end
                 return
             end
@@ -416,20 +424,28 @@ function AngryAssign:ProcessMessage(sender, data)
         if AngryAssign_State.displayed == id then
             self:UpdateDisplayed()
             self:ShowDisplay()
-            if contents_updated then self:DisplayUpdateNotification() end
+            if contents_updated then
+                self:DisplayUpdateNotification()
+            end
         end
         self:UpdateTree()
 
     elseif cmd == "DISPLAY" then
-        if sender == PlayerFullName() then return end
+        if sender == PlayerFullName() then
+            return
+        end
         if not self:PermissionCheck(sender) then
-            if data[DISPLAY_Id] then self:PermissionCheckFailError(sender) end
+            if data[DISPLAY_Id] then
+                self:PermissionCheckFailError(sender)
+            end
             return
         end
 
         local id = data[DISPLAY_Id]
         -- Safety check on ID
-        if id and type(id) ~= "number" then return end
+        if id and type(id) ~= "number" then
+            return
+        end
 
         local updated = data[DISPLAY_Updated]
         local updateId = data[DISPLAY_UpdateId]
@@ -444,17 +460,25 @@ function AngryAssign:ProcessMessage(sender, data)
             self:UpdateTree()
             self:UpdateDisplayed()
             self:ShowDisplay()
-            if id then self:DisplayUpdateNotification() end
+            if id then
+                self:DisplayUpdateNotification()
+            end
         end
 
     elseif cmd == "REQUEST_DISPLAY" then
-        if sender == PlayerFullName() then return end
-        if not self:IsPlayerRaidLeader() then return end
+        if sender == PlayerFullName() then
+            return
+        end
+        if not self:IsPlayerRaidLeader() then
+            return
+        end
 
         self:SendDisplay( AngryAssign_State.displayed )
 
     elseif cmd == "REQUEST_PAGE" then
-        if sender == PlayerFullName() then return end
+        if sender == PlayerFullName() then
+            return
+        end
 
         -- Safety check on requested ID
         if type(data[REQUEST_PAGE_Id]) == "number" then
@@ -492,8 +516,12 @@ function AngryAssign:ProcessMessage(sender, data)
         local remoteStr = tostring(timestamp)
 
         if (localStr ~= "dev" and localStr:len() ~= 14) or (remoteStr ~= "dev" and remoteStr:len() ~= 14) then
-            if localStr ~= "dev" then localTimestamp = tonumber(localStr:sub(1,8)) end
-            if remoteStr ~= "dev" then timestamp = tonumber(remoteStr:sub(1,8)) end
+            if localStr ~= "dev" then
+                localTimestamp = tonumber(localStr:sub(1,8))
+            end
+            if remoteStr ~= "dev" then
+                timestamp = tonumber(remoteStr:sub(1,8))
+            end
         end
 
         if localTimestamp ~= "dev" and timestamp ~= "dev" and timestamp > localTimestamp and localIsClassic == remoteIsClassic and not warnedOOD then
@@ -553,7 +581,9 @@ function AngryAssign:SendPageMessage(id)
     local catVars = nil
     if page.CategoryId then
         local cat = AngryAssign_Categories[page.CategoryId]
-        if cat and cat.Vars then catVars = cat.Vars end
+        if cat and cat.Vars then
+            catVars = cat.Vars
+        end
     end
 
     self:SendOutMessage({ "PAGE",
@@ -597,7 +627,9 @@ function AngryAssign:SendDisplayMessage(id)
     if not page then
         self:SendOutMessage({ "DISPLAY", [DISPLAY_Id] = nil, [DISPLAY_Updated] = nil, [DISPLAY_UpdateId] = nil })
     else
-        if not page.UpdateId then page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars) end
+        if not page.UpdateId then
+            page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
+        end
         self:SendOutMessage({ "DISPLAY", [DISPLAY_Id] = page.Id, [DISPLAY_Updated] = page.Updated, [DISPLAY_UpdateId] = page.UpdateId })
     end
 end
@@ -606,7 +638,9 @@ end
 function AngryAssign:SendRequestDisplay()
     if (IsInRaid() or IsInGroup()) then
         local to = self:GetRaidLeader(true)
-        if to then self:SendOutMessage({ "REQUEST_DISPLAY" }, "WHISPER", to) end
+        if to then
+            self:SendOutMessage({ "REQUEST_DISPLAY" }, "WHISPER", to)
+        end
     end
 end
 
@@ -638,8 +672,16 @@ function AngryAssign:SendVersionMessage()
     local revToSend
     local timestampToSend
     local verToSend
-    if AngryAssign_Version:sub(1,1) == "@" then verToSend = "dev" else verToSend = AngryAssign_Version end
-    if AngryAssign_Timestamp:sub(1,1) == "@" then timestampToSend = "dev" else timestampToSend = tonumber(AngryAssign_Timestamp) end
+    if AngryAssign_Version:sub(1,1) == "@" then
+        verToSend = "dev"
+    else
+        verToSend = AngryAssign_Version
+    end
+    if AngryAssign_Timestamp:sub(1,1) == "@" then
+        timestampToSend = "dev"
+    else
+        timestampToSend = tonumber(AngryAssign_Timestamp)
+    end
     self:SendOutMessage({ "VERSION", [VERSION_Version] = verToSend, [VERSION_Timestamp] = timestampToSend, [VERSION_ValidRaid] = self:IsValidRaid() })
 end
 
@@ -654,8 +696,12 @@ end
 -- @tparam[opt] string to Explicit whisper target.
 function AngryAssign:SendRequestPage(id, to)
     if (IsInRaid() or IsInGroup()) or to then
-        if not to then to = self:GetRaidLeader(true) end
-        if to then self:SendOutMessage({ "REQUEST_PAGE", [REQUEST_PAGE_Id] = id }, "WHISPER", to) end
+        if not to then
+            to = self:GetRaidLeader(true)
+        end
+        if to then
+            self:SendOutMessage({ "REQUEST_PAGE", [REQUEST_PAGE_Id] = id }, "WHISPER", to)
+        end
     end
 end
 
@@ -700,7 +746,9 @@ function AngryAssign:VersionCheckOutput()
     local up_to_date = {}
 
     local ver = AngryAssign_Version
-    if ver:sub(1,1) == "@" then ver = "dev" end
+    if ver:sub(1,1) == "@" then
+        ver = "dev"
+    end
 
     if (IsInRaid() or IsInGroup()) then
         for i = 1, GetNumGroupMembers() do
@@ -754,8 +802,12 @@ function AngryAssign:ShowBulkManagement()
     -- Setup Frame Strata and Global Name for Escape Key
     if frame.frame then
         local f = frame.frame
-        if f.SetFrameStrata then f:SetFrameStrata("FULLSCREEN_DIALOG") end
-        if f.SetToplevel then f:SetToplevel(true) end
+        if f.SetFrameStrata then
+            f:SetFrameStrata("FULLSCREEN_DIALOG")
+        end
+        if f.SetToplevel then
+            f:SetToplevel(true)
+        end
 
         -- Force SOLID Black Background Texture
         local bg = f:CreateTexture(nil, "BACKGROUND")
@@ -781,9 +833,13 @@ function AngryAssign:ShowBulkManagement()
         -- Register for Escape key closing
         local found = false
         for _, v in ipairs(UISpecialFrames) do
-            if v == globalName then found = true break end
+            if v == globalName then
+                found = true break
+            end
         end
-        if not found then tinsert(UISpecialFrames, globalName) end
+        if not found then
+            tinsert(UISpecialFrames, globalName)
+        end
     end
 
     -- Ensure the widget is released (cleaned up) when closed
@@ -816,7 +872,9 @@ function AngryAssign:ShowBulkManagement()
 
         local orphanPages = {}
         for _, page in pairs(AngryAssign_Pages) do
-            if not page.CategoryId then table.insert(orphanPages, page) end
+            if not page.CategoryId then
+                table.insert(orphanPages, page)
+            end
         end
         table.sort(orphanPages, function(a,b) return a.Name < b.Name end)
 
@@ -824,7 +882,9 @@ function AngryAssign:ShowBulkManagement()
         for _, cat in ipairs(sortedCats) do
             local catPages = {}
             for _, page in pairs(AngryAssign_Pages) do
-                if page.CategoryId == cat.Id then table.insert(catPages, page) end
+                if page.CategoryId == cat.Id then
+                    table.insert(catPages, page)
+                end
             end
             table.sort(catPages, function(a,b) return a.Name < b.Name end)
 
@@ -847,9 +907,13 @@ function AngryAssign:ShowBulkManagement()
                     -- Attempting to Uncheck. Check Logic:
                     -- Check if ALL children are ALREADY selected?
                     local allSelected = true
-                    if #catPages == 0 then allSelected = false end
+                    if #catPages == 0 then
+                        allSelected = false
+                    end
                     for _, p in ipairs(catPages) do
-                         if not selectedToDelete.pages[p.Id] then allSelected = false break end
+                         if not selectedToDelete.pages[p.Id] then
+                             allSelected = false break
+                         end
                     end
 
                     if not allSelected and #catPages > 0 then
@@ -858,14 +922,18 @@ function AngryAssign:ShowBulkManagement()
                         catCheck:SetValue(true) -- Keep checked
                         for _, p in ipairs(catPages) do
                             selectedToDelete.pages[p.Id] = true
-                            if pageCheckboxes[p.Id] then pageCheckboxes[p.Id]:SetValue(true) end
+                            if pageCheckboxes[p.Id] then
+                                pageCheckboxes[p.Id]:SetValue(true)
+                            end
                         end
                     else
                         -- State 2 -> 0: Deselect All
                         selectedToDelete.categories[cat.Id] = nil
                         for _, p in ipairs(catPages) do
                             selectedToDelete.pages[p.Id] = nil
-                             if pageCheckboxes[p.Id] then pageCheckboxes[p.Id]:SetValue(false) end
+                             if pageCheckboxes[p.Id] then
+                                 pageCheckboxes[p.Id]:SetValue(false)
+                             end
                         end
                     end
                 end
@@ -965,7 +1033,9 @@ function AngryAssign:ShowBulkManagement()
 
         AngryAssign:Print(string.format("Deleted %d pages and %d categories.", pCount, cCount))
         frame:Hide()
-        if AngryAssign.window then AngryAssign:UpdateTree() end
+        if AngryAssign.window then
+            AngryAssign:UpdateTree()
+        end
     end)
     btnGroup:AddChild(delBtn)
 
@@ -982,7 +1052,9 @@ end
 -- --------------------------
 
 function AngryAssign_ToggleWindow()
-    if not AngryAssign.window then AngryAssign:CreateWindow() end
+    if not AngryAssign.window then
+        AngryAssign:CreateWindow()
+    end
     if AngryAssign.window:IsShown() then
         AngryAssign.window:Hide()
     else
@@ -998,7 +1070,9 @@ function AngryAssign_ToggleLock()
 end
 
 local function AngryAssign_LoadTemplate(template, catIndex)
-    if not template then return end
+    if not template then
+        return
+    end
 
     -- Find or Create Category
     local catId
@@ -1052,8 +1126,12 @@ local function AngryAssign_LoadTemplate(template, catIndex)
 end
 
 function AngryAssign:SaveTemplate(name, catId)
-    if not name or name == "" then return false, "Invalid name" end
-    if not catId then return false, "Invalid category" end
+    if not name or name == "" then
+        return false, "Invalid name"
+    end
+    if not catId then
+        return false, "Invalid category"
+    end
 
     local pages = {}
     for _, page in pairs(AngryAssign_Pages) do
@@ -1062,7 +1140,9 @@ function AngryAssign:SaveTemplate(name, catId)
         end
     end
 
-    if #pages == 0 then return false, "Category is empty" end
+    if #pages == 0 then
+        return false, "Category is empty"
+    end
 
     table.insert(AngryAssign_Templates, { name = name, pages = pages })
     self:Print("Saved template: " .. name)
@@ -1079,7 +1159,9 @@ end
 
 local function AngryAssign_SaveTemplatePopup(catId)
     local cat = AngryAssign:GetCat(catId)
-    if not cat then return end
+    if not cat then
+        return
+    end
 
     local popup_name = "AngryAssign_SaveTemplate"
     if StaticPopupDialogs[popup_name] == nil then
@@ -1176,7 +1258,9 @@ local function AngryAssign_AddPage(widget, event, value)
             OnAccept = function(self)
                 -- Pass 'self' (the popup frame) directly
                 local success, err = AngryAssign:CreatePage(self)
-                if not success and err then print(err) end
+                if not success and err then
+                    print(err)
+                end
             end,
 
             EditBoxOnEnterPressed = function(self)
@@ -1233,7 +1317,9 @@ local function AngryAssign_RenamePage(pageId)
             OnAccept = function(self)
                 local id = self.data
                 local success, err = AngryAssign:RenamePage(id, self)
-                if not success and err then print(err) end
+                if not success and err then
+                    print(err)
+                end
             end,
 
             EditBoxOnEnterPressed = function(self)
@@ -1299,7 +1385,9 @@ local function AngryAssign_AddCategory(widget, event, value)
 
             OnAccept = function(self)
                 local success, err = AngryAssign:CreateCategory(self)
-                if not success and err then print(err) end
+                if not success and err then
+                    print(err)
+                end
             end,
 
             EditBoxOnEnterPressed = function(self)
@@ -1349,7 +1437,9 @@ local function AngryAssign_RenameCategory(catId)
             OnAccept = function(self)
                 local id = self.data
                 local success, err = AngryAssign:RenameCategory(id, self)
-                if not success and err then print(err) end
+                if not success and err then
+                    print(err)
+                end
             end,
 
             EditBoxOnEnterPressed = function(self)
@@ -1480,9 +1570,13 @@ end
 
 local function AngryAssign_RestorePage(widget, event, value)
     local pageId = AngryAssign:SelectedId()
-    if not pageId then return end
+    if not pageId then
+        return
+    end
     local page = AngryAssign_Pages[pageId]
-    if not page then return end
+    if not page then
+        return
+    end
 
     if not AngryAssign_DropDown then
         AngryAssign_DropDown = CreateFrame("Frame", "AngryAssignMenuFrame", UIParent, "UIDropDownMenuTemplate")
@@ -1519,10 +1613,14 @@ local function AngryAssign_RestorePage(widget, event, value)
 end
 
 local function AngryAssign_HighlightNames()
-    if not AngryAssign.window or not AngryAssign.window.text then return end
+    if not AngryAssign.window or not AngryAssign.window.text then
+        return
+    end
 
     local text = AngryAssign.window.text:GetText()
-    if not text or text == "" then return end
+    if not text or text == "" then
+        return
+    end
 
     -- Strip existing color codes to fix broken tags or refresh highlights
     text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
@@ -1648,15 +1746,21 @@ function AngryAssign:PageUpdated(id)
 end
 
 local function AngryAssign_EditVariables(id, type)
-    if not AngryAssign:PermissionCheck() then return end
+    if not AngryAssign:PermissionCheck() then
+        return
+    end
 
     local vars = nil
     if type == "category" then
         local cat = AngryAssign_Categories[id]
-        if cat then vars = cat.Vars end
+        if cat then
+            vars = cat.Vars
+        end
     else
         local page = AngryAssign_Pages[id]
-        if page then vars = page.Vars end
+        if page then
+            vars = page.Vars
+        end
     end
 
     local DEFAULT_VARS_TEMPLATE = "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK="
@@ -1720,16 +1824,20 @@ end
 -- @tparam string type Either `"Page"` or `"Category"`.
 -- @treturn number|nil Matching entity id.
 function AngryAssign:GetEntityByName(name, type)
-	if type == "Page" then
-		for id, page in pairs(AngryAssign_Pages) do
-			if page.Name == name then return id end
-		end
-	elseif type == "Category" then
-		for id, cat in pairs(AngryAssign_Categories) do
-			if cat.Name == name then return id end
-		end
-	end
-	return nil
+    if type == "Page" then
+        for id, page in pairs(AngryAssign_Pages) do
+            if page.Name == name then
+                return id
+            end
+        end
+    elseif type == "Category" then
+        for id, cat in pairs(AngryAssign_Categories) do
+            if cat.Name == name then
+                return id
+            end
+        end
+    end
+    return nil
 end
 
 --- Produces a unique name by appending ` (n)` suffixes when needed.
@@ -1737,33 +1845,37 @@ end
 -- @tparam string type Either `"Page"` or `"Category"`.
 -- @treturn string Unique name.
 function AngryAssign:GetUniqueEntityName(name, type)
-	local newName = name
-	local n = 1
-	while self:GetEntityByName(newName, type) do
-		newName = string.format("%s (%d)", name, n)
-		n = n + 1
-	end
-	return newName
+    local newName = name
+    local n = 1
+    while self:GetEntityByName(newName, type) do
+        newName = string.format("%s (%d)", name, n)
+        n = n + 1
+    end
+    return newName
 end
 
 --- Deletes all nested categories and pages under a category id.
 -- @tparam number catId Category id to recursively clear.
 function AngryAssign:DeleteCategoryChildren(catId)
-	-- Delete sub-categories recursively
-	for id, cat in pairs(AngryAssign_Categories) do
-		if cat.CategoryId == catId then
-			self:DeleteCategoryChildren(id)
-			AngryAssign_Categories[id] = nil
-			if AngryAssign_State.tree.groups then AngryAssign_State.tree.groups[-id] = nil end
-		end
-	end
-	-- Delete pages
-	for id, page in pairs(AngryAssign_Pages) do
-		if page.CategoryId == catId then
-			AngryAssign_Pages[id] = nil
-			if AngryAssign_State.displayed == id then self:ClearDisplayed() end
-		end
-	end
+    -- Delete sub-categories recursively
+    for id, cat in pairs(AngryAssign_Categories) do
+        if cat.CategoryId == catId then
+            self:DeleteCategoryChildren(id)
+            AngryAssign_Categories[id] = nil
+            if AngryAssign_State.tree.groups then
+                AngryAssign_State.tree.groups[-id] = nil
+            end
+        end
+    end
+    -- Delete pages
+    for id, page in pairs(AngryAssign_Pages) do
+        if page.CategoryId == catId then
+            AngryAssign_Pages[id] = nil
+            if AngryAssign_State.displayed == id then
+                self:ClearDisplayed()
+            end
+        end
+    end
 end
 
 -- ── Export / Import ──────────────────────────────────────────────────────────
@@ -1772,67 +1884,73 @@ end
 -- @tparam number catId Category id.
 -- @treturn table|nil Structured export payload for encoded export/import.
 function AngryAssign:GetCategoryExportData(catId)
-	local cat = self:GetCat(catId)
-	if not cat then return nil end
+    local cat = self:GetCat(catId)
+    if not cat then
+        return nil
+    end
 
-	local data = { Type = "Category", Name = cat.Name, Children = {} }
+    local data = { Type = "Category", Name = cat.Name, Children = {} }
 
-	local entries = {}
-	for _, p in pairs(AngryAssign_Pages) do
-		if p.CategoryId == catId then
-			local pageData = { Type = "Page", Name = p.Name, Contents = p.Contents, Index = p.Index or 0 }
-			if p.Vars and p.Vars ~= "" and p.Vars ~= "{}" then pageData.Vars = p.Vars end
-			table.insert(entries, pageData)
-		end
-	end
-	for _, c in pairs(AngryAssign_Categories) do
-		if c.CategoryId == catId then
-			local childCatData = self:GetCategoryExportData(c.Id)
-			if childCatData then
-				childCatData.Index = c.Index or 0
-				table.insert(entries, childCatData)
-			end
-		end
-	end
+    local entries = {}
+    for _, p in pairs(AngryAssign_Pages) do
+        if p.CategoryId == catId then
+            local pageData = { Type = "Page", Name = p.Name, Contents = p.Contents, Index = p.Index or 0 }
+            if p.Vars and p.Vars ~= "" and p.Vars ~= "{}" then
+                pageData.Vars = p.Vars
+            end
+            table.insert(entries, pageData)
+        end
+    end
+    for _, c in pairs(AngryAssign_Categories) do
+        if c.CategoryId == catId then
+            local childCatData = self:GetCategoryExportData(c.Id)
+            if childCatData then
+                childCatData.Index = c.Index or 0
+                table.insert(entries, childCatData)
+            end
+        end
+    end
 
-	table.sort(entries, function(a, b)
-		local ia = a.Index or 0
-		local ib = b.Index or 0
-		if ia == ib then return a.Name < b.Name end
-		return ia < ib
-	end)
+    table.sort(entries, function(a, b)
+        local ia = a.Index or 0
+        local ib = b.Index or 0
+        if ia == ib then
+            return a.Name < b.Name
+        end
+        return ia < ib
+    end)
 
-	data.Children = entries
-	return data
+    data.Children = entries
+    return data
 end
 
 
 function AngryAssign:ShowExportWindow(exportString, pageName)
-	local frame = AceGUI:Create("Window")
-	frame:SetTitle("Export: " .. pageName)
-	frame:SetLayout("Flow")
-	frame:SetWidth(520)
-	frame:SetHeight(220)
-	frame:EnableResize(false)
-	_G["AngryAssign_ExportWindow"] = frame.frame
-	tinsert(UISpecialFrames, "AngryAssign_ExportWindow")
-	frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
+    local frame = AceGUI:Create("Window")
+    frame:SetTitle("Export: " .. pageName)
+    frame:SetLayout("Flow")
+    frame:SetWidth(520)
+    frame:SetHeight(220)
+    frame:EnableResize(false)
+    _G["AngryAssign_ExportWindow"] = frame.frame
+    tinsert(UISpecialFrames, "AngryAssign_ExportWindow")
+    frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
 
-	local editBox = AceGUI:Create("MultiLineEditBox")
-	editBox:SetLabel(nil)
-	editBox:SetFullWidth(true)
-	editBox:SetFullHeight(true)
-	editBox:DisableButton(true)
-	editBox:SetText(exportString)
-	frame:AddChild(editBox)
+    local editBox = AceGUI:Create("MultiLineEditBox")
+    editBox:SetLabel(nil)
+    editBox:SetFullWidth(true)
+    editBox:SetFullHeight(true)
+    editBox:DisableButton(true)
+    editBox:SetText(exportString)
+    frame:AddChild(editBox)
 
-	-- Pre-select all text so user can Ctrl+C immediately
-	C_Timer.After(0, function()
-		if editBox.editBox then
-			editBox.editBox:SetFocus()
-			editBox.editBox:HighlightText()
-		end
-	end)
+    -- Pre-select all text so user can Ctrl+C immediately
+    C_Timer.After(0, function()
+        if editBox.editBox then
+            editBox.editBox:SetFocus()
+            editBox.editBox:HighlightText()
+        end
+    end)
 end
 
 local function ValidateEncodedPagePayload(data, path)
@@ -1900,85 +2018,93 @@ function AngryAssign:ParseImportString(str)
     if type(str) ~= "string" then
         return false, "Import text must be a string"
     end
-	str = str:match("^%s*(.-)%s*$")
-	local prefix, version, encoded
-	if str:match("^AA:Page:(%d+):") then
-		prefix, version, encoded = "Page", str:match("^AA:Page:(%d+):(.*)$")
-	elseif str:match("^AA:Category:(%d+):") then
-		prefix, version, encoded = "Category", str:match("^AA:Category:(%d+):(.*)$")
-	else
-		return false, "Not a valid AA export string"
-	end
+    str = str:match("^%s*(.-)%s*$")
+    local prefix, version, encoded
+    if str:match("^AA:Page:(%d+):") then
+        prefix, version, encoded = "Page", str:match("^AA:Page:(%d+):(.*)$")
+    elseif str:match("^AA:Category:(%d+):") then
+        prefix, version, encoded = "Category", str:match("^AA:Category:(%d+):(.*)$")
+    else
+        return false, "Not a valid AA export string"
+    end
 
-	if version ~= "1" then
-		return false, "Unsupported export version: " .. tostring(version)
-	end
-	if not encoded or encoded == "" then
-		return false, "Missing encoded payload"
-	end
+    if version ~= "1" then
+        return false, "Unsupported export version: " .. tostring(version)
+    end
+    if not encoded or encoded == "" then
+        return false, "Missing encoded payload"
+    end
 
-	local compressed = libD:DecodeForPrint(encoded)
-	if not compressed then return false, "Decode failed" end
-	local serialized, err = libD:DecompressDeflate(compressed)
-	if not serialized then return false, "Decompress failed: " .. (err or "?") end
-	local ok, data = libS:Deserialize(serialized)
-	if not ok then return false, "Deserialize failed" end
+    local compressed = libD:DecodeForPrint(encoded)
+    if not compressed then
+        return false, "Decode failed"
+    end
+    local serialized, err = libD:DecompressDeflate(compressed)
+    if not serialized then
+        return false, "Decompress failed: " .. (err or "?")
+    end
+    local ok, data = libS:Deserialize(serialized)
+    if not ok then
+        return false, "Deserialize failed"
+    end
 
-	if prefix == "Page" then
-		local valid, validationError = ValidateEncodedPagePayload(data, "Page")
-		if not valid then
-			return false, validationError
-		end
-	elseif prefix == "Category" then
-		local valid, validationError = ValidateEncodedCategoryPayload(data, "Category")
-		if not valid then
-			return false, validationError
-		end
-	end
+    if prefix == "Page" then
+        local valid, validationError = ValidateEncodedPagePayload(data, "Page")
+        if not valid then
+            return false, validationError
+        end
+    elseif prefix == "Category" then
+        local valid, validationError = ValidateEncodedCategoryPayload(data, "Category")
+        if not valid then
+            return false, validationError
+        end
+    end
 
-	return true, data, prefix
+    return true, data, prefix
 end
 
 function AngryAssign:ConfirmImportPage(data)
-	local existingId = self:GetEntityByName(data.Name, "Page")
-	local preview = data.Contents:sub(1, 120)
-	if #data.Contents > 120 then preview = preview .. "…" end
+    local existingId = self:GetEntityByName(data.Name, "Page")
+    local preview = data.Contents:sub(1, 120)
+    if #data.Contents > 120 then
+        preview = preview .. "…"
+    end
 
-	if existingId then
-		StaticPopupDialogs["AngryAssign_ImportConflictPage"] = {
-			text = string.format("A page named \"%s\" already exists. What would you like to do?\n\n%s", data.Name, preview),
-			button1 = "Replace",
-			button2 = "Import as New",
-			button3 = CANCEL,
-			whileDead = true,
-			hideOnEscape = true,
-			preferredIndex = 3,
-			OnAccept = function(self)
-				AngryAssign:DoImportPage(self.data, nil, existingId)
-			end,
-			OnCancel = function(self, data, reason)
-				if reason == "clicked" then
-					local newData = { Name = self.data.Name, Contents = self.data.Contents, Vars = self.data.Vars, Index = self.data.Index }
-					newData.Name = AngryAssign:GetUniqueEntityName(newData.Name, "Page")
-					AngryAssign:DoImportPage(newData)
-				end
-			end,
-		}
-		StaticPopup_Show("AngryAssign_ImportConflictPage", nil, nil, data)
-	else
-		StaticPopupDialogs["AngryAssign_ImportConfirmPage"] = {
-			text = string.format("Import page \"%s\"?\n\n%s", data.Name, preview),
-			button1 = "Import",
-			button2 = CANCEL,
-			whileDead = true,
-			hideOnEscape = true,
-			preferredIndex = 3,
-			OnAccept = function(self)
-				AngryAssign:DoImportPage(self.data)
-			end,
-		}
-		StaticPopup_Show("AngryAssign_ImportConfirmPage", nil, nil, data)
-	end
+    if existingId then
+        StaticPopupDialogs["AngryAssign_ImportConflictPage"] = {
+            text = string.format("A page named \"%s\" already exists. What would you like to do?\n\n%s", data.Name, preview),
+            button1 = "Replace",
+            button2 = "Import as New",
+            button3 = CANCEL,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnAccept = function(self)
+                AngryAssign:DoImportPage(self.data, nil, existingId)
+            end,
+            OnCancel = function(self, data, reason)
+                if reason == "clicked" then
+                    local newData = { Name = self.data.Name, Contents = self.data.Contents, Vars = self.data.Vars, Index = self.data.Index }
+                    newData.Name = AngryAssign:GetUniqueEntityName(newData.Name, "Page")
+                    AngryAssign:DoImportPage(newData)
+                end
+            end,
+        }
+        StaticPopup_Show("AngryAssign_ImportConflictPage", nil, nil, data)
+    else
+        StaticPopupDialogs["AngryAssign_ImportConfirmPage"] = {
+            text = string.format("Import page \"%s\"?\n\n%s", data.Name, preview),
+            button1 = "Import",
+            button2 = CANCEL,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnAccept = function(self)
+                AngryAssign:DoImportPage(self.data)
+            end,
+        }
+        StaticPopup_Show("AngryAssign_ImportConfirmPage", nil, nil, data)
+    end
 end
 
 --- Imports (or overwrites) a single page payload.
@@ -1987,74 +2113,74 @@ end
 -- @tparam[opt] number overwriteId Existing page id to overwrite.
 -- @treturn number Imported page id.
 function AngryAssign:DoImportPage(data, parentId, overwriteId)
-	local id = overwriteId or self:Hash("page", math.random(2000000000))
-	local existing = overwriteId and AngryAssign_Pages[overwriteId]
+    local id = overwriteId or self:Hash("page", math.random(2000000000))
+    local existing = overwriteId and AngryAssign_Pages[overwriteId]
 
-	AngryAssign_Pages[id] = {
-		Id = id,
-		Updated = time(),
-		UpdateId = self:Hash(data.Name, data.Contents, data.Vars),
-		Name = data.Name,
-		Contents = data.Contents,
-		Vars = data.Vars,
-		CategoryId = (existing and existing.CategoryId) or parentId,
-		Index = (existing and existing.Index) or data.Index
-	}
-	self:UpdateTree(id)
-	return id
+    AngryAssign_Pages[id] = {
+        Id = id,
+        Updated = time(),
+        UpdateId = self:Hash(data.Name, data.Contents, data.Vars),
+        Name = data.Name,
+        Contents = data.Contents,
+        Vars = data.Vars,
+        CategoryId = (existing and existing.CategoryId) or parentId,
+        Index = (existing and existing.Index) or data.Index
+    }
+    self:UpdateTree(id)
+    return id
 end
 
 function AngryAssign:ConfirmImportCategory(data)
-	local existingId = self:GetEntityByName(data.Name, "Category")
-	local pageCount = 0
-	local catCount = 0
-	local function countItems(d)
-		for _, child in ipairs(d.Children or {}) do
-			if child.Type == "Category" then
-				catCount = catCount + 1
-				countItems(child)
-			else
-				pageCount = pageCount + 1
-			end
-		end
-	end
-	countItems(data)
+    local existingId = self:GetEntityByName(data.Name, "Category")
+    local pageCount = 0
+    local catCount = 0
+    local function countItems(d)
+        for _, child in ipairs(d.Children or {}) do
+            if child.Type == "Category" then
+                catCount = catCount + 1
+                countItems(child)
+            else
+                pageCount = pageCount + 1
+            end
+        end
+    end
+    countItems(data)
 
-	if existingId then
-		StaticPopupDialogs["AngryAssign_ImportConflictCat"] = {
-			text = string.format("A category named \"%s\" already exists. Replace its contents or import as new?\n\nContains %d pages and %d sub-categories.", data.Name, pageCount, catCount),
-			button1 = "Replace",
-			button2 = "Import as New",
-			button3 = CANCEL,
-			whileDead = true,
-			hideOnEscape = true,
-			preferredIndex = 3,
-			OnAccept = function(self)
-				AngryAssign:DoImportCategory(self.data, nil, existingId)
-			end,
-			OnCancel = function(self, data, reason)
-				if reason == "clicked" then
-					local newData = { Name = self.data.Name, Children = self.data.Children, Index = self.data.Index }
-					newData.Name = AngryAssign:GetUniqueEntityName(newData.Name, "Category")
-					AngryAssign:DoImportCategory(newData)
-				end
-			end,
-		}
-		StaticPopup_Show("AngryAssign_ImportConflictCat", nil, nil, data)
-	else
-		StaticPopupDialogs["AngryAssign_ImportConfirmCat"] = {
-			text = string.format("Import category \"%s\" and children?\n\nContains %d pages and %d sub-categories.", data.Name, pageCount, catCount),
-			button1 = "Import",
-			button2 = CANCEL,
-			whileDead = true,
-			hideOnEscape = true,
-			preferredIndex = 3,
-			OnAccept = function(self)
-				AngryAssign:DoImportCategory(self.data)
-			end,
-		}
-		StaticPopup_Show("AngryAssign_ImportConfirmCat", nil, nil, data)
-	end
+    if existingId then
+        StaticPopupDialogs["AngryAssign_ImportConflictCat"] = {
+            text = string.format("A category named \"%s\" already exists. Replace its contents or import as new?\n\nContains %d pages and %d sub-categories.", data.Name, pageCount, catCount),
+            button1 = "Replace",
+            button2 = "Import as New",
+            button3 = CANCEL,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnAccept = function(self)
+                AngryAssign:DoImportCategory(self.data, nil, existingId)
+            end,
+            OnCancel = function(self, data, reason)
+                if reason == "clicked" then
+                    local newData = { Name = self.data.Name, Children = self.data.Children, Index = self.data.Index }
+                    newData.Name = AngryAssign:GetUniqueEntityName(newData.Name, "Category")
+                    AngryAssign:DoImportCategory(newData)
+                end
+            end,
+        }
+        StaticPopup_Show("AngryAssign_ImportConflictCat", nil, nil, data)
+    else
+        StaticPopupDialogs["AngryAssign_ImportConfirmCat"] = {
+            text = string.format("Import category \"%s\" and children?\n\nContains %d pages and %d sub-categories.", data.Name, pageCount, catCount),
+            button1 = "Import",
+            button2 = CANCEL,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnAccept = function(self)
+                AngryAssign:DoImportCategory(self.data)
+            end,
+        }
+        StaticPopup_Show("AngryAssign_ImportConfirmCat", nil, nil, data)
+    end
 end
 
 --- Imports (or overwrites) a category payload and its descendants.
@@ -2063,66 +2189,68 @@ end
 -- @tparam[opt] number overwriteId Existing category id to overwrite.
 -- @treturn number Imported category id.
 function AngryAssign:DoImportCategory(data, parentId, overwriteId)
-	local id = overwriteId or self:Hash("cat", math.random(2000000000))
-	local existing = overwriteId and AngryAssign_Categories[overwriteId]
+    local id = overwriteId or self:Hash("cat", math.random(2000000000))
+    local existing = overwriteId and AngryAssign_Categories[overwriteId]
 
-	if overwriteId then
-		self:DeleteCategoryChildren(id)
-	end
+    if overwriteId then
+        self:DeleteCategoryChildren(id)
+    end
 
-	AngryAssign_Categories[id] = {
-		Id = id,
-		Name = data.Name,
-		CategoryId = (existing and existing.CategoryId) or parentId,
-		Index = (existing and existing.Index) or data.Index
-	}
+    AngryAssign_Categories[id] = {
+        Id = id,
+        Name = data.Name,
+        CategoryId = (existing and existing.CategoryId) or parentId,
+        Index = (existing and existing.Index) or data.Index
+    }
 
-	for _, child in ipairs(data.Children or {}) do
-		if child.Type == "Category" then
-			self:DoImportCategory(child, id)
-		else
-			self:DoImportPage(child, id)
-		end
-	end
+    for _, child in ipairs(data.Children or {}) do
+        if child.Type == "Category" then
+            self:DoImportCategory(child, id)
+        else
+            self:DoImportPage(child, id)
+        end
+    end
 
-	self:UpdateTree()
-	return id
+    self:UpdateTree()
+    return id
 end
 
 --- Opens the encoded-import window (`AA:Page` / `AA:Category`).
 function AngryAssign:ShowImportWindow()
-	local frame = AceGUI:Create("Window")
-	frame:SetTitle("Import")
-	frame:SetLayout("Flow")
-	frame:SetWidth(520)
-	frame:SetHeight(280)
-	frame:EnableResize(false)
-	_G["AngryAssign_ImportWindow"] = frame.frame
-	tinsert(UISpecialFrames, "AngryAssign_ImportWindow")
-	frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
+    local frame = AceGUI:Create("Window")
+    frame:SetTitle("Import")
+    frame:SetLayout("Flow")
+    frame:SetWidth(520)
+    frame:SetHeight(280)
+    frame:EnableResize(false)
+    _G["AngryAssign_ImportWindow"] = frame.frame
+    tinsert(UISpecialFrames, "AngryAssign_ImportWindow")
+    frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
 
-	local editBox = AceGUI:Create("MultiLineEditBox")
-	editBox:SetLabel("Paste export string:")
-	editBox:SetFullWidth(true)
-	editBox:SetFullHeight(true)
-	editBox:DisableButton(true)
-	editBox:SetCallback("OnTextChanged", function(widget, event, text)
-		local ok, result, prefix = AngryAssign:ParseImportString(text)
-		if not ok then return end
-		frame:Hide()
-		if prefix == "Category" then
-			AngryAssign:ConfirmImportCategory(result)
-		else
-			AngryAssign:ConfirmImportPage(result)
-		end
-	end)
-	frame:AddChild(editBox)
+    local editBox = AceGUI:Create("MultiLineEditBox")
+    editBox:SetLabel("Paste export string:")
+    editBox:SetFullWidth(true)
+    editBox:SetFullHeight(true)
+    editBox:DisableButton(true)
+    editBox:SetCallback("OnTextChanged", function(widget, event, text)
+        local ok, result, prefix = AngryAssign:ParseImportString(text)
+        if not ok then
+            return
+        end
+        frame:Hide()
+        if prefix == "Category" then
+            AngryAssign:ConfirmImportCategory(result)
+        else
+            AngryAssign:ConfirmImportPage(result)
+        end
+    end)
+    frame:AddChild(editBox)
 
-	C_Timer.After(0, function()
-		if editBox.editBox then
-			editBox.editBox:SetFocus()
-		end
-	end)
+    C_Timer.After(0, function()
+        if editBox.editBox then
+            editBox.editBox:SetFocus()
+        end
+    end)
 end
 
 -- ── End Export / Import ───────────────────────────────────────────────────────
@@ -2174,46 +2302,46 @@ end
 
 local CategoriesDropDownList
 local function AngryAssign_CategoryMenu(catId)
-	local cat = AngryAssign_Categories[catId]
-	if not cat then
-		return
-	end
+    local cat = AngryAssign_Categories[catId]
+    if not cat then
+        return
+    end
 
-	if not CategoriesDropDownList then
-		CategoriesDropDownList = {
-			{ notCheckable = true, isTitle = true },
-			{ text = "Rename", notCheckable = true, func = function(frame, pageId) AngryAssign_RenameCategory(pageId) end },
-			{ text = "Save as Template", notCheckable = true, func = function(frame, pageId) AngryAssign_SaveTemplatePopup(pageId) end },
-			{ text = "Delete", notCheckable = true, func = function(frame, pageId) AngryAssign_DeleteCategory(pageId) end },
-			{ text = "Edit Variables", notCheckable = true, func = function(frame, pageId) AngryAssign_EditVariables(pageId, "category") end },
-			{ text = "Export", notCheckable = true, hasArrow = true, menuList = {
-				{ text = "Encoded AA", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "Encoded AA") end },
-				{ text = "JSON", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "JSON") end },
-				{ text = "Markdown", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "Markdown") end },
-				{ text = "Output", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "Output") end },
-			} },
-			{ text = "Category", notCheckable = true, hasArrow = true },
-		}
-	end
-	CategoriesDropDownList[1].text = cat.Name
-	CategoriesDropDownList[2].arg1 = catId
-	CategoriesDropDownList[3].arg1 = catId
-	CategoriesDropDownList[4].arg1 = catId
-	CategoriesDropDownList[5].arg1 = catId
-	CategoriesDropDownList[6].arg1 = catId
-	for _, item in ipairs(CategoriesDropDownList[6].menuList) do item.arg1 = catId end
-	CategoriesDropDownList[7].arg1 = catId
+    if not CategoriesDropDownList then
+        CategoriesDropDownList = {
+            { notCheckable = true, isTitle = true },
+            { text = "Rename", notCheckable = true, func = function(frame, pageId) AngryAssign_RenameCategory(pageId) end },
+            { text = "Save as Template", notCheckable = true, func = function(frame, pageId) AngryAssign_SaveTemplatePopup(pageId) end },
+            { text = "Delete", notCheckable = true, func = function(frame, pageId) AngryAssign_DeleteCategory(pageId) end },
+            { text = "Edit Variables", notCheckable = true, func = function(frame, pageId) AngryAssign_EditVariables(pageId, "category") end },
+            { text = "Export", notCheckable = true, hasArrow = true, menuList = {
+                { text = "Encoded AA", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "Encoded AA") end },
+                { text = "JSON", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "JSON") end },
+                { text = "Markdown", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "Markdown") end },
+                { text = "Output", notCheckable = true, func = function(frame, id) AngryAssign:Export(id, "category", "Output") end },
+            } },
+            { text = "Category", notCheckable = true, hasArrow = true },
+        }
+    end
+    CategoriesDropDownList[1].text = cat.Name
+    CategoriesDropDownList[2].arg1 = catId
+    CategoriesDropDownList[3].arg1 = catId
+    CategoriesDropDownList[4].arg1 = catId
+    CategoriesDropDownList[5].arg1 = catId
+    CategoriesDropDownList[6].arg1 = catId
+    for _, item in ipairs(CategoriesDropDownList[6].menuList) do item.arg1 = catId end
+    CategoriesDropDownList[7].arg1 = catId
 
-	local categories = AngryAssign_CategoryMenuList(-catId)
-	if categories ~= nil then
-		CategoriesDropDownList[7].menuList = categories
-		CategoriesDropDownList[7].disabled = false
-	else
-		CategoriesDropDownList[7].menuList = {}
-		CategoriesDropDownList[7].disabled = true
-	end
+    local categories = AngryAssign_CategoryMenuList(-catId)
+    if categories ~= nil then
+        CategoriesDropDownList[7].menuList = categories
+        CategoriesDropDownList[7].disabled = false
+    else
+        CategoriesDropDownList[7].menuList = {}
+        CategoriesDropDownList[7].disabled = true
+    end
 
-	return CategoriesDropDownList
+    return CategoriesDropDownList
 end
 
 local clickTime = 0
@@ -2456,7 +2584,9 @@ local function AngryAssign_ImportPage()
                  AngryAssign:RenamePage(existingId, nameStr)
             else
                  local success, err = AngryAssign:CreatePage(nameStr, s, nil, nil)
-                 if not success then print("Error: "..(err or "")) end
+                 if not success then
+                     print("Error: "..(err or ""))
+                 end
             end
             frame:Hide()
         else
@@ -2545,22 +2675,30 @@ local function AngryAssign_ImportPage()
         if jsonData then
              if jsonData.pages then
                  for _, cat in pairs(AngryAssign_Categories) do
-                     if cat.Name == nameStr then exists = true break end
+                     if cat.Name == nameStr then
+                         exists = true break
+                     end
                  end
              else
                  for _, page in pairs(AngryAssign_Pages) do
-                     if page.Name == nameStr and not page.CategoryId then exists = true break end
+                     if page.Name == nameStr and not page.CategoryId then
+                         exists = true break
+                     end
                  end
              end
         else
             local hasHeaders = s:match("\n# ") or s:match("^# ")
             if hasHeaders then
                 for _, cat in pairs(AngryAssign_Categories) do
-                    if cat.Name == nameStr then exists = true break end
+                    if cat.Name == nameStr then
+                        exists = true break
+                    end
                 end
             else
                 for _, page in pairs(AngryAssign_Pages) do
-                    if page.Name == nameStr and not page.CategoryId then exists = true break end
+                    if page.Name == nameStr and not page.CategoryId then
+                        exists = true break
+                    end
                 end
             end
         end
@@ -2577,8 +2715,11 @@ local function AngryAssign_ImportPage()
                 OnAccept = function() DoImport(nameStr, s, jsonData) end,
             }
             local typeStr = "page"
-            if jsonData and jsonData.pages then typeStr = "category"
-            elseif not jsonData and (s:match("\n# ") or s:match("^# ")) then typeStr = "category" end
+            if jsonData and jsonData.pages then
+                typeStr = "category"
+            elseif not jsonData and (s:match("\n# ") or s:match("^# ")) then
+                typeStr = "category"
+            end
 
             StaticPopup_Show(popup_name, typeStr, nameStr)
         else
@@ -2615,7 +2756,9 @@ function AngryAssign:CreateWindow()
     window:SetTitle(AngryAssign_Title)
     window:SetStatusText("")
     window:SetLayout("Flow")
-    if AngryAssign:GetConfig("scale") then window.frame:SetScale( AngryAssign:GetConfig("scale") ) end
+    if AngryAssign:GetConfig("scale") then
+        window.frame:SetScale( AngryAssign:GetConfig("scale") )
+    end
     window:SetStatusTable(AngryAssign_State.window)
     window:Hide()
     AngryAssign.window = window
@@ -2627,7 +2770,9 @@ function AngryAssign:CreateWindow()
     window.OnHeightSet = function(self, height)
         local content = self.content
         local contentheight = height - 37
-        if contentheight < 0 then contentheight = 0 end
+        if contentheight < 0 then
+            contentheight = 0
+        end
         content:SetHeight(contentheight)
         content.height = contentheight
     end
@@ -2652,7 +2797,11 @@ function AngryAssign:CreateWindow()
     local searchBox = AceGUI:Create("EditBox")
     searchBox:DisableButton(true)
     searchBox:SetWidth(175)
-    searchBox:SetCallback("OnTextChanged", function(_, _, v) if AngryAssign.window.tree then AngryAssign.window.tree:SetSearchKeyword(v) end end)
+    searchBox:SetCallback("OnTextChanged", function(_, _, v)
+        if AngryAssign.window.tree then
+            AngryAssign.window.tree:SetSearchKeyword(v)
+        end
+    end)
     header:AddChild(searchBox)
     window.searchBox = searchBox
 
@@ -2814,7 +2963,9 @@ local function AngryAssign_IconPicker_TextChanged(widget, event, value)
         local path = select(10, GetItemInfo(tonumber(itemID)))
         tinsert(names, path)
     elseif value ~= "" then
-        if not iconCache then iconCache = GetMacroIcons() end
+        if not iconCache then
+            iconCache = GetMacroIcons()
+        end
         local iconsFound = 0
         local subname = value:lower()
         for _, path in ipairs(iconCache) do
@@ -2994,12 +3145,18 @@ function AngryAssign:GetTree()
 end
 
 function AngryAssign:MoveItem(sourceValue, targetValue, position)
-    if not sourceValue or not targetValue then return end
-    if sourceValue == targetValue then return end
+    if not sourceValue or not targetValue then
+        return
+    end
+    if sourceValue == targetValue then
+        return
+    end
 
     local sourceId = selectedLastValue(sourceValue)
     local targetId = selectedLastValue(targetValue)
-    if sourceId == targetId then return end
+    if sourceId == targetId then
+        return
+    end
 
     local sourceObj, sourceType
     if sourceId > 0 then
@@ -3009,7 +3166,9 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
         sourceObj = AngryAssign_Categories[-sourceId]
         sourceType = "category"
     end
-    if not sourceObj then return end
+    if not sourceObj then
+        return
+    end
 
     local targetObj, targetType
     if targetId > 0 then
@@ -3019,26 +3178,42 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
         targetObj = AngryAssign_Categories[-targetId]
         targetType = "category"
     end
-    if not targetObj then return end
+    if not targetObj then
+        return
+    end
 
     -- Circular Dependency Check
     if sourceType == "category" then
         if position == "into" then
-            if targetType ~= "category" then return end
+            if targetType ~= "category" then
+                return
+            end
             -- Check if target is descendant of source
              local cid = targetObj.Id
              while cid do
-                 if cid == sourceObj.Id then self:Print("Cannot move into self.") return end
+                 if cid == sourceObj.Id then
+                     self:Print("Cannot move into self.") return
+                 end
                  local p = AngryAssign_Categories[cid]
-                 if p then cid = p.CategoryId else cid = nil end
+                 if p then
+                     cid = p.CategoryId
+                 else
+                     cid = nil
+                 end
              end
         else
             -- Sibling check
             local cid = targetObj.CategoryId
             while cid do
-                if cid == sourceObj.Id then self:Print("Cannot move into self.") return end
+                if cid == sourceObj.Id then
+                    self:Print("Cannot move into self.") return
+                end
                 local p = AngryAssign_Categories[cid]
-                if p then cid = p.CategoryId else cid = nil end
+                if p then
+                    cid = p.CategoryId
+                else
+                    cid = nil
+                end
             end
         end
     end
@@ -3050,10 +3225,14 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
         newParentId = targetObj.Id
         local maxIdx = 0
         for _, p in pairs(AngryAssign_Pages) do
-            if p.CategoryId == newParentId and (p.Index or 0) > maxIdx then maxIdx = p.Index or 0 end
+            if p.CategoryId == newParentId and (p.Index or 0) > maxIdx then
+                maxIdx = p.Index or 0
+            end
         end
         for _, c in pairs(AngryAssign_Categories) do
-            if c.CategoryId == newParentId and (c.Index or 0) > maxIdx then maxIdx = c.Index or 0 end
+            if c.CategoryId == newParentId and (c.Index or 0) > maxIdx then
+                maxIdx = c.Index or 0
+            end
         end
         newIndex = maxIdx + 1
     elseif position == "into_start" and targetType == "category" then
@@ -3082,16 +3261,22 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
     -- Normalize Indices
     local siblings = {}
     for _, p in pairs(AngryAssign_Pages) do
-        if p.CategoryId == newParentId then table.insert(siblings, p) end
+        if p.CategoryId == newParentId then
+            table.insert(siblings, p)
+        end
     end
     for _, c in pairs(AngryAssign_Categories) do
-        if c.CategoryId == newParentId then table.insert(siblings, c) end
+        if c.CategoryId == newParentId then
+            table.insert(siblings, c)
+        end
     end
 
     table.sort(siblings, function(a, b)
         local ia = a.Index or 0
         local ib = b.Index or 0
-        if ia == ib then return a.Name < b.Name end
+        if ia == ib then
+            return a.Name < b.Name
+        end
         return ia < ib
     end)
 
@@ -3107,9 +3292,17 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
     -- Check if old parent is empty and collapse it
     if oldCategoryId then
         local hasChildren = false
-        for _, p in pairs(AngryAssign_Pages) do if p.CategoryId == oldCategoryId then hasChildren = true break end end
+        for _, p in pairs(AngryAssign_Pages) do
+            if p.CategoryId == oldCategoryId then
+                hasChildren = true break
+            end
+        end
         if not hasChildren then
-            for _, c in pairs(AngryAssign_Categories) do if c.CategoryId == oldCategoryId then hasChildren = true break end end
+            for _, c in pairs(AngryAssign_Categories) do
+                if c.CategoryId == oldCategoryId then
+                    hasChildren = true break
+                end
+            end
         end
 
         if not hasChildren then
@@ -3189,7 +3382,9 @@ function AngryAssign:NextPage(reverse)
     if not page then
         return
     end
-    if not page.CategoryId then return end
+    if not page.CategoryId then
+        return
+    end
 
     local siblings = {}
     for _, p in pairs(AngryAssign_Pages) do
@@ -3203,7 +3398,9 @@ function AngryAssign:NextPage(reverse)
         local ia = a.Index
         local ib = b.Index
         if ia and ib then
-            if ia == ib then return a.Name < b.Name end
+            if ia == ib then
+                return a.Name < b.Name
+            end
             return ia < ib
         elseif ia then return true
         elseif ib then return false
@@ -3225,7 +3422,9 @@ end
 
 function AngryAssign:FirstPage()
     local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
-    if not page or not page.CategoryId then return end
+    if not page or not page.CategoryId then
+        return
+    end
 
     local siblings = {}
     for _, p in pairs(AngryAssign_Pages) do
@@ -3234,14 +3433,18 @@ function AngryAssign:FirstPage()
         end
     end
 
-    if #siblings == 0 then return end
+    if #siblings == 0 then
+        return
+    end
 
     -- Use the same sort order as the Tree
     table.sort(siblings, function(a, b)
         local ia = a.Index
         local ib = b.Index
         if ia and ib then
-            if ia == ib then return a.Name < b.Name end
+            if ia == ib then
+                return a.Name < b.Name
+            end
             return ia < ib
         elseif ia then return true
         elseif ib then return false
@@ -3298,7 +3501,9 @@ end
 -- @tparam[opt] number id Page id, defaults to selected id.
 -- @treturn table|nil Page table.
 function AngryAssign:Get(id)
-    if id == nil then id = self:SelectedId() end
+    if id == nil then
+        id = self:SelectedId()
+    end
     return AngryAssign_Pages[id]
 end
 
@@ -3335,9 +3540,13 @@ local function ExtractAndValidateName(nameOrFrame)
     if type(nameOrFrame) == "table" then
         local editBox = nameOrFrame.editBox or nameOrFrame.wideEditBox or nameOrFrame.EditBox
         -- Fallback: If passed the EditBox directly
-        if not editBox and nameOrFrame.GetText then editBox = nameOrFrame end
+        if not editBox and nameOrFrame.GetText then
+            editBox = nameOrFrame
+        end
 
-        if not editBox then return nil, "Could not find input box." end
+        if not editBox then
+            return nil, "Could not find input box."
+        end
         text = editBox:GetText()
     else
         -- Input is already a string
@@ -3345,13 +3554,17 @@ local function ExtractAndValidateName(nameOrFrame)
     end
 
     -- Validate type
-    if type(text) ~= "string" then return nil, "Invalid name format." end
+    if type(text) ~= "string" then
+        return nil, "Invalid name format."
+    end
 
     -- Trim whitespace
     local cleanName = text:match("^%s*(.-)%s*$")
 
     -- Check empty
-    if cleanName == "" then return nil, "Name cannot be empty." end
+    if cleanName == "" then
+        return nil, "Name cannot be empty."
+    end
 
     return cleanName
 end
@@ -3376,7 +3589,9 @@ function AngryAssign:CreatePage(nameOrFrame, content, categoryId, index)
         return false, err
     end
 
-    if content and type(content) ~= "string" then content = "" end
+    if content and type(content) ~= "string" then
+        content = ""
+    end
 
     -- Original Business Logic
     local id = self:Hash("page", math.random(2000000000))
@@ -3429,7 +3644,9 @@ function AngryAssign:RenamePage(id, nameOrFrame)
     end
 
     -- Optimization: Skip if name hasn't changed
-    if page.Name == name then return true end
+    if page.Name == name then
+        return true
+    end
 
     -- Original Business Logic
     page.Name = name
@@ -3522,7 +3739,9 @@ function AngryAssign:RenameCategory(id, nameOrFrame)
         return false, err
     end
 
-    if cat.Name == name then return true end
+    if cat.Name == name then
+        return true
+    end
 
     cat.Name = name
     self:UpdateTree()
@@ -3567,7 +3786,9 @@ end
 -- @tparam number id Category id.
 function AngryAssign:DeleteCategoryAndChildren(id)
     local cat = self:GetCat(id)
-    if not cat then return end
+    if not cat then
+        return
+    end
 
     local selectedId = self:SelectedId()
 
@@ -3594,7 +3815,9 @@ function AngryAssign:AssignCategory(entryId, parentId)
         cat = self:GetCat(-entryId)
     end
     local parent = self:GetCat(parentId)
-    if not (page or cat) or not parent then return end
+    if not (page or cat) or not parent then
+        return
+    end
 
     if page then
         if page.CategoryId == parentId then
@@ -3648,16 +3871,24 @@ function AngryAssign:UpdateContents(id, value)
     if AngryAssign_State.displayed == id then
         self:UpdateDisplayed()
         self:ShowDisplay()
-        if contents_updated then self:DisplayUpdateNotification() end
+        if contents_updated then
+            self:DisplayUpdateNotification()
+        end
     end
 end
 
 function AngryAssign:PushHistory(page, content, author)
-    if not page or not content or content == "" then return end
-    if not page.History then page.History = {} end
+    if not page or not content or content == "" then
+        return
+    end
+    if not page.History then
+        page.History = {}
+    end
 
     -- Avoid duplicate consecutive entries
-    if #page.History > 0 and page.History[1].content == content then return end
+    if #page.History > 0 and page.History[1].content == content then
+        return
+    end
 
     table.insert(page.History, 1, {
         timestamp = time(),
@@ -3686,7 +3917,9 @@ function AngryAssign:ClearDisplayed()
 end
 
 function AngryAssign:IsGuildOfficer(player)
-    if not player then return false end
+    if not player then
+        return false
+    end
     local fullplayer = EnsureUnitFullName(player)
 
     if guildOfficerNames == nil then
@@ -3763,7 +3996,9 @@ end
 -- @tparam[opt] string sender Sender full name, defaults to current player.
 -- @treturn boolean allowed
 function AngryAssign:PermissionCheck(sender)
-    if not sender then sender = PlayerFullName() end
+    if not sender then
+        sender = PlayerFullName()
+    end
 
     if (IsInRaid() or IsInGroup()) then
         return (UnitIsGroupLeader(EnsureUnitShortName(sender)) == true or UnitIsGroupAssistant(EnsureUnitShortName(sender)) == true) and self:IsValidRaid()
@@ -3915,7 +4150,9 @@ function AngryAssign:CreateDisplay()
     mover:SetScript("OnMouseDown", Mover_MouseDown)
     mover:SetScript("OnMouseUp", Mover_MouseUp)
     self.mover = mover
-    if AngryAssign_State.locked then mover:Hide() end
+    if AngryAssign_State.locked then
+        mover:Hide()
+    end
 
     local label = mover:CreateFontString()
     label:SetFontObject("GameFontNormal")
@@ -3977,7 +4214,9 @@ function AngryAssign:CreateDisplay()
     glow2:SetAlpha(0)
     self.display_glow2 = glow2
 
-    if AngryAssign_State.display.hidden then text:Hide() end
+    if AngryAssign_State.display.hidden then
+        text:Hide()
+    end
     self:UpdateMedia()
     self:UpdateDirection()
 end
@@ -4036,7 +4275,9 @@ function AngryAssign:UpdateBackdrop()
     for lineIndex, visibleLine in ipairs(self.display_text.visibleLines) do
         local messageInfo = self.display_text.historyBuffer:GetEntryAtIndex(lineIndex)
         if messageInfo then
-            if not first then first = visibleLine end
+            if not first then
+                first = visibleLine
+            end
             last = visibleLine
         end
     end
@@ -4182,7 +4423,9 @@ function AngryAssign:GetTemplateContext()
                 unit.colored_name = "|c" .. RAID_CLASS_COLORS[class].colorStr .. name .. "|r"
                 ctx.rosterColors[name] = RAID_CLASS_COLORS[class].colorStr
             end
-            if ctx.classes[class] then table.insert(ctx.classes[class], unit) end
+            if ctx.classes[class] then
+                table.insert(ctx.classes[class], unit)
+            end
             table.insert(ctx.groups[1], unit)
         end
         return ctx
@@ -4249,7 +4492,9 @@ function AngryAssign:RenderPageContent(page, ctx)
         -- Merge Category Variables
         if page.CategoryId then
             local cat = AngryAssign_Categories[page.CategoryId]
-            if cat then MergeAppVars(cat.Vars) end
+            if cat then
+                MergeAppVars(cat.Vars)
+            end
         elseif page.CatVars then
             MergeAppVars(page.CatVars)
         end
@@ -4421,7 +4666,9 @@ function AngryAssign:UpdateDisplayed()
         else
             line = lines[lines_count - i + 1]
         end
-        if line == "" then line = " " end
+        if line == "" then
+            line = " "
+        end
         self.display_text:AddMessage(line)
     end
 
@@ -4440,7 +4687,9 @@ function AngryAssign:OutputDisplayed(id)
         return -- Added return here so we don't proceed with nil ID check if perm fails
     end
 
-    if not id then id = AngryAssign_State.displayed end
+    if not id then
+        id = AngryAssign_State.displayed
+    end
     local page = AngryAssign_Pages[ id ]
 
     local channel
@@ -4598,13 +4847,21 @@ function AngryAssign:ProcessPageForOutput(page)
         if type then
             type = type:lower()
             id = tonumber(id)
-            if type == "spell" then return GetSpellLink(id) end
-            if type == "boss" and not isClassicTBC and not isClassicWrath then return select(5, EJ_GetEncounterInfo(id)) end
-            if type == "journal" and not isClassicTBC and not isClassicWrath then return C_EncounterJournal.GetSectionInfo(id) and C_EncounterJournal.GetSectionInfo(id).link end
+            if type == "spell" then
+                return GetSpellLink(id)
+            end
+            if type == "boss" and not isClassicTBC and not isClassicWrath then
+                return select(5, EJ_GetEncounterInfo(id))
+            end
+            if type == "journal" and not isClassicTBC and not isClassicWrath then
+                return C_EncounterJournal.GetSectionInfo(id) and C_EncounterJournal.GetSectionInfo(id).link
+            end
         end
 
         -- Strip Icon tags entirely for chat output
-        if tagContent:lower():match("^icon%s+") then return "" end
+        if tagContent:lower():match("^icon%s+") then
+            return ""
+        end
 
         -- Default
         return "{"..tagContent.."}"
@@ -4613,12 +4870,18 @@ function AngryAssign:ProcessPageForOutput(page)
     -- Strip Colors
     output = output:gsub("(|c%w+)", function(c)
          local lowerC = c:lower()
-         if ColorTable[lowerC] then return "" end
+         if ColorTable[lowerC] then
+             return ""
+         end
          for i = #c - 1, 3, -1 do
              local sub = lowerC:sub(1, i)
-             if ColorTable[sub] then return c:sub(i + 1) end
+             if ColorTable[sub] then
+                 return c:sub(i + 1)
+             end
          end
-         if lowerC:match("^|c%x+$") then return "" end
+         if lowerC:match("^|c%x+$") then
+             return ""
+         end
          return c
     end):gsub("|r", "")
 
@@ -4645,7 +4908,9 @@ local function SerializeJSON(val)
         local parts = {}
         -- Detect array vs object
         local isArray = false
-        if val[1] ~= nil or next(val) == nil then isArray = true end
+        if val[1] ~= nil or next(val) == nil then
+            isArray = true
+        end
         -- Check if it's a mixed table (has string keys) -> Force Object
         for k in pairs(val) do
             if type(k) ~= "number" then
@@ -4711,12 +4976,16 @@ function AngryAssign:Export(id, type, format)
 
     if type == "page" then
         local page = AngryAssign_Pages[id]
-        if not page then return end
+        if not page then
+            return
+        end
         title = page.Name
 
         if format == "Encoded AA" then
             local data = { Name = page.Name, Contents = page.Contents }
-            if page.Vars and page.Vars ~= "" and page.Vars ~= "{}" then data.Vars = page.Vars end
+            if page.Vars and page.Vars ~= "" and page.Vars ~= "{}" then
+                data.Vars = page.Vars
+            end
             local serialized = libS:Serialize(data)
             local compressed = libD:CompressDeflate(serialized)
             local encoded = libD:EncodeForPrint(compressed)
@@ -4736,7 +5005,9 @@ function AngryAssign:Export(id, type, format)
 
     elseif type == "category" then
         local cat = AngryAssign_Categories[id]
-        if not cat then return end
+        if not cat then
+            return
+        end
         title = cat.Name
 
         -- Gather Pages in Order
@@ -4747,7 +5018,9 @@ function AngryAssign:Export(id, type, format)
             end
         end
         table.sort(pages, function(a,b)
-            if a.Index and b.Index then return a.Index < b.Index end
+            if a.Index and b.Index then
+                return a.Index < b.Index
+            end
             return a.Name < b.Name
         end)
 
@@ -4911,9 +5184,15 @@ function AngryAssign:OnInitialize()
     if AngryAssign_State == nil then
         AngryAssign_State = { tree = {}, window = {}, display = {}, displayed = nil, locked = false, directionUp = false }
     end
-    if AngryAssign_Pages == nil then AngryAssign_Pages = { } end
-    if AngryAssign_Config == nil then AngryAssign_Config = { } end
-    if AngryAssign_Templates == nil then AngryAssign_Templates = {} end
+    if AngryAssign_Pages == nil then
+        AngryAssign_Pages = { }
+    end
+    if AngryAssign_Config == nil then
+        AngryAssign_Config = { }
+    end
+    if AngryAssign_Templates == nil then
+        AngryAssign_Templates = {}
+    end
     if AngryAssign_Categories == nil then
         AngryAssign_Categories = { }
     else
@@ -4935,7 +5214,9 @@ function AngryAssign:OnInitialize()
     self:CleanupOrphanedStates()
 
     local ver = AngryAssign_Version
-    if ver:sub(1,1) == "@" then ver = "dev" end
+    if ver:sub(1,1) == "@" then
+        ver = "dev"
+    end
 
     local options = {
         name = appName .. " " .. ver,
@@ -4980,7 +5261,9 @@ function AngryAssign:OnInitialize()
                     self:UpdateTree()
                     self:UpdateSelected()
                     self:UpdateDisplayed()
-                    if self.window then self.window.tree:SetSelected(nil) end
+                    if self.window then
+                        self.window.tree:SetSelected(nil)
+                    end
                     self:Print("All pages have been deleted.")
                 end
             },
@@ -5139,7 +5422,9 @@ function AngryAssign:OnInitialize()
                         get = function(info) return self:GetConfig("scale") end,
                         set = function(info, val)
                             self:SetConfig("scale", val)
-                            if AngryAssign.window then AngryAssign.window.frame:SetScale(val) end
+                            if AngryAssign.window then
+                                AngryAssign.window.frame:SetScale(val)
+                            end
                         end
                     },
                     backdrop = {
@@ -5374,7 +5659,9 @@ end
 
 function AngryAssign:PARTY_LEADER_CHANGED()
     self:PermissionsUpdated()
-    if AngryAssign_State.displayed and not (self:IsGuildRaid() or self:IsValidRaid()) then self:ClearDisplayed() end
+    if AngryAssign_State.displayed and not (self:IsGuildRaid() or self:IsValidRaid()) then
+        self:ClearDisplayed()
+    end
 end
 
 function AngryAssign:PARTY_CONVERTED_TO_RAID()
@@ -5399,7 +5686,9 @@ end
 function AngryAssign:GROUP_ROSTER_UPDATE()
     self:UpdateSelected()
     if not (IsInRaid() or IsInGroup()) then
-        if AngryAssign_State.displayed then self:ClearDisplayed() end
+        if AngryAssign_State.displayed then
+            self:ClearDisplayed()
+        end
         currentGroup = nil
         warnedPermission = false
     else
