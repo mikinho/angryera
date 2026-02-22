@@ -244,6 +244,55 @@ local function EnsureUnitShortName(unit)
     end
 end
 
+local function IterateGroupMembers(callback)
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            local rawName, rank, subgroup, _, _, class, _, online, isDead = GetRaidRosterInfo(i)
+            if rawName then
+                local fullName = EnsureUnitFullName(rawName)
+                if callback(rawName, fullName, rank or 0, subgroup or 1, class, online ~= false, isDead == true, "raid" .. i) then
+                    return
+                end
+            end
+        end
+        return
+    end
+
+    if IsInGroup() then
+        local function emit(unitToken)
+            if not UnitExists(unitToken) then
+                return false
+            end
+
+            local rawName = UnitName(unitToken)
+            if not rawName then
+                return false
+            end
+
+            local fullName = EnsureUnitFullName(rawName)
+            local _, class = UnitClass(unitToken)
+            local rank = 0
+            if UnitIsGroupLeader(unitToken) then
+                rank = 2
+            elseif UnitIsGroupAssistant and UnitIsGroupAssistant(unitToken) then
+                rank = 1
+            end
+
+            return callback(rawName, fullName, rank, 1, class, UnitIsConnected(unitToken), UnitIsDeadOrGhost(unitToken), unitToken)
+        end
+
+        if emit("player") then
+            return
+        end
+
+        for i = 1, GetNumSubgroupMembers() do
+            if emit("party" .. i) then
+                return
+            end
+        end
+    end
+end
+
 local function IsCategoryDescendant(categoryId, ancestorId)
     if not categoryId or not ancestorId then
         return false
@@ -775,35 +824,30 @@ end
 -- @tparam[opt=false] boolean online_only Require leader to be online.
 -- @treturn string|nil Leader name in `Name-Realm` format when available.
 function AngryAssign:GetRaidLeader(online_only)
-    if (IsInRaid() or IsInGroup()) then
-        for i = 1, GetNumGroupMembers() do
-            local name, rank = GetRaidRosterInfo(i)
-            if rank == 2 then
-                local online = select(8, GetRaidRosterInfo(i))
-                if (not online_only) or online then
-                    return EnsureUnitFullName(name)
-                else
-                    return nil
-                end
-            end
+    local leaderName
+    IterateGroupMembers(function(_, fullName, rank, _, _, online)
+        if rank == 2 and ((not online_only) or online) then
+            leaderName = fullName
+            return true
         end
-    end
-    return nil
+        return false
+    end)
+    return leaderName
 end
 
 --- Finds the player's current raid subgroup.
 -- @treturn number|nil Raid subgroup index (1..8) when grouped.
 function AngryAssign:GetCurrentGroup()
     local player = PlayerFullName()
-    if (IsInRaid() or IsInGroup()) then
-        for i = 1, GetNumGroupMembers() do
-            local name, _, subgroup = GetRaidRosterInfo(i)
-            if EnsureUnitFullName(name) == player then
-                return subgroup
-            end
+    local subgroup
+    IterateGroupMembers(function(_, fullName, _, memberSubgroup)
+        if fullName == player then
+            subgroup = memberSubgroup
+            return true
         end
-    end
-    return nil
+        return false
+    end)
+    return subgroup
 end
 
 --- Prints categorized addon version-check results for current group members.
@@ -818,23 +862,23 @@ function AngryAssign:VersionCheckOutput()
         ver = "dev"
     end
 
-    if (IsInRaid() or IsInGroup()) then
-        for i = 1, GetNumGroupMembers() do
-            local name, _, _, _, _, _, _, online = GetRaidRosterInfo(i)
-            local fullname = EnsureUnitFullName(name)
-            if online then
-                if not versionList[ fullname ] then
-                    tinsert(missing_addon, name)
-                elseif versionList[ fullname ].valid == false or versionList[ fullname ].valid == nil then
-                    tinsert(invalid_raid, name)
-                elseif ver ~= versionList[ fullname ].version then
-                    tinsert(different_version, string.format("%s - %s", name, versionList[ fullname ].version)  )
-                else
-                    tinsert(up_to_date, name)
-                end
-            end
+    IterateGroupMembers(function(rawName, fullName, _, _, _, online)
+        if not online then
+            return false
         end
-    end
+
+        local displayName = rawName or EnsureUnitShortName(fullName)
+        if not versionList[fullName] then
+            tinsert(missing_addon, displayName)
+        elseif versionList[fullName].valid == false or versionList[fullName].valid == nil then
+            tinsert(invalid_raid, displayName)
+        elseif ver ~= versionList[fullName].version then
+            tinsert(different_version, string.format("%s - %s", displayName, versionList[fullName].version))
+        else
+            tinsert(up_to_date, displayName)
+        end
+        return false
+    end)
 
     self:Print("Version check results:")
     if #up_to_date > 0 then
@@ -1686,22 +1730,22 @@ local function AngryAssign_HighlightNames()
     text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
 
     local roster = {}
-    local num = GetNumGroupMembers()
-
-    if num == 0 then
+    if not (IsInRaid() or IsInGroup()) then
         local name = UnitName("player")
         local _, class = UnitClass("player")
         if name and class and app.ColorTable["|c"..class:lower()] then
             roster[name] = app.ColorTable["|c"..class:lower()]
         end
     else
-        for i = 1, num do
-            local name, _, _, _, _, class = GetRaidRosterInfo(i)
-            if name and class and app.ColorTable["|c"..class:lower()] then
-                 name = name:match("([^-]+)") -- Strip realm
-                 roster[name] = app.ColorTable["|c"..class:lower()]
+        IterateGroupMembers(function(rawName, fullName, _, _, class)
+            if class and app.ColorTable["|c"..class:lower()] then
+                local shortName = (rawName or EnsureUnitShortName(fullName)):match("([^-]+)")
+                if shortName then
+                    roster[shortName] = app.ColorTable["|c"..class:lower()]
+                end
             end
-        end
+            return false
+        end)
     end
 
     -- Include Guild Roster
@@ -4073,7 +4117,16 @@ function AngryAssign:PermissionCheck(sender)
     end
 
     if (IsInRaid() or IsInGroup()) then
-        return (UnitIsGroupLeader(EnsureUnitShortName(sender)) == true or UnitIsGroupAssistant(EnsureUnitShortName(sender)) == true) and self:IsValidRaid()
+        local senderFullName = EnsureUnitFullName(sender)
+        local isLeaderOrAssistant = false
+        IterateGroupMembers(function(_, fullName, rank)
+            if fullName == senderFullName then
+                isLeaderOrAssistant = (rank == 2 or rank == 1)
+                return true
+            end
+            return false
+        end)
+        return isLeaderOrAssistant and self:IsValidRaid()
     else
         return sender == PlayerFullName()
     end
@@ -4473,8 +4526,7 @@ function AngryAssign:GetTemplateContext()
     for _, c in ipairs(standardClasses) do ctx.classes[c] = {} end
 
     -- Gather Roster
-    local num = GetNumGroupMembers()
-    if num == 0 then
+    if not (IsInRaid() or IsInGroup()) then
         -- Solo testing
         local name = UnitName("player")
         local _, class = UnitClass("player")
@@ -4492,39 +4544,37 @@ function AngryAssign:GetTemplateContext()
         return ctx
     end
 
-    for i = 1, num do
-        local name, _, subgroup, _, _, class, _, online, isDead = GetRaidRosterInfo(i)
-        if name then
-            local colorStr = "ffffffff"
-            if class and RAID_CLASS_COLORS[class] then
-                colorStr = RAID_CLASS_COLORS[class].colorStr
-                ctx.rosterColors[name] = colorStr
-                -- Also store short name
-                local shortName = name:match("([^-]+)")
-                if shortName and shortName ~= name then
-                    ctx.rosterColors[shortName] = colorStr
-                end
-            end
-
-            local unit = {
-                name = name,
-                class = class,
-                online = online,
-                dead = isDead,
-                colored_name = "|c" .. colorStr .. name .. "|r"
-            }
-
-            -- Insert into groups
-            if subgroup and ctx.groups[subgroup] then
-                table.insert(ctx.groups[subgroup], unit)
-            end
-
-            -- Insert into classes
-            if class and ctx.classes[class] then
-                table.insert(ctx.classes[class], unit)
+    IterateGroupMembers(function(rawName, fullName, _, subgroup, class, online, isDead)
+        local name = rawName or EnsureUnitShortName(fullName)
+        local colorStr = "ffffffff"
+        if class and RAID_CLASS_COLORS[class] then
+            colorStr = RAID_CLASS_COLORS[class].colorStr
+            ctx.rosterColors[name] = colorStr
+            local shortName = name:match("([^-]+)")
+            if shortName and shortName ~= name then
+                ctx.rosterColors[shortName] = colorStr
             end
         end
-    end
+
+        local unit = {
+            name = name,
+            class = class,
+            online = online,
+            dead = isDead,
+            colored_name = "|c" .. colorStr .. name .. "|r"
+        }
+
+        local groupIndex = subgroup or 1
+        if ctx.groups[groupIndex] then
+            table.insert(ctx.groups[groupIndex], unit)
+        end
+
+        if class and ctx.classes[class] then
+            table.insert(ctx.classes[class], unit)
+        end
+
+        return false
+    end)
 
     return ctx
 end
