@@ -194,9 +194,9 @@ local function ProcessTag(tag)
             return GetSpellLink(tonumber(id)) or tag
         elseif type == "icon" then
             return format("|T%s:0|t", select(3, GetSpellInfo(tonumber(id))) or "")
-        elseif type == "boss" then
+        elseif type == "boss" and EJ_GetEncounterInfo then
             return select(5, EJ_GetEncounterInfo(tonumber(id))) or tag
-        elseif type == "journal" then
+        elseif type == "journal" and C_EncounterJournal and C_EncounterJournal.GetSectionInfo then
             return (C_EncounterJournal.GetSectionInfo(tonumber(id)) and C_EncounterJournal.GetSectionInfo(tonumber(id)).link) or tag
         end
     end
