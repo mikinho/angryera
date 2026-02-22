@@ -110,4 +110,19 @@ do
     assert_equal(parsed.y, "a\nb", "Expected ParseVariables JSON path to decode escaped newline")
 end
 
+-- Parser should reject excessively deep nesting.
+do
+    local deep = string.rep("[", 300) .. string.rep("]", 300)
+    local decoded = app.JSON_TryDecode(deep)
+    assert_equal(decoded, nil, "Expected excessively deep JSON to be rejected")
+end
+
+-- Parser should accept reasonably deep (but bounded) nesting.
+do
+    local depth = 100
+    local nested = string.rep("[", depth) .. "0" .. string.rep("]", depth)
+    local decoded = app.JSON_TryDecode(nested)
+    assert_truthy(decoded ~= nil, "Expected bounded deep JSON to decode successfully")
+end
+
 io.write("JSON regression tests passed.\n")

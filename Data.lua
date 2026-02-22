@@ -917,8 +917,13 @@ local parse_value
 -- Sentinel used to preserve JSON `null` values in decoded tables.
 local JSON_NULL = {}
 app.JSON_NULL = JSON_NULL
+local MAX_JSON_NESTING = 256
 
-local function parse_array(str, pos)
+local function parse_array(str, pos, depth)
+    if depth > MAX_JSON_NESTING then
+        return nil, pos, "Maximum JSON nesting exceeded"
+    end
+
     local arr = {}
     pos = skip_ws(str, pos + 1)
     if str:sub(pos, pos) == "]" then
@@ -927,7 +932,7 @@ local function parse_array(str, pos)
 
     local val, parseError
     while true do
-        val, pos, parseError = parse_value(str, pos)
+        val, pos, parseError = parse_value(str, pos, depth + 1)
         if parseError then
             return nil, pos, parseError
         end
@@ -943,7 +948,11 @@ local function parse_array(str, pos)
     end
 end
 
-local function parse_obj_impl(str, pos)
+local function parse_obj_impl(str, pos, depth)
+    if depth > MAX_JSON_NESTING then
+        return nil, pos, "Maximum JSON nesting exceeded"
+    end
+
     local obj = {}
     pos = skip_ws(str, pos + 1)
     if str:sub(pos, pos) == "}" then
@@ -965,7 +974,7 @@ local function parse_obj_impl(str, pos)
         end
         pos = skip_ws(str, pos + 1)
 
-        val, pos, parseError = parse_value(str, pos)
+        val, pos, parseError = parse_value(str, pos, depth + 1)
         if parseError then
             return nil, pos, parseError
         end
@@ -982,14 +991,15 @@ local function parse_obj_impl(str, pos)
     end
 end
 
-parse_value = function(str, pos)
+parse_value = function(str, pos, depth)
+    depth = depth or 0
     pos = skip_ws(str, pos)
     local char = str:sub(pos, pos)
     if char == "{" then
-        return parse_obj_impl(str, pos)
+        return parse_obj_impl(str, pos, depth)
     end
     if char == "[" then
-        return parse_array(str, pos)
+        return parse_array(str, pos, depth)
     end
     if char == "\"" then
         return parse_string(str, pos)
