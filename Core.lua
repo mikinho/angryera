@@ -3392,15 +3392,6 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
         return ia < ib
     end)
 
-    for i, obj in ipairs(siblings) do
-        obj.Index = i
-        if obj.Id and AngryAssign_Pages[obj.Id] == obj then
-            AngryAssign:PageUpdated(obj.Id)
-        elseif obj.Id and AngryAssign_Categories[obj.Id] == obj then
-            AngryAssign:CategoryUpdated(obj.Id)
-        end
-    end
-
     -- Check if old parent is empty and collapse it
     if oldCategoryId then
         local hasChildren = false
