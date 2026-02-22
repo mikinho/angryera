@@ -4052,15 +4052,29 @@ end
 function AngryAssign:UpdateOfficerRank()
     guildOfficerNames = {}
 
-    if C_Club and C_Club.GetGuildClubId then
-        local clubId, streamId = C_Club.GetGuildClubId(), nil
-        local memberIds = CommunitiesUtil.GetMemberIdsSortedByName(clubId, streamId)
-        local allMemberList = CommunitiesUtil.GetMemberInfo(clubId, memberIds)
+    if not (C_Club and C_Club.GetGuildClubId and CommunitiesUtil and CommunitiesUtil.GetMemberIdsSortedByName and CommunitiesUtil.GetMemberInfo and Enum and Enum.ClubRoleIdentifier) then
+        return guildOfficerNames
+    end
 
-        for _, memberInfo in ipairs(allMemberList) do
-            if memberInfo.name and (memberInfo.role == Enum.ClubRoleIdentifier.Owner or memberInfo.role == Enum.ClubRoleIdentifier.Leader or memberInfo.role == Enum.ClubRoleIdentifier.Moderator) then
-                guildOfficerNames[EnsureUnitFullName(memberInfo.name)] = true
-            end
+    local okClub, clubId = pcall(C_Club.GetGuildClubId)
+    if not okClub or not clubId then
+        return guildOfficerNames
+    end
+
+    local okMemberIds, memberIds = pcall(CommunitiesUtil.GetMemberIdsSortedByName, clubId, nil)
+    if not okMemberIds or type(memberIds) ~= "table" then
+        return guildOfficerNames
+    end
+
+    local okMembers, allMemberList = pcall(CommunitiesUtil.GetMemberInfo, clubId, memberIds)
+    if not okMembers or type(allMemberList) ~= "table" then
+        return guildOfficerNames
+    end
+
+    local clubRoles = Enum.ClubRoleIdentifier
+    for _, memberInfo in ipairs(allMemberList) do
+        if type(memberInfo) == "table" and memberInfo.name and (memberInfo.role == clubRoles.Owner or memberInfo.role == clubRoles.Leader or memberInfo.role == clubRoles.Moderator) then
+            guildOfficerNames[EnsureUnitFullName(memberInfo.name)] = true
         end
     end
 
