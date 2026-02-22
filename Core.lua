@@ -59,6 +59,12 @@ local isClassic = isClassicVanilla or isClassicTBC or isClassicWrath
 local protocolVersion = 1
 local comPrefix = appName .. protocolVersion
 local updateFrequency = 2
+local MAX_COMM_ENCODED_BYTES = 256 * 1024
+local MAX_COMM_DECODED_BYTES = 256 * 1024
+local MAX_COMM_SERIALIZED_BYTES = 1024 * 1024
+local MAX_IMPORT_ENCODED_BYTES = 2 * 1024 * 1024
+local MAX_IMPORT_DECODED_BYTES = 2 * 1024 * 1024
+local MAX_IMPORT_SERIALIZED_BYTES = 8 * 1024 * 1024
 local pageLastUpdate = {}
 local pageTimerId = {}
 local displayLastUpdate = nil
@@ -238,6 +244,28 @@ local function EnsureUnitShortName(unit)
     end
 end
 
+local function IsCategoryDescendant(categoryId, ancestorId)
+    if not categoryId or not ancestorId then
+        return false
+    end
+
+    local currentId = categoryId
+    local seen = {}
+    while currentId do
+        if currentId == ancestorId then
+            return true
+        end
+        if seen[currentId] then
+            return false
+        end
+        seen[currentId] = true
+        local category = AngryAssign_Categories[currentId]
+        currentId = category and category.CategoryId or nil
+    end
+
+    return false
+end
+
 local function PlayerFullName()
     if not _player_realm then
         _player_realm = select(2, UnitFullName("player"))
@@ -306,14 +334,23 @@ function AngryAssign:ReceiveMessage(prefix, data, channel, sender)
     if type(data) ~= "string" or data == "" then
         return
     end
+    if #data > MAX_COMM_ENCODED_BYTES then
+        return
+    end
 
     local okDecode, one = pcall(libCE.Decode, libCE, data)
     if not okDecode or type(one) ~= "string" then
         return
     end
+    if #one > MAX_COMM_DECODED_BYTES then
+        return
+    end
 
     local okDecompress, two = pcall(libC.Decompress, libC, one)
     if not okDecompress or not two then
+        return
+    end
+    if #two > MAX_COMM_SERIALIZED_BYTES then
         return
     end
 
@@ -2055,14 +2092,23 @@ function AngryAssign:ParseImportString(str)
     if not encoded or encoded == "" then
         return false, "Missing encoded payload"
     end
+    if #encoded > MAX_IMPORT_ENCODED_BYTES then
+        return false, "Import payload is too large"
+    end
 
     local compressed = libD:DecodeForPrint(encoded)
     if not compressed then
         return false, "Decode failed"
     end
+    if #compressed > MAX_IMPORT_DECODED_BYTES then
+        return false, "Decoded import payload is too large"
+    end
     local serialized, err = libD:DecompressDeflate(compressed)
     if not serialized then
         return false, "Decompress failed: " .. (err or "?")
+    end
+    if #serialized > MAX_IMPORT_SERIALIZED_BYTES then
+        return false, "Decompressed import payload is too large"
     end
     local ok, data = libS:Deserialize(serialized)
     if not ok then
@@ -3239,42 +3285,6 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
         return
     end
 
-    -- Circular Dependency Check
-    if sourceType == "category" then
-        if position == "into" then
-            if targetType ~= "category" then
-                return
-            end
-            -- Check if target is descendant of source
-             local cid = targetObj.Id
-             while cid do
-                 if cid == sourceObj.Id then
-                     self:Print("Cannot move into self.") return
-                 end
-                 local p = AngryAssign_Categories[cid]
-                 if p then
-                     cid = p.CategoryId
-                 else
-                     cid = nil
-                 end
-             end
-        else
-            -- Sibling check
-            local cid = targetObj.CategoryId
-            while cid do
-                if cid == sourceObj.Id then
-                    self:Print("Cannot move into self.") return
-                end
-                local p = AngryAssign_Categories[cid]
-                if p then
-                    cid = p.CategoryId
-                else
-                    cid = nil
-                end
-            end
-        end
-    end
-
     local newParentId, newIndex
     position = position or "after"
 
@@ -3302,6 +3312,11 @@ function AngryAssign:MoveItem(sourceValue, targetValue, position)
     else -- "after"
         newParentId = targetObj.CategoryId
         newIndex = (targetObj.Index or 0) + 0.5
+    end
+
+    if sourceType == "category" and newParentId and IsCategoryDescendant(newParentId, sourceObj.Id) then
+        self:Print("Cannot move into self.")
+        return
     end
 
     -- Save old parent ID for cleanup
@@ -3884,6 +3899,10 @@ function AngryAssign:AssignCategory(entryId, parentId)
         if cat.CategoryId == parentId then
             cat.CategoryId = nil
         else
+            if IsCategoryDescendant(parentId, cat.Id) then
+                self:Print("Cannot move into self.")
+                return
+            end
             cat.CategoryId = parentId
         end
     end
