@@ -4899,10 +4899,36 @@ function AngryAssign:OutputDisplayed(id)
     if channel and page then
         local output = self:RenderPageForChatOutput(page)
 
+        -- If an output is already running, cancel it so we don't overlap spam
+        if self.outputTimer then
+            self:CancelTimer(self.outputTimer)
+            self.outputTimer = nil
+        end
+
         local lines = { strsplit("\n", output) }
+        local queue = {}
         for _, line in ipairs(lines) do
             if line ~= "" then
-                SendChatMessage(line, channel)
+                table.insert(queue, line)
+            end
+        end
+
+        if #queue > 0 then
+            local idx = 1
+            -- Send the very first line instantly
+            SendChatMessage(queue[idx], channel)
+            idx = idx + 1
+            
+            -- If there are more lines, schedule them at a 0.2s interval
+            if idx <= #queue then
+                self.outputTimer = self:ScheduleRepeatingTimer(function()
+                    SendChatMessage(queue[idx], channel)
+                    idx = idx + 1
+                    if idx > #queue then
+                        self:CancelTimer(self.outputTimer)
+                        self.outputTimer = nil
+                    end
+                end, 0.2)
             end
         end
     end
