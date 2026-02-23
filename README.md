@@ -6,6 +6,7 @@ Designed for raid leaders who demand flexibility and speed, AngryEra revitalizes
 *   **Mustache Logic**: Automate assignments with logic like `{{#classes.WARRIOR}}` based on your live raid roster.
 *   **Drag & Drop**: Effortlessly organize pages and categories with intuitive drag-and-drop controls.
 *   **Markdown Support**: Create clear, formatted strategies with headers, bold text, and lists.
+*   **Safer Imports**: JSON/encoded imports are validated with payload and nesting guardrails to prevent malformed data from causing instability.
 *   **Raid Templates**: Includes pre-loaded, optimized strategies for MC, BWL, AQ40, and Naxxramas.
 *   **Modern UI**: A polished interface with pixel-perfect alignment and smarter context menus.
 
@@ -89,6 +90,11 @@ You can import pages and categories by string. This is useful for sharing assign
    * If the content contains headers (lines starting with `# `), a **Category** will be created with individual pages for each header.
    * If no headers are found, a single **Page** will be created.
 4. Enter a name. If importing a category, this will be the Category Name. If importing a single page, this will be the Page Name.
+
+Import safety and behavior notes:
+* JSON escaped newlines (`\n`) are restored to real line breaks on import.
+* JSON `null` values are preserved internally and safely re-encoded on export.
+* Encoded imports are bounded and validated (size/schema/depth) before they are applied.
 
 Exporting
 ---------

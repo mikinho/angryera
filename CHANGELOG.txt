@@ -1,3 +1,13 @@
+## v2.7.1
+
+* Improvement: Hardened JSON parsing with stricter number handling, preserved JSON `null` values (`app.JSON_NULL`), and maximum nesting-depth limits.
+* Improvement: Added import safety guardrails for encoded, decoded, and decompressed payload sizes, plus stricter payload validation.
+* Improvement: Unified party/raid roster member iteration and hardened guild-officer refresh behavior when APIs are unavailable.
+* Improvement: Reduced UI redraw churn by batching tree/page refreshes during category import and move-item operations.
+* Fix: Resolved a Classic Era nil-global crash path in tag processing (`{boss}` / `{journal}`).
+* Fix: Reduced chat disconnect risk by throttling chat output bursts with AceTimer.
+* Developer: Expanded LDoc/lint/test/check documentation and added JSON regression coverage for newline and `null` edge cases.
+
 ## v2.7.0
 
 * **BREAKING CHANGE**: Changed the underlying message broadcasting system. `PAGE` packets will now pass the raw template syntax (`{{MT}}`) across the network directly, along with a payload containing resolved Category Variables. This ensures your local templates won't be silently overwritten by the Raid Leader. Older versions of standard `AngryAssignments` in your raid without AngryEra may see raw bracket formats instead of resolved names on initial receipt.
