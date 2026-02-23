@@ -67,3 +67,4 @@ ignore:
   - libs/LibDeflate/*.md
   - /docs
   - /tests
+  - Makefile
