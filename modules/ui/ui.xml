@@ -1,0 +1,6 @@
+<Ui>
+	<Script file="display.lua"/>
+	<Script file="editor.lua"/>
+	<Script file="import_export.lua"/>
+	<Script file="settings.lua"/>
+</Ui>
