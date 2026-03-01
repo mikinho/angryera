@@ -17,9 +17,9 @@ local HexToRGB = colors.HexToRGB
 local RGBToHex = colors.RGBToHex
 local ProcessTag = tags.ProcessTag
 
-local lwin = AngryEra.lwin
-local LSM = AngryEra.LSM
-local LibMustache = AngryEra.LibMustache
+local lwin = app.libs.lwin
+local LSM = app.libs.LSM
+local LibMustache = app.libs.LibMustache
 
 local currentGroup = nil
 

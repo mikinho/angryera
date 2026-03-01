@@ -4,8 +4,8 @@
 local _, app = ...
 local AngryEra = app.AngryEra
 
-local AceGUI = AngryEra.AceGUI
-local DDM = AngryEra.DDM
+local AceGUI = app.libs.AceGUI
+local DDM = app.libs.DDM
 local helpers = AngryEra.utils.helpers
 local colors = AngryEra.utils.colors
 local EnsureUnitShortName = helpers.EnsureUnitShortName

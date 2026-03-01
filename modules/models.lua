@@ -12,7 +12,7 @@ local tReverse = helpers.tReverse
 local IsCategoryDescendant = helpers.IsCategoryDescendant
 local ExtractAndValidateName = helpers.ExtractAndValidateName
 
-local libC = AngryEra.libC
+local libC = app.libs.libC
 
 --- Displays a page by its exact name.
 -- @tparam string name Page name.

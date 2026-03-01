@@ -11,9 +11,9 @@ AngryEra.utils = AngryEra.utils or {}
 AngryEra.utils.serialization = {}
 local serialization = AngryEra.utils.serialization
 
-local libS = AngryEra.libS
-local libD = AngryEra.libD
-local libC = AngryEra.libC
+local libS = app.libs.libS
+local libD = app.libs.libD
+local libC = app.libs.libC
 local core = AngryEra.core
 
 local function ValidateEncodedPagePayload(data, path)

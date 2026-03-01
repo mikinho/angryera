@@ -6,7 +6,7 @@
 
 local appName, app = ...
 local AngryEra = app.AngryEra
-local LSM = AngryEra.LSM
+local LSM = app.libs.LSM
 
 local core = AngryEra.core
 local isClassic = core.isClassic

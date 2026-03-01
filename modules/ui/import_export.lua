@@ -6,9 +6,9 @@
 
 local _, app = ...
 local AngryEra = app.AngryEra
-local AceGUI = AngryEra.AceGUI
-local libS = AngryEra.libS
-local libD = AngryEra.libD
+local AceGUI = app.libs.AceGUI
+local libS = app.libs.libS
+local libD = app.libs.libD
 local json = AngryEra.utils.json
 local serialization = AngryEra.utils.serialization
 

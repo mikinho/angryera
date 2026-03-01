@@ -16,15 +16,16 @@ local GetAddOnMetadata = GetAddOnMetadata or C_AddOns.GetAddOnMetadata
 local AngryEra = LibStub("AceAddon-3.0"):NewAddon(appName, "AceConsole-3.0", "AceEvent-3.0", "AceComm-3.0", "AceTimer-3.0")
 app.AngryEra = AngryEra
 
-AngryEra.AceGUI = LibStub("AceGUI-3.0")
-AngryEra.libS = LibStub("AceSerializer-3.0")
-AngryEra.LibMustache = LibStub("LibMustache")
-AngryEra.libC = LibStub("LibCompress")
-AngryEra.libD = LibStub("LibDeflate")
-AngryEra.lwin = LibStub("LibWindow-1.1")
-AngryEra.libCE = AngryEra.libC:GetAddonEncodeTable()
-AngryEra.LSM = LibStub("LibSharedMedia-3.0")
-AngryEra.DDM = LibStub("LibDropDownMenu")
+app.libs = {}
+app.libs.AceGUI = LibStub("AceGUI-3.0")
+app.libs.libS = LibStub("AceSerializer-3.0")
+app.libs.LibMustache = LibStub("LibMustache")
+app.libs.libC = LibStub("LibCompress")
+app.libs.libD = LibStub("LibDeflate")
+app.libs.lwin = LibStub("LibWindow-1.1")
+app.libs.libCE = app.libs.libC:GetAddonEncodeTable()
+app.libs.LSM = LibStub("LibSharedMedia-3.0")
+app.libs.DDM = LibStub("LibDropDownMenu")
 
 AngryEra._comStarted = false
 

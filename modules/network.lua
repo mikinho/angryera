@@ -13,9 +13,9 @@ local PlayerFullName = helpers.PlayerFullName
 local IterateGroupMembers = helpers.IterateGroupMembers
 local ValidateString = helpers.ValidateString
 
-local libS = AngryEra.libS
-local libC = AngryEra.libC
-local libCE = AngryEra.libCE
+local libS = app.libs.libS
+local libC = app.libs.libC
+local libCE = app.libs.libCE
 
 local core = AngryEra.core
 local comPrefix = core.comPrefix
