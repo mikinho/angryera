@@ -1,4 +1,4 @@
-## v2.8.0
+## v2.8.0-BETA1
 
 * Developer: Decomposed monolithic `Core.lua` and `Data.lua` into 20 focused modules under `modules/` (core, utils, ui, and domain modules).
 * Fix: Bulk Manage Pages now correctly nests subcategories under their parents, with page checkboxes rendered inside their category group.
