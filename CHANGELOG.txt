@@ -1,3 +1,8 @@
+## v2.8.0
+
+* Developer: Decomposed monolithic `Core.lua` and `Data.lua` into 20 focused modules under `modules/` (core, utils, ui, and domain modules).
+* Fix: Bulk Manage Pages now correctly nests subcategories under their parents, with page checkboxes rendered inside their category group.
+
 ## v2.7.1
 
 * Improvement: Hardened JSON parsing with stricter number handling, preserved JSON `null` values (`app.JSON_NULL`), and maximum nesting-depth limits.
