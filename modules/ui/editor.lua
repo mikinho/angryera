@@ -120,24 +120,11 @@ function AngryAssign:ShowBulkManagement()
 	local function BuildList()
 		scroll:ReleaseChildren()
 
-		-- Registry for direct updates
-		local pageCheckboxes = {} -- [pageId] = widget
+		-- Registry for direct updates (upvalue shared by RenderCategory and all callbacks)
+		local pageCheckboxes = {}
 
-		-- A. Gather Data
-		local sortedCats = {}
-		for _, cat in pairs(AngryAssign_Categories) do table.insert(sortedCats, cat) end
-		table.sort(sortedCats, function(a,b) return a.Name < b.Name end)
-
-		local orphanPages = {}
-		for _, page in pairs(AngryAssign_Pages) do
-			if not page.CategoryId then
-				table.insert(orphanPages, page)
-			end
-		end
-		table.sort(orphanPages, function(a,b) return a.Name < b.Name end)
-
-		-- B. Render Categories
-		for _, cat in ipairs(sortedCats) do
+		local RenderCategory
+		RenderCategory = function(cat, parentContainer, depth)
 			local catPages = {}
 			for _, page in pairs(AngryAssign_Pages) do
 				if page.CategoryId == cat.Id then
@@ -147,12 +134,13 @@ function AngryAssign:ShowBulkManagement()
 			table.sort(catPages, function(a,b) return a.Name < b.Name end)
 
 			local catGroup = AceGUI:Create("SimpleGroup")
-			catGroup:SetLayout("Flow")
+			catGroup:SetLayout("List")
 			catGroup:SetFullWidth(true)
-			scroll:AddChild(catGroup)
+			parentContainer:AddChild(catGroup)
 
+			local prefix = string.rep("  ", depth)
 			local catCheck = AceGUI:Create("CheckBox")
-			catCheck:SetLabel("|cffffd200["..cat.Name.."]|r")
+			catCheck:SetLabel(prefix .. "|cffffd200[" .. cat.Name .. "]|r")
 			catCheck:SetType("checkbox")
 			catCheck:SetValue(selectedToDelete.categories[cat.Id])
 			catCheck:SetFullWidth(true)
@@ -169,15 +157,15 @@ function AngryAssign:ShowBulkManagement()
 						allChildrenSelected = false
 					end
 					for _, p in ipairs(catPages) do
-						 if not selectedToDelete.pages[p.Id] then
-							 allChildrenSelected = false break
-						 end
+						if not selectedToDelete.pages[p.Id] then
+							allChildrenSelected = false break
+						end
 					end
 
 					if not allChildrenSelected and #catPages > 0 then
 						-- State 1 -> 2: Select All Children
 						selectedToDelete.categories[cat.Id] = true
-						catCheck:SetValue(true) -- Keep checked
+						catCheck:SetValue(true)
 						for _, p in ipairs(catPages) do
 							selectedToDelete.pages[p.Id] = true
 							if pageCheckboxes[p.Id] then
@@ -189,9 +177,9 @@ function AngryAssign:ShowBulkManagement()
 						selectedToDelete.categories[cat.Id] = nil
 						for _, p in ipairs(catPages) do
 							selectedToDelete.pages[p.Id] = nil
-							 if pageCheckboxes[p.Id] then
-								 pageCheckboxes[p.Id]:SetValue(false)
-							 end
+							if pageCheckboxes[p.Id] then
+								pageCheckboxes[p.Id]:SetValue(false)
+							end
 						end
 					end
 				end
@@ -199,19 +187,52 @@ function AngryAssign:ShowBulkManagement()
 
 			catGroup:AddChild(catCheck)
 
-			-- Render Children
+			-- Recurse into subcategories
+			local subCats = {}
+			for _, sub in pairs(AngryAssign_Categories) do
+				if sub.CategoryId == cat.Id then
+					table.insert(subCats, sub)
+				end
+			end
+			table.sort(subCats, function(a,b) return a.Name < b.Name end)
+			for _, sub in ipairs(subCats) do
+				RenderCategory(sub, catGroup, depth + 1)
+			end
+
+			-- Render page children
 			for _, page in ipairs(catPages) do
 				local pageCheck = AceGUI:Create("CheckBox")
-				pageCheck:SetLabel("    " .. page.Name)
+				pageCheck:SetLabel(prefix .. "    " .. page.Name)
 				pageCheck:SetType("checkbox")
 				pageCheck:SetValue(selectedToDelete.pages[page.Id])
 				pageCheck:SetCallback("OnValueChanged", function(_, _, val)
 					selectedToDelete.pages[page.Id] = val or nil
 				end)
 				pageCheck:SetFullWidth(true)
-				scroll:AddChild(pageCheck)
+				catGroup:AddChild(pageCheck)
 				pageCheckboxes[page.Id] = pageCheck
 			end
+		end
+
+		-- A. Gather orphan pages
+		local orphanPages = {}
+		for _, page in pairs(AngryAssign_Pages) do
+			if not page.CategoryId then
+				table.insert(orphanPages, page)
+			end
+		end
+		table.sort(orphanPages, function(a,b) return a.Name < b.Name end)
+
+		-- B. Render root categories (recursive)
+		local rootCats = {}
+		for _, cat in pairs(AngryAssign_Categories) do
+			if not cat.CategoryId then
+				table.insert(rootCats, cat)
+			end
+		end
+		table.sort(rootCats, function(a,b) return a.Name < b.Name end)
+		for _, cat in ipairs(rootCats) do
+			RenderCategory(cat, scroll, 0)
 		end
 
 		-- C. Render Orphan Pages
