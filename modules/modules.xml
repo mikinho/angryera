@@ -1,5 +1,4 @@
 <Ui>
-	<Include file="core\core.xml"/>
 	<Include file="utils\utils.xml"/>
 	<Script file="permissions.lua"/>
 	<Script file="network.lua"/>

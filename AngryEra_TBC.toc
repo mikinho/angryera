@@ -13,6 +13,6 @@ embeds.xml
 Libs\LibDropDownMenu\LibDropDownMenu.xml
 Libs\LibMustache\LibMustache.xml
 
-
+modules\core\core.xml
 Templates.lua
 modules\modules.xml
