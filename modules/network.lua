@@ -5,19 +5,19 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
-local AngryAssign = app.AngryAssign
-local helpers = app.utils.helpers
+local AngryEra = app.AngryEra
+local helpers = AngryEra.utils.helpers
 local EnsureUnitFullName = helpers.EnsureUnitFullName
 local EnsureUnitShortName = helpers.EnsureUnitShortName
 local PlayerFullName = helpers.PlayerFullName
 local IterateGroupMembers = helpers.IterateGroupMembers
 local ValidateString = helpers.ValidateString
 
-local libS = app.libS
-local libC = app.libC
-local libCE = app.libCE
+local libS = AngryEra.libS
+local libC = AngryEra.libC
+local libCE = AngryEra.libCE
 
-local core = app.core
+local core = AngryEra.core
 local comPrefix = core.comPrefix
 local updateFrequency = core.updateFrequency
 local MAX_COMM_ENCODED_BYTES = core.MAX_COMM_ENCODED_BYTES
@@ -39,9 +39,9 @@ local VERSION_Version = core.VERSION_Version
 local VERSION_Timestamp = core.VERSION_Timestamp
 local VERSION_ValidRaid = core.VERSION_ValidRaid
 
-local AngryAssign_Title = app.Title
-local AngryAssign_Version = app.Version
-local AngryAssign_Timestamp = app.Timestamp
+local AngryEra_Title = AngryEra.Title
+local AngryEra_Version = AngryEra.Version
+local AngryEra_Timestamp = AngryEra.Timestamp
 
 local pageLastUpdate = {}
 local pageTimerId = {}
@@ -59,7 +59,7 @@ local versionList = {}
 -- @tparam string data Encoded wire payload.
 -- @tparam string channel Source chat channel.
 -- @tparam string sender Sender unit name.
-function AngryAssign:ReceiveMessage(prefix, data, channel, sender)
+function AngryEra:ReceiveMessage(prefix, data, channel, sender)
 	if prefix ~= comPrefix then
 		return
 	end
@@ -101,7 +101,7 @@ end
 -- @tparam[opt] string channel Channel override such as `"RAID"` or `"WHISPER"`.
 -- @tparam[opt] string target Whisper target when `channel` is `"WHISPER"`.
 -- @treturn boolean|nil Returns `true` when sent, or `nil` when no channel is available.
-function AngryAssign:SendOutMessage(data, channel, target)
+function AngryEra:SendOutMessage(data, channel, target)
 	local one = libS:Serialize( data )
 	local two = libC:CompressHuffman(one)
 	local final = libCE:Encode(two)
@@ -128,7 +128,7 @@ end
 -- Applies permission checks, updates local state, and triggers UI sync.
 -- @tparam string sender Sender player name.
 -- @tparam table data Decoded command payload.
-function AngryAssign:ProcessMessage(sender, data)
+function AngryEra:ProcessMessage(sender, data)
 	local cmd = data[COMMAND]
 	sender = EnsureUnitFullName(sender)
 
@@ -269,11 +269,11 @@ function AngryAssign:ProcessMessage(sender, data)
 
 		local localTimestamp = "dev"
 		local localIsClassic = 0
-		if AngryAssign_Timestamp:sub(1,1) ~= "@" then
-			localTimestamp = tonumber(AngryAssign_Timestamp) or 0
-			if AngryAssign_Version:sub(-3) == "tbc" then
+		if AngryEra_Timestamp:sub(1,1) ~= "@" then
+			localTimestamp = tonumber(AngryEra_Timestamp) or 0
+			if AngryEra_Version:sub(-3) == "tbc" then
 				localIsClassic = 2
-			elseif AngryAssign_Version:sub(-1) == "c" then
+			elseif AngryEra_Version:sub(-1) == "c" then
 				localIsClassic = 1
 			end
 		end
@@ -298,7 +298,7 @@ function AngryAssign:ProcessMessage(sender, data)
 		end
 
 		if localTimestamp ~= "dev" and timestamp ~= "dev" and timestamp > localTimestamp and localIsClassic == remoteIsClassic and not warnedOOD then
-			self:Print("Your version of " .. AngryAssign_Title .. " is out of date! Download the latest version from curseforge.com.")
+			self:Print("Your version of " .. AngryEra_Title .. " is out of date! Download the latest version from curseforge.com.")
 			warnedOOD = true
 		end
 
@@ -309,7 +309,7 @@ end
 --- Sends a page update with throttling.
 -- @tparam number id Page id.
 -- @tparam[opt=false] boolean force When `true`, bypasses throttle delay.
-function AngryAssign:SendPage(id, force)
+function AngryEra:SendPage(id, force)
 	local lastUpdate = pageLastUpdate[id]
 	local timerId = pageTimerId[id]
 	local curTime = time()
@@ -332,7 +332,7 @@ end
 
 --- Sends one PAGE payload for the supplied page id.
 -- @tparam number id Page id.
-function AngryAssign:SendPageMessage(id)
+function AngryEra:SendPageMessage(id)
 	pageTimerId[id] = nil
 
 	local page = AngryAssign_Pages[ id ]
@@ -368,7 +368,7 @@ end
 --- Sends display selection updates with throttling.
 -- @tparam[opt] number id Page id to display, or `nil` to clear.
 -- @tparam[opt=false] boolean force When `true`, bypasses throttle delay.
-function AngryAssign:SendDisplay(id, force)
+function AngryEra:SendDisplay(id, force)
 	local curTime = time()
 
 	if displayLastUpdate and (curTime - displayLastUpdate <= updateFrequency) then
@@ -389,7 +389,7 @@ end
 
 --- Sends one DISPLAY payload.
 -- @tparam[opt] number id Page id to display, or `nil` to clear.
-function AngryAssign:SendDisplayMessage(id)
+function AngryEra:SendDisplayMessage(id)
 	displayLastUpdate = time()
 	displayTimerId = nil
 
@@ -405,7 +405,7 @@ function AngryAssign:SendDisplayMessage(id)
 end
 
 --- Requests current displayed page from the active raid leader.
-function AngryAssign:SendRequestDisplay()
+function AngryEra:SendRequestDisplay()
 	if (IsInRaid() or IsInGroup()) then
 		local to = self:GetRaidLeader(true)
 		if to then
@@ -416,7 +416,7 @@ end
 
 --- Sends addon version information with throttling.
 -- @tparam[opt=false] boolean force When `true`, bypasses throttle delay.
-function AngryAssign:SendVersion(force)
+function AngryEra:SendVersion(force)
 	local curTime = time()
 
 	if versionLastUpdate and (curTime - versionLastUpdate <= updateFrequency) then
@@ -436,35 +436,35 @@ function AngryAssign:SendVersion(force)
 end
 
 --- Sends one VERSION payload with current addon metadata.
-function AngryAssign:SendVersionMessage()
+function AngryEra:SendVersionMessage()
 	versionLastUpdate = time()
 	versionTimerId = nil
 
 	local timestampToSend
 	local verToSend
-	if AngryAssign_Version:sub(1,1) == "@" then
+	if AngryEra_Version:sub(1,1) == "@" then
 		verToSend = "dev"
 	else
-		verToSend = AngryAssign_Version
+		verToSend = AngryEra_Version
 	end
-	if AngryAssign_Timestamp:sub(1,1) == "@" then
+	if AngryEra_Timestamp:sub(1,1) == "@" then
 		timestampToSend = "dev"
 	else
-		timestampToSend = tonumber(AngryAssign_Timestamp)
+		timestampToSend = tonumber(AngryEra_Timestamp)
 	end
 	self:SendOutMessage({ "VERSION", [VERSION_Version] = verToSend, [VERSION_Timestamp] = timestampToSend, [VERSION_ValidRaid] = self:IsValidRaid() })
 end
 
 
 --- Broadcasts a version query to nearby addon users.
-function AngryAssign:SendVerQuery()
+function AngryEra:SendVerQuery()
 	self:SendOutMessage({ "VER_QUERY" })
 end
 
 --- Requests a specific page from leader (or explicit target).
 -- @tparam number id Requested page id.
 -- @tparam[opt] string to Explicit whisper target.
-function AngryAssign:SendRequestPage(id, to)
+function AngryEra:SendRequestPage(id, to)
 	if (IsInRaid() or IsInGroup()) or to then
 		if not to then
 			to = self:GetRaidLeader(true)
@@ -478,7 +478,7 @@ end
 --- Returns the current raid leader full name.
 -- @tparam[opt=false] boolean online_only Require leader to be online.
 -- @treturn string|nil Leader name in `Name-Realm` format when available.
-function AngryAssign:GetRaidLeader(online_only)
+function AngryEra:GetRaidLeader(online_only)
 	local leaderName
 	IterateGroupMembers(function(_, fullName, rank, _, _, online)
 		if rank == 2 and ((not online_only) or online) then
@@ -492,7 +492,7 @@ end
 
 --- Finds the player's current raid subgroup.
 -- @treturn number|nil Raid subgroup index (1..8) when grouped.
-function AngryAssign:GetCurrentGroup()
+function AngryEra:GetCurrentGroup()
 	local player = PlayerFullName()
 	local subgroup
 	IterateGroupMembers(function(_, fullName, _, memberSubgroup)
@@ -506,13 +506,13 @@ function AngryAssign:GetCurrentGroup()
 end
 
 --- Prints categorized addon version-check results for current group members.
-function AngryAssign:VersionCheckOutput()
+function AngryEra:VersionCheckOutput()
 	local missing_addon = {}
 	local invalid_raid = {}
 	local different_version = {}
 	local up_to_date = {}
 
-	local ver = AngryAssign_Version
+	local ver = AngryEra_Version
 	if ver:sub(1,1) == "@" then
 		ver = "dev"
 	end
@@ -555,14 +555,14 @@ end
 
 --- Resets the version list used by version check output.
 -- Called by settings (version check command) and init (group join).
-function AngryAssign:ResetVersionList()
+function AngryEra:ResetVersionList()
 	versionList = {}
 end
 
 --- Cancels any pending send timer for a page and clears its update tracking.
 -- Called by models.lua when deleting a page.
 -- @tparam number id Page id.
-function AngryAssign:CancelPageTimer(id)
+function AngryEra:CancelPageTimer(id)
 	local timerId = pageTimerId[id]
 	if timerId then
 		self:CancelTimer(timerId)

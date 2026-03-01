@@ -5,19 +5,19 @@
 -- -------------------------------------------------------------------------------
 
 local appName, app = ...
-local AngryAssign = app.AngryAssign
-local LSM = app.LSM
+local AngryEra = app.AngryEra
+local LSM = AngryEra.LSM
 
-local core = app.core
+local core = AngryEra.core
 local isClassic = core.isClassic
 local comPrefix = core.comPrefix
 
-local colors = app.utils.colors
+local colors = AngryEra.utils.colors
 local RGBToHex = colors.RGBToHex
 local HexToRGB = colors.HexToRGB
 
-local AngryAssign_Title = app.Title
-local AngryAssign_Version = app.Version
+local AngryEra_Title = AngryEra.Title
+local AngryEra_Version = AngryEra.Version
 
 -- -----------------
 -- Addon Setup --
@@ -25,7 +25,7 @@ local AngryAssign_Version = app.Version
 
 local blizOptionsPanel
 
--- class AngryAssignState
+-- class AngryEraState
 -- field tree table Tree view state (collapsed nodes etc)
 -- field window table Window position/size
 -- field display table Display frame position/size
@@ -33,7 +33,7 @@ local blizOptionsPanel
 -- field locked boolean Whether the display is locked
 -- field directionUp boolean Growth direction
 
--- class AngryAssignConfig
+-- class AngryEraConfig
 -- field scale number Scale of the edit window
 -- field hideoncombat boolean Hide display in combat
 -- field highlight string Comma/space separated words to highlight
@@ -46,13 +46,13 @@ local blizOptionsPanel
 -- field fontFlags string Font outline
 -- field color string Normal text color
 
--- class AngryAssignTemplatePage
+-- class AngryEraTemplatePage
 -- field name string
 -- field content string
 
--- class AngryAssignTemplate
+-- class AngryEraTemplate
 -- field name string
--- field pages AngryAssignTemplatePage[]
+-- field pages AngryEraTemplatePage[]
 
 -- type table<number, Page> Dictionary of pages key=Id
 _G.AngryAssign_Pages = _G.AngryAssign_Pages
@@ -60,18 +60,18 @@ _G.AngryAssign_Pages = _G.AngryAssign_Pages
 -- type table<number, Category> Dictionary of categories key=Id
 _G.AngryAssign_Categories = _G.AngryAssign_Categories
 
--- type AngryAssignState
+-- type AngryEraState
 _G.AngryAssign_State = _G.AngryAssign_State
 
--- type AngryAssignConfig
+-- type AngryEraConfig
 _G.AngryAssign_Config = _G.AngryAssign_Config
 
--- type AngryAssignTemplate[]
+-- type AngryEraTemplate[]
 _G.AngryAssign_Templates = _G.AngryAssign_Templates
 
 --- Addon initialization hook.
 -- Creates saved variable tables, migrates legacy category data, and registers options.
-function AngryAssign:OnInitialize()
+function AngryEra:OnInitialize()
 	if AngryAssign_State == nil then
 		AngryAssign_State = { tree = {}, window = {}, display = {}, displayed = nil, locked = false, directionUp = false }
 	end
@@ -104,14 +104,14 @@ function AngryAssign:OnInitialize()
 	-- Run cleanup once on load
 	self:CleanupOrphanedStates()
 
-	local ver = AngryAssign_Version
+	local ver = AngryEra_Version
 	if ver:sub(1,1) == "@" then
 		ver = "dev"
 	end
 
 	local options = {
 		name = appName .. " " .. ver,
-		handler = AngryAssign,
+		handler = AngryEra,
 		type = "group",
 		args = {
 			window = {
@@ -119,7 +119,7 @@ function AngryAssign:OnInitialize()
 				order = 3,
 				name = "Toggle Window",
 				desc = "Shows/hides the edit window (also available in game keybindings)",
-				func = function() AngryAssign_ToggleWindow() end
+				func = function() AngryEra_ToggleWindow() end
 			},
 			help = {
 				type = "execute",
@@ -127,7 +127,7 @@ function AngryAssign:OnInitialize()
 				name = "Help",
 				hidden = true,
 				func = function()
-					LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryAssign", "")
+					LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryEra", "")
 				end
 			},
 			toggle = {
@@ -135,7 +135,7 @@ function AngryAssign:OnInitialize()
 				order = 1,
 				name = "Toggle Display",
 				desc = "Shows/hides the display frame (also available in game keybindings)",
-				func = function() AngryAssign_ToggleDisplay() end
+				func = function() AngryEra_ToggleDisplay() end
 			},
 			deleteall = {
 				type = "execute",
@@ -220,7 +220,7 @@ function AngryAssign:OnInitialize()
 				cmdHidden = false,
 				confirm = true,
 				func = function()
-					app._AngryAssign_ClearPage()
+					AngryEra._AngryEra_ClearPage()
 				end
 			},
 			backup = {
@@ -313,8 +313,8 @@ function AngryAssign:OnInitialize()
 						get = function(info) return self:GetConfig("scale") end,
 						set = function(info, val)
 							self:SetConfig("scale", val)
-							if AngryAssign.window then
-								AngryAssign.window.frame:SetScale(val)
+							if AngryEra.window then
+								AngryEra.window.frame:SetScale(val)
 							end
 						end
 					},
@@ -502,18 +502,18 @@ function AngryAssign:OnInitialize()
 	}
 
 	self:RegisterChatCommand("aa", "ChatCommand")
-	LibStub("AceConfig-3.0"):RegisterOptionsTable("AngryAssign", options)
+	LibStub("AceConfig-3.0"):RegisterOptionsTable("AngryEra", options)
 
-	blizOptionsPanel = LibStub("AceConfigDialog-3.0"):AddToBlizOptions("AngryAssign", AngryAssign_Title)
+	blizOptionsPanel = LibStub("AceConfigDialog-3.0"):AddToBlizOptions("AngryEra", AngryEra_Title)
 	blizOptionsPanel.default = function() self:RestoreDefaults() end
 end
 
 --- Slash command entry point (`/aa`).
 -- @tparam string input Raw slash command arguments.
-function AngryAssign:ChatCommand(input)
+function AngryEra:ChatCommand(input)
   if not input or input:trim() == "" then
     if Settings and Settings.OpenToCategory then
-        Settings.OpenToCategory(AngryAssign_Title)
+        Settings.OpenToCategory(AngryEra_Title)
     else
         InterfaceOptionsFrame_OpenToCategory(blizOptionsPanel)
     end
@@ -522,14 +522,14 @@ function AngryAssign:ChatCommand(input)
     if command == "first" then
         self:FirstPage()
     else
-        LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryAssign", input)
+        LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryEra", input)
     end
   end
 end
 
 --- Addon enable hook.
 -- Initializes display and core event listeners.
-function AngryAssign:OnEnable()
+function AngryEra:OnEnable()
 	self:ResetOfficerRank()
 	self:CreateDisplay()
 
@@ -548,33 +548,33 @@ function AngryAssign:OnEnable()
 end
 
 
-function AngryAssign:PARTY_LEADER_CHANGED()
+function AngryEra:PARTY_LEADER_CHANGED()
 	self:PermissionsUpdated()
 	if AngryAssign_State.displayed and not (self:IsGuildRaid() or self:IsValidRaid()) then
 		self:ClearDisplayed()
 	end
 end
 
-function AngryAssign:PARTY_CONVERTED_TO_RAID()
+function AngryEra:PARTY_CONVERTED_TO_RAID()
 	self:SendRequestDisplay()
 	self:SendVerQuery()
 	self:UpdateDisplayedIfNewGroup()
 end
 
-function AngryAssign:GROUP_JOINED()
+function AngryEra:GROUP_JOINED()
 	self:ResetVersionList() -- Reset version tracking when joining a new group
 	self:SendVerQuery()
 	self:UpdateDisplayedIfNewGroup()
 	self:ScheduleTimer("SendRequestDisplay", 0.5)
 end
 
-function AngryAssign:PLAYER_REGEN_DISABLED()
-	if AngryAssign:GetConfig("hideoncombat") then
+function AngryEra:PLAYER_REGEN_DISABLED()
+	if AngryEra:GetConfig("hideoncombat") then
 		self:HideDisplay()
 	end
 end
 
-function AngryAssign:GROUP_ROSTER_UPDATE()
+function AngryEra:GROUP_ROSTER_UPDATE()
 	self:UpdateSelected()
 	if not (IsInRaid() or IsInGroup()) then
 		if AngryAssign_State.displayed then
@@ -587,13 +587,13 @@ function AngryAssign:GROUP_ROSTER_UPDATE()
 	end
 end
 
-function AngryAssign:PLAYER_GUILD_UPDATE()
+function AngryEra:PLAYER_GUILD_UPDATE()
 	self:ResetOfficerRank()
 	self:PermissionsUpdated()
 end
 
 local guildUpdatePending = false
-function AngryAssign:GUILD_ROSTER_UPDATE(...)
+function AngryEra:GUILD_ROSTER_UPDATE(...)
 	local canRequestRosterUpdate = ...
 	self:ResetOfficerRank()
 	self:UpdateGuildColors()
@@ -612,9 +612,9 @@ function AngryAssign:GUILD_ROSTER_UPDATE(...)
 end
 
 --- Post-enable delayed setup hook for communication/event wiring.
-function AngryAssign:AfterEnable()
+function AngryEra:AfterEnable()
 	self:RegisterComm(comPrefix, "ReceiveMessage")
-	app._comStarted = true
+	AngryEra._comStarted = true
 
 	if not (IsInRaid() or IsInGroup()) then
 		self:ClearDisplayed()

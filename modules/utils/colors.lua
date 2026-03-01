@@ -5,10 +5,11 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
+local AngryEra = app.AngryEra
 
-app.utils = app.utils or {}
-app.utils.colors = {}
-local colors = app.utils.colors
+AngryEra.utils = AngryEra.utils or {}
+AngryEra.utils.colors = {}
+local colors = AngryEra.utils.colors
 
 colors.ColorTable = {
 	["|cblue"]        = "|cff00cbf4",
@@ -34,9 +35,6 @@ colors.ColorTable = {
 	["|cwarrior"]     = "|cffc79c6e",
 	["|cyellow"]      = "|cfffaf318"
 }
-
--- Keep backward compat on app.ColorTable
-app.ColorTable = colors.ColorTable
 
 function colors.RGBToHex(r, g, b, a)
 	r = math.ceil(255 * r)

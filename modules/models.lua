@@ -5,19 +5,19 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
-local AngryAssign = app.AngryAssign
-local helpers = app.utils.helpers
+local AngryEra = app.AngryEra
+local helpers = AngryEra.utils.helpers
 local selectedLastValue = helpers.selectedLastValue
 local tReverse = helpers.tReverse
 local IsCategoryDescendant = helpers.IsCategoryDescendant
 local ExtractAndValidateName = helpers.ExtractAndValidateName
 
-local libC = app.libC
+local libC = AngryEra.libC
 
 --- Displays a page by its exact name.
 -- @tparam string name Page name.
 -- @treturn boolean|nil `true` when displayed, `false` when not found, or `nil` on permission failure.
-function AngryAssign:DisplayPageByName( name )
+function AngryEra:DisplayPageByName( name )
 	for id, page in pairs(AngryAssign_Pages) do
 		if page.Name == name then
 			return self:DisplayPage( id )
@@ -30,7 +30,7 @@ end
 -- Sends both page and display sync payloads.
 -- @tparam number id Page id.
 -- @treturn boolean|nil `true` on success, or `nil` when permission fails.
-function AngryAssign:DisplayPage( id )
+function AngryEra:DisplayPage( id )
 	if not self:PermissionCheck() then
 		return
 	end
@@ -41,21 +41,21 @@ function AngryAssign:DisplayPage( id )
 
 	if AngryAssign_State.displayed ~= id then
 		AngryAssign_State.displayed = id
-		AngryAssign:UpdateDisplayed()
-		AngryAssign:ShowDisplay()
-		AngryAssign:UpdateTree()
-		AngryAssign:DisplayUpdateNotification()
+		AngryEra:UpdateDisplayed()
+		AngryEra:ShowDisplay()
+		AngryEra:UpdateTree()
+		AngryEra:DisplayUpdateNotification()
 	end
 
 	return true
 end
 
-function AngryAssign:CategoryUpdated(id)
+function AngryEra:CategoryUpdated(id)
 	self:UpdateTree()
 	self:UpdateDisplayed()
 end
 
-function AngryAssign:PageUpdated(id)
+function AngryEra:PageUpdated(id)
 	self:UpdateTree()
 	self:UpdateDisplayed()
 	local page = AngryAssign_Pages[id]
@@ -71,7 +71,7 @@ end
 -- @tparam string name Entity name.
 -- @tparam string type Either `"Page"` or `"Category"`.
 -- @treturn number|nil Matching entity id.
-function AngryAssign:GetEntityByName(name, type)
+function AngryEra:GetEntityByName(name, type)
 	if type == "Page" then
 		for id, page in pairs(AngryAssign_Pages) do
 			if page.Name == name then
@@ -92,7 +92,7 @@ end
 -- @tparam string name Base name.
 -- @tparam string type Either `"Page"` or `"Category"`.
 -- @treturn string Unique name.
-function AngryAssign:GetUniqueEntityName(name, type)
+function AngryEra:GetUniqueEntityName(name, type)
 	local newName = name
 	local n = 1
 	while self:GetEntityByName(newName, type) do
@@ -104,7 +104,7 @@ end
 
 --- Deletes all nested categories and pages under a category id.
 -- @tparam number catId Category id to recursively clear.
-function AngryAssign:DeleteCategoryChildren(catId)
+function AngryEra:DeleteCategoryChildren(catId)
 	-- Delete sub-categories recursively
 	for id, cat in pairs(AngryAssign_Categories) do
 		if cat.CategoryId == catId then
@@ -130,11 +130,11 @@ end
 -- Performing changes functions --
 -- ----------------------------------
 
-function AngryAssign:PrevPage()
+function AngryEra:PrevPage()
 	self:NextPage(true);
 end
 
-function AngryAssign:NextPage(reverse)
+function AngryEra:NextPage(reverse)
 	local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
 	if not page then
 		return
@@ -177,7 +177,7 @@ function AngryAssign:NextPage(reverse)
 	end
 end
 
-function AngryAssign:FirstPage()
+function AngryEra:FirstPage()
 	local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
 	if not page or not page.CategoryId then
 		return
@@ -225,11 +225,11 @@ function AngryAssign:FirstPage()
 	end
 end
 
-function AngryAssign:SelectedId()
+function AngryEra:SelectedId()
 	return selectedLastValue( AngryAssign_State.tree.selected )
 end
 
-function AngryAssign:SetSelectedId(selectedId)
+function AngryEra:SetSelectedId(selectedId)
 	local page = AngryAssign_Pages[selectedId]
 	if page then
 		if page.CategoryId then
@@ -257,7 +257,7 @@ end
 --- Returns a page by id or current selection.
 -- @tparam[opt] number id Page id, defaults to selected id.
 -- @treturn table|nil Page table.
-function AngryAssign:Get(id)
+function AngryEra:Get(id)
 	if id == nil then
 		id = self:SelectedId()
 	end
@@ -267,7 +267,7 @@ end
 --- Returns a category by id.
 -- @tparam number id Category id.
 -- @treturn table|nil Category table.
-function AngryAssign:GetCat(id)
+function AngryEra:GetCat(id)
 	return AngryAssign_Categories[id]
 end
 
@@ -276,7 +276,7 @@ end
 -- @tparam string contents Page contents.
 -- @tparam[opt] string vars Page variable string.
 -- @treturn string Hash string.
-function AngryAssign:Hash(name, contents, vars)
+function AngryEra:Hash(name, contents, vars)
 	local code = libC:fcs32init()
 	code = libC:fcs32update(code, name)
 	code = libC:fcs32update(code, "\n")
@@ -296,7 +296,7 @@ end
 -- @treturn boolean ok
 -- @treturn string|nil err Error message on failure.
 -- @treturn number|nil id New page id on success.
-function AngryAssign:CreatePage(nameOrFrame, content, categoryId, index)
+function AngryEra:CreatePage(nameOrFrame, content, categoryId, index)
 	-- Check Permissions first
 	if not self:PermissionCheck() then
 		return false, "Permission denied."
@@ -344,7 +344,7 @@ end
 -- @tparam string|table nameOrFrame New name text or popup/editbox frame.
 -- @treturn boolean ok
 -- @treturn string|nil err Error message when rename fails.
-function AngryAssign:RenamePage(id, nameOrFrame)
+function AngryEra:RenamePage(id, nameOrFrame)
 	-- Check Existence
 	local page = self:Get(id)
 	if not page then
@@ -385,7 +385,7 @@ end
 
 --- Deletes a page from local storage and selection state.
 -- @tparam number id Page id.
-function AngryAssign:DeletePage(id)
+function AngryEra:DeletePage(id)
 	self:CancelPageTimer(id)
 
 	AngryAssign_Pages[id] = nil
@@ -399,7 +399,7 @@ function AngryAssign:DeletePage(id)
 	self:UpdateTree()
 end
 
-function AngryAssign:TouchPage(id)
+function AngryEra:TouchPage(id)
 	if not self:PermissionCheck() then
 		return
 	end
@@ -416,7 +416,7 @@ end
 -- @treturn boolean ok
 -- @treturn string|nil err Error message on failure.
 -- @treturn number|nil id New category id on success.
-function AngryAssign:CreateCategory(nameOrFrame)
+function AngryEra:CreateCategory(nameOrFrame)
 	-- Validate and Clean Input using your new helper
 	local name, err = ExtractAndValidateName(nameOrFrame)
 	if not name then
@@ -441,7 +441,7 @@ end
 -- @tparam string|table nameOrFrame New name text or popup/editbox frame.
 -- @treturn boolean ok
 -- @treturn string|nil err Error message when rename fails.
-function AngryAssign:RenameCategory(id, nameOrFrame)
+function AngryEra:RenameCategory(id, nameOrFrame)
 	local cat = self:GetCat(id)
 	if not cat then
 		return false, "Category not found."
@@ -465,7 +465,7 @@ end
 
 --- Deletes a category but keeps its descendants by moving them upward.
 -- @tparam number id Category id.
-function AngryAssign:DeleteCategory(id)
+function AngryEra:DeleteCategory(id)
 	local cat = self:GetCat(id)
 	if not cat then
 		return
@@ -498,7 +498,7 @@ end
 
 --- Deletes a category and all descendants.
 -- @tparam number id Category id.
-function AngryAssign:DeleteCategoryAndChildren(id)
+function AngryEra:DeleteCategoryAndChildren(id)
 	local cat = self:GetCat(id)
 	if not cat then
 		return
@@ -521,7 +521,7 @@ end
 --- Assigns a page/category into a category (or toggles back to root).
 -- @tparam number entryId Positive for page id, negative for category id.
 -- @tparam number parentId Target category id.
-function AngryAssign:AssignCategory(entryId, parentId)
+function AngryEra:AssignCategory(entryId, parentId)
 	local page, cat
 	if entryId > 0 then
 		page = self:Get(entryId)
@@ -563,7 +563,7 @@ end
 --- Updates a page's contents, history, hash, and sync state.
 -- @tparam number id Page id.
 -- @tparam string value New page content.
-function AngryAssign:UpdateContents(id, value)
+function AngryEra:UpdateContents(id, value)
 	if not self:PermissionCheck() then
 		return
 	end
@@ -595,7 +595,7 @@ function AngryAssign:UpdateContents(id, value)
 	end
 end
 
-function AngryAssign:PushHistory(page, content, author)
+function AngryEra:PushHistory(page, content, author)
 	if not page or not content or content == "" then
 		return
 	end
@@ -621,7 +621,7 @@ function AngryAssign:PushHistory(page, content, author)
 end
 
 
-function AngryAssign:CreateBackup()
+function AngryEra:CreateBackup()
 	for _, page in pairs(AngryAssign_Pages) do
 		page.Backup = page.Contents
 	end
@@ -629,7 +629,7 @@ function AngryAssign:CreateBackup()
 end
 
 --- Clears the currently displayed page selection.
-function AngryAssign:ClearDisplayed()
+function AngryEra:ClearDisplayed()
 	AngryAssign_State.displayed = nil
 	self:UpdateDisplayed()
 	self:UpdateTree()

@@ -1,6 +1,7 @@
 local _, app = ...
+local AngryEra = app.AngryEra
 
-app.Templates = {
+AngryEra.Templates = {
     {
         name = "Molten Core",
         pages = {

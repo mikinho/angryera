@@ -5,10 +5,11 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
+local AngryEra = app.AngryEra
 
-app.utils = app.utils or {}
-app.utils.helpers = {}
-local helpers = app.utils.helpers
+AngryEra.utils = AngryEra.utils or {}
+AngryEra.utils.helpers = {}
+local helpers = AngryEra.utils.helpers
 
 local _player_realm = nil
 

@@ -6,15 +6,15 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
-local AngryAssign = app.AngryAssign
+local AngryEra = app.AngryEra
 
-local core = app.core
+local core = AngryEra.core
 local configDefaults = core.configDefaults
 
 --- Gets a config value with fallback to defaults.
 -- @tparam string key Config key.
 -- @treturn any value
-function AngryAssign:GetConfig(key)
+function AngryEra:GetConfig(key)
 	if AngryAssign_Config[key] == nil then
 		return configDefaults[key]
 	else
@@ -25,7 +25,7 @@ end
 --- Sets a config value, storing `nil` for default-equivalent values.
 -- @tparam string key Config key.
 -- @tparam any value Config value.
-function AngryAssign:SetConfig(key, value)
+function AngryEra:SetConfig(key, value)
 	if configDefaults[key] == value then
 		AngryAssign_Config[key] = nil
 	else
@@ -34,14 +34,14 @@ function AngryAssign:SetConfig(key, value)
 end
 
 --- Restores all config options to defaults and refreshes display/media.
-function AngryAssign:RestoreDefaults()
+function AngryEra:RestoreDefaults()
 	AngryAssign_Config = {}
 	self:UpdateMedia()
 	self:UpdateDisplayed()
-	LibStub("AceConfigRegistry-3.0"):NotifyChange("AngryAssign")
+	LibStub("AceConfigRegistry-3.0"):NotifyChange("AngryEra")
 end
 
-function AngryAssign:CleanupOrphanedStates()
+function AngryEra:CleanupOrphanedStates()
 	if not AngryAssign_State or not AngryAssign_State.tree or not AngryAssign_State.tree.groups then
 		return
 	end

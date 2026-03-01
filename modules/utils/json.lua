@@ -5,10 +5,11 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
+local AngryEra = app.AngryEra
 
-app.utils = app.utils or {}
-app.utils.json = {}
-local json = app.utils.json
+AngryEra.utils = AngryEra.utils or {}
+AngryEra.utils.json = {}
+local json = AngryEra.utils.json
 
 local function skip_ws(str, pos)
 	while true do
@@ -183,7 +184,6 @@ end
 local parse_value
 local JSON_NULL = {}
 json.JSON_NULL = JSON_NULL
-app.JSON_NULL = JSON_NULL
 local MAX_JSON_NESTING = 256
 
 local function parse_array(str, pos, depth)
@@ -312,9 +312,6 @@ function json.JSON_TryDecode(str)
 	return value
 end
 
--- Keep backward compat
-app.JSON_TryDecode = json.JSON_TryDecode
-
 function json.JSON_Decode(str)
 	local decoded = json.JSON_TryDecode(str)
 	if decoded ~= nil then
@@ -322,8 +319,6 @@ function json.JSON_Decode(str)
 	end
 	return {}
 end
-
-app.JSON_Decode = json.JSON_Decode
 
 local function encode_json_string(value)
 	value = value:gsub("\\", "\\\\")
@@ -388,8 +383,6 @@ function json.JSON_Encode(value)
 	return encode_json_value(value)
 end
 
-app.JSON_Encode = json.JSON_Encode
-
 function json.ParseVariables(str)
 	if not str or str == "" then
 		return {}
@@ -422,4 +415,3 @@ function json.ParseVariables(str)
 	return obj
 end
 
-app.ParseVariables = json.ParseVariables

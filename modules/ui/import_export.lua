@@ -5,29 +5,30 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
-local AngryAssign = app.AngryAssign
-local AceGUI = app.AceGUI
-local libS = app.libS
-local libD = app.libD
-local serialization = app.utils.serialization
+local AngryEra = app.AngryEra
+local AceGUI = AngryEra.AceGUI
+local libS = AngryEra.libS
+local libD = AngryEra.libD
+local json = AngryEra.utils.json
+local serialization = AngryEra.utils.serialization
 
 -- ── Export / Import (Encoded AA) ────────────────────────────────────────────
 
 --- Builds recursive export payload data for a category.
 -- Delegates to serialization module.
-function AngryAssign:GetCategoryExportData(catId)
+function AngryEra:GetCategoryExportData(catId)
 	return serialization.GetCategoryExportData(self, catId)
 end
 
-function AngryAssign:ShowExportWindow(exportString, pageName)
+function AngryEra:ShowExportWindow(exportString, pageName)
 	local frame = AceGUI:Create("Window")
 	frame:SetTitle("Export: " .. pageName)
 	frame:SetLayout("Flow")
 	frame:SetWidth(520)
 	frame:SetHeight(220)
 	frame:EnableResize(false)
-	_G["AngryAssign_ExportWindow"] = frame.frame
-	tinsert(UISpecialFrames, "AngryAssign_ExportWindow")
+	_G["AngryEra_ExportWindow"] = frame.frame
+	tinsert(UISpecialFrames, "AngryEra_ExportWindow")
 	frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
 
 	local editBox = AceGUI:Create("MultiLineEditBox")
@@ -49,13 +50,13 @@ end
 
 --- Parses an encoded `AA:Page` or `AA:Category` payload.
 -- Delegates to serialization module.
-function AngryAssign:ParseImportString(str)
+function AngryEra:ParseImportString(str)
 	return serialization.ParseImportString(str)
 end
 
 --- Shows import confirmation/overwrite UI for a validated page payload.
 -- @tparam table data Page payload.
-function AngryAssign:ConfirmImportPage(data)
+function AngryEra:ConfirmImportPage(data)
 	local existingId = self:GetEntityByName(data.Name, "Page")
 	local preview = data.Contents:sub(1, 120)
 	if #data.Contents > 120 then
@@ -63,7 +64,7 @@ function AngryAssign:ConfirmImportPage(data)
 	end
 
 	if existingId then
-		StaticPopupDialogs["AngryAssign_ImportConflictPage"] = {
+		StaticPopupDialogs["AngryEra_ImportConflictPage"] = {
 			text = string.format("A page named \"%s\" already exists. What would you like to do?\n\n%s", data.Name, preview),
 			button1 = "Replace",
 			button2 = "Import as New",
@@ -72,19 +73,19 @@ function AngryAssign:ConfirmImportPage(data)
 			hideOnEscape = true,
 			preferredIndex = 3,
 			OnAccept = function(popup)
-				AngryAssign:DoImportPage(popup.data, nil, existingId)
+				AngryEra:DoImportPage(popup.data, nil, existingId)
 			end,
 			OnCancel = function(popup, _, reason)
 				if reason == "clicked" then
 					local newData = { Name = popup.data.Name, Contents = popup.data.Contents, Vars = popup.data.Vars, Index = popup.data.Index }
-					newData.Name = AngryAssign:GetUniqueEntityName(newData.Name, "Page")
-					AngryAssign:DoImportPage(newData)
+					newData.Name = AngryEra:GetUniqueEntityName(newData.Name, "Page")
+					AngryEra:DoImportPage(newData)
 				end
 			end,
 		}
-		StaticPopup_Show("AngryAssign_ImportConflictPage", nil, nil, data)
+		StaticPopup_Show("AngryEra_ImportConflictPage", nil, nil, data)
 	else
-		StaticPopupDialogs["AngryAssign_ImportConfirmPage"] = {
+		StaticPopupDialogs["AngryEra_ImportConfirmPage"] = {
 			text = string.format("Import page \"%s\"?\n\n%s", data.Name, preview),
 			button1 = "Import",
 			button2 = CANCEL,
@@ -92,10 +93,10 @@ function AngryAssign:ConfirmImportPage(data)
 			hideOnEscape = true,
 			preferredIndex = 3,
 			OnAccept = function(popup)
-				AngryAssign:DoImportPage(popup.data)
+				AngryEra:DoImportPage(popup.data)
 			end,
 		}
-		StaticPopup_Show("AngryAssign_ImportConfirmPage", nil, nil, data)
+		StaticPopup_Show("AngryEra_ImportConfirmPage", nil, nil, data)
 	end
 end
 
@@ -105,7 +106,7 @@ end
 -- @tparam[opt] number overwriteId Existing page id to overwrite.
 -- @tparam[opt=false] boolean suppressTreeUpdate Skip immediate tree refresh when `true`.
 -- @treturn number Imported page id.
-function AngryAssign:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
+function AngryEra:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
 	local id = overwriteId or self:Hash("page", math.random(2000000000))
 	local existing = overwriteId and AngryAssign_Pages[overwriteId]
 
@@ -127,7 +128,7 @@ end
 
 --- Shows import confirmation/overwrite UI for a validated category payload.
 -- @tparam table data Category payload.
-function AngryAssign:ConfirmImportCategory(data)
+function AngryEra:ConfirmImportCategory(data)
 	local existingId = self:GetEntityByName(data.Name, "Category")
 	local pageCount = 0
 	local catCount = 0
@@ -144,7 +145,7 @@ function AngryAssign:ConfirmImportCategory(data)
 	countItems(data)
 
 	if existingId then
-		StaticPopupDialogs["AngryAssign_ImportConflictCat"] = {
+		StaticPopupDialogs["AngryEra_ImportConflictCat"] = {
 			text = string.format("A category named \"%s\" already exists. Replace its contents or import as new?\n\nContains %d pages and %d sub-categories.", data.Name, pageCount, catCount),
 			button1 = "Replace",
 			button2 = "Import as New",
@@ -153,19 +154,19 @@ function AngryAssign:ConfirmImportCategory(data)
 			hideOnEscape = true,
 			preferredIndex = 3,
 			OnAccept = function(popup)
-				AngryAssign:DoImportCategory(popup.data, nil, existingId)
+				AngryEra:DoImportCategory(popup.data, nil, existingId)
 			end,
 			OnCancel = function(popup, _, reason)
 				if reason == "clicked" then
 					local newData = { Name = popup.data.Name, Children = popup.data.Children, Index = popup.data.Index }
-					newData.Name = AngryAssign:GetUniqueEntityName(newData.Name, "Category")
-					AngryAssign:DoImportCategory(newData)
+					newData.Name = AngryEra:GetUniqueEntityName(newData.Name, "Category")
+					AngryEra:DoImportCategory(newData)
 				end
 			end,
 		}
-		StaticPopup_Show("AngryAssign_ImportConflictCat", nil, nil, data)
+		StaticPopup_Show("AngryEra_ImportConflictCat", nil, nil, data)
 	else
-		StaticPopupDialogs["AngryAssign_ImportConfirmCat"] = {
+		StaticPopupDialogs["AngryEra_ImportConfirmCat"] = {
 			text = string.format("Import category \"%s\" and children?\n\nContains %d pages and %d sub-categories.", data.Name, pageCount, catCount),
 			button1 = "Import",
 			button2 = CANCEL,
@@ -173,10 +174,10 @@ function AngryAssign:ConfirmImportCategory(data)
 			hideOnEscape = true,
 			preferredIndex = 3,
 			OnAccept = function(popup)
-				AngryAssign:DoImportCategory(popup.data)
+				AngryEra:DoImportCategory(popup.data)
 			end,
 		}
-		StaticPopup_Show("AngryAssign_ImportConfirmCat", nil, nil, data)
+		StaticPopup_Show("AngryEra_ImportConfirmCat", nil, nil, data)
 	end
 end
 
@@ -186,7 +187,7 @@ end
 -- @tparam[opt] number overwriteId Existing category id to overwrite.
 -- @tparam[opt=false] boolean suppressTreeUpdate Skip immediate tree refresh when `true`.
 -- @treturn number Imported category id.
-function AngryAssign:DoImportCategory(data, parentId, overwriteId, suppressTreeUpdate)
+function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpdate)
 	local id = overwriteId or self:Hash("cat", math.random(2000000000))
 	local existing = overwriteId and AngryAssign_Categories[overwriteId]
 
@@ -216,15 +217,15 @@ function AngryAssign:DoImportCategory(data, parentId, overwriteId, suppressTreeU
 end
 
 --- Opens the encoded-import window (`AA:Page` / `AA:Category`).
-function AngryAssign:ShowImportWindow()
+function AngryEra:ShowImportWindow()
 	local frame = AceGUI:Create("Window")
 	frame:SetTitle("Import")
 	frame:SetLayout("Flow")
 	frame:SetWidth(520)
 	frame:SetHeight(280)
 	frame:EnableResize(false)
-	_G["AngryAssign_ImportWindow"] = frame.frame
-	tinsert(UISpecialFrames, "AngryAssign_ImportWindow")
+	_G["AngryEra_ImportWindow"] = frame.frame
+	tinsert(UISpecialFrames, "AngryEra_ImportWindow")
 	frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
 
 	local editBox = AceGUI:Create("MultiLineEditBox")
@@ -233,15 +234,15 @@ function AngryAssign:ShowImportWindow()
 	editBox:SetFullHeight(true)
 	editBox:DisableButton(true)
 	editBox:SetCallback("OnTextChanged", function(widget, event, text)
-		local ok, result, prefix = AngryAssign:ParseImportString(text)
+		local ok, result, prefix = AngryEra:ParseImportString(text)
 		if not ok then
 			return
 		end
 		frame:Hide()
 		if prefix == "Category" then
-			AngryAssign:ConfirmImportCategory(result)
+			AngryEra:ConfirmImportCategory(result)
 		else
-			AngryAssign:ConfirmImportPage(result)
+			AngryEra:ConfirmImportPage(result)
 		end
 	end)
 	frame:AddChild(editBox)
@@ -256,7 +257,7 @@ end
 -- ── JSON Import Helpers ─────────────────────────────────────────────────────
 
 local function IsJSONNull(value)
-	return value == app.JSON_NULL
+	return value == json.JSON_NULL
 end
 
 local function IsJSONNilLike(value)
@@ -321,7 +322,7 @@ end
 
 -- ── Legacy JSON/Markdown Import Window ──────────────────────────────────────
 
-local function AngryAssign_ImportPage()
+local function AngryEra_ImportPage()
 	local frame = AceGUI:Create("Window")
 	frame:SetTitle("Import Category or Page")
 	frame:SetLayout("Flow")
@@ -369,7 +370,7 @@ local function AngryAssign_ImportPage()
 				end
 
 				if not catId then
-					local success, err, newId = AngryAssign:CreateCategory(title)
+					local success, err, newId = AngryEra:CreateCategory(title)
 					if success then
 						catId = newId
 					else
@@ -392,11 +393,11 @@ local function AngryAssign_ImportPage()
 						end
 
 						if pageId then
-							AngryAssign:UpdateContents(pageId, pContent)
+							AngryEra:UpdateContents(pageId, pContent)
 							AngryAssign_Pages[pageId].Index = i
-							AngryAssign:PageUpdated(pageId)
+							AngryEra:PageUpdated(pageId)
 						else
-							AngryAssign:CreatePage(pName, pContent, catId, i)
+							AngryEra:CreatePage(pName, pContent, catId, i)
 						end
 					end
 					frame:Hide()
@@ -414,11 +415,11 @@ local function AngryAssign_ImportPage()
 				end
 
 				if existingId then
-					AngryAssign:UpdateContents(existingId, pageContent)
-					AngryAssign:RenamePage(existingId, title)
+					AngryEra:UpdateContents(existingId, pageContent)
+					AngryEra:RenamePage(existingId, title)
 					frame:Hide()
 				else
-					local success, err = AngryAssign:CreatePage(title, pageContent, nil, nil)
+					local success, err = AngryEra:CreatePage(title, pageContent, nil, nil)
 					if not success then
 						print("Error: "..(err or ""))
 					else
@@ -426,7 +427,7 @@ local function AngryAssign_ImportPage()
 					end
 				end
 			end
-			AngryAssign:UpdateTree()
+			AngryEra:UpdateTree()
 			return
 		end
 
@@ -456,10 +457,10 @@ local function AngryAssign_ImportPage()
 			end
 
 			if existingId then
-				 AngryAssign:UpdateContents(existingId, s)
-				 AngryAssign:RenamePage(existingId, nameStr)
+				 AngryEra:UpdateContents(existingId, s)
+				 AngryEra:RenamePage(existingId, nameStr)
 			else
-				 local success, err = AngryAssign:CreatePage(nameStr, s, nil, nil)
+				 local success, err = AngryEra:CreatePage(nameStr, s, nil, nil)
 				 if not success then
 					 print("Error: "..(err or ""))
 				 end
@@ -476,7 +477,7 @@ local function AngryAssign_ImportPage()
 			end
 
 			if not catId then
-				local success, err, newId = AngryAssign:CreateCategory(nameStr)
+				local success, err, newId = AngryEra:CreateCategory(nameStr)
 				if success then
 					catId = newId
 				else
@@ -497,17 +498,17 @@ local function AngryAssign_ImportPage()
 					end
 
 					if pageId then
-						AngryAssign:UpdateContents(pageId, block)
+						AngryEra:UpdateContents(pageId, block)
 						AngryAssign_Pages[pageId].Index = i
-						AngryAssign:PageUpdated(pageId)
+						AngryEra:PageUpdated(pageId)
 					else
-						AngryAssign:CreatePage(h.title, block, catId, i)
+						AngryEra:CreatePage(h.title, block, catId, i)
 					end
 				end
 				frame:Hide()
 			end
 		end
-		AngryAssign:UpdateTree()
+		AngryEra:UpdateTree()
 	end
 
 	importBtn:SetCallback("OnClick", function()
@@ -520,7 +521,7 @@ local function AngryAssign_ImportPage()
 		local jsonData
 		local looksLikeJSON = s:match("^%s*[{[]") ~= nil
 		if looksLikeJSON then
-			local decoded = app.JSON_TryDecode(s)
+			local decoded = json.JSON_TryDecode(s)
 			if decoded == nil then
 				print("Invalid JSON. Check syntax and try again.")
 				return
@@ -585,7 +586,7 @@ local function AngryAssign_ImportPage()
 		end
 
 		if exists then
-			local popup_name = "AngryAssign_ImportOverwrite"
+			local popup_name = "AngryEra_ImportOverwrite"
 			StaticPopupDialogs[popup_name] = {
 				text = "A %s named \"%s\" already exists.\nOverwrite?",
 				button1 = YES,
@@ -611,15 +612,15 @@ local function AngryAssign_ImportPage()
 end
 
 -- Expose for editor.lua main menu
-app._AngryAssign_ImportPage = AngryAssign_ImportPage
+AngryEra._AngryEra_ImportPage = AngryEra_ImportPage
 
 -- ── Export Logic ────────────────────────────────────────────────────────────
 
 local function SerializeJSON(val)
-	return app.JSON_Encode(val)
+	return json.JSON_Encode(val)
 end
 
-local function AngryAssign_ShowExportWindow(text, title)
+local function AngryEra_ShowExportWindow(text, title)
 	local frame = AceGUI:Create("Window")
 	frame:SetTitle("Export " .. title)
 	frame:SetLayout("Flow")
@@ -644,7 +645,7 @@ end
 -- @tparam number id Entity id.
 -- @tparam string type `"page"` or `"category"`.
 -- @tparam string format `"Encoded AA"`, `"JSON"`, `"Markdown"`, or `"Output"`.
-function AngryAssign:Export(id, type, format)
+function AngryEra:Export(id, type, format)
 	local exportText = ""
 	local title = ""
 
@@ -732,5 +733,5 @@ function AngryAssign:Export(id, type, format)
 		end
 	end
 
-	AngryAssign_ShowExportWindow(exportText, title .. " (" .. format .. ")")
+	AngryEra_ShowExportWindow(exportText, title .. " (" .. format .. ")")
 end

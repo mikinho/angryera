@@ -5,10 +5,10 @@
 -- -------------------------------------------------------------------------------
 
 local appName, app = ...
-local AngryAssign = app.AngryAssign
-local helpers = app.utils.helpers
-local colors = app.utils.colors
-local tags = app.utils.tags
+local AngryEra = app.AngryEra
+local helpers = AngryEra.utils.helpers
+local colors = AngryEra.utils.colors
+local tags = AngryEra.utils.tags
 
 local EnsureUnitShortName = helpers.EnsureUnitShortName
 local IterateGroupMembers = helpers.IterateGroupMembers
@@ -17,9 +17,9 @@ local HexToRGB = colors.HexToRGB
 local RGBToHex = colors.RGBToHex
 local ProcessTag = tags.ProcessTag
 
-local lwin = app.lwin
-local LSM = app.LSM
-local LibMustache = app.LibMustache
+local lwin = AngryEra.lwin
+local LSM = AngryEra.LSM
+local LibMustache = AngryEra.LibMustache
 
 local currentGroup = nil
 
@@ -27,28 +27,28 @@ local currentGroup = nil
 -- Keybinding globals
 -- -------------------------
 
-function AngryAssign_ToggleDisplay()
-	AngryAssign:ToggleDisplay()
+function AngryEra_ToggleDisplay()
+	AngryEra:ToggleDisplay()
 end
 
-function AngryAssign_ShowDisplay()
-	AngryAssign:ShowDisplay()
+function AngryEra_ShowDisplay()
+	AngryEra:ShowDisplay()
 end
 
-function AngryAssign_HideDisplay()
-	AngryAssign:HideDisplay()
+function AngryEra_HideDisplay()
+	AngryEra:HideDisplay()
 end
 
-function AngryAssign_PrevPage()
-	AngryAssign:PrevPage()
+function AngryEra_PrevPage()
+	AngryEra:PrevPage()
 end
 
-function AngryAssign_NextPage()
-	AngryAssign:NextPage()
+function AngryEra_NextPage()
+	AngryEra:NextPage()
 end
 
-function AngryAssign_FirstPage()
-	AngryAssign:FirstPage()
+function AngryEra_FirstPage()
+	AngryEra:FirstPage()
 end
 
 -- -------------------------
@@ -64,7 +64,7 @@ local function DragHandle_MouseUp(frame)
 	display:StopMovingOrSizing()
 	AngryAssign_State.display.width = display:GetWidth()
 	lwin.SavePosition(display)
-	AngryAssign:UpdateBackdrop()
+	AngryEra:UpdateBackdrop()
 end
 
 local function Mover_MouseDown(frame)
@@ -82,7 +82,7 @@ end
 -- -------------------------
 
 --- Resets display frame position, lock state, and direction settings.
-function AngryAssign:ResetPosition()
+function AngryEra:ResetPosition()
 	AngryAssign_State.display = {}
 	AngryAssign_State.directionUp = false
 	AngryAssign_State.locked = false
@@ -98,20 +98,20 @@ function AngryAssign:ResetPosition()
 end
 
 --- Shows the on-screen assignment display.
-function AngryAssign:ShowDisplay()
+function AngryEra:ShowDisplay()
 	self.display_text:Show()
 	self:UpdateBackdrop()
 	AngryAssign_State.display.hidden = false
 end
 
 --- Hides the on-screen assignment display.
-function AngryAssign:HideDisplay()
+function AngryEra:HideDisplay()
 	self.display_text:Hide()
 	AngryAssign_State.display.hidden = true
 end
 
 --- Toggles the on-screen assignment display visibility.
-function AngryAssign:ToggleDisplay()
+function AngryEra:ToggleDisplay()
 	if self.display_text:IsShown() then
 		self:HideDisplay()
 	else
@@ -120,7 +120,7 @@ function AngryAssign:ToggleDisplay()
 end
 
 --- Creates and initializes the on-screen assignment frame/mover widgets.
-function AngryAssign:CreateDisplay()
+function AngryEra:CreateDisplay()
 	local frame = CreateFrame("Frame", nil, UIParent)
 	frame:SetPoint("CENTER",0,0)
 	frame:SetWidth(AngryAssign_State.display.width or 300)
@@ -172,7 +172,7 @@ function AngryAssign:CreateDisplay()
 	label:SetJustifyH("CENTER")
 	label:SetPoint("LEFT", 38, 0)
 	label:SetPoint("RIGHT", -38, 0)
-	label:SetText(app.Title)
+	label:SetText(AngryEra.Title)
 
 	local direction = CreateFrame("Button", nil, mover)
 	direction:SetPoint("LEFT", 2, 0)
@@ -181,7 +181,7 @@ function AngryAssign:CreateDisplay()
 	direction:SetNormalTexture("Interface\\Buttons\\UI-Panel-QuestHideButton")
 	direction:SetPushedTexture("Interface\\Buttons\\UI-Panel-QuestHideButton")
 	direction:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight", "ADD")
-	direction:SetScript("OnClick", function() AngryAssign:ToggleDirection() end)
+	direction:SetScript("OnClick", function() AngryEra:ToggleDirection() end)
 	self.direction_button = direction
 
 	local lock = CreateFrame("Button", nil, mover)
@@ -190,7 +190,7 @@ function AngryAssign:CreateDisplay()
 	lock:SetPoint("LEFT", direction, "RIGHT", 4, 0)
 	lock:SetWidth(12)
 	lock:SetHeight(14)
-	lock:SetScript("OnClick", function() AngryAssign:ToggleLock() end)
+	lock:SetScript("OnClick", function() AngryEra:ToggleLock() end)
 
 	local drag = CreateFrame("Frame", nil, mover)
 	drag:SetFrameLevel(mover:GetFrameLevel() + 10)
@@ -203,7 +203,7 @@ function AngryAssign:CreateDisplay()
 	drag:SetAlpha(0.5)
 
 	local dragtex = drag:CreateTexture(nil, "OVERLAY")
-	dragtex:SetTexture("Interface\\AddOns\\" .. appName .. "\\Textures\\draghandle")
+	dragtex:SetTexture("Interface\\AddOns\\" .. appName .. "\\textures\\draghandle")
 	dragtex:SetWidth(16)
 	dragtex:SetHeight(16)
 	dragtex:SetBlendMode("ADD")
@@ -211,7 +211,7 @@ function AngryAssign:CreateDisplay()
 
 	local glow = text:CreateTexture()
 	glow:SetDrawLayer("BORDER")
-	glow:SetTexture("Interface\\AddOns\\" .. appName .. "\\Textures\\LevelUpTex")
+	glow:SetTexture("Interface\\AddOns\\" .. appName .. "\\textures\\leveluptex")
 	glow:SetSize(223, 115)
 	glow:SetTexCoord(0.56054688, 0.99609375, 0.24218750, 0.46679688)
 	glow:SetVertexColor( HexToRGB(self:GetConfig("glowColor")) )
@@ -220,7 +220,7 @@ function AngryAssign:CreateDisplay()
 
 	local glow2 = text:CreateTexture()
 	glow2:SetDrawLayer("BORDER")
-	glow2:SetTexture("Interface\\AddOns\\" .. appName .. "\\Textures\\LevelUpTex")
+	glow2:SetTexture("Interface\\AddOns\\" .. appName .. "\\textures\\leveluptex")
 	glow2:SetSize(418, 7)
 	glow2:SetTexCoord(0.00195313, 0.81835938, 0.01953125, 0.03320313)
 	glow2:SetVertexColor( HexToRGB(self:GetConfig("glowColor")) )
@@ -234,7 +234,7 @@ function AngryAssign:CreateDisplay()
 	self:UpdateDirection()
 end
 
-function AngryAssign:ToggleLock()
+function AngryEra:ToggleLock()
 	AngryAssign_State.locked = not AngryAssign_State.locked
 	if AngryAssign_State.locked then
 		self.mover:Hide()
@@ -243,12 +243,12 @@ function AngryAssign:ToggleLock()
 	end
 end
 
-function AngryAssign:ToggleDirection()
+function AngryEra:ToggleDirection()
 	AngryAssign_State.directionUp = not AngryAssign_State.directionUp
 	self:UpdateDirection()
 end
 
-function AngryAssign:UpdateDirection()
+function AngryEra:UpdateDirection()
 	if AngryAssign_State.directionUp then
 		self.display_text:ClearAllPoints()
 		self.display_text:SetPoint("BOTTOMLEFT", 0, 8)
@@ -283,7 +283,7 @@ function AngryAssign:UpdateDirection()
 	self:UpdateDisplayed()
 end
 
-function AngryAssign:UpdateBackdrop()
+function AngryEra:UpdateBackdrop()
 	local first, last
 	for lineIndex, visibleLine in ipairs(self.display_text.visibleLines) do
 		local messageInfo = self.display_text.historyBuffer:GetEntryAtIndex(lineIndex)
@@ -312,10 +312,10 @@ function AngryAssign:UpdateBackdrop()
 end
 
 local editFontName, editFontHeight, editFontFlags
-function AngryAssign:UpdateMedia()
-	local fontName = LSM:Fetch("font", AngryAssign:GetConfig("fontName"))
-	local fontHeight = AngryAssign:GetConfig("fontHeight")
-	local fontFlags = AngryAssign:GetConfig("fontFlags")
+function AngryEra:UpdateMedia()
+	local fontName = LSM:Fetch("font", AngryEra:GetConfig("fontName"))
+	local fontHeight = AngryEra:GetConfig("fontHeight")
+	local fontFlags = AngryEra:GetConfig("fontFlags")
 
 	if fontFlags == "NONE" then
 		fontFlags = ""
@@ -323,7 +323,7 @@ function AngryAssign:UpdateMedia()
 
 	self.display_text:SetTextColor( HexToRGB(self:GetConfig("color")) )
 	self.display_text:SetFont(fontName, fontHeight, fontFlags)
-	self.display_text:SetSpacing( AngryAssign:GetConfig("lineSpacing") )
+	self.display_text:SetSpacing( AngryEra:GetConfig("lineSpacing") )
 
 	if self.window then
 		if self.window.tree then
@@ -347,7 +347,7 @@ end
 -- -------------------------
 
 local updateFlasher, updateFlasher2 = nil, nil
-function AngryAssign:DisplayUpdateNotification()
+function AngryEra:DisplayUpdateNotification()
 	if updateFlasher == nil then
 		updateFlasher = self.display_glow:CreateAnimationGroup()
 
@@ -398,12 +398,12 @@ end
 -- -------------------------
 
 --- Resets the cached group identifier so the next group-change check re-renders.
-function AngryAssign:ResetCurrentGroup()
+function AngryEra:ResetCurrentGroup()
 	currentGroup = nil
 end
 
 --- Re-renders display when group membership context changes.
-function AngryAssign:UpdateDisplayedIfNewGroup()
+function AngryEra:UpdateDisplayedIfNewGroup()
 	local newGroup = self:GetCurrentGroup()
 	if newGroup ~= currentGroup then
 		currentGroup = newGroup
@@ -413,7 +413,7 @@ end
 
 --- Builds Mustache context from current roster/classes/groups.
 -- @treturn table ctx Template context table.
-function AngryAssign:GetTemplateContext()
+function AngryEra:GetTemplateContext()
 	local ctx = {
 		classes = {},
 		groups = {},
@@ -485,7 +485,7 @@ end
 -- @tparam table ctx Template context table.
 -- @treturn string text Rendered text.
 -- @treturn table mergedVars Merged variable map used for rendering.
-function AngryAssign:RenderPageContent(page, ctx)
+function AngryEra:RenderPageContent(page, ctx)
 	local text = page.Contents:gsub("||", "|")
 
 	local mergedVars = {}
@@ -493,7 +493,7 @@ function AngryAssign:RenderPageContent(page, ctx)
 	-- Helper to merge variables strings
 	local function MergeAppVars(varStr)
 		if varStr and varStr ~= "" and varStr ~= "{}" then
-			local vars = app.ParseVariables(varStr)
+			local vars = AngryEra.utils.json.ParseVariables(varStr)
 			for k, v in pairs(vars) do
 				mergedVars[k] = v
 			end
@@ -532,7 +532,7 @@ end
 --- Applies lightweight markdown transformations used by the display layer.
 -- @tparam string text Source text.
 -- @treturn string formattedText
-function AngryAssign:ProcessMarkdown(text)
+function AngryEra:ProcessMarkdown(text)
 	-- Process Headers: # Header
 	-- Start of string
 	text = text:gsub("^(#+)%s+([^\n]+)", function(l, c) return "|cffffd200"..c:upper().."|r" end)
@@ -556,7 +556,7 @@ function AngryAssign:ProcessMarkdown(text)
 end
 
 --- Rebuilds and draws the active display page.
-function AngryAssign:UpdateDisplayed()
+function AngryEra:UpdateDisplayed()
 	local page = AngryAssign_Pages[ AngryAssign_State.displayed ]
 	if not page then
 		self.display_text:Clear()
@@ -568,7 +568,7 @@ function AngryAssign:UpdateDisplayed()
 	local highlightSet = {}
 	local currentGroupStr = "g" .. (self:GetCurrentGroup() or 0)
 
-	for token in string.gmatch( AngryAssign:GetConfig("highlight") , "[^%s%p]+") do
+	for token in string.gmatch( AngryEra:GetConfig("highlight") , "[^%s%p]+") do
 		token = token:lower()
 		if token == "group" then
 			highlightSet[currentGroupStr] = true

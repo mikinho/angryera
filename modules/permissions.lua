@@ -5,8 +5,8 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
-local AngryAssign = app.AngryAssign
-local helpers = app.utils.helpers
+local AngryEra = app.AngryEra
+local helpers = AngryEra.utils.helpers
 local EnsureUnitFullName = helpers.EnsureUnitFullName
 local PlayerFullName = helpers.PlayerFullName
 local IterateGroupMembers = helpers.IterateGroupMembers
@@ -15,20 +15,20 @@ local guildOfficerNames = nil
 local warnedPermission = false
 
 --- Resets the one-time permission warning flag.
-function AngryAssign:ResetPermissionWarning()
+function AngryEra:ResetPermissionWarning()
 	warnedPermission = false
 end
 
 --- Prints a one-time warning when an inbound update fails permission checks.
 -- @tparam string sender Sender unit name.
-function AngryAssign:PermissionCheckFailError(sender)
+function AngryEra:PermissionCheckFailError(sender)
 	if not warnedPermission then
 		self:Print( RED_FONT_COLOR_CODE .. "You have received a page update from "..Ambiguate(sender, "none").." that was rejected due to insufficient permissions. If you wish to see this page, please adjust your permission settings.|r" )
 		warnedPermission = true
 	end
 end
 
-function AngryAssign:IsGuildOfficer(player)
+function AngryEra:IsGuildOfficer(player)
 	if not player then
 		return false
 	end
@@ -41,11 +41,11 @@ function AngryAssign:IsGuildOfficer(player)
 	return guildOfficerNames[fullplayer]
 end
 
-function AngryAssign:ResetOfficerRank()
+function AngryEra:ResetOfficerRank()
 	guildOfficerNames = nil
 end
 
-function AngryAssign:UpdateOfficerRank()
+function AngryEra:UpdateOfficerRank()
 	guildOfficerNames = {}
 
 	if not (C_Club and C_Club.GetGuildClubId and CommunitiesUtil and CommunitiesUtil.GetMemberIdsSortedByName and CommunitiesUtil.GetMemberInfo and Enum and Enum.ClubRoleIdentifier) then
@@ -77,12 +77,12 @@ function AngryAssign:UpdateOfficerRank()
 	return guildOfficerNames
 end
 
-function AngryAssign:IsPlayerRaidLeader()
+function AngryEra:IsPlayerRaidLeader()
 	local leader = self:GetRaidLeader()
 	return leader and PlayerFullName() == EnsureUnitFullName(leader)
 end
 
-function AngryAssign:IsGuildRaid()
+function AngryEra:IsGuildRaid()
 	local leader = self:GetRaidLeader()
 
 	if self:IsGuildOfficer(leader) then
@@ -94,7 +94,7 @@ end
 
 --- Returns whether the configured leader/officer rules allow modifications.
 -- @treturn boolean valid
-function AngryAssign:IsValidRaid()
+function AngryEra:IsValidRaid()
 	if self:GetConfig("allowall") then
 		return true
 	end
@@ -105,7 +105,7 @@ function AngryAssign:IsValidRaid()
 		return true
 	end
 
-	for token in string.gmatch( AngryAssign:GetConfig("allowplayers") , "[^%s!#$%%&()*+,./:;<=>?@\\^_{|}~%[%]]+") do
+	for token in string.gmatch( AngryEra:GetConfig("allowplayers") , "[^%s!#$%%&()*+,./:;<=>?@\\^_{|}~%[%]]+") do
 		if leader and EnsureUnitFullName(token):lower() == EnsureUnitFullName(leader):lower() then
 			return true
 		end
@@ -121,7 +121,7 @@ end
 --- Checks whether a sender is allowed to modify page/display state.
 -- @tparam[opt] string sender Sender full name, defaults to current player.
 -- @treturn boolean allowed
-function AngryAssign:PermissionCheck(sender)
+function AngryEra:PermissionCheck(sender)
 	if not sender then
 		sender = PlayerFullName()
 	end
@@ -143,9 +143,9 @@ function AngryAssign:PermissionCheck(sender)
 end
 
 
-function AngryAssign:PermissionsUpdated()
+function AngryEra:PermissionsUpdated()
 	self:UpdateSelected()
-	if app._comStarted then
+	if AngryEra._comStarted then
 		self:SendRequestDisplay()
 	end
 	if (IsInRaid() or IsInGroup()) and not self:IsValidRaid() then

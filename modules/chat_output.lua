@@ -5,22 +5,22 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
-local AngryAssign = app.AngryAssign
-local tags = app.utils.tags
-local colors = app.utils.colors
+local AngryEra = app.AngryEra
+local tags = AngryEra.utils.tags
+local colors = AngryEra.utils.colors
 
 local ChatOutputClassMap = tags.ChatOutputClassMap
-local UtilityChatData = app.UtilityChatData
-local UtilityChatMap = app.UtilityChatMap
+local UtilityChatData = tags.UtilityChatData
+local UtilityChatMap = tags.UtilityChatMap
 local ColorTable = colors.ColorTable
 
-local core = app.core
+local core = AngryEra.core
 local isClassic = core.isClassic
 local isClassicTBC = core.isClassicTBC
 local isClassicWrath = core.isClassicWrath
 
-function AngryAssign_OutputDisplayed()
-	return AngryAssign:OutputDisplayed( AngryAssign:SelectedId() )
+function AngryEra_OutputDisplayed()
+	return AngryEra:OutputDisplayed( AngryEra:SelectedId() )
 end
 
 local function ResolveChatOutputTag(self, tagContent)
@@ -88,7 +88,7 @@ end
 -- Applies variable rendering, tag substitution, and custom color stripping.
 -- @tparam[opt] table page Page object.
 -- @treturn string output Chat-ready text.
-function AngryAssign:RenderPageForChatOutput(page)
+function AngryEra:RenderPageForChatOutput(page)
 	if not page then
 		return ""
 	end
@@ -106,7 +106,7 @@ end
 
 --- Outputs rendered page content to current group chat channel.
 -- @tparam[opt] number id Page id, defaults to currently displayed id.
-function AngryAssign:OutputDisplayed(id)
+function AngryEra:OutputDisplayed(id)
 	if not self:PermissionCheck() then
 		self:Print( RED_FONT_COLOR_CODE .. "You don't have permission to output a page.|r" )
 		return
@@ -167,6 +167,6 @@ end
 --- Renders a page for export format `"Output"`.
 -- @tparam[opt] table page Page object.
 -- @treturn string output Chat-ready text.
-function AngryAssign:ProcessPageForOutput(page)
+function AngryEra:ProcessPageForOutput(page)
 	return self:RenderPageForChatOutput(page)
 end

@@ -5,15 +5,16 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
+local AngryEra = app.AngryEra
 
-app.utils = app.utils or {}
-app.utils.serialization = {}
-local serialization = app.utils.serialization
+AngryEra.utils = AngryEra.utils or {}
+AngryEra.utils.serialization = {}
+local serialization = AngryEra.utils.serialization
 
-local libS = app.libS
-local libD = app.libD
-local libC = app.libC
-local core = app.core
+local libS = AngryEra.libS
+local libD = AngryEra.libD
+local libC = AngryEra.libC
+local core = AngryEra.core
 
 local function ValidateEncodedPagePayload(data, path)
 	if type(data) ~= "table" then

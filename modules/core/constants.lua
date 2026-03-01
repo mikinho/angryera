@@ -5,9 +5,10 @@
 -- -------------------------------------------------------------------------------
 
 local appName, app = ...
+local AngryEra = app.AngryEra
 
-app.core = app.core or {}
-local core = app.core
+AngryEra.core = AngryEra.core or {}
+local core = AngryEra.core
 
 -- Platform detection
 core.isClassicVanilla = WOW_PROJECT_ID == WOW_PROJECT_CLASSIC

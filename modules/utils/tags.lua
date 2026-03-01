@@ -5,10 +5,11 @@
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
+local AngryEra = app.AngryEra
 
-app.utils = app.utils or {}
-app.utils.tags = {}
-local tags = app.utils.tags
+AngryEra.utils = AngryEra.utils or {}
+AngryEra.utils.tags = {}
+local tags = AngryEra.utils.tags
 
 -- -----------------------
 -- Raid Utility
@@ -386,10 +387,6 @@ for category, items in pairs(AngryEra_RaidUtility) do
 		tags.UtilityChatData[nameTag] = { name = info.name, key = key, texture = iconTexture }
 	end
 end
-
--- Keep backward compat on app.*
-app.UtilityChatMap = tags.UtilityChatMap
-app.UtilityChatData = tags.UtilityChatData
 
 -- ChatOutputClassMap
 tags.ChatOutputClassMap = {
