@@ -8,6 +8,8 @@ local appName, app = ...
 local AngryEra = app.AngryEra
 local LSM = app.libs.LSM
 
+AngryEra.Templates = app.Templates
+
 local core = AngryEra.core
 local isClassic = core.isClassic
 local comPrefix = core.comPrefix
