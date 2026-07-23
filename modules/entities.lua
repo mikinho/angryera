@@ -172,18 +172,141 @@ function AngryEra:MigrateEntityIdentities()
     end
 end
 
+local LEGACY_LOCAL_ID_MAX = 1000000
+
+local function RemapTreeValue(value, maps)
+    if type(value) ~= "number" or value % 1 ~= 0 or value == 0 then
+        return nil
+    end
+    if value < 0 then
+        local mapped = maps.category[-value]
+        return mapped and -mapped or nil
+    end
+    return maps.category[value] or maps.page[value]
+end
+
+local function RemapTreePath(path, maps)
+    local parts = {}
+    local changed = false
+    for segment in path:gmatch("[^\001]+") do
+        local mapped = RemapTreeValue(tonumber(segment), maps)
+        if mapped then
+            changed = true
+            parts[#parts + 1] = tostring(mapped)
+        else
+            parts[#parts + 1] = segment
+        end
+    end
+    if not changed then
+        return nil
+    end
+    return table.concat(parts, "\001")
+end
+
+local function RemapLegacyRecordIds(records, map)
+    local legacyIds = {}
+    for id in pairs(records) do
+        if type(id) == "number" and id % 1 == 0 and id > LEGACY_LOCAL_ID_MAX then
+            legacyIds[#legacyIds + 1] = id
+        end
+    end
+    table.sort(legacyIds)
+
+    for _, oldId in ipairs(legacyIds) do
+        local newId = 1
+        while records[newId] ~= nil do
+            newId = newId + 1
+        end
+        local record = records[oldId]
+        records[oldId] = nil
+        records[newId] = record
+        if type(record) == "table" then
+            record.Id = newId
+        end
+        map[oldId] = newId
+    end
+    return #legacyIds
+end
+
+--- Renumbers legacy hashed local ids to sequential ids.
+-- Legacy AngryAssignments allocated local page and category ids from FCS32
+-- hashes spanning the full 32-bit range. This migration detects those ids,
+-- moves the records to the lowest free sequential ids, and rewrites parent
+-- references plus persisted display and tree state. It is idempotent and runs
+-- on every load so restored backups are also repaired.
+-- @treturn number migrated Count of renumbered entities.
+function AngryEra:MigrateLegacyLocalIds()
+    if type(AngryAssign_Pages) ~= "table" or type(AngryAssign_Categories) ~= "table" then
+        return 0
+    end
+
+    local maps = {
+        page = {},
+        category = {},
+    }
+    local migrated = RemapLegacyRecordIds(AngryAssign_Pages, maps.page)
+        + RemapLegacyRecordIds(AngryAssign_Categories, maps.category)
+    if migrated == 0 then
+        return 0
+    end
+
+    for _, page in pairs(AngryAssign_Pages) do
+        if type(page) == "table" and maps.category[page.CategoryId] then
+            page.CategoryId = maps.category[page.CategoryId]
+        end
+    end
+    for _, category in pairs(AngryAssign_Categories) do
+        if type(category) == "table" and maps.category[category.CategoryId] then
+            category.CategoryId = maps.category[category.CategoryId]
+        end
+    end
+
+    local state = AngryAssign_State
+    if type(state) == "table" then
+        if maps.page[state.displayed] then
+            state.displayed = maps.page[state.displayed]
+        end
+
+        local tree = type(state.tree) == "table" and state.tree or nil
+        if tree then
+            if type(tree.selected) == "string" then
+                tree.selected = RemapTreePath(tree.selected, maps) or tree.selected
+            else
+                local remappedSelected = RemapTreeValue(tree.selected, maps)
+                if remappedSelected then
+                    tree.selected = remappedSelected
+                end
+            end
+
+            if type(tree.groups) == "table" then
+                local rewritten = {}
+                for key, value in pairs(tree.groups) do
+                    local newKey = key
+                    if type(key) == "number" then
+                        newKey = RemapTreeValue(key, maps) or key
+                    elseif type(key) == "string" then
+                        newKey = RemapTreePath(key, maps) or key
+                    end
+                    rewritten[newKey] = value
+                end
+                tree.groups = rewritten
+            end
+        end
+    end
+
+    return migrated
+end
+
 --- Allocates an unused local numeric UI id.
 -- @tparam string kind `"page"` or `"category"`.
 -- @treturn number id
 function AngryEra:AllocateLocalEntityId(kind)
     local records = GetRecords(kind)
-    for _ = 1, 1000 do
-        local id = self:Hash(kind, math.random(2000000000))
-        if type(id) == "number" and id > 0 and records[id] == nil then
-            return id
-        end
+    local id = 1
+    while records[id] ~= nil do
+        id = id + 1
     end
-    error("Unable to allocate a local " .. tostring(kind) .. " id")
+    return id
 end
 
 --- Allocates an unused immutable SyncId.
