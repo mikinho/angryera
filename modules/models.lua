@@ -16,7 +16,11 @@ local libC = app.libs.libC
 
 local function PublishPageRevision(self, id)
     if AngryAssign_State.displayed == id then
-        return self:SendDisplay(id, true)
+        local published, publishResult, activatedLocally = self:SendDisplay(id, true)
+        if activatedLocally == true and type(self.CancelAutoAdvancePublishRetry) == "function" then
+            self:CancelAutoAdvancePublishRetry()
+        end
+        return published, publishResult, activatedLocally
     end
     return self:SendPage(id, true)
 end
@@ -43,6 +47,9 @@ function AngryEra:RefreshDisplayedPageAfterHierarchyMutation()
 
     local sent, result, activatedLocally = self:SendDisplay(displayedId, true)
     if activatedLocally == true then
+        if type(self.CancelAutoAdvancePublishRetry) == "function" then
+            self:CancelAutoAdvancePublishRetry()
+        end
         self:UpdateDisplayed()
     end
     return sent, result, activatedLocally
@@ -61,28 +68,52 @@ function AngryEra:DisplayPageByName(name)
 end
 
 --- Displays a page locally and publishes its exact v3 page/context snapshot.
+-- Existing callers may continue to use the first return value as local display
+-- success. The third and fourth returns expose the independent publication
+-- result for callers that require shared-display confirmation.
 -- @tparam number id Page id.
+-- @tparam[opt] table options Internal display options.
 -- @treturn boolean|nil `true` on success, or `nil` when permission fails.
-function AngryEra:DisplayPage(id)
+-- @treturn string|nil localError
+-- @treturn boolean published
+-- @treturn string|nil publicationResult
+function AngryEra:DisplayPage(id, options)
+    local retry = type(options) == "table" and options.AutoAdvanceRetry or nil
+
     if not self:CanLocalPlayerPublish("display") then
         return
     end
 
-    local _, displayResult, activatedLocally = self:SendDisplay(id, true)
+    local published, displayResult, activatedLocally = self:SendDisplay(id, true)
     if activatedLocally ~= true then
         self:Print(RED_FONT_COLOR_CODE .. "Unable to display the page: " .. tostring(displayResult) .. "|r")
-        return nil, displayResult
+        return nil, displayResult, false, displayResult
     end
 
-    if AngryAssign_State.displayed ~= id then
+    if
+        type(self.CancelAutoAdvancePublishRetry) == "function"
+        and (retry == nil or retry ~= self._autoAdvancePublishRetry)
+    then
+        self:CancelAutoAdvancePublishRetry()
+    end
+
+    local changedPage = AngryAssign_State.displayed ~= id
+    if changedPage then
         AngryAssign_State.displayed = id
-        AngryEra:UpdateDisplayed()
+    end
+
+    -- SendDisplay activates an exact page/context tuple before transport. Even
+    -- when the local page id is unchanged (for example, a publication retry),
+    -- that tuple can have a new revision and must be rendered into the public
+    -- displayed-note snapshot before the next encounter.
+    AngryEra:UpdateDisplayed()
+    if changedPage then
         AngryEra:ShowDisplay()
         AngryEra:UpdateTree()
         AngryEra:DisplayUpdateNotification()
     end
 
-    return true
+    return true, nil, published == true, displayResult
 end
 
 function AngryEra:CategoryUpdated(id)
@@ -92,13 +123,16 @@ end
 
 function AngryEra:PageUpdated(id)
     self:UpdateTree()
-    self:UpdateDisplayed()
     local page = AngryAssign_Pages[id]
     if page then
         page.Updated = time()
         page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
-        ReportFailedDisplayPublish(self, id, PublishPageRevision(self, id))
+        local published, publishResult, activatedLocally = PublishPageRevision(self, id)
+        self:UpdateDisplayed()
+        ReportFailedDisplayPublish(self, id, published, publishResult, activatedLocally)
+        return
     end
+    self:UpdateDisplayed()
 end
 
 -- ── Import Helper Functions ──────────────────────────────────────────────────
@@ -751,6 +785,9 @@ end
 -- @treturn boolean ok
 -- @treturn string|nil errorCode
 function AngryEra:ClearDisplayed(publish)
+    if type(self.CancelAutoAdvancePublishRetry) == "function" then
+        self:CancelAutoAdvancePublishRetry()
+    end
     local wasDisplayed = AngryAssign_State.displayed ~= nil
     AngryAssign_State.displayed = nil
 

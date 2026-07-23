@@ -25,6 +25,7 @@ automatically whenever a page is displayed:
 
 ```
 MT=Zessy
+$MT={{MT}}
 $SQUARE=$MT
 $SKULL=Kway-OtherRealm
 ```
@@ -129,15 +130,23 @@ setup.
 * `$AUTOADVANCE` — **kill-driven page advancement**. Set `$AUTOADVANCE=true`
   on a category and, after each boss kill, the raid leader's client advances
   the display to the next page — so the upcoming assignments are on screen
-  ahead of the pull. Wipes never advance. Set `$AUTOADVANCE=false` on a
-  specific page to stop the chain at that boss (for example, the final boss
-  of the night).
+  ahead of the pull. Wipes never advance. The rendered page's exact metadata
+  snapshot decides whether advancement is enabled, so a later private category
+  edit cannot change the behavior of the note already on screen. Set
+  `$AUTOADVANCE=false` on a specific page to stop the chain at that boss (for
+  example, the final boss of the night). A shared-display transport failure is
+  warned about and retried twice; local activation alone is not reported as a
+  shared success.
 * `$ENCOUNTER` / `$ENCOUNTERID` — **encounter binding** for auto-advance.
-  Kills are matched to pages by encounter id, then by `$ENCOUNTER` or the
-  page's own name (so template pages named "Lucifron" bind automatically),
-  preferring the displayed page's category, and finally falling back to the
-  currently displayed page. Use these when a page's name differs from the
-  boss (`$ENCOUNTER=Patchwerk` on a page called "Patch").
+  The displayed page is matched first by encounter id, then by `$ENCOUNTER` or
+  its own name (so template pages named "Lucifron" bind automatically). If it
+  does not match, Angry Era searches only its bounded, locally authoritative
+  sibling sequence and finally falls back to the displayed page. Duplicate id
+  or name bindings in that sequence are treated as ambiguous and do not
+  advance. Receiver-private placement of a remote-owned displayed page is
+  never used to infer what comes next. Use explicit bindings when a page's
+  name differs from the boss (`$ENCOUNTER=Patchwerk` on a page called
+  "Patch").
 
 **Custom keys** are yours: anything else (`$phase=2`, `$note=swap fast`) is
 carried along, inherited, and exposed through `AngryEra:GetDisplayedMeta()`

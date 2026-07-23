@@ -36,6 +36,8 @@ local displayActivatedLocally = true
 local showDisplayCalls = 0
 local displayNotificationCalls = 0
 local printedMessages = {}
+local autoAdvanceRetryCancellations = 0
+local operationLog = {}
 
 _G.RED_FONT_COLOR_CODE = "<red>"
 
@@ -49,6 +51,7 @@ end
 
 function AngryEra:UpdateDisplayed()
     updateDisplayCalls = updateDisplayCalls + 1
+    operationLog[#operationLog + 1] = "render"
 end
 
 function AngryEra:SendPage(id)
@@ -56,6 +59,7 @@ function AngryEra:SendPage(id)
 end
 
 function AngryEra:SendDisplay(id, force)
+    operationLog[#operationLog + 1] = "send-display"
     sentDisplays[#sentDisplays + 1] = {
         Id = id,
         Force = force,
@@ -69,6 +73,12 @@ end
 
 function AngryEra:DisplayUpdateNotification()
     displayNotificationCalls = displayNotificationCalls + 1
+end
+
+function AngryEra:CancelAutoAdvancePublishRetry()
+    autoAdvanceRetryCancellations = autoAdvanceRetryCancellations + 1
+    self._autoAdvancePublishRetry = nil
+    return true
 end
 
 function AngryEra:ClearActiveDisplayReference()
@@ -130,11 +140,21 @@ assert(updateDisplayCalls == 1, "PageUpdated should refresh the active display")
 
 sentPageId = nil
 AngryAssign_State.displayed = 42
+operationLog = {}
+local cancellationsBeforeActiveUpdate = autoAdvanceRetryCancellations
 AngryEra:PageUpdated(42)
 assert(sentPageId == nil, "An active page update should not send an unpaired page snapshot")
 assert(
     #sentDisplays == 1 and sentDisplays[1].Id == 42,
     "An active page update should publish its exact page and display tuple"
+)
+assert(
+    operationLog[1] == "send-display" and operationLog[2] == "render",
+    "an active page update should activate its new exact tuple before rendering"
+)
+assert(
+    autoAdvanceRetryCancellations == cancellationsBeforeActiveUpdate + 1,
+    "an active page update should cancel a superseded auto-advance retry after activation"
 )
 
 AngryAssign_State.displayed = nil
@@ -142,33 +162,71 @@ displaySendOk = false
 displaySendResult = "preparation-failed"
 displayActivatedLocally = false
 local displayUpdatesBeforeFailure = updateDisplayCalls
-local displayed, displayError = AngryEra:DisplayPage(42)
+local retainedRetry = {}
+AngryEra._autoAdvancePublishRetry = retainedRetry
+local cancellationsBeforeFailedDisplay = autoAdvanceRetryCancellations
+local displayed, displayError, published, publicationResult = AngryEra:DisplayPage(42)
 assert(not displayed and displayError == "preparation-failed", "display preparation errors should be returned")
+assert(
+    published == false and publicationResult == "preparation-failed",
+    "failed activation should expose publication failure"
+)
 assert(AngryAssign_State.displayed == nil, "failed activation must not commit the displayed page id")
 assert(updateDisplayCalls == displayUpdatesBeforeFailure, "failed activation must not render a local fallback")
+assert(
+    AngryEra._autoAdvancePublishRetry == retainedRetry
+        and autoAdvanceRetryCancellations == cancellationsBeforeFailedDisplay,
+    "a failed replacement display must preserve the existing publication retry"
+)
 assert(#printedMessages == 1, "a failed display activation should be reported to the user")
 assert(printedMessages[1]:find("preparation-failed", 1, true), "the report should carry the failure code")
 
 displaySendResult = "transport-failed"
 displayActivatedLocally = true
-displayed, displayError = AngryEra:DisplayPage(42)
+displayed, displayError, published, publicationResult = AngryEra:DisplayPage(42)
 assert(displayed and displayError == nil, "transport failure after activation should retain local display success")
+assert(
+    published == false and publicationResult == "transport-failed",
+    "transport failure should be independently exposed"
+)
 assert(AngryAssign_State.displayed == 42, "successful activation should commit despite transport failure")
+assert(
+    AngryEra._autoAdvancePublishRetry == nil and autoAdvanceRetryCancellations == cancellationsBeforeFailedDisplay + 1,
+    "a successful replacement activation should cancel the superseded retry"
+)
 assert(
     showDisplayCalls == 1 and displayNotificationCalls == 1,
     "successful local activation should refresh the display"
 )
 assert(#printedMessages == 1, "a transport-only failure after activation should not be reported as an error")
 displaySendOk = true
+displaySendResult = "display-message-id"
+local updatesBeforeSamePagePublish = updateDisplayCalls
+displayed, displayError, published, publicationResult = AngryEra:DisplayPage(42)
+assert(displayed and displayError == nil, "a published display should remain a local success")
+assert(published == true and publicationResult == "display-message-id", "publication success should be exposed")
+assert(
+    updateDisplayCalls == updatesBeforeSamePagePublish + 1,
+    "republishing the same page should render its newly activated exact tuple"
+)
+assert(
+    showDisplayCalls == 1 and displayNotificationCalls == 1,
+    "same-page republication should not repeat page-change UI effects"
+)
 displaySendResult = nil
 
 local sendsBeforeLocalClear = #sentDisplays
 AngryAssign_State.displayed = 42
+local cancellationsBeforeClear = autoAdvanceRetryCancellations
 local cleared, clearError = AngryEra:ClearDisplayed()
 assert(cleared and not clearError, "local display clear should succeed")
 assert(AngryAssign_State.displayed == nil, "local display clear should reset selection")
 assert(activeClearCalls == 1, "local display clear should discard the exact active tuple")
 assert(#sentDisplays == sendsBeforeLocalClear, "local-only clear must not publish")
+assert(
+    autoAdvanceRetryCancellations == cancellationsBeforeClear + 1,
+    "clearing the display should synchronously cancel a stale auto-advance retry"
+)
 
 AngryAssign_State.displayed = 42
 cleared, clearError = AngryEra:ClearDisplayed(true)
