@@ -14,7 +14,10 @@ local app = {
                 end,
             },
             tags = {
-                ProcessTag = function(value)
+                ProcessTag = function(value, page)
+                    if value:lower() == "{page}" then
+                        return page and page.Name or value
+                    end
                     return value
                 end,
             },
@@ -133,5 +136,65 @@ local emptyText, emptyVariables = AngryEra:RenderPageContent({
     Contents = 42,
 }, {})
 assert(emptyText == "" and next(emptyVariables) == nil, "Malformed page contents should fail safe")
+
+AngryAssign_State = {
+    displayed = 99,
+}
+AngryAssign_Pages = {
+    [99] = {
+        Name = "Unrelated Page",
+    },
+}
+local renderedPage = {
+    Name = "Render Target",
+    Contents = "{page}",
+}
+local renderedText
+AngryEra.display_text = {
+    Clear = function() end,
+    AddMessage = function(_, text)
+        renderedText = text
+    end,
+}
+AngryEra.display_glow = {}
+AngryEra.display_glow2 = {}
+AngryEra.backdrop = {
+    Hide = function() end,
+}
+AngryEra.GetConfig = function(_, key)
+    local values = {
+        backdropShow = false,
+        color = "ffffff",
+        glowColor = "ffffff",
+        highlight = "",
+        highlightColor = "ffffff",
+    }
+    return values[key]
+end
+AngryEra.GetCurrentGroup = function()
+    return 1
+end
+AngryEra.GetTemplateContext = function()
+    return {
+        rosterColors = {},
+    }
+end
+AngryEra.UpdateBackdrop = function() end
+AngryEra.ProcessMarkdown = function(_, text)
+    return text
+end
+AngryAssign_State.directionUp = false
+AngryAssign_State.displayed = 1
+AngryAssign_Pages[1] = renderedPage
+_G.strsplit = function(_, value)
+    return value
+end
+_G.C_Timer = {
+    After = function(_, callback)
+        callback()
+    end,
+}
+AngryEra:UpdateDisplayed()
+assert(renderedText == "Render Target", "{page} should resolve from the page being rendered")
 
 print("Display inheritance tests passed.")

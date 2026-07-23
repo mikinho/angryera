@@ -422,7 +422,7 @@ tags.ChatOutputClassMap = {
 }
 
 -- ProcessTag
-function tags.ProcessTag(tag)
+function tags.ProcessTag(tag, page)
     local lowerTag = tag:lower()
 
     if tags.UtilityChatData[lowerTag] and tags.UtilityChatData[lowerTag].texture then
@@ -430,10 +430,7 @@ function tags.ProcessTag(tag)
     end
 
     if lowerTag == "{page}" then
-        local id = AngryAssign_State.displayed
-        if id and AngryAssign_Pages[id] then
-            return AngryAssign_Pages[id].Name
-        end
+        return type(page) == "table" and page.Name or tag
     end
 
     local type, id = lowerTag:match("{(%a+)%s+(%d+)}")

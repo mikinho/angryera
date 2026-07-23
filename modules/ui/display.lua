@@ -671,7 +671,9 @@ function AngryEra:UpdateDisplayed()
 
     -- Process Tags (Single Pass)
     -- (%b{}) captures anything balanced between { and }
-    text = text:gsub("(%b{})", ProcessTag)
+    text = text:gsub("(%b{})", function(tag)
+        return ProcessTag(tag, page)
+    end)
 
     -- Process Highlights (Word Scan)
     -- Optimization: Only scan if we actually have things to highlight
