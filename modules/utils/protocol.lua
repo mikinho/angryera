@@ -1435,6 +1435,9 @@ local function EncodeCompactPageRaw(envelope, codec, includeAncestorContext)
         return nil, hashError
     end
     local ancestorContextIncluded = includeAncestorContext or layerCount == 0
+    if not ancestorContextIncluded and envelope.ReplyTo ~= nil then
+        return nil, "compact-page-ancestor-context-reference-correlated"
+    end
 
     local flags = envelope.ReplyTo ~= nil and COMPACT_PAGE_FLAG_REPLY_TO or 0
     if ancestorContextIncluded then
@@ -1488,6 +1491,9 @@ local function DecodeCompactPageRaw(raw, codec, resolveAncestorContext)
     end
     local hasReplyTo = flags % 2 == COMPACT_PAGE_FLAG_REPLY_TO
     local ancestorContextIncluded = math.floor(flags / COMPACT_PAGE_FLAG_ANCESTOR_CONTEXT_INCLUDED) % 2 == 1
+    if hasReplyTo and not ancestorContextIncluded then
+        return nil, "invalid-compact-page-flags"
+    end
     local cursor = 2
 
     local senderInstallationId

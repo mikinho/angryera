@@ -1150,22 +1150,42 @@ do
 end
 
 do
-    local omittedPageEncoded, omittedPageError, omittedPageEncodeMetadata =
+    local correlatedOmission, correlatedOmissionError =
         protocol.EncodeCompactPageEnvelope(compactPageEnvelope, compactPageCodec, { IncludeAncestorContext = false })
+    AssertError(
+        correlatedOmission,
+        correlatedOmissionError,
+        "compact-page-ancestor-context-reference-correlated",
+        "correlated compact pages must remain self-contained"
+    )
+
+    local omittedPageEnvelope =
+        assert(protocol.BuildEnvelope(compactPageSession, "PAGE_UPSERT", MakePageUpsertPayload(), {
+            SentAt = 1750000000101,
+        }))
+    local omittedBaselineEncoded, omittedBaselineError, omittedBaselineMetadata =
+        protocol.EncodeCompactPageEnvelope(omittedPageEnvelope, compactPageCodec)
+    Assert(
+        omittedBaselineEncoded ~= nil and omittedBaselineError == nil,
+        "uncorrelated compact page baseline encodes inline"
+    )
+    local omittedBaselineRaw = ReadCompactPageFrameForTest(omittedBaselineEncoded)
+    local omittedPageEncoded, omittedPageError, omittedPageEncodeMetadata =
+        protocol.EncodeCompactPageEnvelope(omittedPageEnvelope, compactPageCodec, { IncludeAncestorContext = false })
     Assert(
         omittedPageEncoded ~= nil and omittedPageError == nil,
         "nonempty compact page ancestor context may be omitted"
     )
     local omittedPageRaw = ReadCompactPageFrameForTest(omittedPageEncoded)
-    AssertEqual(omittedPageRaw:byte(1), 1, "omitted compact page retains only its reply flag")
+    AssertEqual(omittedPageRaw:byte(1), 0, "omitted compact page has no correlation or inline-context flags")
     AssertEqual(
-        #compactPageRaw - #omittedPageRaw,
-        compactPageEncodeMetadata.AncestorContextBytes,
+        #omittedBaselineRaw - #omittedPageRaw,
+        omittedBaselineMetadata.AncestorContextBytes,
         "omitted compact page removes the entire canonical ancestor block"
     )
     AssertEqual(
         omittedPageEncodeMetadata.AncestorContextId,
-        compactPageEncodeMetadata.AncestorContextId,
+        omittedBaselineMetadata.AncestorContextId,
         "inline and omitted packets share an ancestor identity"
     )
     AssertEqual(
@@ -1175,7 +1195,7 @@ do
     )
     AssertEqual(
         omittedPageEncodeMetadata.AncestorContextBytes,
-        compactPageEncodeMetadata.AncestorContextBytes,
+        omittedBaselineMetadata.AncestorContextBytes,
         "omitted encode metadata retains the reusable context size"
     )
 
@@ -1199,32 +1219,28 @@ do
     )
     AssertEqual(
         missingPageMetadata.SenderInstallationId,
-        compactPageEnvelope.SenderInstallationId,
+        omittedPageEnvelope.SenderInstallationId,
         "resolver miss exposes validated sender installation"
     )
     AssertEqual(
         missingPageMetadata.SenderSessionId,
-        compactPageEnvelope.SenderSessionId,
+        omittedPageEnvelope.SenderSessionId,
         "resolver miss exposes validated sender session"
     )
     AssertEqual(
         missingPageMetadata.MessageId,
-        compactPageEnvelope.MessageId,
+        omittedPageEnvelope.MessageId,
         "resolver miss exposes validated message identity"
     )
-    AssertEqual(missingPageMetadata.Sequence, compactPageEnvelope.Sequence, "resolver miss exposes validated sequence")
-    AssertEqual(missingPageMetadata.SentAt, compactPageEnvelope.SentAt, "resolver miss exposes validated timestamp")
-    AssertEqual(
-        missingPageMetadata.ReplyTo,
-        compactPageEnvelope.ReplyTo,
-        "resolver miss exposes validated reply identity"
-    )
+    AssertEqual(missingPageMetadata.Sequence, omittedPageEnvelope.Sequence, "resolver miss exposes validated sequence")
+    AssertEqual(missingPageMetadata.SentAt, omittedPageEnvelope.SentAt, "resolver miss exposes validated timestamp")
+    Assert(missingPageMetadata.ReplyTo == nil, "resolver miss preserves the uncorrelated active-page lane")
     Assert(
-        DeepEqual(missingPageMetadata.Reference, compactPageEncodeMetadata.Reference),
+        DeepEqual(missingPageMetadata.Reference, omittedBaselineMetadata.Reference),
         "resolver miss exposes only the validated page reference tuple"
     )
 
-    local resolvedLayers = DeepCopy(compactPageEnvelope.Payload.AncestorVariableLayers)
+    local resolvedLayers = DeepCopy(omittedPageEnvelope.Payload.AncestorVariableLayers)
     local observedInstallationId
     local observedSessionId
     local observedContextId
@@ -1238,23 +1254,23 @@ do
             end,
         })
     Assert(resolvedPage ~= nil and resolvedPageError == nil, "cached ancestor context resolves omitted page")
-    Assert(DeepEqual(resolvedPage, compactPageEnvelope), "resolved omitted page is canonical")
+    Assert(DeepEqual(resolvedPage, omittedPageEnvelope), "resolved omitted page is canonical")
     AssertEqual(
         observedInstallationId,
-        compactPageEnvelope.SenderInstallationId,
+        omittedPageEnvelope.SenderInstallationId,
         "resolver receives sender installation"
     )
-    AssertEqual(observedSessionId, compactPageEnvelope.SenderSessionId, "resolver receives sender session")
+    AssertEqual(observedSessionId, omittedPageEnvelope.SenderSessionId, "resolver receives sender session")
     AssertEqual(
         observedContextId,
-        compactPageEncodeMetadata.AncestorContextId,
+        omittedBaselineMetadata.AncestorContextId,
         "resolver receives ancestor context identity"
     )
     Assert(DeepEqual(resolvedPageMetadata, omittedPageEncodeMetadata), "resolved omitted page metadata round trips")
     resolvedLayers[1].Vars = "mutated-after-resolve"
     AssertEqual(
         resolvedPage.Payload.AncestorVariableLayers[1].Vars,
-        compactPageEnvelope.Payload.AncestorVariableLayers[1].Vars,
+        omittedPageEnvelope.Payload.AncestorVariableLayers[1].Vars,
         "resolved ancestor context is detached from the cache"
     )
 
@@ -1297,13 +1313,22 @@ do
         "invalid-resolved-ancestor-context",
         "compact page validates resolved ancestor contexts"
     )
+
+    local correlatedReferenceFrame = BuildCompactPageFrameForTest(ReplaceByte(compactPageRaw, 1, 1))
+    badResolvedPage, resolvedPageError = protocol.DecodeCompactPageEnvelope(correlatedReferenceFrame, compactPageCodec)
+    AssertError(
+        badResolvedPage,
+        resolvedPageError,
+        "invalid-compact-page-flags",
+        "compact page decoder rejects a correlated ancestor-context reference"
+    )
 end
 
 local orphanPagePayload = MakePageUpsertPayload()
 orphanPagePayload.Page.ParentSyncId = nil
 orphanPagePayload.AncestorVariableLayers = {}
 local orphanPageEnvelope = assert(protocol.BuildEnvelope(compactPageSession, "PAGE_UPSERT", orphanPagePayload, {
-    SentAt = 1750000000101,
+    SentAt = 1750000000102,
 }))
 local orphanPageEncoded, _, orphanPageEncodeMetadata =
     protocol.EncodeCompactPageEnvelope(orphanPageEnvelope, compactPageCodec, { IncludeAncestorContext = false })
