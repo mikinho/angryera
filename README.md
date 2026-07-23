@@ -1,4 +1,4 @@
-**AngryEra** is a modern fork of the legendary AngryAssignments. While initially restored to optimize the experience for **Classic Era, Hardcore, and Season of Discovery**, it is fully compatible with **all versions of World of Warcraft** (Retail, Cataclysm, Classic).
+**AngryEra** is a modern fork of the legendary AngryAssignments for **WoW Classic Era, Hardcore, Season of Discovery, and Burning Crusade Anniversary**. The current release supports Classic Era 1.15.9 and Burning Crusade Anniversary 2.5.6.
 
 Designed for raid leaders who demand flexibility and speed, AngryEra revitalizes assignment management:
 
@@ -8,9 +8,17 @@ Designed for raid leaders who demand flexibility and speed, AngryEra revitalizes
 *   **Markdown Support**: Create clear, formatted strategies with headers, bold text, and lists.
 *   **Safer Imports**: JSON/encoded imports are validated with payload and nesting guardrails to prevent malformed data from causing instability.
 *   **Raid Templates**: Includes pre-loaded, optimized strategies for MC, BWL, AQ40, and Naxxramas.
+*   **Smart Markers**: Assign raid target icons to your target or mouseover unit with dedicated keybindings.
 *   **Modern UI**: A polished interface with pixel-perfect alignment and smarter context menus.
 
 Ensure your team knows exactly what to do, whether you're organizing a PUG or leading a hardcore progression guild.
+
+Smart Markers
+-------------
+
+The **AngryEra | Smart Markers** section in the game's keybinding menu provides actions for assigning Star, Circle, Diamond, Triangle, Moon, Square, X, or Skull to either your current target or mouseover unit.
+
+Assigning a marker that is already on the selected unit leaves it in place instead of toggling it off. The **Clear All Raid Targets** keybinding removes every active raid target icon.
 
 Using AngryEra as a raider
 ------------------------------
