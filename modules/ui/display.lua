@@ -755,14 +755,6 @@ function AngryEra:UpdateDisplayed()
         end)
     end
 
-    if type(self.NotifyDisplayedNoteChanged) == "function" then
-        pcall(self.NotifyDisplayedNoteChanged, self, {
-            Page = renderedPage,
-            RenderedText = text,
-            MergedVariables = mergedVars,
-        })
-    end
-
     -- Render
     self.display_text:Clear()
     local lines = { strsplit("\n", text) }
@@ -784,4 +776,12 @@ function AngryEra:UpdateDisplayed()
     C_Timer.After(0.01, function()
         self:UpdateBackdrop()
     end)
+
+    if type(self.NotifyDisplayedNoteChanged) == "function" then
+        pcall(self.NotifyDisplayedNoteChanged, self, {
+            Page = renderedPage,
+            RenderedText = text,
+            MergedVariables = mergedVars,
+        })
+    end
 end

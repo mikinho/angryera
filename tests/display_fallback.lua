@@ -7,6 +7,8 @@ local function TestHash(value)
 end
 
 local currentTime = 1000
+local unpackValues = unpack or rawget(table, "unpack")
+
 function _G.time()
     return currentTime
 end
@@ -15,7 +17,7 @@ function _G.strsplit(separator, text)
     for piece in (text .. separator):gmatch("([^" .. separator .. "]*)" .. separator) do
         parts[#parts + 1] = piece
     end
-    return unpack(parts)
+    return unpackValues(parts)
 end
 _G.C_Timer = {
     After = function() end,
