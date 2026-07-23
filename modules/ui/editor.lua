@@ -969,11 +969,6 @@ local function AngryEra_HighlightNames()
         if selectedId and selectedId > 0 then
             AngryEra:UpdateContents(selectedId, text)
         end
-
-        -- Re-enable the Send button since we just saved
-        if AngryEra.window.button_display then
-            AngryEra.window.button_display:SetDisabled(false)
-        end
     end
 end
 
@@ -1964,7 +1959,8 @@ function AngryEra:UpdateSelected(destructive)
     end
     local page = AngryAssign_Pages[self:SelectedId()]
     local canEdit = self:CanEditEntityLocally(page)
-    local canPublish = self:CanLocalPlayerPublish("display")
+    local canDisplay = self:CanLocalPlayerPublish("display")
+    local canOutput = self:CanLocalPlayerOutput()
     if destructive or not self.window.text.button:IsEnabled() then
         if page then
             self.window.text:SetText(page.Contents)
@@ -1975,8 +1971,8 @@ function AngryEra:UpdateSelected(destructive)
     end
     if page and canEdit then
         self.window.button_revert:SetDisabled(not self.window.text.button:IsEnabled())
-        self.window.button_display:SetDisabled(self.window.text.button:IsEnabled() or not canPublish)
-        self.window.button_output:SetDisabled(self.window.text.button:IsEnabled() or not canPublish)
+        self.window.button_display:SetDisabled(self.window.text.button:IsEnabled() or not canDisplay)
+        self.window.button_output:SetDisabled(self.window.text.button:IsEnabled() or not canOutput)
         -- Always enable Restore button so users can see the menu (even if empty)
         self.window.button_restore:SetDisabled(false)
         self.window.text:SetDisabled(false)

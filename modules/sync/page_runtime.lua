@@ -197,6 +197,14 @@ local function IsAuthorized(self, sender, action)
     return ok and authorized == true
 end
 
+local function IsCurrentDisplayAuthority(self, sender)
+    if not IsAuthorized(self, sender, "display") or type(self.GetGroupRole) ~= "function" then
+        return false
+    end
+    local ok, role = pcall(self.GetGroupRole, self, sender)
+    return ok and role == "leader"
+end
+
 local function CanPublish(self, action)
     if type(self.CanLocalPlayerPublish) ~= "function" then
         return false
@@ -1639,6 +1647,70 @@ function AngryEra:BuildActivePageRequestResponse(auth, payload)
     }
 end
 
+-- A new leader can legitimately select an unchanged page that originated on
+-- this installation. Cache only that leader/session's render context so its
+-- following DISPLAY can resolve; never materialize the relay into local data.
+local function AcceptLocalOwnerRelayContext(self, capture, auth, payload)
+    local incoming = payload.Page
+    if not IsCurrentDisplayAuthority(self, auth.Sender) then
+        return false, "local-namespace-collision"
+    end
+
+    local existingEntry = capture.Indexed.BySyncId[incoming.SyncId]
+    local existing = existingEntry and existingEntry.Kind == "page" and existingEntry.Record or nil
+    local localState = rawget(capture.EntityLocal, incoming.SyncId)
+    if
+        not IsPlainTable(existing)
+        or rawget(existing, "OwnerId") ~= capture.Meta.InstallationId
+        or not IsPlainTable(localState)
+        or rawget(localState, "OwnedLocally") ~= true
+        or not StoredPageMatchesWire(existing, incoming)
+    then
+        return false, "local-namespace-collision"
+    end
+
+    local reference = ReferenceFromUpsert(payload)
+    local pendingReady = PendingMatchesReference(capture.PendingDisplay, auth, reference)
+    local nextContexts, contextError =
+        BuildNextContexts(capture.Contexts, auth, payload, capture.DisplayReference, capture.PendingDisplay)
+    if not nextContexts then
+        return false, contextError
+    end
+
+    local existingSnapshot = SnapshotFields(existing)
+    if not IsAuthorized(self, auth.Sender, "pageUpsert") then
+        return false, "page-upsert-authorization-changed"
+    end
+    if
+        not IsCurrentDisplayAuthority(self, auth.Sender)
+        or not FieldsMatch(existing, existingSnapshot)
+        or not StoredPageMatchesWire(existing, incoming)
+    then
+        return false, "local-namespace-collision"
+    end
+    local committed, commitError = CommitContextState(self, capture, nextContexts)
+    if not committed then
+        return false, commitError
+    end
+
+    return true,
+        {
+            Applied = false,
+            NoOp = false,
+            ContextOnly = true,
+            Created = false,
+            LocalOwnerRelay = true,
+            LocalId = existingEntry.Id,
+            SyncId = incoming.SyncId,
+            RevisionId = incoming.RevisionId,
+            ContextRevisionId = payload.ContextRevisionId,
+            ContextUpdated = true,
+            PendingDisplayReady = pendingReady,
+            PendingDisplayPayload = pendingReady and Clone(capture.PendingDisplay.Payload) or nil,
+            UIRefreshed = false,
+        }
+end
+
 local function AcceptPageUpsert(self, auth, payload, options)
     local safeOptions, optionsError = ValidateAcceptOptions(options)
     if not safeOptions then
@@ -1667,7 +1739,7 @@ local function AcceptPageUpsert(self, auth, payload, options)
     end
     local incoming = safePayload.Page
     if incoming.OwnerId == capture.Meta.InstallationId then
-        return false, "local-namespace-collision"
+        return AcceptLocalOwnerRelayContext(self, capture, safeAuth, safePayload)
     end
 
     local existingEntry = capture.Indexed.BySyncId[incoming.SyncId]

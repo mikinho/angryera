@@ -72,6 +72,23 @@ activeOutput = AngryEra:RenderPageForChatOutput({
 activeRenderFailure = false
 assert(activeOutput == "", "Active chat output must remain blank when its exact tuple is unavailable")
 
+local outputPermissionChecks = 0
+local deniedOutputMessage
+function AngryEra:CanLocalPlayerOutput()
+    outputPermissionChecks = outputPermissionChecks + 1
+    return false
+end
+function AngryEra:Print(message)
+    deniedOutputMessage = message
+end
+_G.RED_FONT_COLOR_CODE = "<red>"
+AngryEra:OutputDisplayed(1)
+assert(outputPermissionChecks == 1, "chat output should use its independent local authority check")
+assert(
+    deniedOutputMessage and deniedOutputMessage:find("permission to output", 1, true),
+    "denied chat output should explain the permission failure"
+)
+
 local outputId = false
 function AngryEra:OutputDisplayed(id)
     outputId = id

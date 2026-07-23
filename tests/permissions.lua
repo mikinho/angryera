@@ -107,6 +107,10 @@ _G.Enum = {
 }
 
 assert(loadfile("modules/permissions.lua"))("AngryEra", app)
+assert(
+    AngryEra.permissionActions.leaderOnly.display and not AngryEra.permissionActions.normal.display,
+    "shared display selection should be classified as leader-only"
+)
 
 local function SetRoster(entries, isRaid)
     groupRoster = entries
@@ -125,6 +129,7 @@ SetRoster({
     { name = "Viewer-Realm", rank = 0 },
 })
 assert(AngryEra:CanReceiveFrom("PugLeader-Realm", "pageUpsert"), "A non-officer group leader should be trusted")
+assert(AngryEra:CanReceiveFrom("PugLeader-Realm", "display"), "The current group leader should control display")
 assert(AngryEra:CanReceiveFrom("PugLeader-Realm", "delete"), "The group leader should pass leader-only actions")
 
 SetGuild({
@@ -147,6 +152,7 @@ SetGuild({
     { name = "OfficerMember-Realm", role = 3 },
 })
 assert(AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "An officer assistant should be trusted")
+assert(not AngryEra:CanReceiveFrom("Officer-Realm", "display"), "An officer assistant must not control display")
 assert(not AngryEra:CanReceiveFrom("OrdinaryAssist-Realm", "pageUpsert"), "An ordinary assistant should be rejected")
 assert(not AngryEra:CanReceiveFrom("OfficerMember-Realm", "pageUpsert"), "An officer without assist should be rejected")
 
@@ -157,6 +163,7 @@ SetRoster({
     { name = "DirectMember-Realm", rank = 0 },
 })
 assert(AngryEra:CanReceiveFrom("DirectAssist-Realm", "pageUpsert"), "A directly trusted assistant should qualify")
+assert(not AngryEra:CanReceiveFrom("DirectAssist-Realm", "display"), "Direct trust must not grant display control")
 config.trustedPublishers = "DirectMember-Realm"
 assert(not AngryEra:CanReceiveFrom("DirectMember-Realm", "pageUpsert"), "Allowlisting must not grant assist rank")
 
@@ -168,6 +175,10 @@ SetRoster({
     { name = "AnyMember-Realm", rank = 0 },
 })
 assert(AngryEra:CanReceiveFrom("AnyAssist-Realm", "pageUpsert"), "The explicit override should trust assistants")
+assert(
+    not AngryEra:CanReceiveFrom("AnyAssist-Realm", "display"),
+    "The assistant override must not grant display control"
+)
 assert(not AngryEra:CanReceiveFrom("AnyMember-Realm", "pageUpsert"), "The assistant override should reject members")
 assert(not AngryEra:CanReceiveFrom("AnyAssist-Realm", "delete"), "Assistants must never pass destructive actions")
 
@@ -255,6 +266,8 @@ assert(not AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "Authorizatio
 currentPlayer = "Officer-Realm"
 groupRoster[2].rank = 1
 assert(AngryEra:CanLocalPlayerPublish("pageUpsert"), "A local officer assistant should publish normal changes")
+assert(not AngryEra:CanLocalPlayerPublish("display"), "A local assistant must not publish display changes")
+assert(AngryEra:CanLocalPlayerOutput(), "A local raid assistant should retain group-chat output authority")
 assert(not AngryEra:CanLocalPlayerPublish("delete"), "A local assistant should not publish destructive changes")
 assert(
     AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
@@ -306,19 +319,24 @@ assert(
     AngryEra:CanLocalPlayerPublish("pageUpsert"),
     "Any current assistant may attempt a normal change for receivers to authorize"
 )
+assert(not AngryEra:CanLocalPlayerPublish("display"), "An ordinary assistant must not attempt display changes")
+assert(AngryEra:CanLocalPlayerOutput(), "Guild trust must not be required for a raid assistant to output")
 config.allowAllAssistants = true
 config.trustedPublishers = "OrdinaryAssist-Realm"
 assert(
     AngryEra:CanLocalPlayerPublish("pageUpsert"),
     "Receiver preferences must not grant or revoke outbound attempt authority"
 )
+assert(not AngryEra:CanLocalPlayerPublish("display"), "Receiver overrides must not grant outbound display authority")
 AngryEra._protocolStarted = true
 AngryEra:PermissionsUpdated()
 assert(clearDisplayedCalls == 0, "Ignore-shared preference changes must not clear a locally selected display")
 currentPlayer = "OrdinaryMember-Realm"
 assert(not AngryEra:CanLocalPlayerPublish("pageUpsert"), "An ordinary member may not attempt shared changes")
+assert(not AngryEra:CanLocalPlayerOutput(), "An ordinary member must not output assignments to group chat")
 
 grouped = false
+assert(AngryEra:CanLocalPlayerOutput(), "Solo chat-output previews should remain available")
 assert(AngryEra:CanEditEntityLocally({ LocallyOwned = true }), "Local entities should remain editable while solo")
 assert(
     not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
@@ -354,6 +372,8 @@ app.libs = {
 assert(loadfile("modules/ui/editor.lua"))("AngryEra", app)
 
 local editorDisabled
+local displayButtonDisabled
+local outputButtonDisabled
 local function DisabledButton()
     return {
         SetDisabled = function() end,
@@ -374,8 +394,16 @@ AngryEra.window = {
         end,
     },
     button_revert = DisabledButton(),
-    button_display = DisabledButton(),
-    button_output = DisabledButton(),
+    button_display = {
+        SetDisabled = function(_, disabled)
+            displayButtonDisabled = disabled
+        end,
+    },
+    button_output = {
+        SetDisabled = function(_, disabled)
+            outputButtonDisabled = disabled
+        end,
+    },
     button_restore = DisabledButton(),
     button_menu = DisabledButton(),
 }
@@ -402,6 +430,18 @@ assert(editorDisabled == true, "Editor Save controls must disable without an aut
 authoritativePageContextAvailable = true
 AngryEra:UpdateSelected()
 assert(editorDisabled == false, "Editor Save controls should enable when the authoritative context is available")
+
+currentPlayer = "Officer-Realm"
+SetRoster({
+    { name = "PugLeader-Realm", rank = 2 },
+    { name = "Officer-Realm", rank = 1 },
+})
+AngryEra:UpdateSelected()
+assert(displayButtonDisabled == true, "Assistant editor Send should remain disabled without display authority")
+assert(
+    outputButtonDisabled == false,
+    "Assistant editor Output should remain enabled independently of display authority"
+)
 
 local hierarchyRefreshes = 0
 AngryEra.window = nil

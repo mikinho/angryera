@@ -68,7 +68,7 @@ Permissions apply to publishing shared mutations, not to private library use.
 
 | Action | Raid leader | Raid assistant AND (guild officer OR directly allowlisted) | Other member |
 | --- | --- | --- | --- |
-| Display an assignment | Allowed | Allowed | Denied |
+| Display an assignment | Allowed | Denied | Denied |
 | Add or update shared content | Allowed | Allowed | Denied |
 | Rename shared content | Allowed | Allowed | Denied |
 | Reorder inside a synchronized root | Allowed | Allowed | Denied |
@@ -80,13 +80,14 @@ Permissions apply to publishing shared mutations, not to private library use.
 Additional rules:
 
 - A raid leader is trusted even when not a guild officer.
+- Only the current raid or party leader may select or clear the shared display.
 - Raid-assistant status alone never grants AngryEra write authority.
 - A guild officer who is not a raid assistant has no shared write authority.
 - An explicit allowlist can grant a raid assistant non-destructive shared
   proposal authority. It never elevates a non-assistant.
 - `Allow All Assistants` may remain as an explicit override and defaults off.
 - `Allow All Assistants` never elevates a non-assistant and never bypasses
-  leader-only actions.
+  leader-only actions, including shared display selection.
 - Destructive shared actions remain raid-leader-only even when an assistant is
   allowlisted.
 - Permission decisions are receiver-local. Rejected packets never mutate local
@@ -149,6 +150,8 @@ variables.
 
 - The Output keybinding renders the actively displayed page.
 - The editor Output button renders the page selected in the editor.
+- Group-chat output is available to the current leader and raid assistants; it
+  does not grant or exercise shared display authority.
 - The on-screen display prefers the exact active snapshot. When that snapshot
   is unavailable and the displayed page is locally owned, the display falls
   back to local hierarchy data instead of rendering nothing. Remote-owned
@@ -245,6 +248,11 @@ tombstone operations. The assistant receives `CHANGE_RESULT`.
 Active-page-only clients that have not opted into hierarchy synchronization
 still receive `PAGE_UPSERT`. It contains ordered ancestor variable layers so
 the page renders identically without importing the hierarchy.
+
+Active-page `PAGE_UPSERT` does not overwrite a receiver's locally owned source.
+During leader handoff, an identical relay from the current leader may provide
+volatile display context. Changed owner revisions require the canonical
+`CHANGE_PROPOSE`/`DELTA` path.
 
 ## Entity revisions
 

@@ -17,13 +17,13 @@ local warnedPermission = false
 
 local NORMAL_ACTIONS = {
     pageUpsert = true,
-    display = true,
     categoryUpsert = true,
     reorder = true,
     changeProposal = true,
 }
 
 local LEADER_ONLY_ACTIONS = {
+    display = true,
     manifest = true,
     delete = true,
     tombstone = true,
@@ -256,6 +256,17 @@ function AngryEra:CanLocalPlayerPublish(action)
         return true
     end
     return role == "assistant"
+end
+
+--- Returns whether the local player may output assignments to group chat.
+-- Chat output does not select the shared display. Raid/party leaders and raid
+-- assistants may output; ordinary members may not.
+function AngryEra:CanLocalPlayerOutput()
+    if not IsGrouped() then
+        return true
+    end
+    local role = self:GetGroupRole(PlayerFullName())
+    return role == "leader" or role == "assistant"
 end
 
 --- Returns whether an entity may be edited in place.

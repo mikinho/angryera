@@ -9,6 +9,8 @@ local members = {
     ["alpha-realm"] = "assistant",
     ["beta-realm"] = "member",
 }
+local displayRequiresLeader = false
+local localDisplayAuthority = true
 local sentMessages = {}
 local printedMessages = {}
 
@@ -112,11 +114,21 @@ function AngryEra:CanReceiveFrom(player, action)
     if action == "version" or action == "request" then
         return true
     end
+    if action == "display" and displayRequiresLeader then
+        return role == "leader"
+    end
     return (action == "display" or action == "pageUpsert") and (role == "leader" or role == "assistant")
 end
 
 function AngryEra:CanLocalPlayerPublish(action)
-    return action == "display" or action == "pageUpsert"
+    if action == "display" then
+        return localDisplayAuthority
+    end
+    return action == "pageUpsert"
+end
+
+function AngryEra:IsPlayerRaidLeader()
+    return localDisplayAuthority
 end
 
 function AngryEra:SendCommMessage(prefix, data, channel, target, priority)
@@ -703,6 +715,41 @@ assert(failedBuildCalls == 2, "The response builder should run again after the c
 AngryEra.BuildActivePageRequestResponse = savedBuildPageResponse
 
 sentMessages = {}
+local savedBuildDisplayResponse = AngryEra.BuildActiveDisplayRequestResponse
+local displayResponseBuildCalls = 0
+function AngryEra:BuildActiveDisplayRequestResponse(auth, payload)
+    displayResponseBuildCalls = displayResponseBuildCalls + 1
+    return savedBuildDisplayResponse(self, auth, payload)
+end
+
+localDisplayAuthority = false
+local prePromotionDisplayRequest = BuildRemoteEnvelope("transient-display-request", "DISPLAY_REQUEST", {})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, prePromotionDisplayRequest, "WHISPER", "Beta-Realm")
+AssertError(accepted, result, "not-display-authority", "display request before local authority is ready")
+assert(#sentMessages == 0, "A pre-promotion display request must not send traffic")
+assert(displayResponseBuildCalls == 0, "A non-authority request must stop before response planning")
+
+localDisplayAuthority = true
+local postPromotionDisplayRequest = BuildRemoteEnvelope("transient-display-request", "DISPLAY_REQUEST", {}, {
+    Sequence = 2,
+})
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, postPromotionDisplayRequest, "WHISPER", "Beta-Realm")
+assert(accepted, result or "A failed pre-promotion plan must not throttle the post-promotion response")
+assert(displayResponseBuildCalls == 1, "Authority recovery should build the display response once")
+assert(#sentMessages == 2, "The recovered display response should send its page and display")
+
+local repeatedPostPromotionDisplayRequest = BuildRemoteEnvelope("transient-display-request", "DISPLAY_REQUEST", {}, {
+    Sequence = 3,
+})
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, repeatedPostPromotionDisplayRequest, "WHISPER", "Beta-Realm")
+AssertError(accepted, result, "throttled", "successful recovered display response")
+assert(displayResponseBuildCalls == 1, "A successful plan should retain the existing response throttle")
+assert(#sentMessages == 2, "The successful-plan throttle must prevent response amplification")
+AngryEra.BuildActiveDisplayRequestResponse = savedBuildDisplayResponse
+
+sentMessages = {}
 local displayRequestEncoded, displayRequestEnvelope =
     BuildRemoteEnvelope("remote-display-request", "DISPLAY_REQUEST", {})
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, displayRequestEncoded, "RAID", "Alpha-Realm")
@@ -823,6 +870,42 @@ local requestedRemoteDisplay = BuildRemoteEnvelope("remote-request-response", "D
 })
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, requestedRemoteDisplay, "WHISPER", "Alpha-Realm")
 assert(accepted and not result.RequestNeeded, "Correlated upsert then display should use exact cached tuple")
+
+-- Authorization is re-evaluated for every DISPLAY, so a former leader cannot
+-- keep driving the display after becoming an otherwise-qualified assistant.
+displayRequiresLeader = true
+members["alpha-realm"] = "leader"
+members["beta-realm"] = "assistant"
+local preHandoffDisplay = BuildRemoteEnvelope("leader-handoff-alpha", "DISPLAY", {
+    Displayed = false,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, preHandoffDisplay, "RAID", "Alpha-Realm")
+assert(accepted, result)
+
+members["alpha-realm"] = "assistant"
+members["beta-realm"] = "leader"
+assert(
+    AngryEra:CanReceiveFrom("Alpha-Realm", "pageUpsert"),
+    "The former leader should remain a qualified assistant for page updates"
+)
+local formerLeaderDisplay = BuildRemoteEnvelope("leader-handoff-alpha", "DISPLAY", {
+    Displayed = false,
+}, {
+    Sequence = 2,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, formerLeaderDisplay, "RAID", "Alpha-Realm")
+AssertError(accepted, result, "unauthorized", "display from a leader demoted to qualified assistant")
+
+local newLeaderDisplay = BuildRemoteEnvelope("leader-handoff-beta", "DISPLAY", {
+    Displayed = false,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, newLeaderDisplay, "RAID", "Beta-Realm")
+assert(accepted, result or "The newly promoted leader should control the display immediately")
+
+displayRequiresLeader = false
+members["alpha-realm"] = "assistant"
+members["beta-realm"] = "member"
+AngryEra:ResetProtocolPeers()
 
 members["beta-realm"] = "assistant"
 local firstDisplaySessionPacket = BuildRemoteEnvelope("beta-display-session-1", "DISPLAY", {

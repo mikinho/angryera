@@ -148,7 +148,7 @@ end
 --- Outputs rendered page content to current group chat channel.
 -- @tparam[opt] number id Page id, defaults to currently displayed id.
 function AngryEra:OutputDisplayed(id)
-    if not self:CanLocalPlayerPublish("display") then
+    if type(self.CanLocalPlayerOutput) ~= "function" or not self:CanLocalPlayerOutput() then
         self:Print(RED_FONT_COLOR_CODE .. "You don't have permission to output a page.|r")
         return
     end

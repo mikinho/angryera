@@ -53,9 +53,9 @@ During raids, whenever any change in assignments occurs, the new assignments wil
 Using AngryEra as an officer/raid assistant
 -------------------------------------------
 
-Shared page changes and on-screen display requests are always accepted from the current group leader. A raid assistant may also publish non-destructive changes when that assistant is a guild officer (or higher) in the receiver's guild, or is named in the receiver's **Trusted Assistants** setting. Officer rank without raid assist does not grant shared write access, and raid assist alone is not enough.
+Shared page changes are always accepted from the current group leader. A raid assistant may also publish non-destructive page changes when that assistant is a guild officer (or higher) in the receiver's guild, or is named in the receiver's **Trusted Assistants** setting. Officer rank without raid assist does not grant shared write access, and raid assist alone is not enough. The current group leader alone controls which page is shown on-screen or clears the shared display.
 
-Each installation applies its own receiver policy and rejects unauthorized messages. **Leader Only** rejects assistant changes, while **Ignore Shared Changes** keeps the local library private. **Allow All Raid Assistants** is an explicit override for groups where every assistant should be trusted; it is disabled by default. Creating, organizing, deleting, importing, and exporting private local content does not require raid authority.
+Each installation applies its own receiver policy and rejects unauthorized messages. **Leader Only** rejects assistant page changes, while **Ignore Shared Changes** keeps the local library private. **Allow All Raid Assistants** is an explicit override for groups where every assistant should be trusted to publish non-destructive page changes; it never grants shared display control and is disabled by default. Creating, organizing, deleting, importing, and exporting private local content does not require raid authority.
 
 You will likely want to configure a keybinding for "Toggle Window" in the game keybindings.  This brings up the edit window, which is what officers and raid assistants will use to modify the assignment pages.  The edit window can be scaled up or down via the "Scale" parameter in the configuration menu (or via "/aa scale").
 
@@ -63,11 +63,12 @@ The edit window contains a list of assignment pages you have on the left.  When 
 
 When editing pages, you'll have several buttons of interest:
 
-* "Save" will become available after you've begun changing a page. It commits the draft, updates the page timestamp, and sends the updated version to everyone online in the guild (replacing whatever version they may have had). "Save" does not change which page is currently displayed on-screen, but if the page you edited is the one being displayed, everyone will immediately see the new version (and if they had hidden their display, it will re-appear).
+* "Save" will become available after you've begun changing a page. It commits the draft, updates the page timestamp, and publishes the updated page to the group. "Save" does not select a different page. When the raid leader saves the displayed page, its exact updated revision is also made the shared on-screen version. A qualified assistant may publish the page edit, but the leader retains control of the shared display revision.
 * "Revert" will become available after you've begun changing a page.  It will abandon your current edits, going back to the previous version of the page.
 * "Restore" lets you choose a historical version and loads it into the editor as a draft. Nothing is sent until you click "Save"; click "Revert" to discard the restored draft and return to the current stored version.
-* "Send and Display" is only available while not actively editing a page.  It will update the timestamp on the page, send the current version to everyone online in the guild (replacing whatever version they may have had), and, if in a raid, make it the current on-screen display for everyone in the raid.  If you're not in a raid, it will display on-screen for you personally, so you can preview it.
-* "Clear Displayed" will remove whatever on-screen display was currently in place, ie: everyone in the raid will now see nothing.  It doesn't affect the contents of any pages.
+* "Send and Display" is only available to the current group leader while grouped and only while not actively editing a page. It publishes the current version and makes it the shared on-screen display. If you're not in a group, it displays on-screen for you personally so you can preview it.
+* "Output" is available to the current group leader and raid assistants. It sends the page shown in the editor to group chat without changing the shared display.
+* "Clear Displayed" removes the shared on-screen display when used by the current group leader. For anyone else it clears only the local display. It doesn't affect page contents.
 
 Within assignment pages, you can use raid symbols such as {rt1}, {rt2}, {circle}, {star}, etc.  {hs} or {healthstone} will insert the icon for a healthstone, and {bl} or {bloodlust} will insert the icon for bloodlust.  You can insert any other icon in the game using this syntax: {icon spell_holy_sealofprotection}.  Icon names can be looked up by going to a spell's page on [Wowhead](http://www.wowhead.com) and then clicking on the icon.  You can also use any UI escape sequences, see [WoWWiki's page](http://www.wowwiki.com/UI_escape_sequences) for a full list.
 

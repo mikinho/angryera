@@ -510,6 +510,14 @@ local function SafeCanPublish(self, action)
     return ok and allowed == true
 end
 
+local function IsLocalDisplayAuthority(self)
+    if not SafeCanPublish(self, "display") or type(self.IsPlayerRaidLeader) ~= "function" then
+        return false
+    end
+    local ok, isLeader = pcall(self.IsPlayerRaidLeader, self)
+    return ok and isLeader == true
+end
+
 local function RequiredAction(messageType)
     if messageType == "VERSION_QUERY" or messageType == "VERSION" then
         return "version"
@@ -1061,6 +1069,11 @@ end
 function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
     local now = Now()
     CleanupRecords(displayRequestReplies, now)
+    -- Do not let a request received during the roster handoff consume the
+    -- leader's post-promotion response throttle.
+    if not IsLocalDisplayAuthority(self) then
+        return false, "not-display-authority"
+    end
     local throttleKey = CurrentDisplayThrottleKey(self, auth.Sender)
     if displayRequestReplies[throttleKey] then
         return false, "throttled"

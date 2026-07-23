@@ -1166,4 +1166,141 @@ AssertEqual(
     "missing remote context preserves revision identity"
 )
 
+-- A new display authority may relay an unchanged page back to its owning
+-- installation. The relay only supplies the sender-bound volatile context
+-- required by the following DISPLAY; it must never replace local-owned data.
+ResetStorage()
+local localOwnerPage = AngryAssign_Pages[1]
+local localOwnerWire = {
+    Kind = "page",
+    SyncId = localPageSyncId,
+    OwnerId = localInstallationId,
+    Revision = 1,
+    UpdatedAt = currentTime,
+    UpdatedBy = "Viewer-Realm",
+    ParentSyncId = localCategorySyncId,
+    Order = 1,
+    Name = localOwnerPage.Name,
+    Vars = localOwnerPage.Vars,
+    Contents = localOwnerPage.Contents,
+}
+localOwnerWire.RevisionId = assert(schema.BuildEntityRevisionId(localOwnerWire, TestHash))
+localOwnerPage.Revision = localOwnerWire.Revision
+localOwnerPage.RevisionId = localOwnerWire.RevisionId
+localOwnerPage.UpdatedAt = localOwnerWire.UpdatedAt
+localOwnerPage.UpdatedBy = localOwnerWire.UpdatedBy
+local localOwnerPayload = assert(activePage.BuildPageUpsertPayload(localOwnerWire, {
+    {
+        SyncId = localCategorySyncId,
+        Vars = "",
+    },
+}, TestHash))
+local localOwnerDisplay = {
+    Displayed = true,
+    SyncId = localOwnerWire.SyncId,
+    RevisionId = localOwnerWire.RevisionId,
+    ContextRevisionId = localOwnerPayload.ContextRevisionId,
+}
+local pagesBeforeLocalOwnerRelay = AngryAssign_Pages
+local categoriesBeforeLocalOwnerRelay = AngryAssign_Categories
+local metaBeforeLocalOwnerRelay = AngryAssign_Meta
+local stateBeforeLocalOwnerRelay = AngryAssign_State
+local provenanceBeforeLocalOwnerRelay = AngryAssign_Meta.EntityLocal[localPageSyncId]
+local managedScopesBeforeLocalOwnerRelay = provenanceBeforeLocalOwnerRelay.ManagedScopes
+local indexesBeforeLocalOwnerRelay = AngryEra.entitySyncIndexes
+
+accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), localOwnerPayload)
+Assert(accepted and result.ContextOnly and result.LocalOwnerRelay, result)
+Assert(not result.Applied and not result.Created, "local-owner relay caches context without applying a page revision")
+AssertEqual(result.LocalId, 1, "local-owner relay resolves the existing local page")
+Assert(AngryAssign_Pages == pagesBeforeLocalOwnerRelay, "local-owner relay preserves the pages table")
+Assert(AngryAssign_Categories == categoriesBeforeLocalOwnerRelay, "local-owner relay preserves the categories table")
+Assert(AngryAssign_Meta == metaBeforeLocalOwnerRelay, "local-owner relay preserves metadata")
+Assert(AngryAssign_State == stateBeforeLocalOwnerRelay, "local-owner relay preserves display state")
+Assert(AngryAssign_Pages[1] == localOwnerPage, "local-owner relay preserves the local page record")
+Assert(
+    AngryAssign_Meta.EntityLocal[localPageSyncId] == provenanceBeforeLocalOwnerRelay
+        and provenanceBeforeLocalOwnerRelay.ManagedScopes == managedScopesBeforeLocalOwnerRelay,
+    "local-owner relay preserves local provenance"
+)
+Assert(AngryEra.entitySyncIndexes == indexesBeforeLocalOwnerRelay, "local-owner relay does not install new indexes")
+local localOwnerContext =
+    AngryEra:GetActivePageRenderContext(localPageSyncId, localOwnerWire.RevisionId, localOwnerPayload.ContextRevisionId)
+Assert(localOwnerContext ~= nil, "local-owner relay caches the exact volatile context")
+AssertEqual(localOwnerContext.Sender, "Leader-Realm", "local-owner relay binds context to the display authority")
+
+accepted, result = AngryEra:AcceptActiveDisplay(Auth(), localOwnerDisplay)
+Assert(accepted and result.Applied and not result.RequestNeeded, result)
+AssertEqual(AngryAssign_State.displayed, 1, "proactive local-owner relay lets the leader display the existing page")
+Assert(AngryAssign_Pages == pagesBeforeLocalOwnerRelay, "display activation still preserves local-owned pages")
+Assert(AngryAssign_Meta == metaBeforeLocalOwnerRelay, "display activation still preserves local-owned metadata")
+local localOwnerActiveReference = AngryEra:GetActiveDisplayReference()
+AssertEqual(localOwnerActiveReference.Sender, "Leader-Realm", "active local-owner relay remains bound to the leader")
+
+-- DISPLAY can arrive before its PAGE_UPSERT and take the correlated request
+-- path. The exact local-owner relay must complete that pending display too.
+AngryEra:ResetActivePageTransientState()
+accepted, result = AngryEra:AcceptActiveDisplay(Auth(), localOwnerDisplay)
+Assert(accepted and result.RequestNeeded, result)
+Assert(AngryEra:GetPendingActiveDisplayRequest() ~= nil, "missing relay context creates a pending display")
+accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), localOwnerPayload, {
+    CorrelatedReply = true,
+})
+Assert(accepted and result.ContextOnly and result.PendingDisplayReady, result)
+Assert(result.PendingDisplayPayload ~= nil, "local-owner reply returns the exact pending display payload")
+accepted, result = AngryEra:AcceptActiveDisplay(Auth(), result.PendingDisplayPayload)
+Assert(accepted and not result.RequestNeeded, result)
+AssertEqual(AngryAssign_State.displayed, 1, "correlated local-owner relay completes the leader display")
+Assert(AngryAssign_Pages == pagesBeforeLocalOwnerRelay, "correlated relay still preserves local-owned pages")
+Assert(AngryAssign_Meta == metaBeforeLocalOwnerRelay, "correlated relay still preserves local-owned metadata")
+
+local changedLocalOwnerWire = DeepCopy(localOwnerWire)
+changedLocalOwnerWire.Contents = "Changed by relay"
+changedLocalOwnerWire.RevisionId = assert(schema.BuildEntityRevisionId(changedLocalOwnerWire, TestHash))
+local changedLocalOwnerPayload = assert(activePage.BuildPageUpsertPayload(changedLocalOwnerWire, {
+    {
+        SyncId = localCategorySyncId,
+        Vars = "",
+    },
+}, TestHash))
+local contextsBeforeChangedLocalOwnerRelay = AngryEra._activePageContexts
+accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), changedLocalOwnerPayload)
+AssertError(accepted, result, "local-namespace-collision", "changed local-owner relay")
+Assert(AngryEra._activePageContexts == contextsBeforeChangedLocalOwnerRelay, "changed relay does not mutate context")
+AssertEqual(localOwnerPage.Contents, "Private", "changed relay does not mutate local-owned content")
+
+accepted, result = AngryEra:AcceptActivePageUpsert(
+    Auth({
+        Sender = "Assistant",
+        SenderInstallationId = otherInstallationId,
+        SenderSessionId = "assistant_owner_relay",
+    }),
+    localOwnerPayload
+)
+AssertError(accepted, result, "local-namespace-collision", "assistant local-owner relay")
+Assert(
+    AngryEra._activePageContexts == contextsBeforeChangedLocalOwnerRelay,
+    "ordinary assistant cannot add a local-owner relay context"
+)
+
+local localOwnerPageAuthorizationChecks = 0
+authorization.pageUpsert = true
+authorizationHook = function(_, _, action)
+    if action == "pageUpsert" then
+        localOwnerPageAuthorizationChecks = localOwnerPageAuthorizationChecks + 1
+        if localOwnerPageAuthorizationChecks == 2 then
+            authorization.pageUpsert = false
+        end
+    end
+end
+accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), localOwnerPayload)
+AssertError(accepted, result, "page-upsert-authorization-changed", "revoked local-owner relay")
+AssertEqual(localOwnerPageAuthorizationChecks, 2, "local-owner relay rechecks page authority before context commit")
+Assert(
+    AngryEra._activePageContexts == contextsBeforeChangedLocalOwnerRelay,
+    "revoked local-owner relay cannot commit a volatile context"
+)
+authorizationHook = nil
+authorization.pageUpsert = true
+
 print(string.format("Active-page runtime tests passed (%d assertions).", assertions))

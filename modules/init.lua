@@ -540,8 +540,8 @@ function AngryEra:OnInitialize()
                     receiveMode = {
                         type = "select",
                         order = 1,
-                        name = "Receive Shared Changes",
-                        desc = "Choose who may change shared pages and displays on this installation",
+                        name = "Receive Shared Page Changes",
+                        desc = "Choose who may change shared pages on this installation; only the group leader controls the display",
                         values = {
                             standard = "Leader + Qualified Assistants",
                             leaderOnly = "Leader Only",
@@ -559,7 +559,7 @@ function AngryEra:OnInitialize()
                         type = "toggle",
                         order = 2,
                         name = "Allow All Raid Assistants",
-                        desc = "Explicitly trust every raid assistant for non-destructive shared changes",
+                        desc = "Explicitly trust every raid assistant for non-destructive shared page changes",
                         get = function(info)
                             return self:GetConfig("allowAllAssistants")
                         end,
@@ -572,7 +572,7 @@ function AngryEra:OnInitialize()
                         type = "input",
                         order = 3,
                         name = "Trusted Assistants",
-                        desc = "Names of raid assistants trusted directly for non-destructive changes (Name-Realm, separated by spaces or commas)",
+                        desc = "Names of raid assistants trusted directly for non-destructive page changes (Name-Realm, separated by spaces or commas)",
                         get = function(info)
                             return self:GetConfig("trustedPublishers")
                         end,

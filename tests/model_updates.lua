@@ -45,6 +45,8 @@ function AngryEra:UpdateTree()
     updateTreeCalls = updateTreeCalls + 1
 end
 
+function AngryEra:UpdateSelected() end
+
 function AngryEra:Print(message)
     printedMessages[#printedMessages + 1] = message
 end
@@ -56,6 +58,7 @@ end
 
 function AngryEra:SendPage(id)
     sentPageId = id
+    return true, "page-message"
 end
 
 function AngryEra:SendDisplay(id, force)
@@ -88,6 +91,10 @@ end
 
 function AngryEra:CanLocalPlayerPublish(action)
     return action == "display" and canPublishDisplay
+end
+
+function AngryEra:CanEditEntityLocally()
+    return true
 end
 
 function AngryEra:RemovePageRecord(id)
@@ -156,6 +163,41 @@ assert(
     autoAdvanceRetryCancellations == cancellationsBeforeActiveUpdate + 1,
     "an active page update should cancel a superseded auto-advance retry after activation"
 )
+
+sentPageId = nil
+canPublishDisplay = false
+local displaysBeforeAssistantUpdate = #sentDisplays
+local cancellationsBeforeAssistantUpdate = autoAdvanceRetryCancellations
+AngryEra:PageUpdated(42)
+assert(sentPageId == 42, "an assistant should publish an active-page edit as PAGE_UPSERT")
+assert(
+    #sentDisplays == displaysBeforeAssistantUpdate,
+    "an assistant active-page edit must not replace the leader-controlled display"
+)
+assert(
+    autoAdvanceRetryCancellations == cancellationsBeforeAssistantUpdate,
+    "a page-only assistant publication must not alter display retry state"
+)
+
+sentPageId = nil
+local showsBeforeAssistantSave = showDisplayCalls
+local notificationsBeforeAssistantSave = displayNotificationCalls
+AngryEra:UpdateContents(42, "Assistant revision")
+assert(sentPageId == 42, "assistant Save should publish the active page without selecting it")
+assert(showDisplayCalls == showsBeforeAssistantSave, "assistant Save must not reopen an unchanged leader display")
+assert(
+    displayNotificationCalls == notificationsBeforeAssistantSave,
+    "assistant Save must not announce an unchanged leader display"
+)
+
+sentPageId = nil
+local showsBeforeAssistantRename = showDisplayCalls
+local renamed, renameError = AngryEra:RenamePage(42, "Assistant rename")
+assert(renamed and not renameError, "assistant rename should remain a valid page edit")
+assert(sentPageId == 42, "assistant rename should publish the active page without selecting it")
+assert(showDisplayCalls == showsBeforeAssistantRename, "assistant rename must not reopen an unchanged leader display")
+
+canPublishDisplay = true
 
 AngryAssign_State.displayed = nil
 displaySendOk = false

@@ -15,13 +15,15 @@ local unpackValues = unpack or rawget(table, "unpack")
 local libC = app.libs.libC
 
 local function PublishPageRevision(self, id)
-    if AngryAssign_State.displayed == id then
+    if AngryAssign_State.displayed == id and self:CanLocalPlayerPublish("display") then
         local published, publishResult, activatedLocally = self:SendDisplay(id, true)
         if activatedLocally == true and type(self.CancelAutoAdvancePublishRetry) == "function" then
             self:CancelAutoAdvancePublishRetry()
         end
         return published, publishResult, activatedLocally
     end
+    -- A qualified assistant may still publish an edit to the active page, but
+    -- only the current group leader may choose or replace the shared display.
     return self:SendPage(id, true)
 end
 
@@ -517,7 +519,7 @@ function AngryEra:RenamePage(id, nameOrFrame)
     page.Updated = time()
     page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
 
-    PublishPageRevision(self, id)
+    local published, publishResult, activatedLocally = PublishPageRevision(self, id)
     if AngryAssign_State.displayed ~= id then
         self:RefreshDisplayedPageAfterHierarchyMutation()
     end
@@ -525,8 +527,11 @@ function AngryEra:RenamePage(id, nameOrFrame)
 
     if AngryAssign_State.displayed == id then
         self:UpdateDisplayed()
-        self:ShowDisplay()
+        if activatedLocally == true then
+            self:ShowDisplay()
+        end
     end
+    ReportFailedDisplayPublish(self, id, published, publishResult, activatedLocally)
 
     return true
 end
@@ -737,13 +742,16 @@ function AngryEra:UpdateContents(id, value)
     page.Updated = time()
     page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
 
-    ReportFailedDisplayPublish(self, id, PublishPageRevision(self, id))
+    local published, publishResult, activatedLocally = PublishPageRevision(self, id)
+    ReportFailedDisplayPublish(self, id, published, publishResult, activatedLocally)
     self:UpdateSelected(true)
     if AngryAssign_State.displayed == id then
         self:UpdateDisplayed()
-        self:ShowDisplay()
-        if contents_updated then
-            self:DisplayUpdateNotification()
+        if activatedLocally == true then
+            self:ShowDisplay()
+            if contents_updated then
+                self:DisplayUpdateNotification()
+            end
         end
     end
 end
