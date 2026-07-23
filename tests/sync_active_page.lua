@@ -307,4 +307,462 @@ for key, value in pairs(sourcePageSnapshot) do
     AssertEqual(sourcePage[key], value, "failed build preserves source page " .. key)
 end
 
+local function LocalSyncId(kind, sequence)
+    return string.format("%s:%s:%d", installationId, kind, sequence)
+end
+
+local function MakeLocalCollections()
+    local categories = {
+        [1] = {
+            Id = 1,
+            SyncId = LocalSyncId("category", 10),
+            OwnerId = installationId,
+            Index = 5,
+            Name = "Top",
+            Vars = "top=yes",
+        },
+        [2] = {
+            Id = 2,
+            SyncId = LocalSyncId("category", 11),
+            OwnerId = installationId,
+            CategoryId = 1,
+            Index = 2,
+            Name = "Managed",
+            Vars = "managed=yes",
+        },
+        [3] = {
+            Id = 3,
+            SyncId = LocalSyncId("category", 12),
+            OwnerId = installationId,
+            CategoryId = 2,
+            Index = 3,
+            Name = "Parent",
+            Vars = "parent=yes",
+        },
+        [4] = {
+            Id = 4,
+            SyncId = LocalSyncId("category", 13),
+            OwnerId = installationId,
+            CategoryId = 3,
+            Index = 1,
+            Name = "Before",
+            Vars = "",
+        },
+    }
+    local pages = {
+        [100] = {
+            Id = 100,
+            SyncId = LocalSyncId("page", 20),
+            OwnerId = installationId,
+            CategoryId = 3,
+            Index = 10,
+            Name = "Target",
+            Vars = "page=yes",
+            Contents = "initial",
+        },
+        [101] = {
+            Id = 101,
+            SyncId = LocalSyncId("page", 22),
+            OwnerId = installationId,
+            CategoryId = 3,
+            Index = 5,
+            Name = "Page Before",
+            Vars = "",
+            Contents = "",
+        },
+        [102] = {
+            Id = 102,
+            SyncId = LocalSyncId("page", 21),
+            OwnerId = installationId,
+            CategoryId = 3,
+            Index = 10,
+            Name = "Target",
+            Vars = "",
+            Contents = "",
+        },
+        [200] = {
+            Id = 200,
+            SyncId = LocalSyncId("page", 30),
+            OwnerId = installationId,
+            Index = 10,
+            Name = "Orphan",
+            Vars = "",
+            Contents = "root",
+        },
+    }
+    return categories, pages
+end
+
+local function PreparationOptions(updatedAt, managedScopeId)
+    return {
+        UpdatedAt = updatedAt,
+        UpdatedBy = "Leader-Realm",
+        ManagedScopeId = managedScopeId,
+    }
+end
+
+local localCategories, localPages = MakeLocalCollections()
+local managedScopeId = localCategories[2].SyncId
+local prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2000, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "missing local revision should prepare")
+AssertEqual(preparation.RevisionAction, "initialized", "first preparation initializes revision metadata")
+AssertEqual(localPages[100].Revision, 1, "initial preparation starts at revision one")
+AssertEqual(localPages[100].RevisionId, prepared.Page.RevisionId, "prepared identity commits to the local page")
+AssertEqual(prepared.Page.Order, 3, "mixed siblings receive deterministic dense order")
+AssertEqual(prepared.Page.ParentSyncId, localCategories[3].SyncId, "direct parent maps to its SyncId")
+AssertEqual(#prepared.AncestorVariableLayers, 2, "managed boundary trims private ancestors")
+AssertEqual(prepared.AncestorVariableLayers[1].SyncId, managedScopeId, "managed root is the first layer")
+AssertEqual(prepared.AncestorVariableLayers[2].SyncId, localCategories[3].SyncId, "direct parent is the final layer")
+AssertEqual(preparation.BoundarySyncId, managedScopeId, "preparation reports the selected managed boundary")
+
+local overlayCategories, overlayPages = MakeLocalCollections()
+overlayCategories[2].CategoryId = 999
+local overlayPayload, overlayError = activePage.PrepareLocalPageUpsert(
+    overlayCategories,
+    overlayPages,
+    100,
+    PreparationOptions(2000, overlayCategories[2].SyncId),
+    TestHash
+)
+Assert(overlayPayload and not overlayError, "managed root ignores its private local parent overlay")
+AssertEqual(#overlayPayload.AncestorVariableLayers, 2, "private root overlay stays outside the managed context")
+
+local initializedRevisionId = localPages[100].RevisionId
+prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2001, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "unchanged local page should prepare")
+AssertEqual(preparation.RevisionAction, "unchanged", "unchanged preparation does not touch")
+AssertEqual(localPages[100].Revision, 1, "unchanged preparation does not bump the revision")
+AssertEqual(localPages[100].UpdatedAt, 2000, "unchanged preparation preserves the prior audit time")
+
+local topmostPayload, topmostError, topmostPreparation =
+    activePage.PrepareLocalPageUpsert(localCategories, localPages, 100, PreparationOptions(2002), TestHash)
+Assert(topmostPayload and not topmostError, "unmanaged local page should prepare")
+AssertEqual(#topmostPayload.AncestorVariableLayers, 3, "unmanaged context starts at the topmost ancestor")
+AssertEqual(
+    topmostPayload.AncestorVariableLayers[1].SyncId,
+    localCategories[1].SyncId,
+    "topmost ancestor is the fallback boundary"
+)
+AssertEqual(
+    topmostPreparation.RevisionAction,
+    "unchanged",
+    "changing only the render-context boundary does not touch the page"
+)
+AssertEqual(localPages[100].RevisionId, initializedRevisionId, "context boundary is excluded from page identity")
+
+local contextBeforeAncestorChange = prepared.ContextRevisionId
+localCategories[2].Vars = "managed=changed"
+prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2003, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "changed inherited variables should prepare")
+Assert(prepared.ContextRevisionId ~= contextBeforeAncestorChange, "ancestor variables change context identity")
+AssertEqual(preparation.RevisionAction, "unchanged", "ancestor variables do not touch the page revision")
+AssertEqual(localPages[100].Revision, 1, "ancestor-only changes leave page revision unchanged")
+
+localPages[100].Contents = "changed contents"
+prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2004, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "changed page contents should prepare")
+AssertEqual(preparation.RevisionAction, "touched", "changed contents touch the page")
+AssertEqual(localPages[100].Revision, 2, "changed contents increment exactly once")
+
+localPages[100].Name = "Renamed Target"
+prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2005, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "renamed page should prepare")
+AssertEqual(preparation.RevisionAction, "touched", "changed name touches the page")
+AssertEqual(localPages[100].Revision, 3, "changed name increments exactly once")
+
+localPages[100].Vars = "page=changed"
+prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2006, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "changed page variables should prepare")
+AssertEqual(preparation.RevisionAction, "touched", "changed page variables touch the page")
+AssertEqual(localPages[100].Revision, 4, "changed page variables increment exactly once")
+
+localPages[100].Index = 9
+prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2007, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "raw index change with stable dense order should prepare")
+AssertEqual(prepared.Page.Order, 3, "stable normalized placement keeps its dense order")
+AssertEqual(preparation.RevisionAction, "unchanged", "noncanonical index changes do not touch the page")
+AssertEqual(localPages[100].Revision, 4, "stable canonical placement preserves the revision")
+
+localPages[100].Index = 0
+prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2008, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "reordered page should prepare")
+AssertEqual(prepared.Page.Order, 1, "fractional local placement is normalized after reorder")
+AssertEqual(preparation.RevisionAction, "touched", "changed canonical order touches the page")
+AssertEqual(localPages[100].Revision, 5, "changed order increments exactly once")
+
+prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2009, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "repeated reordered page should prepare")
+AssertEqual(preparation.RevisionAction, "unchanged", "repeated preparation does not touch twice")
+AssertEqual(localPages[100].Revision, 5, "repeated preparation preserves the revision")
+
+localPages[100].CategoryId = 2
+prepared, preparationError, preparation = activePage.PrepareLocalPageUpsert(
+    localCategories,
+    localPages,
+    100,
+    PreparationOptions(2010, managedScopeId),
+    TestHash
+)
+Assert(prepared and not preparationError, "page moved inside its managed scope should prepare")
+AssertEqual(prepared.Page.ParentSyncId, managedScopeId, "moved page publishes its new direct parent")
+AssertEqual(#prepared.AncestorVariableLayers, 1, "moved page context ends at its new direct parent")
+AssertEqual(preparation.RevisionAction, "touched", "changed canonical parent touches the page")
+AssertEqual(localPages[100].Revision, 6, "changed parent increments exactly once")
+
+local orphanPayload, orphanError, orphanPreparation =
+    activePage.PrepareLocalPageUpsert(localCategories, localPages, 200, PreparationOptions(2011), TestHash)
+Assert(orphanPayload and not orphanError, "orphan page should prepare")
+AssertEqual(orphanPayload.Page.ParentSyncId, nil, "orphan page has no wire parent")
+AssertEqual(orphanPayload.Page.Order, 2, "orphan order includes root categories")
+AssertEqual(#orphanPayload.AncestorVariableLayers, 0, "orphan page has no ancestor layers")
+AssertEqual(orphanPreparation.BoundarySyncId, nil, "orphan page has no context boundary")
+AssertEqual(orphanPreparation.RevisionAction, "initialized", "orphan revision initializes once")
+
+local siblingCategories, siblingPages = MakeLocalCollections()
+local siblingScopeId = siblingCategories[2].SyncId
+assert(
+    activePage.PrepareLocalPageUpsert(
+        siblingCategories,
+        siblingPages,
+        100,
+        PreparationOptions(2012, siblingScopeId),
+        TestHash
+    )
+)
+siblingPages[101].Index = 20
+local siblingPayload, siblingError, siblingPreparation = activePage.PrepareLocalPageUpsert(
+    siblingCategories,
+    siblingPages,
+    100,
+    PreparationOptions(2013, siblingScopeId),
+    TestHash
+)
+Assert(siblingPayload and not siblingError, "sibling-driven placement change should prepare")
+AssertEqual(siblingPayload.Page.Order, 2, "sibling movement recomputes deterministic target order")
+AssertEqual(siblingPreparation.RevisionAction, "touched", "changed sibling-derived placement touches the page")
+AssertEqual(siblingPages[100].Revision, 2, "sibling-derived placement increments exactly once")
+
+local invalidCategories
+local invalidPages
+local invalidOptions
+local beforeFailure
+
+invalidCategories, invalidPages = MakeLocalCollections()
+invalidPages[100].Revision = 1
+beforeFailure = DeepCopy(invalidPages[100])
+local failedPreparation, failedPreparationError = activePage.PrepareLocalPageUpsert(
+    invalidCategories,
+    invalidPages,
+    100,
+    PreparationOptions(3000, invalidCategories[2].SyncId),
+    TestHash
+)
+AssertError(failedPreparation, failedPreparationError, "partial-revision-metadata", "partial revision metadata")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "partial revision failure is atomic")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+invalidPages[100].CategoryId = 999
+beforeFailure = DeepCopy(invalidPages[100])
+failedPreparation, failedPreparationError =
+    activePage.PrepareLocalPageUpsert(invalidCategories, invalidPages, 100, PreparationOptions(3001), TestHash)
+AssertError(failedPreparation, failedPreparationError, "missing-category", "missing ancestor")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "missing ancestor failure is atomic")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+invalidCategories[1].CategoryId = 3
+beforeFailure = DeepCopy(invalidPages[100])
+failedPreparation, failedPreparationError =
+    activePage.PrepareLocalPageUpsert(invalidCategories, invalidPages, 100, PreparationOptions(3002), TestHash)
+AssertError(failedPreparation, failedPreparationError, "cycle", "ancestor cycle")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "cycle failure is atomic")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+invalidCategories[2].Id = 999
+beforeFailure = DeepCopy(invalidPages[100])
+failedPreparation, failedPreparationError =
+    activePage.PrepareLocalPageUpsert(invalidCategories, invalidPages, 100, PreparationOptions(3003), TestHash)
+AssertError(failedPreparation, failedPreparationError, "category-id-mismatch", "stale ancestor reference")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "stale ancestor failure is atomic")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+beforeFailure = DeepCopy(invalidPages[100])
+failedPreparation, failedPreparationError = activePage.PrepareLocalPageUpsert(
+    invalidCategories,
+    invalidPages,
+    100,
+    PreparationOptions(3004, invalidCategories[4].SyncId),
+    TestHash
+)
+AssertError(failedPreparation, failedPreparationError, "managed-scope-not-ancestor", "stale managed scope reference")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "stale managed scope failure is atomic")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+invalidPages[100].Id = 999
+beforeFailure = DeepCopy(invalidPages[100])
+failedPreparation, failedPreparationError = activePage.PrepareLocalPageUpsert(
+    invalidCategories,
+    invalidPages,
+    100,
+    PreparationOptions(3005, invalidCategories[2].SyncId),
+    TestHash
+)
+AssertError(failedPreparation, failedPreparationError, "invalid-local-id", "stale page reference")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "stale page failure is atomic")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+invalidPages[300] = DeepCopy(invalidPages[100])
+invalidPages[300].Id = 300
+invalidPages[300].CategoryId = 2
+beforeFailure = DeepCopy(invalidPages[100])
+failedPreparation, failedPreparationError = activePage.PrepareLocalPageUpsert(
+    invalidCategories,
+    invalidPages,
+    100,
+    PreparationOptions(3006, invalidCategories[2].SyncId),
+    TestHash
+)
+AssertError(failedPreparation, failedPreparationError, "duplicate-local-sync-id", "duplicate target identity")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "duplicate target identity failure is atomic")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+invalidCategories[5] = DeepCopy(invalidCategories[3])
+invalidCategories[5].Id = 5
+invalidCategories[5].CategoryId = 1
+beforeFailure = DeepCopy(invalidPages[100])
+failedPreparation, failedPreparationError = activePage.PrepareLocalPageUpsert(
+    invalidCategories,
+    invalidPages,
+    100,
+    PreparationOptions(3007, invalidCategories[2].SyncId),
+    TestHash
+)
+AssertError(failedPreparation, failedPreparationError, "duplicate-local-sync-id", "duplicate ancestor identity")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "duplicate ancestor identity failure is atomic")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+beforeFailure = DeepCopy(invalidPages[100])
+local preparationHashCalls = 0
+failedPreparation, failedPreparationError = activePage.PrepareLocalPageUpsert(
+    invalidCategories,
+    invalidPages,
+    100,
+    PreparationOptions(3008, invalidCategories[2].SyncId),
+    function(value)
+        preparationHashCalls = preparationHashCalls + 1
+        if preparationHashCalls == 3 then
+            return "INVALID!"
+        end
+        return TestHash(value)
+    end
+)
+AssertError(failedPreparation, failedPreparationError, "context-hash-failed", "late payload validation failure")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "late payload failure does not initialize revision metadata")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+beforeFailure = DeepCopy(invalidPages[100])
+failedPreparation, failedPreparationError = activePage.PrepareLocalPageUpsert(
+    invalidCategories,
+    invalidPages,
+    100,
+    PreparationOptions(3009, invalidCategories[2].SyncId),
+    function(value)
+        invalidPages[101].Index = 20
+        return TestHash(value)
+    end
+)
+AssertError(failedPreparation, failedPreparationError, "stale-page-context", "context changes during preparation")
+Assert(DeepEqual(invalidPages[100], beforeFailure), "stale context does not initialize target revision metadata")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+beforeFailure = DeepCopy(invalidPages[100])
+local insertedDuplicate = false
+failedPreparation, failedPreparationError = activePage.PrepareLocalPageUpsert(
+    invalidCategories,
+    invalidPages,
+    100,
+    PreparationOptions(3010, invalidCategories[2].SyncId),
+    function(value)
+        if not insertedDuplicate then
+            insertedDuplicate = true
+            invalidPages[300] = DeepCopy(invalidPages[100])
+            invalidPages[300].Id = 300
+        end
+        return TestHash(value)
+    end
+)
+AssertError(
+    failedPreparation,
+    failedPreparationError,
+    "duplicate-local-sync-id",
+    "identity ambiguity introduced during preparation"
+)
+Assert(DeepEqual(invalidPages[100], beforeFailure), "late identity ambiguity does not initialize revision metadata")
+
+invalidCategories, invalidPages = MakeLocalCollections()
+invalidOptions = PreparationOptions(3011, LocalSyncId("category", 999))
+beforeFailure = DeepCopy(invalidPages[100])
+failedPreparation, failedPreparationError =
+    activePage.PrepareLocalPageUpsert(invalidCategories, invalidPages, 100, invalidOptions, TestHash)
+AssertError(
+    failedPreparation,
+    failedPreparationError,
+    "managed-scope-not-ancestor",
+    "unrelated canonical managed scope"
+)
+Assert(DeepEqual(invalidPages[100], beforeFailure), "unrelated scope failure is atomic")
+
 print(string.format("Active-page synchronization tests passed (%d assertions).", assertions))
