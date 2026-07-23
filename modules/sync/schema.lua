@@ -206,6 +206,9 @@ local function EncodeString(value)
 end
 
 local function EncodeInteger(value)
+    if value == 0 then
+        return "I0;"
+    end
     return "I" .. string.format("%.0f", value) .. ";"
 end
 

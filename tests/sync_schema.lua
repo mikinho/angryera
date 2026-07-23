@@ -356,6 +356,22 @@ Assert(
     "maximum timestamp has a cross-runtime canonical decimal encoding"
 )
 
+local zeroTimestampTombstone = MakeTombstone("page", 93, 2, {
+    DeletedAt = 0,
+})
+local negativeZeroTimestampTombstone = DeepCopy(zeroTimestampTombstone)
+negativeZeroTimestampTombstone.DeletedAt = -0.0
+AssertEqual(
+    schema.CanonicalTombstoneInput(negativeZeroTimestampTombstone),
+    schema.CanonicalTombstoneInput(zeroTimestampTombstone),
+    "negative-zero tombstone timestamps have one canonical encoding"
+)
+AssertEqual(
+    schema.BuildTombstoneRevisionId(negativeZeroTimestampTombstone, TestHash),
+    zeroTimestampTombstone.RevisionId,
+    "negative-zero tombstone timestamps have one revision identity"
+)
+
 local invalidTombstoneCases = {
     { "unknown tombstone field", "tombstone-unknown-field", { Future = true } },
     { "wrong tombstone kind", "invalid-tombstone-kind", { Kind = "PAGE" } },
@@ -427,6 +443,16 @@ AssertError(count, arrayError, "invalid-array", "array metatable")
 local manifest = MakeManifest()
 valid, validationError = schema.ValidateManifest(manifest, TestHash)
 Assert(valid and validationError == nil, "valid manifest")
+
+local zeroTimestampManifest = DeepCopy(manifest)
+zeroTimestampManifest.Entities[1].UpdatedAt = 0
+local negativeZeroTimestampManifest = DeepCopy(zeroTimestampManifest)
+negativeZeroTimestampManifest.Entities[1].UpdatedAt = -0.0
+AssertEqual(
+    schema.BuildManifestHash(negativeZeroTimestampManifest, TestHash),
+    schema.BuildManifestHash(zeroTimestampManifest, TestHash),
+    "negative-zero entity timestamps have one manifest encoding"
+)
 
 local manifestInput = assert(schema.CanonicalManifestInput(manifest, TestHash))
 local manifestHash = assert(schema.BuildManifestHash(manifest, TestHash))
