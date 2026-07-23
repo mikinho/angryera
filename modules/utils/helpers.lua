@@ -119,12 +119,17 @@ function helpers.IterateGroupMembers(callback)
                 return false
             end
 
-            local rawName = UnitName(unitToken)
+            local rawName, realm = UnitName(unitToken)
             if not rawName then
                 return false
             end
 
-            local fullName = helpers.EnsureUnitFullName(rawName)
+            local fullName
+            if type(realm) == "string" and realm ~= "" then
+                fullName = rawName .. "-" .. realm
+            else
+                fullName = helpers.EnsureUnitFullName(rawName)
+            end
             local _, class = UnitClass(unitToken)
             local rank = 0
             if UnitIsGroupLeader(unitToken) then

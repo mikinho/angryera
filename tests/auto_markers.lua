@@ -1,12 +1,6 @@
 _G.UnitFullName = function()
     return "Viewer", "Pagle"
 end
-_G.UnitName = function()
-    return "Viewer"
-end
-_G.UnitExists = function(unit)
-    return unit == "player"
-end
 _G.UnitClass = function()
     return "Warrior", "WARRIOR"
 end
@@ -16,11 +10,7 @@ end
 _G.UnitIsDeadOrGhost = function()
     return false
 end
-_G.GetNumSubgroupMembers = function()
-    return 0
-end
-
-local raidRoster = {
+local baseRaidRoster = {
     { name = "Zessy", rank = 0 },
     { name = "Kway-OtherRealm", rank = 0 },
     { name = "Uniq-OtherRealm", rank = 0 },
@@ -29,6 +19,19 @@ local raidRoster = {
     { name = "Viewer", rank = 2 },
 }
 
+local function CopyRaidRoster()
+    local copy = {}
+    for index, member in ipairs(baseRaidRoster) do
+        copy[index] = {
+            name = member.name,
+            rank = member.rank,
+        }
+    end
+    return copy
+end
+
+local raidRoster = CopyRaidRoster()
+local partyRoster = {}
 local inRaid = true
 local inGroup = true
 local isLeader = true
@@ -50,6 +53,26 @@ _G.GetRaidRosterInfo = function(i)
     end
     return member.name, member.rank, 1, 60, "Warrior", "WARRIOR", "Zone", true, false
 end
+_G.GetNumSubgroupMembers = function()
+    return #partyRoster
+end
+_G.UnitName = function(unit)
+    if unit == "player" then
+        return "Viewer", "Pagle"
+    end
+    local partyIndex = type(unit) == "string" and tonumber(unit:match("^party(%d+)$")) or nil
+    local member = partyIndex and partyRoster[partyIndex] or nil
+    if member then
+        return member.name, member.realm
+    end
+end
+_G.UnitExists = function(unit)
+    if unit == "player" then
+        return true
+    end
+    local partyIndex = type(unit) == "string" and tonumber(unit:match("^party(%d+)$")) or nil
+    return not inRaid and inGroup and partyIndex ~= nil and partyRoster[partyIndex] ~= nil
+end
 _G.UnitIsGroupLeader = function()
     return isLeader
 end
@@ -59,12 +82,48 @@ end
 
 local currentMarkers = {}
 local assignments = {}
+local function FullRosterName(name, realm)
+    if type(realm) == "string" and realm ~= "" then
+        return name .. "-" .. realm
+    end
+    if name and name:find("-", 1, true) then
+        return name
+    end
+    return name and (name .. "-Pagle") or nil
+end
+
+local function UnitIdentity(unit)
+    if unit == "player" then
+        return "Viewer-Pagle"
+    end
+    local raidIndex = type(unit) == "string" and tonumber(unit:match("^raid(%d+)$")) or nil
+    if raidIndex and raidRoster[raidIndex] then
+        return FullRosterName(raidRoster[raidIndex].name)
+    end
+    local partyIndex = type(unit) == "string" and tonumber(unit:match("^party(%d+)$")) or nil
+    if partyIndex and partyRoster[partyIndex] then
+        local member = partyRoster[partyIndex]
+        return FullRosterName(member.name, member.realm)
+    end
+    return unit
+end
+
 _G.GetRaidTargetIndex = function(unit)
-    return currentMarkers[unit]
+    return currentMarkers[UnitIdentity(unit)]
 end
 _G.SetRaidTarget = function(unit, index)
     assignments[#assignments + 1] = { unit = unit, index = index }
-    currentMarkers[unit] = index
+    local identity = UnitIdentity(unit)
+    if index == 0 then
+        currentMarkers[identity] = nil
+        return
+    end
+    for otherIdentity, markerIndex in pairs(currentMarkers) do
+        if markerIndex == index then
+            currentMarkers[otherIdentity] = nil
+        end
+    end
+    currentMarkers[identity] = index
 end
 
 local AngryEra = {
@@ -74,10 +133,20 @@ local app = {
     AngryEra = AngryEra,
 }
 
+assert(loadfile("modules/identity.lua"))("AngryEra", app)
+assert(loadfile("modules/utils/json.lua"))("AngryEra", app)
+assert(loadfile("modules/utils/variables.lua"))("AngryEra", app)
 assert(loadfile("modules/utils/helpers.lua"))("AngryEra", app)
 assert(loadfile("modules/smart_markers.lua"))("AngryEra", app)
 
 local function Reset()
+    isLeader = true
+    isAssistant = false
+    inRaid = true
+    inGroup = true
+    AngryEra_ApplyAutoMarkers(nil, nil)
+    raidRoster = CopyRaidRoster()
+    partyRoster = {}
     currentMarkers = {}
     assignments = {}
 end
@@ -91,13 +160,29 @@ local function FindAssignment(index)
     return nil
 end
 
--- $SQUARE=$MT resolves through metadata to a same-realm exact match.
+local function CountAssignments(index)
+    local count = 0
+    for _, assignment in ipairs(assignments) do
+        if assignment.index == index then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- The real merge and partition pipeline bridges a public variable into
+-- metadata, after which $SQUARE=$MT resolves through the metadata table.
 Reset()
-local applied = AngryEra_ApplyAutoMarkers({
-    MT = "Zessy",
-    SQUARE = "$MT",
-})
-assert(applied == 1, "a metadata reference should apply one marker, got " .. tostring(applied))
+local variables = AngryEra.utils.variables
+local merged, mergeError = variables.MergeVariableLayers({}, "MT=Zessy\n$MT={{MT}}\n$SQUARE=$MT")
+assert(merged and not mergeError, "the marker bridge should merge through the production variable resolver")
+local publicVars, markerMeta, partitionError = variables.PartitionResolvedVariables(merged)
+assert(publicVars and markerMeta and not partitionError, "the resolved bridge should partition")
+assert(publicVars.MT == "Zessy", "the public MT variable should remain available")
+assert(markerMeta.MT == "Zessy", "$MT={{MT}} should bridge the public value into metadata")
+assert(markerMeta.SQUARE == "$MT", "$SQUARE=$MT should remain a metadata reference")
+local applied = AngryEra_ApplyAutoMarkers(markerMeta, publicVars)
+assert(applied == 1, "the production marker bridge should apply one marker, got " .. tostring(applied))
 assert(FindAssignment(6) == "raid1", "square should land on the same-realm exact match")
 
 -- Realm-qualified names match cross-realm members exactly.
@@ -169,10 +254,80 @@ assert(FindAssignment(7) == "raid2", "the first key in canonical order should wi
 
 -- Reapplication is idempotent through the same-index guard.
 Reset()
-AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+assert(applied == 1, "the initial marker assignment should be counted")
 local callsAfterFirst = #assignments
-AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+assert(applied == 0, "an unchanged marker should not be counted as applied")
 assert(#assignments == callsAfterFirst, "an unchanged marker should not call SetRaidTarget again")
+
+-- A new note reconciles addon-owned markers that it no longer requests.
+Reset()
+AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+assignments = {}
+applied = AngryEra_ApplyAutoMarkers({ SKULL = "Kway-OtherRealm" })
+assert(applied == 1, "the replacement note should apply its new marker")
+assert(
+    #assignments == 2 and assignments[1].unit == "raid1" and assignments[1].index == 0,
+    "the replacement note should clear its stale square first"
+)
+assert(assignments[2].unit == "raid2" and assignments[2].index == 8, "the replacement skull should be applied")
+
+-- A blank or cleared display removes the remaining addon-owned marker.
+assignments = {}
+applied = AngryEra_ApplyAutoMarkers(nil, nil)
+assert(applied == 0, "clearing a display should not count marker removals as applications")
+assert(
+    #assignments == 1 and assignments[1].unit == "raid2" and assignments[1].index == 0,
+    "clearing a display should remove its addon-owned marker"
+)
+
+-- A manual reassignment revokes ownership and is never cleared or reasserted.
+Reset()
+AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+currentMarkers["Zessy-Pagle"] = 1
+assignments = {}
+AngryEra_ApplyAutoMarkers(nil, nil)
+assert(#assignments == 0, "clearing a note must preserve a marker that someone changed manually")
+assert(currentMarkers["Zessy-Pagle"] == 1, "the manual replacement marker should remain")
+
+-- A pre-existing matching marker is a no-op and is never claimed as addon-owned.
+Reset()
+currentMarkers["Zessy-Pagle"] = 6
+applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+assert(applied == 0 and #assignments == 0, "a pre-existing matching marker should be an unowned no-op")
+AngryEra_ApplyAutoMarkers(nil, nil)
+assert(#assignments == 0, "a pre-existing matching marker should survive the note being cleared")
+
+-- Ownership follows a stable full name when raid unit tokens are reordered.
+Reset()
+AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+assignments = {}
+raidRoster[1], raidRoster[3] = raidRoster[3], raidRoster[1]
+AngryEra_ApplyAutoMarkers(nil, nil)
+assert(
+    #assignments == 1 and assignments[1].unit == "raid3" and assignments[1].index == 0,
+    "stale cleanup should find the original player after roster token changes"
+)
+
+-- Roster retries apply only targets that have never resolved.
+Reset()
+applied = AngryEra_ApplyAutoMarkers({
+    SQUARE = "Zessy",
+    SKULL = "Late-OtherRealm",
+})
+assert(applied == 1 and FindAssignment(6) == "raid1", "the present target should resolve immediately")
+currentMarkers["Zessy-Pagle"] = 1
+assignments = {}
+raidRoster[#raidRoster + 1] = { name = "Late-OtherRealm", rank = 0 }
+applied = AngryEra:RetryDisplayedNoteMarkers()
+assert(applied == 1, "a late roster member should resolve on the roster retry")
+assert(FindAssignment(8) == "raid7", "the retry should apply the pending skull to the late member")
+assert(CountAssignments(6) == 0, "the retry must not reassert an already-resolved square")
+assert(currentMarkers["Zessy-Pagle"] == 1, "the retry must preserve a manual marker change")
+assignments = {}
+applied = AngryEra:RetryDisplayedNoteMarkers()
+assert(applied == 0 and #assignments == 0, "resolved markers should not run again on later roster updates")
 
 -- Raid members without marking authority never call SetRaidTarget.
 Reset()
@@ -191,6 +346,15 @@ inRaid = false
 applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Viewer" })
 assert(applied == 1, "party members may mark")
 inRaid = true
+
+-- Party iteration preserves UnitName's realm return for exact matching.
+Reset()
+inRaid = false
+partyRoster = {
+    { name = "Kway", realm = "OtherRealm" },
+}
+applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Kway-OtherRealm" })
+assert(applied == 1 and FindAssignment(6) == "party1", "qualified cross-realm party names should match exactly")
 
 -- Solo, the player can still be matched directly.
 Reset()
@@ -215,7 +379,12 @@ assert(applied == 1 and FindAssignment(6) == "raid1", "the note entry point shou
 function AngryEra:GetDisplayedMeta()
     return nil
 end
+assignments = {}
 applied = AngryEra:ApplyDisplayedNoteMarkers()
 assert(applied == 0, "a cleared display should apply nothing")
+assert(
+    #assignments == 1 and assignments[1].unit == "raid1" and assignments[1].index == 0,
+    "the displayed-note entry point should clear its stale owned marker"
+)
 
 print("Auto marker tests passed.")

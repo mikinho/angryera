@@ -21,10 +21,10 @@ assert(BINDING_NAME_AngryEra_MARK_TARGET_8 == "Assign Skull to Target")
 assert(BINDING_NAME_AngryEra_MARK_TARGET_7 == "Assign X to Target")
 assert(BINDING_NAME_AngryEra_MARK_MOUSEOVER_1 == "Assign Star to Mouseover")
 
-AngryEra_SetRaidTarget("target", 8)
+assert(AngryEra_SetRaidTarget("target", 8) == false, "an unchanged marker should report no change")
 assert(#assignments == 0)
 
-AngryEra_SetRaidTarget("mouseover", 3)
+assert(AngryEra_SetRaidTarget("mouseover", 3) == true, "a newly assigned marker should report a change")
 assert(#assignments == 1)
 assert(assignments[1].unit == "mouseover")
 assert(assignments[1].index == 3)

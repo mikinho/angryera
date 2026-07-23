@@ -28,9 +28,12 @@ for index = 8, 1, -1 do
 end
 
 function AngryEra_SetRaidTarget(unit, index)
-    if GetRaidTargetIndex(unit) ~= index then
-        SetRaidTarget(unit, index)
+    local currentIndex = GetRaidTargetIndex(unit) or 0
+    if currentIndex == index then
+        return false
     end
+    SetRaidTarget(unit, index)
+    return (GetRaidTargetIndex(unit) or 0) == index
 end
 
 function AngryEra_ClearAllRaidTargets()
@@ -56,6 +59,7 @@ local AUTO_MARKER_INDEXES = {
 }
 
 local AUTO_MARKER_ORDER = { "STAR", "CIRCLE", "DIAMOND", "TRIANGLE", "MOON", "SQUARE", "CROSS", "X", "SKULL" }
+local autoMarkerStates = {}
 
 local function ResolveMarkerValue(value, vars, meta)
     if type(value) ~= "string" then
@@ -95,13 +99,16 @@ local function FindRosterUnit(candidate)
     local shortTarget = candidate:lower()
 
     local exactUnit
+    local exactIdentity
     local shortUnit
+    local shortIdentity
     local shortMatches = 0
     if type(helpers.IterateGroupMembers) == "function" then
         helpers.IterateGroupMembers(function(_, fullName, _, _, _, _, _, unitToken)
             local fullLower = type(fullName) == "string" and fullName:lower() or ""
             if fullLower ~= "" and fullLower == fullTarget then
                 exactUnit = unitToken
+                exactIdentity = fullLower
                 return true
             end
             if not qualified then
@@ -109,6 +116,7 @@ local function FindRosterUnit(candidate)
                 if shortName == shortTarget then
                     shortMatches = shortMatches + 1
                     shortUnit = unitToken
+                    shortIdentity = fullLower
                 end
             end
             return false
@@ -116,15 +124,15 @@ local function FindRosterUnit(candidate)
     end
 
     if exactUnit then
-        return exactUnit
+        return exactUnit, exactIdentity
     end
     if not qualified and shortMatches == 1 then
-        return shortUnit
+        return shortUnit, shortIdentity
     end
     if type(helpers.PlayerFullName) == "function" then
         local playerName = helpers.PlayerFullName()
         if type(playerName) == "string" and playerName:lower() == fullTarget then
-            return "player"
+            return "player", playerName:lower()
         end
     end
     return nil
@@ -140,6 +148,118 @@ local function CanAssignRaidMarkers()
     return true
 end
 
+local function BuildMarkerPlans(meta, vars)
+    local valuesByMarker = {}
+    local sortedKeys = {}
+    if type(meta) == "table" then
+        for key in pairs(meta) do
+            if type(key) == "string" then
+                sortedKeys[#sortedKeys + 1] = key
+            end
+        end
+    end
+
+    table.sort(sortedKeys)
+    for _, key in ipairs(sortedKeys) do
+        local canonical = key:upper()
+        if AUTO_MARKER_INDEXES[canonical] and valuesByMarker[canonical] == nil then
+            valuesByMarker[canonical] = meta[key]
+        end
+    end
+
+    local plans = {}
+    for _, canonical in ipairs(AUTO_MARKER_ORDER) do
+        local markerIndex = AUTO_MARKER_INDEXES[canonical]
+        local candidate = ResolveMarkerValue(valuesByMarker[canonical], vars, meta)
+        if candidate then
+            local plan = plans[markerIndex]
+            if not plan then
+                plan = {}
+                plans[markerIndex] = plan
+            end
+            plan[#plan + 1] = {
+                Candidate = candidate,
+                Key = candidate:lower(),
+            }
+        end
+    end
+    return plans
+end
+
+local function MarkerPlansEqual(left, right)
+    if type(left) ~= "table" or type(right) ~= "table" or #left ~= #right then
+        return false
+    end
+    for index = 1, #left do
+        if left[index].Key ~= right[index].Key then
+            return false
+        end
+    end
+    return true
+end
+
+local function ClearOwnedMarker(markerIndex, state)
+    if type(state) ~= "table" then
+        return false
+    end
+    local identity = state.OwnedIdentity
+    state.OwnedIdentity = nil
+    if not identity then
+        return false
+    end
+
+    local unitToken = FindRosterUnit(identity)
+    if unitToken and GetRaidTargetIndex(unitToken) == markerIndex then
+        return AngryEra_SetRaidTarget(unitToken, 0)
+    end
+    return false
+end
+
+local function ForgetReplacedOwnedMarkers(markerIndex, identity)
+    for otherIndex, state in pairs(autoMarkerStates) do
+        if otherIndex ~= markerIndex and state.OwnedIdentity == identity then
+            state.OwnedIdentity = nil
+        end
+    end
+end
+
+local function TryMarkerPlan(markerIndex, state)
+    for _, choice in ipairs(state.Plan) do
+        local unitToken, identity = FindRosterUnit(choice.Candidate)
+        if unitToken then
+            state.Pending = false
+            state.ResolvedIdentity = identity
+            if AngryEra_SetRaidTarget(unitToken, markerIndex) then
+                ForgetReplacedOwnedMarkers(markerIndex, identity)
+                state.OwnedIdentity = identity
+                return 1
+            end
+            state.OwnedIdentity = nil
+            return 0
+        end
+    end
+
+    state.Pending = true
+    state.ResolvedIdentity = nil
+    state.OwnedIdentity = nil
+    return 0
+end
+
+local function RetryPendingMarkers()
+    if not CanAssignRaidMarkers() then
+        return 0
+    end
+
+    local applied = 0
+    for markerIndex = 1, 8 do
+        local state = autoMarkerStates[markerIndex]
+        if state and state.Pending then
+            applied = applied + TryMarkerPlan(markerIndex, state)
+        end
+    end
+    return applied
+end
+
 --- Applies raid target markers named by displayed-note metadata.
 -- Marker keys are matched case-insensitively ($STAR through $SKULL, with $X
 -- and $CROSS both mapping to cross). A value resolves in order: `$name` reads
@@ -151,38 +271,44 @@ end
 -- @tparam[opt] table vars Resolved public template variables.
 -- @treturn number applied Count of markers assigned.
 function AngryEra_ApplyAutoMarkers(meta, vars)
-    if type(meta) ~= "table" or not CanAssignRaidMarkers() then
+    local plans = BuildMarkerPlans(meta, vars)
+    local applied = 0
+    if not CanAssignRaidMarkers() then
+        for markerIndex = 1, 8 do
+            autoMarkerStates[markerIndex] = nil
+            local plan = plans[markerIndex]
+            if plan then
+                autoMarkerStates[markerIndex] = {
+                    Plan = plan,
+                    Pending = true,
+                }
+            end
+        end
         return 0
     end
 
-    local valuesByMarker = {}
-    local sortedKeys = {}
-    for key in pairs(meta) do
-        if type(key) == "string" then
-            sortedKeys[#sortedKeys + 1] = key
-        end
-    end
-    table.sort(sortedKeys)
-    for _, key in ipairs(sortedKeys) do
-        local canonical = key:upper()
-        if AUTO_MARKER_INDEXES[canonical] and valuesByMarker[canonical] == nil then
-            valuesByMarker[canonical] = meta[key]
-        end
-    end
-
-    local applied = 0
-    local assignedIndexes = {}
-    for _, canonical in ipairs(AUTO_MARKER_ORDER) do
-        local markerIndex = AUTO_MARKER_INDEXES[canonical]
-        local value = valuesByMarker[canonical]
-        if value ~= nil and not assignedIndexes[markerIndex] then
-            local candidate = ResolveMarkerValue(value, vars, meta)
-            local unitToken = candidate and FindRosterUnit(candidate)
-            if unitToken then
-                assignedIndexes[markerIndex] = true
-                AngryEra_SetRaidTarget(unitToken, markerIndex)
-                applied = applied + 1
+    for markerIndex = 1, 8 do
+        local oldState = autoMarkerStates[markerIndex]
+        local plan = plans[markerIndex]
+        if not plan then
+            if oldState then
+                ClearOwnedMarker(markerIndex, oldState)
+                autoMarkerStates[markerIndex] = nil
             end
+        elseif oldState and MarkerPlansEqual(oldState.Plan, plan) then
+            if oldState.Pending then
+                applied = applied + TryMarkerPlan(markerIndex, oldState)
+            end
+        else
+            if oldState then
+                ClearOwnedMarker(markerIndex, oldState)
+            end
+            local state = {
+                Plan = plan,
+                Pending = true,
+            }
+            autoMarkerStates[markerIndex] = state
+            applied = applied + TryMarkerPlan(markerIndex, state)
         end
     end
     return applied
@@ -194,10 +320,15 @@ if AngryEra then
     -- @treturn number applied
     function AngryEra:ApplyDisplayedNoteMarkers()
         local meta = type(self.GetDisplayedMeta) == "function" and self:GetDisplayedMeta() or nil
-        if type(meta) ~= "table" then
-            return 0
-        end
         local vars = type(self.GetDisplayedVars) == "function" and self:GetDisplayedVars() or nil
         return AngryEra_ApplyAutoMarkers(meta, vars)
+    end
+
+    --- Retries only displayed-note marker targets that have never resolved.
+    -- Intended for GROUP_ROSTER_UPDATE so late arrivals can be marked without
+    -- reasserting markers that a player changed manually.
+    -- @treturn number applied Count of markers newly assigned.
+    function AngryEra:RetryDisplayedNoteMarkers()
+        return RetryPendingMarkers()
     end
 end

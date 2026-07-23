@@ -98,6 +98,18 @@ function AngryEra:UpdateDisplayedIfNewGroup()
     Record("update-group-display")
 end
 
+function AngryEra:PermissionsUpdated()
+    Record("permissions-updated")
+end
+
+function AngryEra:PruneProtocolPeers()
+    Record("prune-protocol-peers")
+end
+
+function AngryEra:RetryDisplayedNoteMarkers()
+    Record("retry-displayed-markers")
+end
+
 function AngryEra:Print(message)
     Record("print", message)
 end
@@ -151,6 +163,16 @@ AngryEra:AfterEnable()
 for _, call in ipairs(calls) do
     assert(call.Name ~= "clear-displayed", "delayed setup must not duplicate the startup clear")
 end
+
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+local markerRetryCount = 0
+for _, call in ipairs(calls) do
+    if call.Name == "retry-displayed-markers" then
+        markerRetryCount = markerRetryCount + 1
+    end
+end
+assert(markerRetryCount == 1, "a roster update should retry unresolved displayed-note marker targets once")
 
 local totalClearCount = clearCountBeforeJoin + 1
 assert(totalClearCount == 2, "startup and group join should each perform one local-only clear")

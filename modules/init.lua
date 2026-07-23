@@ -685,6 +685,9 @@ function AngryEra:GROUP_ROSTER_UPDATE()
     else
         self:PruneProtocolPeers()
         self:UpdateDisplayedIfNewGroup()
+        if type(self.RetryDisplayedNoteMarkers) == "function" then
+            self:RetryDisplayedNoteMarkers()
+        end
     end
 end
 
