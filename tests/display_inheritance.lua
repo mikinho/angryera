@@ -83,37 +83,107 @@ assert(localVariables.target == "page", "Page variables should win")
 
 local chain = assert(variableHelpers.CollectCategoryChain(AngryAssign_Categories, 3))
 local wireLayers = assert(variableHelpers.BuildAncestorVariableLayers(chain))
+local activePageSyncId = "ae3i:1:2:3:4:page:4"
+local activeRevisionId = "fcs32:12345678"
+local activeContextRevisionId = "fcs32:87654321"
 local wirePage = {
+    SyncId = activePageSyncId,
+    RevisionId = activeRevisionId,
     Contents = localPage.Contents,
     ParentSyncId = parentSyncId,
-    AncestorVariableLayers = wireLayers,
     Vars = localPage.Vars,
 }
-local wireText, wireVariables, wireError = AngryEra:RenderPageContent(wirePage, {})
+local storedWirePage = {
+    Id = 4,
+    SyncId = activePageSyncId,
+    RevisionId = "fcs32:aaaaaaaa",
+    Contents = "{{target}}",
+    CategoryId = 3,
+    Vars = "target=stored",
+}
+AngryEra.GetActiveDisplayReference = function()
+    return {
+        SyncId = activePageSyncId,
+        RevisionId = activeRevisionId,
+        ContextRevisionId = activeContextRevisionId,
+    }
+end
+AngryEra.GetActivePageRenderContext = function(_, syncId, revisionId, contextRevisionId)
+    assert(syncId == activePageSyncId, "active context should use the displayed SyncId")
+    assert(revisionId == activeRevisionId, "active context should use the displayed revision")
+    assert(contextRevisionId == activeContextRevisionId, "active context should use the displayed context revision")
+    return {
+        Page = wirePage,
+        AncestorVariableLayers = wireLayers,
+    }
+end
+local wireText, wireVariables, wireError, renderedWirePage = AngryEra:RenderPageContent(
+    storedWirePage,
+    {},
+    { UseActiveDisplayContext = true }
+)
 assert(not wireError, wireError)
 assert(wireText == localText, "Standalone wire layers should render identically to the local hierarchy")
 assert(wireVariables.resolved == localVariables.resolved, "Wire and local merged variables should match")
+assert(renderedWirePage == wirePage, "Active rendering should use the exact cached page snapshot")
+
+AngryEra.GetActiveDisplayReference = function()
+    return {
+        SyncId = "ae3i:1:2:3:4:page:999",
+        RevisionId = activeRevisionId,
+        ContextRevisionId = activeContextRevisionId,
+    }
+end
+local failedText, failedVariables, failedError = AngryEra:RenderPageContent(
+    storedWirePage,
+    {},
+    { UseActiveDisplayContext = true }
+)
+assert(failedText == "" and next(failedVariables) == nil, "Mismatched active references must render blank")
+assert(failedError == "active-display-reference-mismatch", "Mismatched active references should remain diagnosable")
+
+AngryEra.GetActiveDisplayReference = function()
+    return {
+        SyncId = activePageSyncId,
+        RevisionId = activeRevisionId,
+        ContextRevisionId = activeContextRevisionId,
+    }
+end
+AngryEra.GetActivePageRenderContext = function()
+    return nil
+end
+failedText, failedVariables, failedError = AngryEra:RenderPageContent(
+    storedWirePage,
+    {},
+    { UseActiveDisplayContext = true }
+)
+assert(failedText == "" and next(failedVariables) == nil, "Missing exact active context must render blank")
+assert(failedError == "missing-active-display-context", "Missing exact active context should remain diagnosable")
+
+AngryEra.GetActiveDisplayReference = nil
+AngryEra.GetActivePageRenderContext = nil
+failedText, failedVariables, failedError = AngryEra:RenderPageContent(
+    storedWirePage,
+    {},
+    { UseActiveDisplayContext = true }
+)
+assert(failedText == "" and next(failedVariables) == nil, "Missing active runtime must render blank")
+assert(failedError == "active-display-runtime-unavailable", "Missing active runtime should remain diagnosable")
 
 local preferredLocalPage = {
     Contents = "{{target}}",
     CategoryId = 3,
-    ParentSyncId = parentSyncId,
-    AncestorVariableLayers = {
-        { SyncId = parentSyncId, Vars = "target=wire" },
-    },
 }
 local preferredText = AngryEra:RenderPageContent(preferredLocalPage, {})
-assert(preferredText == "parent", "A valid local hierarchy should take precedence over packet context")
+assert(preferredText == "parent", "Ordinary rendering should use the local hierarchy")
 
 local staleLocalPage = {
     Contents = "{{target}}",
     CategoryId = 99,
-    ParentSyncId = parentSyncId,
-    AncestorVariableLayers = wireLayers,
     Vars = "target=page",
 }
 local staleText, _, staleError = AngryEra:RenderPageContent(staleLocalPage, {})
-assert(staleText == "page", "A stale local parent should fall back to validated standalone layers")
+assert(staleText == "page", "A stale local parent should fall back to page variables")
 assert(staleError == "missing-category", "A stale local hierarchy should remain diagnosable")
 
 local malformedPage = {
@@ -125,12 +195,6 @@ local malformedText, malformedVariables, malformedError = AngryEra:RenderPageCon
 assert(malformedText == "yes/", "Malformed hierarchy should fall back to page variables only")
 assert(malformedVariables.pageOnly == "yes", "Page variables should survive hierarchy failure")
 assert(malformedError == "missing-category", "Hierarchy failures should be returned")
-
-local legacyText = AngryEra:RenderPageContent({
-    Contents = "{{legacy}}",
-    CatVars = "legacy=yes",
-}, {})
-assert(legacyText == "yes", "Protocol-1 direct category variables should remain a temporary fallback")
 
 local emptyText, emptyVariables = AngryEra:RenderPageContent({
     Contents = 42,
@@ -148,6 +212,7 @@ AngryAssign_Pages = {
 local renderedPage = {
     Name = "Render Target",
     Contents = "{page}",
+    SyncId = activePageSyncId,
 }
 local renderedText
 AngryEra.display_text = {
@@ -186,6 +251,19 @@ end
 AngryAssign_State.directionUp = false
 AngryAssign_State.displayed = 1
 AngryAssign_Pages[1] = renderedPage
+AngryEra.GetActiveDisplayReference = function()
+    return {
+        SyncId = activePageSyncId,
+        RevisionId = activeRevisionId,
+        ContextRevisionId = activeContextRevisionId,
+    }
+end
+AngryEra.GetActivePageRenderContext = function()
+    return {
+        Page = renderedPage,
+        AncestorVariableLayers = {},
+    }
+end
 _G.strsplit = function(_, value)
     return value
 end

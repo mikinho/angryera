@@ -1,4 +1,4 @@
-.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-identity-meta test-entity-identity test-network-identity test-permissions test-import-ownership test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-display-inheritance test-category-serialization test-model-hierarchy-safety check check-strict
+.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-active-page-network test-permissions test-import-ownership test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-display-inheritance test-category-serialization test-model-hierarchy-safety check check-strict
 
 LDOC ?= ldoc
 LDOC_CONFIG ?= .ldoc
@@ -59,7 +59,7 @@ lint-luacheck-strict:
 	@command -v $(LUACHECK) >/dev/null 2>&1 || { echo "Error: $(LUACHECK) not found."; exit 1; }
 	@$(LUACHECK) --config $(LUACHECK_CONFIG) -- $(LUA_FILES)
 
-test: test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-identity-meta test-entity-identity test-network-identity test-permissions test-import-ownership test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-display-inheritance test-category-serialization test-model-hierarchy-safety
+test: test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-active-page-network test-permissions test-import-ownership test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-display-inheritance test-category-serialization test-model-hierarchy-safety
 
 test-json-regression:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
@@ -85,6 +85,10 @@ test-model-updates:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
 	@$(LUA_RUN) tests/model_updates.lua
 
+test-init-lifecycle:
+	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
+	@$(LUA_RUN) tests/init_lifecycle.lua
+
 test-identity-meta:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
 	@$(LUA_RUN) tests/identity_meta.lua
@@ -93,9 +97,9 @@ test-entity-identity:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
 	@$(LUA_RUN) tests/entity_identity.lua
 
-test-network-identity:
+test-active-page-network:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
-	@$(LUA_RUN) tests/network_identity.lua
+	@$(LUA_RUN) tests/active_page_network.lua
 
 test-permissions:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
@@ -120,6 +124,10 @@ test-sync-schema:
 test-sync-active-page:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
 	@$(LUA_RUN) tests/sync_active_page.lua
+
+test-sync-page-runtime:
+	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
+	@$(LUA_RUN) tests/sync_page_runtime.lua
 
 test-sync-revisions:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }

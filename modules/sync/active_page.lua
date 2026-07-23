@@ -699,3 +699,108 @@ function activePage.PrepareLocalPageUpsert(categories, pages, pageId, options, h
             Order = context.Order,
         }
 end
+
+--- Prepares a local page using a previously validated authoritative wire context.
+-- This is the remote-owned republish path: private local CategoryId/Index fields
+-- are deliberately ignored. The base page supplies immutable wire placement,
+-- while the current local record supplies editable Name/Vars/Contents.
+-- @tparam table page Current local page record.
+-- @tparam table basePayload Exact previously received PAGE_UPSERT payload.
+-- @tparam table options Exact UpdatedAt/UpdatedBy and optional matching ManagedScopeId.
+-- @tparam function hashCallback FCS32-compatible callback.
+-- @treturn table|nil payload
+-- @treturn string|nil errorCode
+-- @treturn table|nil preparation Detached revision action and boundary summary.
+function activePage.PrepareLocalPageUpsertFromContext(page, basePayload, options, hashCallback)
+    local safeOptions, optionsError = ValidatePreparationOptions(options)
+    if not safeOptions then
+        return nil, optionsError
+    end
+    if type(hashCallback) ~= "function" then
+        return nil, "invalid-hash-callback"
+    end
+
+    local validBase, baseError, safeBase = activePage.ValidatePageUpsertPayload(basePayload, hashCallback)
+    if not validBase then
+        return nil, baseError
+    end
+    if not IsPlainTable(page) then
+        return nil, "invalid-local-record"
+    end
+    local pageId = rawget(page, "Id")
+    local validPage, pageError = ValidateSortableLocalRecord("page", pageId, page)
+    if not validPage then
+        return nil, pageError
+    end
+
+    local base = safeBase.Page
+    for _, field in ipairs({
+        "SyncId",
+        "OwnerId",
+        "Revision",
+        "RevisionId",
+        "UpdatedAt",
+        "UpdatedBy",
+    }) do
+        if rawget(page, field) ~= rawget(base, field) then
+            return nil, "authoritative-base-mismatch"
+        end
+    end
+
+    local boundarySyncId = #safeBase.AncestorVariableLayers > 0 and safeBase.AncestorVariableLayers[1].SyncId or nil
+    if safeOptions.ManagedScopeId ~= nil and safeOptions.ManagedScopeId ~= boundarySyncId then
+        return nil, "managed-scope-boundary-mismatch"
+    end
+
+    local sourceSnapshot = SnapshotFields(page, LOCAL_PAGE_SOURCE_FIELDS)
+    local current = BuildLocalWirePage(page, base.ParentSyncId, base.Order)
+    local expectedRevisionId, revisionError = schema.BuildEntityRevisionId(current, hashCallback)
+    if not expectedRevisionId then
+        return nil, revisionError
+    end
+
+    local wire
+    local revisionAction
+    if current.RevisionId == expectedRevisionId then
+        wire = current
+        revisionAction = "unchanged"
+    else
+        if not IsInteger(current.Revision, 1, schema.LIMITS.Revision - 1) then
+            return nil, current.Revision == schema.LIMITS.Revision and "revision-exhausted" or "invalid-revision"
+        end
+        wire, revisionError = BuildHashedLocalWire(page, base.ParentSyncId, base.Order, {
+            Revision = current.Revision + 1,
+            UpdatedAt = safeOptions.UpdatedAt,
+            UpdatedBy = safeOptions.UpdatedBy,
+        }, hashCallback)
+        if not wire then
+            return nil, revisionError
+        end
+        revisionAction = "touched"
+    end
+
+    local payload, payloadError = activePage.BuildPageUpsertPayload(wire, safeBase.AncestorVariableLayers, hashCallback)
+    if not payload then
+        return nil, payloadError
+    end
+    if not SnapshotsEqual(sourceSnapshot, SnapshotFields(page, LOCAL_PAGE_SOURCE_FIELDS), LOCAL_PAGE_SOURCE_FIELDS) then
+        return nil, "stale-page-context"
+    end
+
+    if revisionAction ~= "unchanged" then
+        page.Revision = wire.Revision
+        page.RevisionId = wire.RevisionId
+        page.UpdatedAt = wire.UpdatedAt
+        page.UpdatedBy = wire.UpdatedBy
+    end
+
+    return payload,
+        nil,
+        {
+            RevisionAction = revisionAction,
+            BoundarySyncId = boundarySyncId,
+            AncestorCount = #safeBase.AncestorVariableLayers,
+            Order = base.Order,
+            AuthoritativeContext = true,
+        }
+end

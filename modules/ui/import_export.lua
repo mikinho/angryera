@@ -145,6 +145,7 @@ function AngryEra:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
     AngryAssign_Pages[id] = page
     if not suppressTreeUpdate then
         self:UpdateTree(id)
+        self:RefreshDisplayedPageAfterHierarchyMutation()
     end
     return id
 end
@@ -235,7 +236,7 @@ function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpda
     end
 
     if overwriteId then
-        local deleted, deleteError = self:DeleteCategoryChildren(overwriteId)
+        local deleted, deleteError = self:DeleteCategoryChildren(overwriteId, true)
         if not deleted then
             return nil, deleteError
         end
@@ -266,6 +267,7 @@ function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpda
 
     if not suppressTreeUpdate then
         self:UpdateTree()
+        self:RefreshDisplayedPageAfterHierarchyMutation()
     end
     return id
 end

@@ -309,48 +309,10 @@ function AngryEra:RegisterRemoteEntityIdentity(entity, kind, wireIdentity)
     return true
 end
 
---- Builds temporary provenance for a protocol-1 page until the hard cutover.
-function AngryEra:BuildLegacyRemoteIdentity(sender, kind, remoteId)
-    if
-        (kind ~= "page" and kind ~= "category")
-        or type(remoteId) ~= "number"
-        or remoteId ~= remoteId
-        or remoteId == math.huge
-        or remoteId == -math.huge
-        or remoteId < 1
-        or remoteId > 4294967295
-        or remoteId % 1 ~= 0
-    then
-        return nil
-    end
-    local hash = tonumber(self:Hash("legacy", tostring(sender))) or 0
-    local legacyInstallationId = string.format("ae3i:0:%x:0:0", math.floor(math.abs(hash)))
-    return {
-        OwnerId = legacyInstallationId,
-        SyncId = string.format("%s:%s:%d", legacyInstallationId, kind, math.floor(math.abs(remoteId))),
-    }
-end
-
 --- Returns the local-only identity metadata for an entity.
 function AngryEra:GetLocalEntityState(entityOrSyncId)
     local syncId = EntitySyncId(entityOrSyncId)
     return syncId and AngryAssign_Meta and AngryAssign_Meta.EntityLocal[syncId]
-end
-
---- Stores a protocol-1 wire id in local-only metadata during the cutover.
-function AngryEra:SetLegacyRemoteId(entityOrSyncId, remoteId)
-    local state = self:GetLocalEntityState(entityOrSyncId)
-    if not state then
-        return false
-    end
-    state.LegacyRemoteId = remoteId
-    return true
-end
-
---- Returns the protocol-1 wire id for a remapped remote page.
-function AngryEra:GetLegacyRemoteId(entityOrSyncId)
-    local state = self:GetLocalEntityState(entityOrSyncId)
-    return state and state.LegacyRemoteId
 end
 
 --- Returns whether an entity originated in this local library.

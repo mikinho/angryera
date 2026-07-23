@@ -2,6 +2,8 @@ local selectedPath
 local selectedValue
 local removedCategories = {}
 local removedPages = {}
+local clearCalls = {}
+local displayedRepublishes = {}
 
 local AngryEra = {
     utils = {
@@ -67,9 +69,21 @@ function AngryEra:RemovePageRecord(id)
     AngryAssign_Pages[id] = nil
 end
 
-function AngryEra:ClearDisplayed()
+function AngryEra:ClearDisplayed(publish)
+    clearCalls[#clearCalls + 1] = publish
     AngryAssign_State.displayed = nil
 end
+
+function AngryEra:SendDisplay(id, force)
+    displayedRepublishes[#displayedRepublishes + 1] = {
+        Id = id,
+        Force = force,
+    }
+    return true, "display-message", true
+end
+
+function AngryEra:UpdateDisplayed() end
+function AngryEra:UpdateTree() end
 
 AngryAssign_State = {
     tree = {
@@ -123,6 +137,28 @@ assert(AngryAssign_Categories[1], "DeleteCategoryChildren should retain the requ
 assert(not AngryAssign_Categories[2] and not AngryAssign_Categories[3], "Every descendant category should be removed")
 assert(not AngryAssign_Pages[10] and not AngryAssign_Pages[11], "Pages throughout the subtree should be removed")
 assert(AngryAssign_State.displayed == nil, "Deleting the displayed page should clear the display")
+assert(#clearCalls == 1 and clearCalls[1] == true, "Recursive deletion should publish one display clear")
 assert(removedCategories[1] == 3 and removedCategories[2] == 2, "Descendant categories should be removed leaf-first")
+
+AngryAssign_Categories = {
+    [1] = { Id = 1, Name = "Root" },
+    [2] = { Id = 2, Name = "Removed Subtree", CategoryId = 1 },
+}
+AngryAssign_Pages = {
+    [20] = { Id = 20, Name = "Displayed", CategoryId = 1 },
+    [21] = { Id = 21, Name = "Removed", CategoryId = 2 },
+}
+AngryAssign_State.displayed = 20
+removedCategories = {}
+removedPages = {}
+displayedRepublishes = {}
+
+deleted, deleteError = AngryEra:DeleteCategoryAndChildren(2)
+assert(deleted and not deleteError, "Deleting a non-active sibling subtree should succeed")
+assert(AngryAssign_State.displayed == 20, "Sibling subtree deletion should retain the active page")
+assert(
+    #displayedRepublishes == 1 and displayedRepublishes[1].Id == 20 and displayedRepublishes[1].Force == true,
+    "Sibling subtree deletion should republish the displayed page exactly once"
+)
 
 print("Model hierarchy safety tests passed.")

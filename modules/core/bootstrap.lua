@@ -24,11 +24,9 @@ app.libs.LibMustache = LibStub("LibMustache")
 app.libs.libC = LibStub("LibCompress")
 app.libs.libD = LibStub("LibDeflate")
 app.libs.lwin = LibStub("LibWindow-1.1")
-app.libs.libCE = app.libs.libC:GetAddonEncodeTable()
 app.libs.LSM = LibStub("LibSharedMedia-3.0")
 app.libs.DDM = LibStub("LibDropDownMenu")
 
-AngryEra._comStarted = false
 AngryEra._protocolStarted = false
 
 AngryEra.Title = GetAddOnMetadata(appName, "Title")

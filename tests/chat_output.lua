@@ -24,8 +24,13 @@ function AngryEra:GetTemplateContext()
     return {}
 end
 
-function AngryEra:RenderPageContent(page)
-    return page.Contents, {}
+local activeRenderFailure = false
+function AngryEra:RenderPageContent(page, _, options)
+    if activeRenderFailure and options and options.UseActiveDisplayContext then
+        return "", {}, "missing-active-display-context", page
+    end
+    local renderedPage = options and options.UseActiveDisplayContext and page.ActiveSnapshot or page
+    return renderedPage.Contents, {}, nil, renderedPage
 end
 
 local app = { AngryEra = AngryEra }
@@ -48,6 +53,24 @@ local pageOutput = AngryEra:RenderPageForChatOutput({
     Contents = "{PAGE}",
 })
 assert(pageOutput == "Rendered Page", "{page} should use the page passed to the renderer")
+
+local activeOutput = AngryEra:RenderPageForChatOutput({
+    Name = "Stored Page",
+    Contents = "{PAGE}",
+    ActiveSnapshot = {
+        Name = "Exact Active Page",
+        Contents = "{PAGE}",
+    },
+}, true)
+assert(activeOutput == "Exact Active Page", "Active chat output should use the exact display snapshot")
+
+activeRenderFailure = true
+activeOutput = AngryEra:RenderPageForChatOutput({
+    Name = "Unsafe Local Fallback",
+    Contents = "must not be sent",
+}, true)
+activeRenderFailure = false
+assert(activeOutput == "", "Active chat output must remain blank when its exact tuple is unavailable")
 
 local outputId = false
 function AngryEra:OutputDisplayed(id)

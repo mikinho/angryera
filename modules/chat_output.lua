@@ -124,18 +124,22 @@ end
 --- Renders a page into chat-ready plain output.
 -- Applies variable rendering, tag substitution, and custom color stripping.
 -- @tparam[opt] table page Page object.
+-- @tparam[opt=false] boolean useActiveDisplayContext Render the exact active v3 snapshot.
 -- @treturn string output Chat-ready text.
-function AngryEra:RenderPageForChatOutput(page)
+function AngryEra:RenderPageForChatOutput(page, useActiveDisplayContext)
     if not page then
         return ""
     end
 
     local ctx = self:GetTemplateContext()
-    local renderedText, _ = self:RenderPageContent(page, ctx)
+    local renderedText, _, _, renderedPage = self:RenderPageContent(page, ctx, {
+        UseActiveDisplayContext = useActiveDisplayContext == true,
+    })
     local output = renderedText or page.Contents or ""
+    renderedPage = renderedPage or page
 
     output = output:gsub("{(.-)}", function(tagContent)
-        return ResolveChatOutputTag(self, page, tagContent)
+        return ResolveChatOutputTag(self, renderedPage, tagContent)
     end)
 
     return StripChatOutputColors(output)
@@ -149,7 +153,8 @@ function AngryEra:OutputDisplayed(id)
         return
     end
 
-    if not id then
+    local useActiveDisplayContext = id == nil
+    if useActiveDisplayContext then
         id = AngryAssign_State.displayed
     end
     local page = AngryAssign_Pages[id]
@@ -164,7 +169,7 @@ function AngryEra:OutputDisplayed(id)
     end
 
     if channel and page then
-        local output = self:RenderPageForChatOutput(page)
+        local output = self:RenderPageForChatOutput(page, useActiveDisplayContext)
 
         -- If an output is already running, cancel it so we don't overlap spam
         if self.outputTimer then

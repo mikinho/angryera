@@ -596,6 +596,108 @@ AssertEqual(siblingPayload.Page.Order, 2, "sibling movement recomputes determini
 AssertEqual(siblingPreparation.RevisionAction, "touched", "changed sibling-derived placement touches the page")
 AssertEqual(siblingPages[100].Revision, 2, "sibling-derived placement increments exactly once")
 
+local contextCategories, contextPages = MakeLocalCollections()
+local contextBoundary = contextCategories[2].SyncId
+local authoritativeBase = assert(
+    activePage.PrepareLocalPageUpsert(
+        contextCategories,
+        contextPages,
+        100,
+        PreparationOptions(2200, contextBoundary),
+        TestHash
+    )
+)
+local contextPage = contextPages[100]
+local privateCategoryId = 999
+local privateIndex = -25.5
+contextPage.CategoryId = privateCategoryId
+contextPage.Index = privateIndex
+contextPage.Contents = "first receiver-side edit"
+local contextPrepared, contextPrepareError, contextPreparation =
+    activePage.PrepareLocalPageUpsertFromContext(contextPage, authoritativeBase, PreparationOptions(2201), TestHash)
+Assert(contextPrepared and not contextPrepareError, "authoritative remote base prepares a receiver-side edit")
+AssertEqual(contextPreparation.RevisionAction, "touched", "remote edit touches its revision exactly once")
+Assert(contextPreparation.AuthoritativeContext, "remote preparation reports authoritative context use")
+AssertEqual(
+    contextPrepared.Page.ParentSyncId,
+    authoritativeBase.Page.ParentSyncId,
+    "remote preparation retains authoritative parent"
+)
+AssertEqual(contextPrepared.Page.Order, authoritativeBase.Page.Order, "remote preparation retains authoritative order")
+Assert(
+    DeepEqual(contextPrepared.AncestorVariableLayers, authoritativeBase.AncestorVariableLayers),
+    "remote preparation retains the exact authoritative ancestor layers"
+)
+AssertEqual(contextPage.CategoryId, privateCategoryId, "remote preparation ignores private local parent placement")
+AssertEqual(contextPage.Index, privateIndex, "remote preparation ignores private local sibling placement")
+AssertEqual(contextPage.Revision, authoritativeBase.Page.Revision + 1, "first remote edit increments once")
+
+contextPage.Contents = "second receiver-side edit"
+local secondContextPrepared, secondContextError, secondContextPreparation =
+    activePage.PrepareLocalPageUpsertFromContext(contextPage, contextPrepared, PreparationOptions(2202), TestHash)
+Assert(secondContextPrepared and not secondContextError, "new authoritative base supports a consecutive remote edit")
+AssertEqual(secondContextPreparation.RevisionAction, "touched", "second remote edit touches exactly once")
+AssertEqual(
+    secondContextPrepared.Page.Revision,
+    contextPrepared.Page.Revision + 1,
+    "second remote edit increments once"
+)
+AssertEqual(
+    secondContextPrepared.Page.ParentSyncId,
+    authoritativeBase.Page.ParentSyncId,
+    "consecutive remote edit retains original authoritative parent"
+)
+AssertEqual(
+    secondContextPrepared.Page.Order,
+    authoritativeBase.Page.Order,
+    "consecutive edit retains authoritative order"
+)
+Assert(
+    DeepEqual(secondContextPrepared.AncestorVariableLayers, authoritativeBase.AncestorVariableLayers),
+    "consecutive remote edit retains original authoritative layers"
+)
+
+local mismatchedContext, mismatchedContextError =
+    activePage.PrepareLocalPageUpsertFromContext(contextPage, authoritativeBase, PreparationOptions(2203), TestHash)
+AssertError(mismatchedContext, mismatchedContextError, "authoritative-base-mismatch", "stale authoritative base")
+
+local wrongBoundaryContext, wrongBoundaryError = activePage.PrepareLocalPageUpsertFromContext(
+    contextPage,
+    secondContextPrepared,
+    PreparationOptions(2204, contextCategories[3].SyncId),
+    TestHash
+)
+AssertError(
+    wrongBoundaryContext,
+    wrongBoundaryError,
+    "managed-scope-boundary-mismatch",
+    "remote explicit boundary cannot replace authoritative boundary"
+)
+
+local staleContextPage = DeepCopy(contextPrepared.Page)
+staleContextPage.Id = 500
+staleContextPage.CategoryId = privateCategoryId
+staleContextPage.Index = privateIndex
+staleContextPage.Contents = "staged receiver edit"
+local staleRevision = staleContextPage.Revision
+local staleRevisionId = staleContextPage.RevisionId
+local contextHashCalls = 0
+local staleContextPrepared, staleContextError = activePage.PrepareLocalPageUpsertFromContext(
+    staleContextPage,
+    contextPrepared,
+    PreparationOptions(2205),
+    function(value)
+        contextHashCalls = contextHashCalls + 1
+        if contextHashCalls == 3 then
+            staleContextPage.Index = privateIndex + 1
+        end
+        return TestHash(value)
+    end
+)
+AssertError(staleContextPrepared, staleContextError, "stale-page-context", "remote source changes during preparation")
+AssertEqual(staleContextPage.Revision, staleRevision, "stale remote preparation does not touch revision")
+AssertEqual(staleContextPage.RevisionId, staleRevisionId, "stale remote preparation preserves revision identity")
+
 local invalidCategories
 local invalidPages
 local invalidOptions

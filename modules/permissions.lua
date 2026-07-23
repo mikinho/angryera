@@ -259,13 +259,24 @@ function AngryEra:CanLocalPlayerPublish(action)
 end
 
 --- Returns whether an entity may be edited in place.
--- Local entities are always editable; managed remote entities require publish authority.
+-- Local entities are always editable. Remote pages additionally require the
+-- exact authoritative base context that will be used to publish their revision.
+-- Remote category proposal editing is a separate hierarchy-sync path.
 function AngryEra:CanEditEntityLocally(entity)
     if not entity then
         return false
     end
     if not entity.SyncId or self:IsLocallyOwned(entity) then
         return true
+    end
+    if rawget(entity, "Contents") ~= nil then
+        if type(self.HasAuthoritativePageContext) ~= "function" then
+            return false
+        end
+        local checked, contextAvailable = pcall(self.HasAuthoritativePageContext, self, entity)
+        if not checked or contextAvailable ~= true then
+            return false
+        end
     end
     return IsGrouped() and self:CanLocalPlayerPublish("pageUpsert")
 end
@@ -320,10 +331,8 @@ end
 
 function AngryEra:PermissionsUpdated()
     self:UpdateSelected()
-    if AngryEra._comStarted then
-        self:SendRequestDisplay()
-    end
     if AngryEra._protocolStarted then
         self:SendProtocolVersionQuery()
+        self:SendRequestDisplay()
     end
 end

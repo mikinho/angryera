@@ -6,6 +6,7 @@
 	<Script file="sync\schema.lua"/>
 	<Script file="sync\active_page.lua"/>
 	<Script file="sync\revisions.lua"/>
+	<Script file="sync\page_runtime.lua"/>
 	<Script file="sync\scopes.lua"/>
 	<Script file="sync\snapshot.lua"/>
 	<Script file="sync\apply.lua"/>

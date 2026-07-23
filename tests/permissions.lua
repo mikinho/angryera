@@ -4,6 +4,7 @@ local raid = true
 local groupRoster = {}
 local guildMembers = {}
 local clearDisplayedCalls = 0
+local authoritativePageContextAvailable = true
 
 local function EnsureUnitFullName(name)
     if name and not name:find("-", 1, true) then
@@ -14,6 +15,12 @@ end
 
 local helpers = {
     EnsureUnitFullName = EnsureUnitFullName,
+    selectedLastValue = function(value)
+        return tonumber(value)
+    end,
+    IsCategoryDescendant = function()
+        return false
+    end,
     PlayerFullName = function()
         return currentPlayer
     end,
@@ -58,8 +65,13 @@ function AngryEra:IsLocallyOwned(entity)
     return entity and entity.LocallyOwned == true
 end
 
+function AngryEra:HasAuthoritativePageContext()
+    return authoritativePageContextAvailable
+end
+
 function AngryEra:UpdateSelected() end
 function AngryEra:SendRequestDisplay() end
+function AngryEra:SendProtocolVersionQuery() end
 function AngryEra:ClearDisplayed()
     clearDisplayedCalls = clearDisplayedCalls + 1
 end
@@ -245,9 +257,41 @@ groupRoster[2].rank = 1
 assert(AngryEra:CanLocalPlayerPublish("pageUpsert"), "A local officer assistant should publish normal changes")
 assert(not AngryEra:CanLocalPlayerPublish("delete"), "A local assistant should not publish destructive changes")
 assert(
-    AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false }),
+    AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
     "A qualified publisher should edit managed remote entities while grouped"
 )
+authoritativePageContextAvailable = false
+assert(
+    not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
+    "A remote page without its authoritative base context must fail closed"
+)
+assert(
+    AngryEra:CanEditEntityLocally({ SyncId = "remote-category", LocallyOwned = false }),
+    "Remote category editing should remain governed by hierarchy publish authority"
+)
+authoritativePageContextAvailable = true
+local savedContextCheck = AngryEra.HasAuthoritativePageContext
+AngryEra.HasAuthoritativePageContext = nil
+assert(
+    not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
+    "A missing authoritative-context helper must fail closed for remote pages"
+)
+assert(
+    AngryEra:CanEditEntityLocally({ SyncId = "local", LocallyOwned = true, Contents = "" }),
+    "Locally owned pages must not depend on the authoritative remote-context helper"
+)
+assert(
+    AngryEra:CanEditEntityLocally({ Contents = "" }),
+    "Unsynchronized pages must remain editable without an authoritative remote context"
+)
+AngryEra.HasAuthoritativePageContext = function()
+    error("malformed transient context")
+end
+assert(
+    not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
+    "Authoritative-context lookup failures must fail closed"
+)
+AngryEra.HasAuthoritativePageContext = savedContextCheck
 
 currentPlayer = "OrdinaryAssist-Realm"
 SetRoster({
@@ -268,7 +312,7 @@ assert(
     AngryEra:CanLocalPlayerPublish("pageUpsert"),
     "Receiver preferences must not grant or revoke outbound attempt authority"
 )
-AngryEra._comStarted = true
+AngryEra._protocolStarted = true
 AngryEra:PermissionsUpdated()
 assert(clearDisplayedCalls == 0, "Ignore-shared preference changes must not clear a locally selected display")
 currentPlayer = "OrdinaryMember-Realm"
@@ -277,7 +321,7 @@ assert(not AngryEra:CanLocalPlayerPublish("pageUpsert"), "An ordinary member may
 grouped = false
 assert(AngryEra:CanEditEntityLocally({ LocallyOwned = true }), "Local entities should remain editable while solo")
 assert(
-    not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false }),
+    not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
     "Managed remote entities should require active publish authority"
 )
 
@@ -298,5 +342,93 @@ assert(
 assert(AngryAssign_Config.allowall == nil, "Legacy allow-all config should be removed")
 assert(AngryAssign_Config.allowplayers == nil, "Legacy allow-player config should be removed")
 assert(AngryAssign_Meta.Migrations.PermissionPolicy == 1, "Permission migration should be marked complete")
+
+-- The editor must consume the same authoritative-context guard so a post-reload
+-- remote page cannot expose a Save path that will mutate locally and fail later.
+AngryEra.Title = "Angry Era"
+AngryEra.utils.colors = {}
+app.libs = {
+    AceGUI = {},
+    DDM = {},
+}
+assert(loadfile("modules/ui/editor.lua"))("AngryEra", app)
+
+local editorDisabled
+local function DisabledButton()
+    return {
+        SetDisabled = function() end,
+    }
+end
+
+AngryEra.window = {
+    text = {
+        button = {
+            IsEnabled = function()
+                return false
+            end,
+            Disable = function() end,
+        },
+        SetText = function() end,
+        SetDisabled = function(_, disabled)
+            editorDisabled = disabled
+        end,
+    },
+    button_revert = DisabledButton(),
+    button_display = DisabledButton(),
+    button_output = DisabledButton(),
+    button_restore = DisabledButton(),
+    button_menu = DisabledButton(),
+}
+function AngryEra:SelectedId()
+    return 777
+end
+
+SetRoster({
+    { name = "OrdinaryMember-Realm", rank = 2 },
+})
+AngryAssign_State = {
+    tree = {},
+}
+AngryAssign_Pages = {
+    [777] = {
+        SyncId = "remote-page",
+        Contents = "Remote",
+        LocallyOwned = false,
+    },
+}
+authoritativePageContextAvailable = false
+AngryEra:UpdateSelected()
+assert(editorDisabled == true, "Editor Save controls must disable without an authoritative remote-page context")
+authoritativePageContextAvailable = true
+AngryEra:UpdateSelected()
+assert(editorDisabled == false, "Editor Save controls should enable when the authoritative context is available")
+
+local hierarchyRefreshes = 0
+AngryEra.window = nil
+AngryEra.UpdateTree = function() end
+AngryEra.RefreshDisplayedPageAfterHierarchyMutation = function()
+    hierarchyRefreshes = hierarchyRefreshes + 1
+end
+AngryAssign_State = {
+    tree = {
+        groups = {},
+    },
+}
+AngryAssign_Categories = {}
+AngryAssign_Pages = {
+    [1] = {
+        Id = 1,
+        Name = "Moved",
+        Index = 2,
+    },
+    [2] = {
+        Id = 2,
+        Name = "Target",
+        Index = 1,
+    },
+}
+AngryEra:MoveItem("1", "2", "before")
+assert(AngryAssign_Pages[1].Index == 0.5, "tree drag should retain its structural mutation")
+assert(hierarchyRefreshes == 1, "tree drag should republish the displayed exact tuple once")
 
 print("Permission tests passed.")

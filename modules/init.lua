@@ -12,7 +12,6 @@ AngryEra.Templates = app.Templates
 
 local core = AngryEra.core
 local isClassic = core.isClassic
-local comPrefix = core.comPrefix
 local protocolPrefix = AngryEra.utils.protocol.PREFIX
 
 local colors = AngryEra.utils.colors
@@ -176,7 +175,7 @@ function AngryEra:OnInitialize()
                 cmdHidden = false,
                 confirm = true,
                 func = function()
-                    AngryAssign_State.displayed = nil
+                    self:ClearDisplayed(true)
                     self:RemoveAllEntityRecords()
                     self:UpdateTree()
                     self:UpdateSelected()
@@ -282,10 +281,13 @@ function AngryEra:OnInitialize()
                 desc = "Displays a list of all users (in the raid) running the addon and the version they're running",
                 func = function()
                     if IsInRaid() or IsInGroup() then
-                        self:ResetVersionList() -- start with a fresh version list, when displaying it
-                        self:SendOutMessage({ "VER_QUERY" })
-                        self:ScheduleTimer("VersionCheckOutput", 3)
-                        self:Print("Version check running...")
+                        local sent, queryIdOrError = self:SendProtocolVersionQuery(true)
+                        if sent then
+                            self:ScheduleTimer("VersionCheckOutput", 3, queryIdOrError)
+                            self:Print("Version check running...")
+                        else
+                            self:Print("Unable to start version check: " .. tostring(queryIdOrError))
+                        end
                     else
                         self:Print("You must be in a raid group to run the version check.")
                     end
@@ -617,6 +619,7 @@ end
 function AngryEra:OnEnable()
     self:ResetOfficerRank()
     self:CreateDisplay()
+    self:ClearDisplayed()
     if self.syncRuntimeStartupWarning then
         self:Print(self.syncRuntimeStartupWarning)
         self.syncRuntimeStartupWarning = nil
@@ -645,15 +648,14 @@ function AngryEra:PARTY_LEADER_CHANGED()
 end
 
 function AngryEra:PARTY_CONVERTED_TO_RAID()
-    self:SendRequestDisplay()
-    self:SendVerQuery()
+    self:SendProtocolVersionQuery(true)
+    self:ScheduleTimer("SendRequestDisplay", 0.5)
     self:UpdateDisplayedIfNewGroup()
 end
 
 function AngryEra:GROUP_JOINED()
-    self:ResetVersionList() -- Reset version tracking when joining a new group
+    self:ClearDisplayed()
     self:ResetProtocolPeers()
-    self:SendVerQuery()
     if self._protocolStarted then
         self:SendProtocolVersionQuery(true)
     end
@@ -670,9 +672,7 @@ end
 function AngryEra:GROUP_ROSTER_UPDATE()
     self:PermissionsUpdated()
     if not (IsInRaid() or IsInGroup()) then
-        if AngryAssign_State.displayed then
-            self:ClearDisplayed()
-        end
+        self:ClearDisplayed()
         self:ResetCurrentGroup()
         self:ResetPermissionWarning()
         self:ResetProtocolPeers()
@@ -709,22 +709,15 @@ end
 
 --- Post-enable delayed setup hook for communication/event wiring.
 function AngryEra:AfterEnable()
-    self:RegisterComm(comPrefix, "ReceiveMessage")
     self:RegisterComm(protocolPrefix, "ReceiveProtocolMessage")
-    AngryEra._comStarted = true
     AngryEra._protocolStarted = true
-
-    if not (IsInRaid() or IsInGroup()) then
-        self:ClearDisplayed()
-    end
 
     --self:RegisterEvent("PARTY_CONVERTED_TO_RAID")
     self:RegisterEvent("PARTY_LEADER_CHANGED")
     self:RegisterEvent("GROUP_JOINED")
     self:RegisterEvent("GROUP_ROSTER_UPDATE")
 
-    self:SendRequestDisplay()
     self:UpdateDisplayedIfNewGroup()
-    self:SendVerQuery()
     self:SendProtocolVersionQuery(true)
+    self:ScheduleTimer("SendRequestDisplay", 0.5)
 end

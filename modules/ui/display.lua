@@ -494,15 +494,55 @@ end
 --- Renders a page with merged category/page variables and Mustache.
 -- @tparam table page Page table.
 -- @tparam table ctx Template context table.
+-- @tparam[opt] table options Set `UseActiveDisplayContext` for the exact v3 display snapshot.
 -- @treturn string text Rendered text.
 -- @treturn table mergedVars Merged variable map used for rendering.
-function AngryEra:RenderPageContent(page, ctx)
-    local contents = type(page.Contents) == "string" and page.Contents or ""
-    local text = contents:gsub("||", "|")
+-- @treturn string|nil variableError
+-- @treturn table renderedPage Exact page record used for rendering.
+function AngryEra:RenderPageContent(page, ctx, options)
+    local renderedPage = page
     local layers
     local variableError
+    if type(options) == "table" and options.UseActiveDisplayContext == true then
+        if
+            type(self.GetActiveDisplayReference) ~= "function"
+            or type(self.GetActivePageRenderContext) ~= "function"
+        then
+            return "", {}, "active-display-runtime-unavailable", renderedPage
+        end
 
-    if page.CategoryId then
+        local referenceCallOk, reference = pcall(self.GetActiveDisplayReference, self)
+        if not referenceCallOk or type(reference) ~= "table" then
+            return "", {}, "missing-active-display-reference", renderedPage
+        end
+        if reference.SyncId ~= page.SyncId or not reference.RevisionId or not reference.ContextRevisionId then
+            return "", {}, "active-display-reference-mismatch", renderedPage
+        end
+
+        local contextCallOk, activeContext = pcall(
+            self.GetActivePageRenderContext,
+            self,
+            reference.SyncId,
+            reference.RevisionId,
+            reference.ContextRevisionId
+        )
+        if
+            not contextCallOk
+            or type(activeContext) ~= "table"
+            or type(activeContext.Page) ~= "table"
+            or type(activeContext.AncestorVariableLayers) ~= "table"
+        then
+            return "", {}, "missing-active-display-context", renderedPage
+        end
+
+        renderedPage = activeContext.Page
+        layers = activeContext.AncestorVariableLayers
+    end
+
+    local contents = type(renderedPage.Contents) == "string" and renderedPage.Contents or ""
+    local text = contents:gsub("||", "|")
+
+    if not layers and renderedPage == page and page.CategoryId then
         local chain, chainError = variableHelpers.CollectCategoryChain(AngryAssign_Categories, page.CategoryId)
         if chain then
             layers, variableError = variableHelpers.BuildAncestorVariableLayers(chain)
@@ -511,28 +551,12 @@ function AngryEra:RenderPageContent(page, ctx)
         end
     end
 
-    if not layers and page.AncestorVariableLayers then
-        local wireLayers, wireError =
-            variableHelpers.ValidateAncestorVariableLayers(page.AncestorVariableLayers, page.ParentSyncId)
-        if wireLayers then
-            layers = wireLayers
-        else
-            variableError = variableError or wireError
-        end
-    end
-
-    -- Temporary protocol-1 fallback until the final hard cutover.
-    if not layers and type(page.CatVars) == "string" then
-        layers = {
-            { Vars = page.CatVars },
-        }
-    end
     layers = layers or {}
 
-    local mergedVars, mergeError = variableHelpers.MergeVariableLayers(layers, page.Vars)
+    local mergedVars, mergeError = variableHelpers.MergeVariableLayers(layers, renderedPage.Vars)
     if not mergedVars then
         variableError = variableError or mergeError
-        mergedVars = variableHelpers.MergeVariableLayers({}, page.Vars) or {}
+        mergedVars = variableHelpers.MergeVariableLayers({}, renderedPage.Vars) or {}
     end
 
     if LibMustache then
@@ -547,7 +571,7 @@ function AngryEra:RenderPageContent(page, ctx)
         end
     end
 
-    return text, mergedVars, variableError
+    return text, mergedVars, variableError, renderedPage
 end
 
 --- Applies lightweight markdown transformations used by the display layer.
@@ -620,7 +644,8 @@ function AngryEra:UpdateDisplayed()
     local highlightHex = self:GetConfig("highlightColor")
 
     -- Mustache Templating & Merging
-    local renderedText, mergedVars = self:RenderPageContent(page, ctx)
+    local renderedText, mergedVars, _, renderedPage =
+        self:RenderPageContent(page, ctx, { UseActiveDisplayContext = true })
     local text = renderedText or page.Contents or ""
 
     local hasHighlight = next(highlightSet) ~= nil
@@ -672,7 +697,7 @@ function AngryEra:UpdateDisplayed()
     -- Process Tags (Single Pass)
     -- (%b{}) captures anything balanced between { and }
     text = text:gsub("(%b{})", function(tag)
-        return ProcessTag(tag, page)
+        return ProcessTag(tag, renderedPage)
     end)
 
     -- Process Highlights (Word Scan)

@@ -14,6 +14,33 @@ local unpackValues = unpack or rawget(table, "unpack")
 
 local libC = app.libs.libC
 
+local function PublishPageRevision(self, id)
+    if AngryAssign_State.displayed == id then
+        return self:SendDisplay(id, true)
+    end
+    return self:SendPage(id, true)
+end
+
+--- Republishes the displayed page after a hierarchy mutation may have changed
+-- its canonical mixed-sibling order, parent, or inherited variable layers.
+-- Private organization changes by unauthorized viewers leave the exact shared
+-- display snapshot untouched.
+-- @treturn boolean sent
+-- @treturn string|nil messageIdOrError
+-- @treturn boolean activatedLocally
+function AngryEra:RefreshDisplayedPageAfterHierarchyMutation()
+    local displayedId = AngryAssign_State.displayed
+    if not displayedId or not AngryAssign_Pages[displayedId] then
+        return true, "no-displayed-page", false
+    end
+
+    local sent, result, activatedLocally = self:SendDisplay(displayedId, true)
+    if activatedLocally == true then
+        self:UpdateDisplayed()
+    end
+    return sent, result, activatedLocally
+end
+
 --- Displays a page by its exact name.
 -- @tparam string name Page name.
 -- @treturn boolean|nil `true` when displayed, `false` when not found, or `nil` on permission failure.
@@ -26,8 +53,7 @@ function AngryEra:DisplayPageByName(name)
     return false
 end
 
---- Displays a page for the group and marks it updated.
--- Sends both page and display sync payloads.
+--- Displays a page locally and publishes its exact v3 page/context snapshot.
 -- @tparam number id Page id.
 -- @treturn boolean|nil `true` on success, or `nil` when permission fails.
 function AngryEra:DisplayPage(id)
@@ -35,9 +61,10 @@ function AngryEra:DisplayPage(id)
         return
     end
 
-    self:TouchPage(id)
-    self:SendPage(id, true)
-    self:SendDisplay(id, true)
+    local _, displayResult, activatedLocally = self:SendDisplay(id, true)
+    if activatedLocally ~= true then
+        return nil, displayResult
+    end
 
     if AngryAssign_State.displayed ~= id then
         AngryAssign_State.displayed = id
@@ -52,7 +79,7 @@ end
 
 function AngryEra:CategoryUpdated(id)
     self:UpdateTree()
-    self:UpdateDisplayed()
+    self:RefreshDisplayedPageAfterHierarchyMutation()
 end
 
 function AngryEra:PageUpdated(id)
@@ -62,7 +89,7 @@ function AngryEra:PageUpdated(id)
     if page then
         page.Updated = time()
         page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
-        self:SendPage(id, true)
+        PublishPageRevision(self, id)
     end
 end
 
@@ -159,9 +186,10 @@ end
 
 --- Deletes all nested categories and pages under a category id.
 -- @tparam number catId Category id to recursively clear.
+-- @tparam[opt=false] boolean suppressDisplayRefresh Defer active-page republishing to a larger transaction.
 -- @treturn boolean ok
 -- @treturn string|nil errorCode
-function AngryEra:DeleteCategoryChildren(catId)
+function AngryEra:DeleteCategoryChildren(catId, suppressDisplayRefresh)
     local descendantIds, categorySet = CollectCategoryDescendants(catId)
     if not descendantIds then
         return false, categorySet
@@ -181,7 +209,7 @@ function AngryEra:DeleteCategoryChildren(catId)
     for _, pageId in ipairs(pageIds) do
         self:RemovePageRecord(pageId)
         if AngryAssign_State.displayed == pageId then
-            self:ClearDisplayed()
+            self:ClearDisplayed(true)
         end
     end
     for _, categoryId in ipairs(descendantIds) do
@@ -189,6 +217,9 @@ function AngryEra:DeleteCategoryChildren(catId)
         if AngryAssign_State.tree.groups then
             AngryAssign_State.tree.groups[-categoryId] = nil
         end
+    end
+    if suppressDisplayRefresh ~= true then
+        self:RefreshDisplayedPageAfterHierarchyMutation()
     end
     return true
 end
@@ -368,10 +399,11 @@ end
 -- @tparam[opt=""] string content Initial page content.
 -- @tparam[opt] number categoryId Parent category id.
 -- @tparam[opt] number index Sort index override.
+-- @tparam[opt=false] boolean suppressDisplayRefresh Defer active-page order republishing to a bulk operation.
 -- @treturn boolean ok
 -- @treturn string|nil err Error message on failure.
 -- @treturn number|nil id New page id on success.
-function AngryEra:CreatePage(nameOrFrame, content, categoryId, index)
+function AngryEra:CreatePage(nameOrFrame, content, categoryId, index, suppressDisplayRefresh)
     -- Validate and Clean Input
     local name, err = ExtractAndValidateName(nameOrFrame)
     if not name then
@@ -403,7 +435,10 @@ function AngryEra:CreatePage(nameOrFrame, content, categoryId, index)
     end
 
     self:UpdateTree(id)
-    self:SendPage(id, true)
+    PublishPageRevision(self, id)
+    if suppressDisplayRefresh ~= true and AngryAssign_State.displayed ~= id then
+        self:RefreshDisplayedPageAfterHierarchyMutation()
+    end
 
     return true, nil, id
 end
@@ -440,7 +475,10 @@ function AngryEra:RenamePage(id, nameOrFrame)
     page.Updated = time()
     page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
 
-    self:SendPage(id, true)
+    PublishPageRevision(self, id)
+    if AngryAssign_State.displayed ~= id then
+        self:RefreshDisplayedPageAfterHierarchyMutation()
+    end
     self:UpdateTree()
 
     if AngryAssign_State.displayed == id then
@@ -454,24 +492,22 @@ end
 --- Deletes a page from local storage and selection state.
 -- @tparam number id Page id.
 function AngryEra:DeletePage(id)
+    if not AngryAssign_Pages[id] then
+        return
+    end
+
+    local wasDisplayed = AngryAssign_State.displayed == id
     self:RemovePageRecord(id)
     if self.window and self:SelectedId() == id then
         self:SetSelectedId(nil)
         self:UpdateSelected(true)
     end
-    if AngryAssign_State.displayed == id then
-        self:ClearDisplayed()
+    if wasDisplayed then
+        self:ClearDisplayed(true)
+    else
+        self:RefreshDisplayedPageAfterHierarchyMutation()
     end
     self:UpdateTree()
-end
-
-function AngryEra:TouchPage(id)
-    local page = self:Get(id)
-    if not page then
-        return
-    end
-
-    page.Updated = time()
 end
 
 --- Creates a category.
@@ -495,6 +531,7 @@ function AngryEra:CreateCategory(nameOrFrame)
         AngryAssign_State.tree.groups[-id] = true
     end
     self:UpdateTree()
+    self:RefreshDisplayedPageAfterHierarchyMutation()
 
     return true, nil, id
 end
@@ -525,6 +562,7 @@ function AngryEra:RenameCategory(id, nameOrFrame)
 
     cat.Name = name
     self:UpdateTree()
+    self:RefreshDisplayedPageAfterHierarchyMutation()
 
     return true
 end
@@ -560,6 +598,7 @@ function AngryEra:DeleteCategory(id)
 
     self:UpdateTree()
     self:SetSelectedId(selectedId)
+    self:RefreshDisplayedPageAfterHierarchyMutation()
 end
 
 --- Deletes a category and all descendants.
@@ -572,7 +611,7 @@ function AngryEra:DeleteCategoryAndChildren(id)
 
     local selectedId = self:SelectedId()
 
-    local deleted = self:DeleteCategoryChildren(id)
+    local deleted = self:DeleteCategoryChildren(id, true)
     if not deleted then
         return false
     end
@@ -585,6 +624,7 @@ function AngryEra:DeleteCategoryAndChildren(id)
 
     self:UpdateTree()
     self:SetSelectedId(selectedId)
+    self:RefreshDisplayedPageAfterHierarchyMutation()
     return true
 end
 
@@ -628,6 +668,7 @@ function AngryEra:AssignCategory(entryId, parentId)
     if selectedId == entryId then
         self:SetSelectedId(selectedId)
     end
+    self:RefreshDisplayedPageAfterHierarchyMutation()
 end
 
 --- Updates a page's contents, history, hash, and sync state.
@@ -654,7 +695,7 @@ function AngryEra:UpdateContents(id, value)
     page.Updated = time()
     page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
 
-    self:SendPage(id, true)
+    PublishPageRevision(self, id)
     self:UpdateSelected(true)
     if AngryAssign_State.displayed == id then
         self:UpdateDisplayed()
@@ -697,9 +738,39 @@ function AngryEra:CreateBackup()
     self:UpdateSelected()
 end
 
---- Clears the currently displayed page selection.
-function AngryEra:ClearDisplayed()
+--- Clears the current local display and optionally publishes one shared clear.
+-- @tparam[opt=false] boolean publish Publish `DISPLAY { Displayed = false }` when authorized.
+-- @treturn boolean ok
+-- @treturn string|nil errorCode
+function AngryEra:ClearDisplayed(publish)
+    local wasDisplayed = AngryAssign_State.displayed ~= nil
     AngryAssign_State.displayed = nil
+
+    local cleared, clearError
+    if type(self.ClearActiveDisplayReference) == "function" then
+        cleared, clearError = self:ClearActiveDisplayReference()
+    else
+        cleared, clearError = false, "active-page-runtime-unavailable"
+    end
+
+    local published = true
+    local publishError
+    if
+        publish == true
+        and wasDisplayed
+        and type(self.CanLocalPlayerPublish) == "function"
+        and self:CanLocalPlayerPublish("display")
+    then
+        published, publishError = self:SendDisplay(nil, true)
+    end
+
     self:UpdateDisplayed()
     self:UpdateTree()
+    if cleared ~= true then
+        return false, clearError or "active-display-clear-failed"
+    end
+    if published ~= true then
+        return false, publishError
+    end
+    return true
 end

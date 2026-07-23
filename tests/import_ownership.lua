@@ -2,6 +2,7 @@ local nextId = 10
 local replacedPages = 0
 local replacedCategories = 0
 local deletedCategoryChildren = 0
+local displayHierarchyRefreshes = 0
 
 AngryAssign_Pages = {}
 AngryAssign_Categories = {}
@@ -89,12 +90,16 @@ function AngryEra:ReplaceCategoryRecord(id, fields)
     return category
 end
 
-function AngryEra:DeleteCategoryChildren()
+function AngryEra:DeleteCategoryChildren(_, suppressDisplayRefresh)
+    assert(suppressDisplayRefresh == true, "bulk category replacement should defer active display refresh")
     deletedCategoryChildren = deletedCategoryChildren + 1
     return true
 end
 
 function AngryEra:UpdateTree() end
+function AngryEra:RefreshDisplayedPageAfterHierarchyMutation()
+    displayHierarchyRefreshes = displayHierarchyRefreshes + 1
+end
 
 local app = {
     AngryEra = AngryEra,
@@ -179,5 +184,6 @@ assert(replacedCategoryId == 4, "A locally owned category should remain replacea
 assert(AngryAssign_Categories[4].Vars == "MT=ReplacementTank", "Category replacement should retain variables")
 assert(deletedCategoryChildren == 1, "Replacing a local category should clear its prior descendants")
 assert(replacedCategories == 1, "Local category replacement should preserve its identity")
+assert(displayHierarchyRefreshes == 4, "Each top-level import should refresh active hierarchy state exactly once")
 
 print("Import ownership tests passed.")

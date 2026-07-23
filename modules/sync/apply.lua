@@ -642,8 +642,8 @@ local function MaterializeEntity(entity, current, resolvedIds, rootSyncId, rootP
         end
     end
     if entity.Kind == "page" then
-        -- Keep the protocol-1 compatibility fields coherent during the v3
-        -- cutover instead of retaining stale local hashes and timestamps.
+        -- Keep local editor compatibility fields coherent with canonical v3
+        -- revisions instead of retaining stale hashes and timestamps.
         localFields.UpdateId = entity.RevisionId
         localFields.Updated = entity.UpdatedAt
     end

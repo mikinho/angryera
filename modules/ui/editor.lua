@@ -390,7 +390,6 @@ local function AngryEra_LoadTemplate(template, catIndex)
         local cat = AngryAssign_Categories[catId]
         if not cat.Index and catIndex then
             cat.Index = catIndex
-            AngryEra:CategoryUpdated(catId)
         end
     end
 
@@ -407,13 +406,14 @@ local function AngryEra_LoadTemplate(template, catIndex)
             end
 
             if not exists then
-                AngryEra:CreatePage(tPage.name, tPage.content, catId, i)
+                AngryEra:CreatePage(tPage.name, tPage.content, catId, i, true)
             end
         end
     end
 
     AngryEra:UpdateTree()
     AngryEra:UpdateSelected()
+    AngryEra:RefreshDisplayedPageAfterHierarchyMutation()
 end
 
 function AngryEra:SaveTemplate(name, catId)
@@ -819,12 +819,7 @@ local function AngryEra_DisplayPage(widget, event, value)
 end
 
 local function AngryEra_ClearPage(widget, event, value)
-    if not AngryEra:CanLocalPlayerPublish("display") then
-        return
-    end
-
-    AngryEra:ClearDisplayed()
-    AngryEra:SendDisplay(nil, true)
+    AngryEra:ClearDisplayed(true)
 end
 -- Expose for init.lua options table
 AngryEra._AngryEra_ClearPage = AngryEra_ClearPage
@@ -1947,6 +1942,7 @@ function AngryEra:MoveItem(sourceValue, targetValue, position)
     end
 
     self:UpdateTree()
+    self:RefreshDisplayedPageAfterHierarchyMutation()
 end
 
 function AngryEra:UpdateTree(id)

@@ -181,17 +181,6 @@ local collision = AngryEra:RegisterRemoteEntityIdentity({ Id = 903 }, "page", {
 })
 assert(not collision, "Remote identity must not collide with a locally owned SyncId")
 
-for _, invalidId in ipairs({ 0, -1, 1.5, math.huge, -math.huge }) do
-    assert(
-        AngryEra:BuildLegacyRemoteIdentity("Leader-Realm", "page", invalidId) == nil,
-        "Malformed legacy numeric ids should be rejected"
-    )
-end
-assert(
-    AngryEra:BuildLegacyRemoteIdentity("Leader-Realm", "page", 0 / 0) == nil,
-    "NaN legacy numeric ids should be rejected"
-)
-
 assert(AngryEra:SetPinned(remotePage, true), "Remote entities should support a local pin")
 assert(AngryEra:IsPinned(remotePage), "Pinning should be stored locally")
 assert(remotePage.Pinned == nil, "Pin state must not be written into wire-visible entity data")
