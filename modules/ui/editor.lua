@@ -1960,6 +1960,9 @@ function AngryEra:UpdateTree(id)
 end
 
 function AngryEra:UpdateSelected(destructive)
+    if destructive then
+        self:ClearSyncDraftConflict()
+    end
     if not self.window then
         return
     end

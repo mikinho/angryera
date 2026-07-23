@@ -112,6 +112,20 @@ function AngryEra:OnInitialize()
     self:InitializeIdentityStorage()
     self:MigratePermissionConfig()
     self:MigrateEntityIdentities()
+    local syncRuntimeReady, syncRuntimeResult = self:InitializeSyncRuntimeStorage()
+    if not syncRuntimeReady then
+        self.syncRuntimeStartupWarning = "Synchronization v3 is disabled because its saved state could not be initialized: "
+            .. tostring(syncRuntimeResult)
+    elseif #syncRuntimeResult > 0 then
+        local scopeLabel = #syncRuntimeResult == 1 and "scope" or "scopes"
+        self.syncRuntimeStartupWarning = string.format(
+            "Synchronization v3 repaired %d invalid saved %s; affected scopes were disabled.",
+            #syncRuntimeResult,
+            scopeLabel
+        )
+    else
+        self.syncRuntimeStartupWarning = nil
+    end
 
     -- Run cleanup once on load
     self:CleanupOrphanedStates()
@@ -603,6 +617,10 @@ end
 function AngryEra:OnEnable()
     self:ResetOfficerRank()
     self:CreateDisplay()
+    if self.syncRuntimeStartupWarning then
+        self:Print(self.syncRuntimeStartupWarning)
+        self.syncRuntimeStartupWarning = nil
+    end
     local protocolStarted, protocolError = self:StartProtocolSession()
     if not protocolStarted then
         self:Print("Unable to start synchronization session: " .. tostring(protocolError))

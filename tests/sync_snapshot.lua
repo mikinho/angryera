@@ -438,7 +438,7 @@ invalid, invalidError = snapshot.Stage(manifest, manifestHash, mismatchedScopeSe
 AssertError(
     invalid,
     invalidError,
-    "invalid-current-scope-authority",
+    "invalid-current-scope-authority-session-mismatch",
     "persisted manifest and authority epoch sessions must agree"
 )
 
