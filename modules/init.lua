@@ -564,8 +564,9 @@ function AngryEra:OnInitialize()
                             return self:GetConfig("receiveMode")
                         end,
                         set = function(info, val)
+                            local previousMode = self:GetConfig("receiveMode")
                             self:SetConfig("receiveMode", val)
-                            self:PermissionsUpdated()
+                            self:ReceiveModeUpdated(previousMode)
                         end,
                     },
                     allowAllAssistants = {
@@ -680,6 +681,10 @@ function AngryEra:PARTY_LEADER_CHANGED()
         self:ResetDisplayPublicationState()
     end
     self:PermissionsUpdated()
+    if self._protocolStarted then
+        self:SendProtocolVersionQuery()
+        self:SendRequestDisplay()
+    end
 end
 
 function AngryEra:PARTY_CONVERTED_TO_RAID()

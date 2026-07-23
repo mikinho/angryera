@@ -5,6 +5,9 @@ local groupRoster = {}
 local guildMembers = {}
 local clearDisplayedCalls = 0
 local authoritativePageContextAvailable = true
+local selectedUpdateCalls = 0
+local displayRequestCalls = 0
+local versionQueryCalls = 0
 
 local function EnsureUnitFullName(name)
     if name and not name:find("-", 1, true) then
@@ -69,9 +72,16 @@ function AngryEra:HasAuthoritativePageContext()
     return authoritativePageContextAvailable
 end
 
-function AngryEra:UpdateSelected() end
-function AngryEra:SendRequestDisplay() end
-function AngryEra:SendProtocolVersionQuery() end
+function AngryEra:UpdateSelected()
+    selectedUpdateCalls = selectedUpdateCalls + 1
+end
+function AngryEra:SendRequestDisplay()
+    displayRequestCalls = displayRequestCalls + 1
+    return true, "display-request-id"
+end
+function AngryEra:SendProtocolVersionQuery()
+    versionQueryCalls = versionQueryCalls + 1
+end
 function AngryEra:ClearDisplayed()
     clearDisplayedCalls = clearDisplayedCalls + 1
 end
@@ -331,6 +341,21 @@ assert(not AngryEra:CanLocalPlayerPublish("display"), "Receiver overrides must n
 AngryEra._protocolStarted = true
 AngryEra:PermissionsUpdated()
 assert(clearDisplayedCalls == 0, "Ignore-shared preference changes must not clear a locally selected display")
+assert(selectedUpdateCalls == 1, "Routine permission refresh should update local controls")
+assert(displayRequestCalls == 0, "Routine permission refresh must not request the active page")
+assert(versionQueryCalls == 0, "Routine permission refresh must not rediscover protocol peers")
+config.receiveMode = "standard"
+local requested, requestResult = AngryEra:ReceiveModeUpdated("ignoreShared")
+assert(requested and requestResult == "display-request-id", "Re-enabling shared updates should request current state")
+assert(displayRequestCalls == 1, "A deny-to-accept receive-mode transition should request exactly once")
+assert(versionQueryCalls == 0, "A receive-mode transition should not trigger unrelated discovery traffic")
+requested, requestResult = AngryEra:ReceiveModeUpdated("standard")
+assert(not requested and requestResult == "not-needed", "An accepting-to-accepting transition needs no request")
+assert(displayRequestCalls == 1, "Equivalent accepting modes must not request the active page again")
+AngryEra._protocolStarted = false
+requested, requestResult = AngryEra:ReceiveModeUpdated("ignoreShared")
+assert(not requested and requestResult == "not-needed", "A disabled protocol cannot request shared state")
+assert(displayRequestCalls == 1, "Disabled protocol state must suppress receive-mode recovery traffic")
 currentPlayer = "OrdinaryMember-Realm"
 assert(not AngryEra:CanLocalPlayerPublish("pageUpsert"), "An ordinary member may not attempt shared changes")
 assert(not AngryEra:CanLocalPlayerOutput(), "An ordinary member must not output assignments to group chat")

@@ -97,6 +97,11 @@ function AngryEra:SendProtocolVersionQuery(force)
     return true, "query-id"
 end
 
+function AngryEra:SendRequestDisplay()
+    Record("request-display")
+    return true, "display-request-id"
+end
+
 function AngryEra:UpdateDisplayedIfNewGroup()
     Record("update-group-display")
 end
@@ -203,10 +208,19 @@ assert(calls[#calls].Value.Method == "SendRequestDisplay", "group join should re
 
 calls = {}
 AngryEra:AfterEnable()
+local afterEnableVersionQueryCount = 0
+local afterEnableDisplayRequestCount = 0
 for _, call in ipairs(calls) do
     assert(call.Name ~= "clear-displayed", "delayed setup must not duplicate the startup clear")
     assert(call.Name ~= "register-comm", "delayed setup must not leave a startup receive blind spot")
+    if call.Name == "version-query" then
+        afterEnableVersionQueryCount = afterEnableVersionQueryCount + 1
+    elseif call.Name == "schedule" and call.Value.Method == "SendRequestDisplay" then
+        afterEnableDisplayRequestCount = afterEnableDisplayRequestCount + 1
+    end
 end
+assert(afterEnableVersionQueryCount == 1, "delayed startup should perform one explicit discovery query")
+assert(afterEnableDisplayRequestCount == 1, "delayed startup should schedule one explicit display request")
 
 calls = {}
 AngryEra:GROUP_ROSTER_UPDATE()
@@ -215,6 +229,8 @@ for _, call in ipairs(calls) do
     if call.Name == "retry-displayed-markers" then
         markerRetryCount = markerRetryCount + 1
     end
+    assert(call.Name ~= "version-query", "routine roster refreshes must not rediscover protocol peers")
+    assert(call.Name ~= "request-display", "routine roster refreshes must not request the active page")
 end
 assert(markerRetryCount == 1, "a roster update should retry unresolved displayed-note marker targets once")
 
@@ -223,6 +239,16 @@ AngryEra:PARTY_LEADER_CHANGED()
 assert(
     calls[1].Name == "reset-display-publication" and calls[2].Name == "permissions-updated",
     "leader changes must reset queued publication state before reevaluating permissions"
+)
+assert(calls[3].Name == "version-query", "leader changes should explicitly rediscover protocol peers")
+assert(calls[4].Name == "request-display", "leader changes should explicitly request the new leader's display")
+
+calls = {}
+AngryEra:PARTY_CONVERTED_TO_RAID()
+assert(calls[1].Name == "version-query", "party conversion should explicitly rediscover protocol peers")
+assert(
+    calls[2].Name == "schedule" and calls[2].Value.Method == "SendRequestDisplay",
+    "party conversion should explicitly schedule a display request"
 )
 
 local totalClearCount = clearCountBeforeJoin + 1

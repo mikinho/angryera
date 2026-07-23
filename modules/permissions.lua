@@ -340,10 +340,26 @@ function AngryEra:MigratePermissionConfig()
     AngryAssign_Meta.Migrations.PermissionPolicy = PERMISSION_POLICY_VERSION
 end
 
+--- Refreshes controls after local permission inputs change.
+-- Protocol discovery and display recovery belong to explicit group lifecycle
+-- boundaries; routine roster and guild events must not generate sync traffic.
 function AngryEra:PermissionsUpdated()
     self:UpdateSelected()
-    if AngryEra._protocolStarted then
-        self:SendProtocolVersionQuery()
-        self:SendRequestDisplay()
+end
+
+--- Applies a receive-mode change and recovers state only when sharing is
+-- re-enabled after being ignored.
+-- @tparam string previousMode Receive mode before the configuration write.
+-- @treturn boolean requestedOrNotNeeded
+-- @treturn string|nil messageIdOrStatus
+function AngryEra:ReceiveModeUpdated(previousMode)
+    self:PermissionsUpdated()
+    if
+        AngryEra._protocolStarted
+        and previousMode == "ignoreShared"
+        and self:GetConfig("receiveMode") ~= "ignoreShared"
+    then
+        return self:SendRequestDisplay()
     end
+    return false, "not-needed"
 end
