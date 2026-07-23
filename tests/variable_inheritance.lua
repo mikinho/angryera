@@ -157,6 +157,17 @@ merged, mergeError = variables.MergeVariableLayers({}, "a={{b}}\nb={{a}}")
 assert(merged and not mergeError, "Cyclic references should remain representable")
 assert(merged.a == "{{a}}" and merged.b == "{{a}}", "Cyclic reference output should be deterministic")
 
+local expansiveReferences = {}
+for index = 1, 20 do
+    local key = string.format("K%02d", index)
+    local nextKey = string.format("K%02d", index + 1)
+    expansiveReferences[#expansiveReferences + 1] = key .. "={{" .. nextKey .. "}}{{" .. nextKey .. "}}"
+end
+expansiveReferences[#expansiveReferences + 1] = "K21=end"
+merged, mergeError = variables.MergeVariableLayers({}, table.concat(expansiveReferences, "\n"))
+assert(merged == nil, "Exponentially expanding references should be rejected")
+assert(mergeError == "resolved-variables-too-large", "Expansion rejection should return a stable error")
+
 local canonicalContext, canonicalError = variables.BuildContextRevisionInput(layers, "role=page")
 assert(canonicalContext and not canonicalError, "Valid layers should produce canonical context input")
 

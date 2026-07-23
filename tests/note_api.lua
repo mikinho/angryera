@@ -177,6 +177,27 @@ assert(secondNote.Vars.NullValue ~= note.Vars.NullValue, "Every getter should ow
 assert(json.JSON_NULL.consumerMutation == nil, "Public null mutations should not reach the codec singleton")
 structuredMeta.assignments.tanks[1] = "Zessy"
 
+local invalidVariableKey = {}
+local rejected, rejectionError = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK - MT: Zessy",
+    MergedVariables = {
+        Nested = {
+            [invalidVariableKey] = "unsupported",
+        },
+    },
+})
+assert(rejected == false, "Invalid variable graphs should not announce")
+assert(rejectionError == "invalid-variables", "Invalid variable graphs should report their partition error")
+assert(AngryEra:GetDisplayedVars().MT == "Zessy", "A rejected graph should preserve the previous snapshot")
+assert(#scanEvents == 1 and #messages == 1, "A rejected graph should not publish an event")
+
+local invalidContextAnnounced, invalidContextError = AngryEra:NotifyDisplayedNoteChanged({})
+assert(invalidContextAnnounced == false, "Invalid render contexts should not announce")
+assert(invalidContextError == "invalid-context", "Invalid render contexts should report invalid-context")
+assert(AngryEra:GetDisplayedVars().MT == "Zessy", "An invalid render context should preserve the previous snapshot")
+assert(#scanEvents == 1 and #messages == 1, "An invalid render context should not publish an event")
+
 announced = AngryEra:NotifyDisplayedNoteChanged({
     Page = wirePage,
     RenderedText = "PATCHWERK - MT: Zessy",
@@ -309,6 +330,44 @@ local partialNote = AngryEra:GetDisplayedNote()
 assert(partialNote.Ancestors[2].SyncId == unknownSyncId, "Unknown ancestors should keep their sync id")
 assert(partialNote.Ancestors[2].Name == nil, "Unknown ancestors should expose no name")
 assert(partialNote.Category == "Renamed Quarter", "The direct parent should still resolve by ParentSyncId")
+
+local exactRenderContext = renderContext
+renderContext = nil
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK",
+    MergedVariables = {},
+    AncestorVariableLayers = exactRenderContext.AncestorVariableLayers,
+})
+assert(announced == true, "A local fallback after an exact-context miss should announce")
+local fallbackIdentityNote = AngryEra:GetDisplayedNote()
+assert(
+    fallbackIdentityNote.RevisionId == nil and fallbackIdentityNote.ContextRevisionId == nil,
+    "A local fallback should not retain stale exact-revision identifiers"
+)
+renderContext = exactRenderContext
+
+-- Valid aggregate graphs above the former 8,192-table copy/equality guard must
+-- remain readable and must not generate duplicate change events.
+local largeVariables = {}
+for index = 1, 9000 do
+    largeVariables["Large" .. tostring(index)] = {}
+end
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK",
+    MergedVariables = largeVariables,
+})
+assert(announced == true, "A valid large aggregate should publish")
+local largePublicVariables, largeGetterError = AngryEra:GetDisplayedVars()
+assert(largePublicVariables and not largeGetterError, "A valid large aggregate should remain readable")
+assert(type(largePublicVariables.Large9000) == "table", "The complete large aggregate should reach consumers")
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK",
+    MergedVariables = largeVariables,
+})
+assert(announced == false, "An unchanged large aggregate should not announce again")
 
 -- Event channels degrade independently.
 local scanCountBefore = #scanEvents

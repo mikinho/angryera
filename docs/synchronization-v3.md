@@ -136,7 +136,9 @@ Variables resolve from broadest to narrowest scope:
 3. page variables.
 
 Later scopes override earlier scopes. Variable-to-variable references resolve
-after all scopes have merged.
+after all scopes have merged. Reference expansion is bounded to 5,000 bytes
+per resolved value and to the maximum aggregate ancestor-plus-page variable
+budget.
 
 For synchronized entities, the published hierarchy and variable values are
 authoritative. A member who wants different values creates a local fork.
@@ -148,10 +150,11 @@ variables.
 - The Output keybinding renders the actively displayed page.
 - The editor Output button renders the page selected in the editor.
 - The on-screen display prefers the exact active snapshot. When that snapshot
-  is unavailable and the displayed page is locally authoritative, the display
-  falls back to local hierarchy data instead of rendering nothing. Chat output
-  through the active display context never falls back; a missing exact tuple
-  produces no chat message.
+  is unavailable and the displayed page is locally owned, the display falls
+  back to local hierarchy data instead of rendering nothing. Remote-owned
+  pages never reconstruct wire hierarchy from receiver-private placement.
+  Chat output through the active display context never falls back; a missing
+  exact tuple produces no chat message.
 - `{page}` resolves from the page passed to the renderer, never from global
   display state.
 - Group chat continues to auto-select instance, raid, or party channels unless

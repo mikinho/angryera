@@ -17,9 +17,15 @@ end
 AngryEra.NOTE_API_VERSION = 1
 AngryEra.NOTE_UPDATE_EVENT = "ANGRYERA_NOTE_UPDATE"
 
-local MAX_PUBLIC_CLONE_TABLES = 8192
-local MAX_PUBLIC_CLONE_ENTRIES = 65536
-local MAX_EQUAL_TABLES = 8192
+-- A published snapshot can contain every valid ancestor/page variable source,
+-- plus a small fixed envelope for the note fields and ancestor descriptors.
+-- Keep clone/equality guards above that valid production ceiling.
+local MAX_VARIABLE_SOURCE_BYTES = variables.MAX_RESOLVED_VARIABLE_BYTES
+local MAX_SNAPSHOT_GRAPH_SIZE = MAX_VARIABLE_SOURCE_BYTES + 1024
+local MAX_PUBLIC_CLONE_TABLES = MAX_SNAPSHOT_GRAPH_SIZE
+local MAX_PUBLIC_CLONE_ENTRIES = MAX_SNAPSHOT_GRAPH_SIZE
+local MAX_EQUAL_TABLES = MAX_SNAPSHOT_GRAPH_SIZE
+local MAX_EQUAL_ENTRIES = MAX_SNAPSHOT_GRAPH_SIZE * 2
 local publicNulls = setmetatable({}, { __mode = "k" })
 
 local function IsPlainTable(value)
@@ -128,6 +134,7 @@ local function ValuesEqual(left, right)
         },
     }
     local tableCount = 0
+    local entryCount = 0
 
     while #pending > 0 do
         local work = pending[#pending]
@@ -159,6 +166,10 @@ local function ValuesEqual(left, right)
                 rightToLeft[rightValue] = leftValue
 
                 for key, entry in pairs(leftValue) do
+                    entryCount = entryCount + 1
+                    if entryCount > MAX_EQUAL_ENTRIES then
+                        return false
+                    end
                     if IsPlainTable(key) then
                         return false
                     end
@@ -172,6 +183,10 @@ local function ValuesEqual(left, right)
                     }
                 end
                 for key in pairs(rightValue) do
+                    entryCount = entryCount + 1
+                    if entryCount > MAX_EQUAL_ENTRIES then
+                        return false
+                    end
                     if IsPlainTable(key) or rawget(leftValue, key) == nil then
                         return false
                     end
@@ -226,8 +241,14 @@ local function ResolveActiveReference(self, page)
         reference.RevisionId,
         reference.ContextRevisionId
     )
-    if not contextOk or not IsPlainTable(context) then
-        return reference, nil
+    if
+        not contextOk
+        or not IsPlainTable(context)
+        or not IsPlainTable(context.Page)
+        or context.Page.SyncId ~= page.SyncId
+        or not IsPlainTable(context.AncestorVariableLayers)
+    then
+        return nil, nil
     end
     return reference, context
 end
@@ -239,7 +260,8 @@ local function BuildAncestors(self, context)
         return ancestors
     end
 
-    for index = 1, #layers do
+    local layerCount = math.min(#layers, variables.MAX_ANCESTOR_DEPTH)
+    for index = 1, layerCount do
         local layer = layers[index]
         if IsPlainTable(layer) and type(layer.SyncId) == "string" then
             ancestors[#ancestors + 1] = {
@@ -253,9 +275,18 @@ end
 
 local function BuildSnapshot(self, context)
     local page = context.Page
-    local publicVariables, meta = variables.PartitionResolvedVariables(context.MergedVariables or {})
+    local mergedVariables = context.MergedVariables
+    if mergedVariables == nil then
+        mergedVariables = {}
+    end
+    local publicVariables, meta, variableError = variables.PartitionResolvedVariables(mergedVariables)
+    if not publicVariables then
+        return nil, variableError
+    end
+
     local reference, activeContext = ResolveActiveReference(self, page)
-    local ancestors = BuildAncestors(self, activeContext)
+    local ancestorContext = IsPlainTable(context.AncestorVariableLayers) and context or activeContext
+    local ancestors = BuildAncestors(self, ancestorContext)
 
     local categorySyncId = type(page.ParentSyncId) == "string" and page.ParentSyncId or nil
     local categoryName = ResolveCategoryName(self, categorySyncId)
@@ -263,7 +294,7 @@ local function BuildSnapshot(self, context)
         categoryName = ancestors[#ancestors].Name
         categorySyncId = categorySyncId or ancestors[#ancestors].SyncId
     end
-    if categoryName == nil and categorySyncId == nil then
+    if categoryName == nil and categorySyncId == nil and not IsPlainTable(context.AncestorVariableLayers) then
         categoryName, categorySyncId = ResolveLocalCategory(page)
     end
 
@@ -282,8 +313,8 @@ local function BuildSnapshot(self, context)
         Rendered = type(context.RenderedText) == "string" and context.RenderedText or "",
         UpdatedAt = type(page.UpdatedAt) == "number" and page.UpdatedAt or nil,
         UpdatedBy = type(page.UpdatedBy) == "string" and page.UpdatedBy or nil,
-        Vars = publicVariables or {},
-        Meta = meta or {},
+        Vars = publicVariables,
+        Meta = meta,
     }
 end
 
@@ -310,16 +341,112 @@ local function EmitNoteEvent(self, snapshot)
     end
 end
 
+local noteEventQueue = {}
+local noteEventQueueHead = 1
+local noteEventQueueTail = 0
+local dispatchingNoteEvents = false
+local noteEventDrainScheduled = false
+local schedulingNoteEventDrain = false
+local MAX_NOTE_EVENTS_PER_DRAIN = 32
+
+local DrainNoteEvents
+
+local function ResetNoteEventQueue()
+    noteEventQueueHead = 1
+    noteEventQueueTail = 0
+end
+
+local function CoalescePendingNoteEvents()
+    local latest = noteEventQueue[noteEventQueueTail]
+    for index = noteEventQueueHead, noteEventQueueTail do
+        noteEventQueue[index] = nil
+    end
+    noteEventQueue[1] = latest
+    noteEventQueueHead = 1
+    noteEventQueueTail = latest and 1 or 0
+end
+
+local function ScheduleNoteEventDrain()
+    if noteEventDrainScheduled or noteEventQueueHead > noteEventQueueTail then
+        return
+    end
+    if not IsPlainTable(C_Timer) or type(C_Timer.After) ~= "function" then
+        return
+    end
+
+    noteEventDrainScheduled = true
+    schedulingNoteEventDrain = true
+    local firedSynchronously = false
+    local scheduled = pcall(C_Timer.After, 0, function()
+        if schedulingNoteEventDrain then
+            firedSynchronously = true
+            return
+        end
+        noteEventDrainScheduled = false
+        DrainNoteEvents()
+    end)
+    schedulingNoteEventDrain = false
+    if not scheduled or firedSynchronously then
+        noteEventDrainScheduled = false
+    end
+end
+
+DrainNoteEvents = function()
+    if dispatchingNoteEvents then
+        return
+    end
+    dispatchingNoteEvents = true
+    local dispatched = 0
+    while noteEventQueueHead <= noteEventQueueTail and dispatched < MAX_NOTE_EVENTS_PER_DRAIN do
+        local pending = noteEventQueue[noteEventQueueHead]
+        noteEventQueue[noteEventQueueHead] = nil
+        noteEventQueueHead = noteEventQueueHead + 1
+        dispatched = dispatched + 1
+        pcall(EmitNoteEvent, pending.Self, pending.Snapshot)
+    end
+    dispatchingNoteEvents = false
+
+    if noteEventQueueHead > noteEventQueueTail then
+        ResetNoteEventQueue()
+        return
+    end
+
+    CoalescePendingNoteEvents()
+    ScheduleNoteEventDrain()
+end
+
+local function QueueNoteEvent(self, snapshot)
+    noteEventQueueTail = noteEventQueueTail + 1
+    noteEventQueue[noteEventQueueTail] = {
+        Self = self,
+        Snapshot = snapshot,
+    }
+
+    if dispatchingNoteEvents or noteEventDrainScheduled then
+        return
+    end
+    DrainNoteEvents()
+end
+
 --- Records the latest displayed-note render and announces meaningful changes.
 -- Called by the display pipeline after every rebuild; `context` is nil when the
 -- display cleared. The stored snapshot always tracks the latest render, while
 -- ANGRYERA_NOTE_UPDATE fires when any published snapshot field changes.
--- @tparam table|nil context `{ Page = wireOrLocalPage, RenderedText = string, MergedVariables = table }`.
+-- @tparam table|nil context Render context, or nil when the display clears.
 -- @treturn boolean announced
+-- @treturn string|nil errorCode
 function AngryEra:NotifyDisplayedNoteChanged(context)
+    if context ~= nil and (not IsPlainTable(context) or not IsPlainTable(context.Page)) then
+        return false, "invalid-context"
+    end
+
     local snapshot
-    if IsPlainTable(context) and IsPlainTable(context.Page) then
-        snapshot = BuildSnapshot(self, context)
+    if context ~= nil then
+        local snapshotError
+        snapshot, snapshotError = BuildSnapshot(self, context)
+        if not snapshot then
+            return false, snapshotError
+        end
     end
 
     local previous = self._displayedNoteSnapshot
@@ -328,7 +455,7 @@ function AngryEra:NotifyDisplayedNoteChanged(context)
         return false
     end
 
-    EmitNoteEvent(self, snapshot)
+    QueueNoteEvent(self, snapshot)
     return true
 end
 

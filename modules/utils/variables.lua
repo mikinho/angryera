@@ -18,6 +18,7 @@ local variables = AngryEra.utils.variables
 
 variables.MAX_ANCESTOR_DEPTH = 32
 variables.MAX_VARIABLE_BYTES = 5000
+variables.MAX_RESOLVED_VARIABLE_BYTES = (variables.MAX_ANCESTOR_DEPTH + 1) * variables.MAX_VARIABLE_BYTES
 
 local function IsPositiveInteger(value)
     return type(value) == "number" and value >= 1 and value % 1 == 0
@@ -317,13 +318,23 @@ function variables.MergeVariableLayers(layers, pageVariables)
     for key, value in pairs(parsedPage) do
         merged[key] = value
     end
-    return json.ResolveVariableReferences(merged)
+    return json.ResolveVariableReferences(
+        merged,
+        nil,
+        variables.MAX_RESOLVED_VARIABLE_BYTES,
+        variables.MAX_VARIABLE_BYTES
+    )
 end
 
 variables.META_VARIABLE_PREFIX = "$"
 
-local MAX_PARTITION_TABLES = 4096
-local MAX_PARTITION_ENTRIES = 32768
+-- A render can merge every allowed ancestor layer plus the page layer. Every
+-- reachable parsed table or entry requires source text, so the aggregate byte
+-- ceiling is also a conservative ceiling for either graph dimension. The extra
+-- slot accounts for the resolved root created after the source layers merge.
+local MAX_PARTITION_SOURCE_BYTES = variables.MAX_RESOLVED_VARIABLE_BYTES
+local MAX_PARTITION_TABLES = MAX_PARTITION_SOURCE_BYTES + 1
+local MAX_PARTITION_ENTRIES = MAX_PARTITION_SOURCE_BYTES + 1
 
 local function CloneVariableGraph(value)
     if type(value) ~= "table" or value == json.JSON_NULL then
@@ -369,18 +380,13 @@ local function CloneVariableGraph(value)
         pending[#pending] = nil
 
         for key, entry in pairs(work.Source) do
+            if type(key) == "table" then
+                return nil, "invalid-variables"
+            end
+
             entryCount = entryCount + 1
             if entryCount > MAX_PARTITION_ENTRIES then
                 return nil, "variables-too-complex"
-            end
-
-            local copiedKey = key
-            if type(key) == "table" then
-                local keyError
-                copiedKey, keyError = QueueTable(key)
-                if not copiedKey then
-                    return nil, keyError
-                end
             end
 
             local copiedEntry = entry
@@ -391,7 +397,7 @@ local function CloneVariableGraph(value)
                     return nil, entryError
                 end
             end
-            work.Copy[copiedKey] = copiedEntry
+            work.Copy[key] = copiedEntry
         end
     end
 
@@ -410,7 +416,8 @@ end
 -- Metadata keys are exposed with the prefix stripped; only empty stripped names
 -- are dropped. The input table is never mutated. Returned values are deeply
 -- detached while preserving shared references, cycles, and the JSON-null
--- sentinel used by the internal codec.
+-- sentinel used by the internal codec. Nested table keys are rejected because
+-- parsed variable graphs only contain scalar keys.
 -- @tparam table resolved Resolved variable map from `MergeVariableLayers`.
 -- @treturn table|nil publicVariables
 -- @treturn table|nil meta
@@ -431,16 +438,23 @@ function variables.PartitionResolvedVariables(resolved)
         return nil, nil, cloneError
     end
 
-    local publicVariables = {}
+    local publicVariables = detached
     local meta = {}
-    for key, value in pairs(detached) do
-        if not variables.IsMetaVariableKey(key) then
-            publicVariables[key] = value
-        else
-            local metaKey = key:sub(2)
-            if metaKey ~= "" then
-                meta[metaKey] = value
-            end
+    local metadataKeys = {}
+    for key in pairs(publicVariables) do
+        if variables.IsMetaVariableKey(key) then
+            metadataKeys[#metadataKeys + 1] = key
+        end
+    end
+
+    for index = 1, #metadataKeys do
+        local key = metadataKeys[index]
+        local value = publicVariables[key]
+        publicVariables[key] = nil
+
+        local metaKey = key:sub(2)
+        if metaKey ~= "" then
+            meta[metaKey] = value
         end
     end
     return publicVariables, meta

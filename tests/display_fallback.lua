@@ -113,6 +113,7 @@ local AngryEra = app.AngryEra
 
 local localInstallationId = "ae3i:1:2:3:4"
 local remoteInstallationId = "ae3i:a:b:c:d"
+local rootCategorySyncId = localInstallationId .. ":category:3"
 local categorySyncId = localInstallationId .. ":category:1"
 local pageSyncId = localInstallationId .. ":page:2"
 local remotePageSyncId = remoteInstallationId .. ":page:9"
@@ -124,6 +125,7 @@ _G.AngryAssign_Meta = {
     InstallationId = localInstallationId,
     EntityCounter = 10,
     EntityLocal = {
+        [rootCategorySyncId] = { OwnedLocally = true },
         [categorySyncId] = { OwnedLocally = true },
         [pageSyncId] = { OwnedLocally = true },
         [hashedCategorySyncId] = { OwnedLocally = true },
@@ -132,11 +134,19 @@ _G.AngryAssign_Meta = {
     SyncScopes = {},
 }
 _G.AngryAssign_Categories = {
+    [3] = {
+        Id = 3,
+        Name = "Raids",
+        SyncId = rootCategorySyncId,
+        OwnerId = localInstallationId,
+        Vars = "$tier=Classic",
+    },
     [1] = {
         Id = 1,
         Name = "Naxxramas",
         SyncId = categorySyncId,
         OwnerId = localInstallationId,
+        CategoryId = 3,
         Vars = "",
     },
     [4025479151] = {
@@ -162,6 +172,7 @@ _G.AngryAssign_Pages = {
         Name = "Remote",
         SyncId = remotePageSyncId,
         OwnerId = remoteInstallationId,
+        CategoryId = 1,
         Contents = "remote body",
         Vars = "",
     },
@@ -193,6 +204,13 @@ function AngryEra:GetProtocolSession()
         InstallationId = localInstallationId,
         SessionId = "session-1",
     }
+end
+function AngryEra:GetCategoryBySyncId(syncId)
+    for _, category in pairs(AngryAssign_Categories) do
+        if category.SyncId == syncId then
+            return category
+        end
+    end
 end
 function AngryEra:GetConfig(key)
     local defaults = {
@@ -227,6 +245,15 @@ local function RenderedBody()
     return table.concat(rendered, "\n")
 end
 
+local noteEventCount = 0
+_G.WeakAuras = {
+    ScanEvents = function(event)
+        if event == AngryEra.NOTE_UPDATE_EVENT then
+            noteEventCount = noteEventCount + 1
+        end
+    end,
+}
+
 AngryEra:ResetActivePageTransientState()
 
 -- The activated exact snapshot renders normally.
@@ -247,6 +274,15 @@ assert(RenderedBody():find("$MT = Meta", 1, true), "metadata should render witho
 local note = AngryEra:GetDisplayedNote()
 assert(note and note.RevisionId ~= nil, "an activated display should expose revision identity")
 assert(note.Meta.MT == "Meta", "metadata should reach the note API")
+assert(#note.Ancestors == 2, "an activated display should expose the complete ancestor chain")
+assert(
+    note.Ancestors[1].SyncId == rootCategorySyncId and note.Ancestors[1].Name == "Raids",
+    "the activated ancestor chain should start at the root"
+)
+assert(
+    note.Ancestors[2].SyncId == categorySyncId and note.Ancestors[2].Name == "Naxxramas",
+    "the activated ancestor chain should end at the direct parent"
+)
 
 -- A missing active snapshot falls back to local rendering instead of a blank display.
 AngryEra:ResetActivePageTransientState()
@@ -258,6 +294,25 @@ assert(RenderedBody():find("$MT = Meta", 1, true), "fallback rendering should re
 local fallbackNote = AngryEra:GetDisplayedNote()
 assert(fallbackNote and fallbackNote.RevisionId == nil, "fallback snapshots should carry no revision identity")
 assert(fallbackNote.Rendered:find("Zessy", 1, true), "fallback snapshots should carry the rendered text")
+assert(#fallbackNote.Ancestors == 2, "fallback snapshots should retain the complete ancestor chain")
+assert(
+    fallbackNote.Ancestors[1].SyncId == rootCategorySyncId and fallbackNote.Ancestors[1].Name == "Raids",
+    "fallback snapshots should retain the root ancestor identity"
+)
+assert(
+    fallbackNote.Ancestors[2].SyncId == categorySyncId and fallbackNote.Ancestors[2].Name == "Naxxramas",
+    "fallback snapshots should retain the direct-parent identity"
+)
+
+local eventsBeforeAncestorRename = noteEventCount
+AngryAssign_Categories[3].Name = "Classic Raids"
+AngryEra:UpdateDisplayed()
+fallbackNote = AngryEra:GetDisplayedNote()
+assert(fallbackNote.Ancestors[1].Name == "Classic Raids", "fallback snapshots should refresh renamed ancestors")
+assert(
+    noteEventCount == eventsBeforeAncestorRename + 1,
+    "renaming a fallback ancestor should publish one note update event"
+)
 
 -- Chat output intentionally keeps its exact-tuple requirement (no local fallback).
 local chatOutput = AngryEra:RenderPageForChatOutput(AngryAssign_Pages[2], true)
@@ -265,8 +320,14 @@ assert(chatOutput == "", "active chat output must stay blank without its exact t
 
 -- A remote-owned page without an authoritative context stays blank.
 AngryAssign_State.displayed = 9
+local originalAuthoritativePageContext = AngryEra.HasAuthoritativePageContext
+AngryEra.HasAuthoritativePageContext = function()
+    return true
+end
 AngryEra:UpdateDisplayed()
 assert(RenderedBody() == " ", "a remote page without context should not render local guesses")
+assert(AngryEra:GetDisplayedNote() == nil, "a blank remote page should not publish receiver-private hierarchy")
+AngryEra.HasAuthoritativePageContext = originalAuthoritativePageContext
 
 -- A failing note API must never abort display rendering.
 AngryAssign_State.displayed = 2

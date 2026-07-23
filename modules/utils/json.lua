@@ -419,12 +419,29 @@ end
 -- Unknown references and cyclic references remain visible in Mustache form.
 -- @tparam table variables Parsed variable map.
 -- @tparam[opt=20] number maxDepth Maximum reference depth.
--- @treturn table Resolved copy of the variable map.
-function json.ResolveVariableReferences(variables, maxDepth)
+-- @tparam[opt=1048576] number maxOutputBytes Maximum cumulative resolved string bytes.
+-- @tparam[opt=1048576] number maxValueBytes Maximum bytes in one resolved string.
+-- @treturn table|nil resolved Resolved copy of the variable map.
+-- @treturn string|nil errorCode
+function json.ResolveVariableReferences(variables, maxDepth, maxOutputBytes, maxValueBytes)
     maxDepth = maxDepth or 20
+    maxOutputBytes = maxOutputBytes or 1048576
+    maxValueBytes = maxValueBytes or maxOutputBytes
 
     local resolved = {}
     local resolving = {}
+    local outputBytes = 0
+
+    local function StoreResolved(key, value)
+        if type(value) == "string" then
+            if #value > maxValueBytes or outputBytes + #value > maxOutputBytes then
+                return nil, "resolved-variables-too-large"
+            end
+            outputBytes = outputBytes + #value
+        end
+        resolved[key] = value
+        return value
+    end
 
     local function ResolveValue(key, depth)
         if resolved[key] ~= nil then
@@ -433,29 +450,70 @@ function json.ResolveVariableReferences(variables, maxDepth)
 
         local value = variables[key]
         if type(value) ~= "string" or depth >= maxDepth then
-            resolved[key] = value
-            return value
+            return StoreResolved(key, value)
         end
 
         resolving[key] = true
-        local result = value:gsub("{{%s*([^{}]-)%s*}}", function(reference)
+        local parts = {}
+        local cursor = 1
+        local resultBytes = 0
+
+        local function Append(part)
+            local nextResultBytes = resultBytes + #part
+            if nextResultBytes > maxValueBytes or outputBytes + nextResultBytes > maxOutputBytes then
+                return false
+            end
+            parts[#parts + 1] = part
+            resultBytes = nextResultBytes
+            return true
+        end
+
+        while true do
+            local referenceStart, referenceEnd, reference = value:find("{{%s*([^{}]-)%s*}}", cursor)
+            if not referenceStart then
+                if not Append(value:sub(cursor)) then
+                    resolving[key] = nil
+                    return nil, "resolved-variables-too-large"
+                end
+                break
+            end
+
+            if not Append(value:sub(cursor, referenceStart - 1)) then
+                resolving[key] = nil
+                return nil, "resolved-variables-too-large"
+            end
+
             reference = reference:match("^%s*(.-)%s*$")
+            local replacement
             if reference == "" or variables[reference] == nil or resolving[reference] then
-                return "{{" .. reference .. "}}"
+                replacement = "{{" .. reference .. "}}"
+            else
+                local referenceValue, referenceError = ResolveValue(reference, depth + 1)
+                if referenceError then
+                    resolving[key] = nil
+                    return nil, referenceError
+                end
+                if
+                    type(referenceValue) == "string"
+                    or type(referenceValue) == "number"
+                    or type(referenceValue) == "boolean"
+                then
+                    replacement = tostring(referenceValue)
+                else
+                    replacement = "{{" .. reference .. "}}"
+                end
             end
 
-            local referenceValue = ResolveValue(reference, depth + 1)
-            if
-                type(referenceValue) == "string"
-                or type(referenceValue) == "number"
-                or type(referenceValue) == "boolean"
-            then
-                return tostring(referenceValue)
+            if not Append(replacement) then
+                resolving[key] = nil
+                return nil, "resolved-variables-too-large"
             end
+            cursor = referenceEnd + 1
+        end
 
-            return "{{" .. reference .. "}}"
-        end)
         resolving[key] = nil
+        local result = table.concat(parts)
+        outputBytes = outputBytes + resultBytes
         resolved[key] = result
         return result
     end
@@ -477,7 +535,10 @@ function json.ResolveVariableReferences(variables, maxDepth)
     end)
 
     for _, key in ipairs(keys) do
-        ResolveValue(key, 0)
+        local _, resolveError = ResolveValue(key, 0)
+        if resolveError then
+            return nil, resolveError
+        end
     end
 
     return resolved

@@ -499,6 +499,7 @@ end
 -- @treturn table mergedVars Merged variable map used for rendering.
 -- @treturn string|nil variableError
 -- @treturn table renderedPage Exact page record used for rendering.
+-- @treturn table ancestorVariableLayers Exact root-to-parent variable layers used for rendering.
 function AngryEra:RenderPageContent(page, ctx, options)
     local renderedPage = page
     local layers
@@ -508,15 +509,15 @@ function AngryEra:RenderPageContent(page, ctx, options)
             type(self.GetActiveDisplayReference) ~= "function"
             or type(self.GetActivePageRenderContext) ~= "function"
         then
-            return "", {}, "active-display-runtime-unavailable", renderedPage
+            return "", {}, "active-display-runtime-unavailable", renderedPage, {}
         end
 
         local referenceCallOk, reference = pcall(self.GetActiveDisplayReference, self)
         if not referenceCallOk or type(reference) ~= "table" then
-            return "", {}, "missing-active-display-reference", renderedPage
+            return "", {}, "missing-active-display-reference", renderedPage, {}
         end
         if reference.SyncId ~= page.SyncId or not reference.RevisionId or not reference.ContextRevisionId then
-            return "", {}, "active-display-reference-mismatch", renderedPage
+            return "", {}, "active-display-reference-mismatch", renderedPage, {}
         end
 
         local contextCallOk, activeContext = pcall(
@@ -532,7 +533,7 @@ function AngryEra:RenderPageContent(page, ctx, options)
             or type(activeContext.Page) ~= "table"
             or type(activeContext.AncestorVariableLayers) ~= "table"
         then
-            return "", {}, "missing-active-display-context", renderedPage
+            return "", {}, "missing-active-display-context", renderedPage, {}
         end
 
         renderedPage = activeContext.Page
@@ -556,6 +557,7 @@ function AngryEra:RenderPageContent(page, ctx, options)
     local mergedVars, mergeError = variableHelpers.MergeVariableLayers(layers, renderedPage.Vars)
     if not mergedVars then
         variableError = variableError or mergeError
+        layers = {}
         mergedVars = variableHelpers.MergeVariableLayers({}, renderedPage.Vars) or {}
     end
 
@@ -571,7 +573,7 @@ function AngryEra:RenderPageContent(page, ctx, options)
         end
     end
 
-    return text, mergedVars, variableError, renderedPage
+    return text, mergedVars, variableError, renderedPage, layers
 end
 
 local ACTIVE_CONTEXT_UNAVAILABLE = {
@@ -585,11 +587,18 @@ local function CanRenderPageLocally(self, page)
     if type(page.OwnerId) ~= "string" then
         return true
     end
-    if type(self.HasAuthoritativePageContext) ~= "function" then
-        return true
+
+    if type(self.IsLocallyOwned) == "function" then
+        local checked, locallyOwned = pcall(self.IsLocallyOwned, self, page)
+        if checked and locallyOwned == true then
+            return true
+        end
     end
-    local ok, authoritative = pcall(self.HasAuthoritativePageContext, self, page)
-    return ok and authoritative == true
+
+    if type(AngryAssign_Meta) ~= "table" then
+        return false
+    end
+    return page.OwnerId == AngryAssign_Meta.InstallationId
 end
 
 --- Renders a page preferring the exact active display snapshot.
@@ -601,13 +610,14 @@ end
 -- @treturn table mergedVars Merged variable map used for rendering.
 -- @treturn string|nil variableError
 -- @treturn table renderedPage Exact page record used for rendering.
+-- @treturn table ancestorVariableLayers Exact root-to-parent variable layers used for rendering.
 function AngryEra:RenderPageWithActiveFallback(page, ctx)
-    local renderedText, mergedVars, variableError, renderedPage =
+    local renderedText, mergedVars, variableError, renderedPage, ancestorVariableLayers =
         self:RenderPageContent(page, ctx, { UseActiveDisplayContext = true })
     if ACTIVE_CONTEXT_UNAVAILABLE[variableError] and CanRenderPageLocally(self, page) then
         return self:RenderPageContent(page, ctx)
     end
-    return renderedText, mergedVars, variableError, renderedPage
+    return renderedText, mergedVars, variableError, renderedPage, ancestorVariableLayers
 end
 
 --- Applies lightweight markdown transformations used by the display layer.
@@ -683,7 +693,8 @@ function AngryEra:UpdateDisplayed()
     local highlightHex = self:GetConfig("highlightColor")
 
     -- Mustache Templating & Merging
-    local renderedText, mergedVars, _, renderedPage = self:RenderPageWithActiveFallback(page, ctx)
+    local renderedText, mergedVars, variableError, renderedPage, ancestorVariableLayers =
+        self:RenderPageWithActiveFallback(page, ctx)
     local text = renderedText or page.Contents or ""
 
     local hasHighlight = next(highlightSet) ~= nil
@@ -778,10 +789,15 @@ function AngryEra:UpdateDisplayed()
     end)
 
     if type(self.NotifyDisplayedNoteChanged) == "function" then
-        pcall(self.NotifyDisplayedNoteChanged, self, {
-            Page = renderedPage,
-            RenderedText = text,
-            MergedVariables = mergedVars,
-        })
+        if ACTIVE_CONTEXT_UNAVAILABLE[variableError] then
+            pcall(self.NotifyDisplayedNoteChanged, self, nil)
+        else
+            pcall(self.NotifyDisplayedNoteChanged, self, {
+                Page = renderedPage,
+                RenderedText = text,
+                MergedVariables = mergedVars,
+                AncestorVariableLayers = ancestorVariableLayers,
+            })
+        end
     end
 end
