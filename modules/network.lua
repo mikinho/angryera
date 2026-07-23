@@ -14,6 +14,7 @@ local PlayerFullName = helpers.PlayerFullName
 local IterateGroupMembers = helpers.IterateGroupMembers
 
 local updateFrequency = AngryEra.core.updateFrequency
+local displayControlDebounce = 0.125
 local displayPageDebounce = 0.125
 -- Promised group pages need a long grace period so a large/low-FPS transfer
 -- does not make every receiver request a duplicate at once. A targeted request
@@ -24,8 +25,9 @@ local maximumDisplayRecoveryAttempts = 3
 
 local pageLastUpdate = {}
 local pageTimerId = {}
-local displayLastUpdate
 local displayTimerId
+local pendingDisplayControl
+local displayControlGeneration = 0
 local pendingDisplayRecoveryTimer
 local pendingDisplayRecovery
 local pendingDisplayRecoveryGeneration = 0
@@ -236,7 +238,59 @@ local function CancelPendingDisplayPage(self, reason)
     end
 end
 
-local function QueueDisplayPage(self, id, payload)
+local function CancelObsoleteDisplayPage(self, payload)
+    if
+        payload
+        and (
+            (pendingDisplayPage and SamePageTuple(pendingDisplayPage.Payload, payload))
+            or (activeDisplayPageTransfer and SamePageTuple(activeDisplayPageTransfer.Payload, payload))
+        )
+    then
+        return false
+    end
+    if not pendingDisplayPage and not activeDisplayPageTransfer then
+        return false
+    end
+    CancelPendingDisplayPage(self, "superseded")
+    return true
+end
+
+local function CancelMatchingDisplayPage(self, payload)
+    if
+        not payload
+        or not (
+            (pendingDisplayPage and SamePageTuple(pendingDisplayPage.Payload, payload))
+            or (activeDisplayPageTransfer and SamePageTuple(activeDisplayPageTransfer.Payload, payload))
+        )
+    then
+        return false
+    end
+    CancelPendingDisplayPage(self, "superseded")
+    return true
+end
+
+local function CancelPendingDisplayControl(self, reason)
+    local pending = pendingDisplayControl
+    local timer = displayTimerId
+    displayControlGeneration = displayControlGeneration + 1
+    pendingDisplayControl = nil
+    displayTimerId = nil
+    CancelTimer(self, timer)
+    if pending and pending.Debug then
+        Trace(
+            self,
+            "display-debounce-drop",
+            "id=%s generation=%d reason=%s",
+            tostring(pending.Id),
+            pending.Generation,
+            tostring(reason or "superseded")
+        )
+    end
+    return pending ~= nil or timer ~= nil
+end
+
+local function QueueDisplayPage(self, id, payload, delay)
+    delay = type(delay) == "number" and delay >= 0 and delay or displayPageDebounce
     if IsPublishedDisplayTuple(payload) then
         CancelPendingDisplayPage(self, "superseded")
         if IsDebugEnabled(self) then
@@ -277,7 +331,7 @@ local function QueueDisplayPage(self, id, payload)
         Payload = payload,
         QueuedAt = debugEnabled and PreciseNowMilliseconds() or 0,
     }
-    pendingDisplayPageTimer = self:ScheduleTimer("SendDisplayPageMessage", displayPageDebounce, displayPageGeneration)
+    pendingDisplayPageTimer = self:ScheduleTimer("SendDisplayPageMessage", delay, displayPageGeneration)
     if not pendingDisplayPageTimer then
         pendingDisplayPage = nil
         return false, "page-publication-schedule-failed"
@@ -289,7 +343,7 @@ local function QueueDisplayPage(self, id, payload)
             "id=%s generation=%d delay=%dms",
             tostring(id),
             displayPageGeneration,
-            math.floor(displayPageDebounce * 1000)
+            math.floor(delay * 1000)
         )
     end
     return true, "scheduled"
@@ -396,9 +450,7 @@ end
 function AngryEra:ResetDisplayPublicationState()
     self:CancelPendingDisplayRecovery()
     CancelPendingDisplayPage(self, "reset")
-    CancelTimer(self, displayTimerId)
-    displayTimerId = nil
-    displayLastUpdate = nil
+    CancelPendingDisplayControl(self, "reset")
     for _, timerId in pairs(pageTimerId) do
         CancelTimer(self, timerId)
     end
@@ -642,46 +694,28 @@ function AngryEra:SendPageMessage(id)
     return SendPreparedPage(self, id)
 end
 
---- Publishes an active display selection with throttling.
--- A page tuple is proactively published once per group/session. Later
--- selections send only DISPLAY; a receiver without that tuple requests it.
--- @tparam[opt] number id Local page id, or nil to clear the shared display.
--- @tparam[opt=false] boolean force Bypass the publication delay.
--- @treturn boolean sentOrScheduled
--- @treturn string|nil messageIdOrStatus
--- @treturn boolean activatedLocally Whether the exact local display state committed.
-function AngryEra:SendDisplay(id, force)
-    if not self:CanLocalPlayerPublish("display") then
-        return false, "unauthorized", false
+local function DisplaySelectionMatchesActive(self, prepared)
+    local displayPayload = type(prepared) == "table" and prepared.DisplayPayload or nil
+    if type(displayPayload) ~= "table" then
+        return false
     end
-
-    local now = time()
-    if not force and displayLastUpdate and now - displayLastUpdate < updateFrequency then
-        CancelTimer(self, displayTimerId)
-        displayTimerId = self:ScheduleTimer("SendDisplayMessage", updateFrequency - (now - displayLastUpdate), id)
-        return true, "scheduled", false
+    if displayPayload.Displayed then
+        return prepared.PagePayload ~= nil and ActiveDisplayMatches(self, prepared.PagePayload)
     end
-
-    CancelTimer(self, displayTimerId)
-    displayTimerId = nil
-    return self:SendDisplayMessage(id)
+    if type(self.GetActiveDisplayReference) ~= "function" then
+        return false
+    end
+    local queried, reference = pcall(self.GetActiveDisplayReference, self)
+    return queried and reference == nil
 end
 
---- Immediately sends DISPLAY control and, for a new tuple, queues PAGE_UPSERT.
--- A short trailing debounce coalesces rapid page A -> B navigation before the
--- replaceable active-page stream starts.
--- @tparam[opt] number id Local page id, or nil to clear the shared display.
--- @treturn boolean sent
--- @treturn string|nil messageIdOrError
--- @treturn boolean activatedLocally Whether the exact local display state committed.
-function AngryEra:SendDisplayMessage(id)
-    displayTimerId = nil
+local function PrepareDisplaySelection(self, id)
     local debugEnabled = IsDebugEnabled(self)
     if debugEnabled then
         Trace(self, "display-select", "id=%s", tostring(id))
     end
     if not self:CanLocalPlayerPublish("display") then
-        return false, "unauthorized", false
+        return nil, "unauthorized"
     end
 
     if
@@ -689,22 +723,22 @@ function AngryEra:SendDisplayMessage(id)
         or type(self.ActivatePreparedActiveDisplay) ~= "function"
         or type(self.ClearActiveDisplayReference) ~= "function"
     then
-        return false, "active-page-runtime-unavailable", false
+        return nil, "active-page-runtime-unavailable"
     end
     if id ~= nil and not self:CanLocalPlayerPublish("pageUpsert") then
-        return false, "unauthorized", false
+        return nil, "unauthorized"
     end
 
     local author = PlayerFullName()
     if type(author) ~= "string" or author == "" then
-        return false, "invalid-local-author", false
+        return nil, "invalid-local-author"
     end
     local displayPayload, pagePayloadOrError = self:BuildActiveDisplayPayload(id, {
         UpdatedAt = time(),
         UpdatedBy = author,
     })
     if not displayPayload then
-        return false, pagePayloadOrError, false
+        return nil, pagePayloadOrError
     end
 
     local pagePayload = pagePayloadOrError
@@ -715,15 +749,48 @@ function AngryEra:SendDisplayMessage(id)
         activated, activationError = self:ActivatePreparedActiveDisplay(displayPayload, pagePayload)
     end
     if activated ~= true then
-        return false, activationError or "active-display-activation-failed", false
+        return nil, activationError or "active-display-activation-failed"
+    end
+    return {
+        Debug = debugEnabled,
+        DisplayPayload = displayPayload,
+        Id = id,
+        PagePayload = pagePayload,
+    }
+end
+
+local function PublishPreparedDisplay(self, prepared, pageDelay)
+    if
+        type(prepared) ~= "table"
+        or type(prepared.DisplayPayload) ~= "table"
+        or not self:CanLocalPlayerPublish("display")
+        or (prepared.PagePayload ~= nil and not self:CanLocalPlayerPublish("pageUpsert"))
+    then
+        CancelPendingDisplayPage(self, "unauthorized")
+        return false, "unauthorized"
+    end
+    if not DisplaySelectionMatchesActive(self, prepared) then
+        CancelMatchingDisplayPage(self, prepared.PagePayload)
+        if prepared.Debug then
+            Trace(
+                self,
+                "display-debounce-skip",
+                "id=%s generation=%s reason=inactive-tuple",
+                tostring(prepared.Id),
+                tostring(prepared.Generation)
+            )
+        end
+        return true, "superseded"
     end
 
-    if pagePayload then
-        CancelTimer(self, pageTimerId[id])
-        pageTimerId[id] = nil
-        local queued, queueResult = QueueDisplayPage(self, id, pagePayload)
+    local displayPayload = prepared.DisplayPayload
+    displayPayload.PageFollows = nil
+    if prepared.PagePayload then
+        CancelTimer(self, pageTimerId[prepared.Id])
+        pageTimerId[prepared.Id] = nil
+        local queued, queueResult = QueueDisplayPage(self, prepared.Id, prepared.PagePayload, pageDelay)
         if not queued then
-            return false, queueResult, true
+            return false, queueResult
         end
         if queueResult ~= "already-published" then
             displayPayload.PageFollows = true
@@ -734,13 +801,12 @@ function AngryEra:SendDisplayMessage(id)
 
     local sent, result = self:SendProtocolDisplay(displayPayload)
     if sent then
-        displayLastUpdate = time()
-        if debugEnabled then
+        if prepared.Debug then
             Trace(
                 self,
                 "display-submit",
                 "id=%s message=%s pageFollows=%s",
-                tostring(id),
+                tostring(prepared.Id),
                 tostring(result),
                 tostring(displayPayload.PageFollows == true)
             )
@@ -748,6 +814,103 @@ function AngryEra:SendDisplayMessage(id)
     else
         CancelPendingDisplayPage(self, "display-send-failed")
     end
+    return sent, result
+end
+
+local function QueuePendingDisplayControl(self, prepared)
+    local replaced = pendingDisplayControl ~= nil
+    CancelPendingDisplayControl(self, "superseded")
+    prepared.Generation = displayControlGeneration
+    prepared.QueuedAt = prepared.Debug and PreciseNowMilliseconds() or 0
+    pendingDisplayControl = prepared
+    displayTimerId = self:ScheduleTimer("SendPendingDisplayControl", displayControlDebounce, displayControlGeneration)
+    if not displayTimerId then
+        pendingDisplayControl = nil
+        return false, "display-publication-schedule-failed"
+    end
+    if prepared.Debug then
+        Trace(
+            self,
+            "display-debounce-start",
+            "id=%s generation=%d delay=%dms replaced=%s",
+            tostring(prepared.Id),
+            prepared.Generation,
+            math.floor(displayControlDebounce * 1000),
+            tostring(replaced)
+        )
+    end
+    return true, "scheduled"
+end
+
+--- Sends the newest locally activated interactive display selection.
+-- Replaced generations never allocate a protocol sequence or timestamp.
+-- @tparam number generation Publication generation captured by AceTimer.
+-- @treturn boolean sentOrSuperseded
+-- @treturn string|nil messageIdOrStatus
+function AngryEra:SendPendingDisplayControl(generation)
+    local pending = pendingDisplayControl
+    if not pending or pending.Generation ~= generation then
+        if IsDebugEnabled(self) then
+            Trace(self, "display-debounce-skip", "generation=%s reason=superseded", tostring(generation))
+        end
+        return true, "superseded"
+    end
+    pendingDisplayControl = nil
+    displayTimerId = nil
+    if pending.Debug then
+        Trace(
+            self,
+            "display-debounce-fire",
+            "id=%s generation=%d waited=%dms",
+            tostring(pending.Id),
+            pending.Generation,
+            math.max(PreciseNowMilliseconds() - pending.QueuedAt, 0)
+        )
+    end
+    -- The control debounce already absorbed rapid navigation. Start a missing
+    -- final page on the next timer turn instead of adding another 125 ms.
+    return PublishPreparedDisplay(self, pending, 0)
+end
+
+--- Publishes an active display selection.
+-- Interactive calls activate locally immediately and replace one 125 ms
+-- trailing-edge control timer. Forced calls publish immediately.
+-- @tparam[opt] number id Local page id, or nil to clear the shared display.
+-- @tparam[opt=false] boolean force Bypass interactive control coalescing.
+-- @treturn boolean sentOrScheduled
+-- @treturn string|nil messageIdOrStatus
+-- @treturn boolean activatedLocally Whether the exact local display state committed.
+function AngryEra:SendDisplay(id, force)
+    if force then
+        return self:SendDisplayMessage(id)
+    end
+
+    local prepared, preparationError = PrepareDisplaySelection(self, id)
+    if not prepared then
+        return false, preparationError, false
+    end
+    CancelObsoleteDisplayPage(self, prepared.PagePayload)
+    local scheduled, scheduleResult = QueuePendingDisplayControl(self, prepared)
+    if not scheduled then
+        local sent, result = PublishPreparedDisplay(self, prepared, 0)
+        return sent, result or scheduleResult, true
+    end
+    return true, scheduleResult, true
+end
+
+--- Immediately prepares, activates, and publishes DISPLAY control.
+-- A new tuple retains the page-only debounce for forced revision publication.
+-- @tparam[opt] number id Local page id, or nil to clear the shared display.
+-- @treturn boolean sent
+-- @treturn string|nil messageIdOrError
+-- @treturn boolean activatedLocally Whether the exact local display state committed.
+function AngryEra:SendDisplayMessage(id)
+    CancelPendingDisplayControl(self, "forced")
+    local prepared, preparationError = PrepareDisplaySelection(self, id)
+    if not prepared then
+        return false, preparationError, false
+    end
+    local sent, result = PublishPreparedDisplay(self, prepared, displayPageDebounce)
     return sent, result, true
 end
 

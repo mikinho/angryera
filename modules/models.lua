@@ -81,12 +81,13 @@ end
 -- @treturn string|nil publicationResult
 function AngryEra:DisplayPage(id, options)
     local retry = type(options) == "table" and options.AutoAdvanceRetry or nil
+    local forcePublication = type(options) == "table" and options.ForcePublication == true
 
     if not self:CanLocalPlayerPublish("display") then
         return
     end
 
-    local published, displayResult, activatedLocally = self:SendDisplay(id, true)
+    local published, displayResult, activatedLocally = self:SendDisplay(id, forcePublication)
     if activatedLocally ~= true then
         self:Print(RED_FONT_COLOR_CODE .. "Unable to display the page: " .. tostring(displayResult) .. "|r")
         return nil, displayResult, false, displayResult

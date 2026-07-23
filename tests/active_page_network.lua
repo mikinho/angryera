@@ -59,6 +59,7 @@ local app = {
 local calls = {}
 local timers = {}
 local canceled = {}
+local failNextTimer = false
 local preparationCount = 0
 local nextActivationError
 local failPageSend = false
@@ -232,6 +233,10 @@ function AngryEra:GetPendingActiveDisplayRequest()
 end
 
 function AngryEra:ScheduleTimer(method, delay, argument)
+    if failNextTimer then
+        failNextTimer = false
+        return nil
+    end
     local timer = {
         Method = method,
         Delay = delay,
@@ -482,14 +487,17 @@ assert(calls[#calls].Type == "ACTIVATE", "activation failure should occur at the
 
 currentTime = 101
 sent, result, activatedLocally = AngryEra:SendDisplay(5)
-assert(sent and result == "scheduled", "rapid display changes should be throttled")
-assert(not activatedLocally, "a scheduled display has not activated locally yet")
-assert(timers[#timers].Method == "SendDisplayMessage", "display throttle should schedule the v3 sender")
+assert(sent and result == "scheduled", "interactive display changes should be coalesced")
+assert(activatedLocally, "a coalesced display should still activate locally immediately")
+assert(
+    timers[#timers].Method == "SendPendingDisplayControl" and timers[#timers].Delay == 0.125,
+    "interactive display control should use the 125 millisecond trailing timer"
+)
 local scheduledDisplay = timers[#timers]
 sent, result, activatedLocally = AngryEra:SendDisplay(5, true)
 assert(sent and result == "display-message", "forced display should send immediately")
 assert(activatedLocally, "forced display should activate its exact tuple immediately")
-assert(canceled[scheduledDisplay], "forced display should cancel its delayed predecessor")
+assert(canceled[scheduledDisplay], "forced display should cancel its coalesced predecessor")
 local forcedDisplayPageTimer = timers[#timers]
 
 local callsBeforeClear = #calls
@@ -520,6 +528,127 @@ assert(
 local displayAfterPageSendTimer = timers[#timers]
 sent, result = AngryEra:SendDisplayPageMessage(displayAfterPageSendTimer.Argument)
 assert(sent and result == "page-message", "the active-page stream should republish after a generic page send")
+
+do
+    pageRevisionIds[5] = "fcs32:12345685"
+    pageRevisionIds[6] = "fcs32:22345685"
+    local burstCallsStart = #calls
+    local burstTimers = {}
+    for index = 1, 10 do
+        local id = index % 2 == 1 and 5 or 6
+        sent, result, activatedLocally = AngryEra:SendDisplay(id)
+        assert(
+            sent and result == "scheduled" and activatedLocally,
+            "every rapid interactive selection should activate locally and schedule publication"
+        )
+        burstTimers[#burstTimers + 1] = timers[#timers]
+    end
+    assert(
+        #calls == burstCallsStart + 10,
+        "ten rapid uncached selections should perform only their ten local activations before the quiet window"
+    )
+    for index = burstCallsStart + 1, #calls do
+        assert(calls[index].Type == "ACTIVATE", "rapid uncached intermediates must not enter transport")
+    end
+    for index = 1, #burstTimers - 1 do
+        assert(canceled[burstTimers[index]], "each replaced display generation should cancel its timer")
+        local callsBeforeStaleControl = #calls
+        sent, result = AngryEra:SendPendingDisplayControl(burstTimers[index].Argument)
+        assert(sent and result == "superseded", "a canceled display generation should be harmless")
+        assert(#calls == callsBeforeStaleControl, "a canceled display generation must not send")
+    end
+
+    local finalBurstTimer = burstTimers[#burstTimers]
+    assert(not canceled[finalBurstTimer], "the final display generation should remain scheduled")
+    sent, result = AngryEra:SendPendingDisplayControl(finalBurstTimer.Argument)
+    assert(sent and result == "display-message", "the final uncached display generation should publish")
+    assert(
+        #calls == burstCallsStart + 11
+            and calls[#calls].Type == "DISPLAY"
+            and calls[#calls].Payload.SyncId == Upsert(6).Page.SyncId
+            and calls[#calls].Payload.PageFollows == true,
+        "ten uncached toggles should emit exactly one final DISPLAY with a page promise"
+    )
+    local finalBurstPageTimer = timers[#timers]
+    assert(
+        finalBurstPageTimer.Method == "SendDisplayPageMessage" and finalBurstPageTimer.Delay == 0,
+        "the final page should start on the next timer turn without a second debounce"
+    )
+    sent, result = AngryEra:SendDisplayPageMessage(finalBurstPageTimer.Argument)
+    assert(sent and result == "page-message", "the final uncached page should publish")
+    assert(
+        calls[#calls].Type == "PAGE_UPSERT" and calls[#calls].Payload.Page.SyncId == Upsert(6).Page.SyncId,
+        "only the final page from an uncached burst may enter transport"
+    )
+
+    sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+    assert(sent and result == "display-message" and activatedLocally, "cached burst setup should publish page A")
+    local cachedPageATimer = timers[#timers]
+    sent, result = AngryEra:SendDisplayPageMessage(cachedPageATimer.Argument)
+    assert(sent and result == "page-message", "cached burst setup should finish page A")
+
+    burstCallsStart = #calls
+    burstTimers = {}
+    local timersBeforeCachedBurst = #timers
+    for index = 1, 10 do
+        local id = index % 2 == 1 and 6 or 5
+        sent, result, activatedLocally = AngryEra:SendDisplay(id)
+        assert(
+            sent and result == "scheduled" and activatedLocally,
+            "every cached rapid selection should still activate locally"
+        )
+        burstTimers[#burstTimers + 1] = timers[#timers]
+    end
+    assert(#calls == burstCallsStart + 10, "ten cached toggles should remain local until the final control timer")
+    for index = 1, #burstTimers - 1 do
+        local callsBeforeStaleControl = #calls
+        sent, result = AngryEra:SendPendingDisplayControl(burstTimers[index].Argument)
+        assert(sent and result == "superseded", "cached stale display generations should be harmless")
+        assert(#calls == callsBeforeStaleControl, "cached stale generations must not send")
+    end
+    sent, result = AngryEra:SendPendingDisplayControl(burstTimers[#burstTimers].Argument)
+    assert(sent and result == "display-message", "the final cached generation should publish")
+    assert(
+        #calls == burstCallsStart + 11
+            and calls[#calls].Type == "DISPLAY"
+            and calls[#calls].Payload.SyncId == Upsert(5).Page.SyncId
+            and calls[#calls].Payload.PageFollows == nil,
+        "ten cached toggles should emit exactly one final control and no page promise"
+    )
+    assert(
+        #timers == timersBeforeCachedBurst + 10,
+        "a cached burst should allocate only replaceable control timers and no page timer"
+    )
+end
+
+pageRevisionIds[5] = "fcs32:12345686"
+local callsBeforeDisplayScheduleFailure = #calls
+failNextTimer = true
+sent, result, activatedLocally = AngryEra:SendDisplay(5)
+assert(
+    sent and result == "display-message" and activatedLocally,
+    "display timer allocation failure should fall back to immediate publication"
+)
+assert(
+    #calls == callsBeforeDisplayScheduleFailure + 2
+        and calls[callsBeforeDisplayScheduleFailure + 1].Type == "ACTIVATE"
+        and calls[callsBeforeDisplayScheduleFailure + 2].Type == "DISPLAY",
+    "display timer allocation failure must not report a phantom scheduled send"
+)
+local fallbackDisplayPageTimer = timers[#timers]
+sent, result = AngryEra:SendDisplayPageMessage(fallbackDisplayPageTimer.Argument)
+assert(sent and result == "page-message", "the timer-allocation fallback should still publish its final page")
+
+pageRevisionIds[5] = "fcs32:12345687"
+sent, result, activatedLocally = AngryEra:SendDisplay(5)
+assert(sent and result == "scheduled" and activatedLocally, "authority recheck should queue display control")
+local authorityDisplayTimer = timers[#timers]
+local callsBeforeDisplayAuthorityRecheck = #calls
+canPublishDisplay = false
+sent, result = AngryEra:SendPendingDisplayControl(authorityDisplayTimer.Argument)
+canPublishDisplay = true
+assert(not sent and result == "unauthorized", "a delayed display flush should recheck display authority")
+assert(#calls == callsBeforeDisplayAuthorityRecheck, "lost display authority must prevent delayed display transport")
 
 currentTime = 105
 sent, result = AngryEra:SendPage(5)
@@ -811,7 +940,7 @@ assert(sent and result == "scheduled", "reset should have a pending page timer")
 local resetPageTimer = timers[#timers]
 
 sent, result, activatedLocally = AngryEra:SendDisplay(5)
-assert(sent and result == "scheduled" and not activatedLocally, "reset should have a pending display timer")
+assert(sent and result == "scheduled" and activatedLocally, "reset should have a pending display timer")
 local resetDisplayTimer = timers[#timers]
 
 AngryEra:ResetDisplayPublicationState()
@@ -819,6 +948,10 @@ assert(canceled[resetRecoveryTimer], "publication reset should cancel pending re
 assert(canceled[resetDisplayPageTimer], "publication reset should cancel the debounced display page")
 assert(canceled[resetPageTimer], "publication reset should cancel page throttling")
 assert(canceled[resetDisplayTimer], "publication reset should cancel display throttling")
+local callsBeforeStaleResetDisplay = #calls
+sent, result = AngryEra:SendPendingDisplayControl(resetDisplayTimer.Argument)
+assert(sent and result == "superseded", "a reset display callback should be harmless")
+assert(#calls == callsBeforeStaleResetDisplay, "a reset display callback must not publish")
 
 local timersBeforeResetDisplay = #timers
 callsBeforeCachedDisplay = #calls

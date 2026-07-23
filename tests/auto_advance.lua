@@ -52,11 +52,13 @@ function AngryEra:GetActivePageRenderContext()
 end
 
 local displayedCalls = {}
+local displayOptions = {}
 local displayLocalSuccess = true
 local displayPublished = true
 local displayPublicationResult = "display-message-id"
-function AngryEra:DisplayPage(id)
+function AngryEra:DisplayPage(id, options)
     displayedCalls[#displayedCalls + 1] = id
+    displayOptions[#displayOptions + 1] = options
     if displayLocalSuccess == true then
         AngryAssign_State.displayed = id
         return true, nil, displayPublished, displayPublicationResult
@@ -165,6 +167,7 @@ end
 local function Reset(displayedId, meta, categorySyncId)
     AngryEra:CancelAutoAdvancePublishRetry()
     displayedCalls = {}
+    displayOptions = {}
     displayLocalSuccess = true
     displayPublished = true
     displayPublicationResult = "display-message-id"
@@ -197,6 +200,10 @@ Reset(10, { AUTOADVANCE = true })
 local advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
 assert(advanced == true and result == 11, "a kill should advance to the next page")
 assert(displayedCalls[1] == 11, "the next sibling should be displayed")
+assert(
+    displayOptions[1] and displayOptions[1].ForcePublication == true,
+    "encounter auto-advance should force immediate publication"
+)
 
 -- Wipes never advance.
 Reset(10, { AUTOADVANCE = true })
@@ -442,6 +449,14 @@ displayPublished = true
 local retrySucceeded, retryResult = RunNextTimer()
 assert(retrySucceeded == true and retryResult == 11, "a successful retry should confirm shared publication")
 assert(#displayedCalls == 2, "retry should republish the already activated page exactly once")
+assert(
+    displayOptions[1]
+        and displayOptions[1].ForcePublication == true
+        and displayOptions[2]
+        and displayOptions[2].ForcePublication == true,
+    "auto-advance and its retry should both force immediate publication"
+)
+assert(displayOptions[2].AutoAdvanceRetry ~= nil, "an auto-advance publication retry should retain its retry identity")
 
 -- Replacing the display cancels the pending retry without republishing stale state.
 Reset(10, { AUTOADVANCE = true })

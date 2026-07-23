@@ -295,19 +295,32 @@ During leader handoff, an identical relay from the current leader may provide
 volatile display context. Changed owner revisions require the canonical
 `CHANGE_PROPOSE`/`DELTA` path.
 
-A non-empty leader display emits its compact `DISPLAY` reference immediately on
-the control lane. The first selection of an exact page revision/context tuple in
-the current group session marks `PageFollows` and places its `PAGE_UPSERT` in a
-125-millisecond trailing debounce before the active-page lane. That lane emits
-standard AceComm frames one at a time through ChatThrottleLib. A newer selection
-invalidates the old generation immediately, leaving at most one obsolete frame
-already queued; the receiver's next multipart first frame replaces any
-abandoned reassembly. A completed tuple is remembered for the session, so
-switching back to it sends only `DISPLAY`. Repeated selection while the same
-tuple is pending or in flight reuses that work instead of restarting it. If the
-current tuple's page stream reports failure, the leader immediately reannounces
-the same display without `PageFollows`; receivers that still miss it then use
-the targeted request path instead of trusting a failed promise.
+An ordinary interactive selection activates its exact local page/context
+immediately, then replaces one 125-millisecond trailing-edge control timer. A
+new interactive choice during that window supersedes the prepared older choice
+before it allocates a protocol sequence, `SentAt`, or transport work. When the
+timer fires, only the final selection emits its compact `DISPLAY` on the control
+lane. If that exact page revision/context tuple was already published in the
+current group session, the final selection sends only `DISPLAY`. Otherwise it
+marks `PageFollows` and schedules the matching `PAGE_UPSERT` for the next timer
+turn; the control debounce has already absorbed rapid navigation, so the page
+does not incur a second 125-millisecond wait.
+
+The active-page lane emits standard AceComm frames one at a time through
+ChatThrottleLib. A newer selection invalidates the old generation immediately,
+leaving at most one obsolete frame already queued; the receiver's next
+multipart first frame replaces any abandoned reassembly. Repeated selection
+while the same tuple is pending or in flight reuses that work instead of
+restarting it. If the current tuple's page stream reports failure, the leader
+immediately reannounces the same display without `PageFollows`; receivers that
+still miss it then use the targeted request path instead of trusting a failed
+promise.
+
+Interactive coalescing does not delay authoritative state changes or request
+handling. Forced publications, including displayed-page revision and hierarchy
+refreshes, shared clears, and protocol responses emit `DISPLAY` control
+immediately. A forced uncached page publication retains only its independent
+page-snapshot debounce; it does not delay the control message.
 
 `/aa debug` enables session-local timing traces for display selection, debounce
 replacement, encoded byte and chunk counts, local transport drain, approximate

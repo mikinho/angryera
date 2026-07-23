@@ -405,8 +405,10 @@ function AngryEra:RetryAutoAdvanceDisplay(retry)
     end
 
     retry.Attempts = retry.Attempts + 1
-    local displayed, displayError, published, publicationResult =
-        self:DisplayPage(retry.PageId, { AutoAdvanceRetry = retry })
+    local displayed, displayError, published, publicationResult = self:DisplayPage(retry.PageId, {
+        AutoAdvanceRetry = retry,
+        ForcePublication = true,
+    })
     if displayed ~= true then
         self:CancelAutoAdvancePublishRetry()
         ReportAutoAdvance(self, "Auto-advance publication retry failed: " .. tostring(displayError))
@@ -468,7 +470,7 @@ function AngryEra:AdvanceDisplayedPageAfterEncounter(encounterId, encounterName)
         return false, "already-displayed"
     end
 
-    local displayed, _, published, publicationResult = self:DisplayPage(nextPage.Id)
+    local displayed, _, published, publicationResult = self:DisplayPage(nextPage.Id, { ForcePublication = true })
     if displayed ~= true then
         return false, "display-failed"
     end

@@ -248,6 +248,10 @@ displayed, displayError, published, publicationResult = AngryEra:DisplayPage(42)
 assert(displayed and displayError == nil, "a published display should remain a local success")
 assert(published == true and publicationResult == "display-message-id", "publication success should be exposed")
 assert(
+    sentDisplays[#sentDisplays].Id == 42 and sentDisplays[#sentDisplays].Force == false,
+    "an ordinary DisplayPage should activate locally through non-forced publication"
+)
+assert(
     updateDisplayCalls == updatesBeforeSamePagePublish + 1,
     "republishing the same page should render its newly activated exact tuple"
 )
@@ -256,6 +260,43 @@ assert(
     "same-page republication should not repeat page-change UI effects"
 )
 displaySendResult = nil
+
+AngryAssign_Pages[50] = {
+    Id = 50,
+    CategoryId = 9,
+    Index = 1,
+    Name = "Navigation A",
+    Contents = "",
+}
+AngryAssign_Pages[51] = {
+    Id = 51,
+    CategoryId = 9,
+    Index = 2,
+    Name = "Navigation B",
+    Contents = "",
+}
+AngryAssign_State.displayed = 50
+local sendsBeforeNextPage = #sentDisplays
+AngryEra:NextPage()
+assert(AngryAssign_State.displayed == 51, "NextPage should activate the next page locally")
+assert(
+    #sentDisplays == sendsBeforeNextPage + 1
+        and sentDisplays[#sentDisplays].Id == 51
+        and sentDisplays[#sentDisplays].Force == false,
+    "NextPage should use non-forced publication"
+)
+
+local sendsBeforePrevPage = #sentDisplays
+AngryEra:PrevPage()
+assert(AngryAssign_State.displayed == 50, "PrevPage should activate the previous page locally")
+assert(
+    #sentDisplays == sendsBeforePrevPage + 1
+        and sentDisplays[#sentDisplays].Id == 50
+        and sentDisplays[#sentDisplays].Force == false,
+    "PrevPage should use non-forced publication"
+)
+AngryAssign_Pages[50] = nil
+AngryAssign_Pages[51] = nil
 
 local sendsBeforeLocalClear = #sentDisplays
 AngryAssign_State.displayed = 42
