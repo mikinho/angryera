@@ -41,14 +41,18 @@ local RaidTargetChatMap = {
 }
 
 function AngryEra_OutputDisplayed()
-    return AngryEra:OutputDisplayed(AngryEra:SelectedId())
+    return AngryEra:OutputDisplayed()
 end
 
-local function ResolveChatOutputTag(self, tagContent)
+local function ResolveChatOutputTag(self, page, tagContent)
     local normalizedTag = tagContent:lower()
     local raidTargetTag = RaidTargetChatMap[normalizedTag]
     if raidTargetTag then
         return raidTargetTag
+    end
+
+    if normalizedTag == "page" then
+        return page.Name or ""
     end
 
     local lowerTag = "{" .. normalizedTag .. "}"
@@ -131,7 +135,7 @@ function AngryEra:RenderPageForChatOutput(page)
     local output = renderedText or page.Contents or ""
 
     output = output:gsub("{(.-)}", function(tagContent)
-        return ResolveChatOutputTag(self, tagContent)
+        return ResolveChatOutputTag(self, page, tagContent)
     end)
 
     return StripChatOutputColors(output)

@@ -843,6 +843,10 @@ local function AngryEra_TextEntered(widget, event, value)
     AngryEra:UpdateContents(AngryEra:SelectedId(), value)
 end
 
+local function AngryEra_OutputSelectedPage()
+    return AngryEra:OutputDisplayed(AngryEra:SelectedId())
+end
+
 local function AngryEra_RestorePage(widget, event, value)
     local pageId = AngryEra:SelectedId()
     if not pageId then
@@ -1546,7 +1550,7 @@ function AngryEra:CreateWindow()
     button_output:SetHeight(22)
     button_output:ClearAllPoints()
     button_output:SetPoint("RIGHT", button_high.frame, "LEFT", -6, 0)
-    button_output:SetCallback("OnClick", AngryEra_OutputDisplayed)
+    button_output:SetCallback("OnClick", AngryEra_OutputSelectedPage)
     tree:AddChild(button_output)
     window.button_output = button_output
 

@@ -61,6 +61,7 @@ function AngryEra:PageUpdated(id)
     local page = AngryAssign_Pages[id]
     if page then
         page.Updated = time()
+        page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
         self:SendPage(id, true)
     end
 end
