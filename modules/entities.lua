@@ -172,9 +172,13 @@ function AngryEra:MigrateEntityIdentities()
     end
 end
 
-local LEGACY_LOCAL_ID_MAX = 1000000
+local LOCAL_ID_MIGRATION_VERSION = 1
 
-local function RemapTreeValue(value, maps)
+local function IsPositiveInteger(value)
+    return type(value) == "number" and value >= 1 and value % 1 == 0
+end
+
+local function RemapSelectionValue(value, maps)
     if type(value) ~= "number" or value % 1 ~= 0 or value == 0 then
         return nil
     end
@@ -182,14 +186,26 @@ local function RemapTreeValue(value, maps)
         local mapped = maps.category[-value]
         return mapped and -mapped or nil
     end
-    return maps.category[value] or maps.page[value]
+    return maps.page[value]
+end
+
+local function RemapCategoryStateValue(value, categoryMap)
+    if type(value) ~= "number" or value % 1 ~= 0 or value == 0 then
+        return nil
+    end
+    local categoryId = value < 0 and -value or value
+    local mapped = categoryMap[categoryId]
+    if not mapped then
+        return nil
+    end
+    return value < 0 and -mapped or mapped
 end
 
 local function RemapTreePath(path, maps)
     local parts = {}
     local changed = false
     for segment in path:gmatch("[^\001]+") do
-        local mapped = RemapTreeValue(tonumber(segment), maps)
+        local mapped = RemapSelectionValue(tonumber(segment), maps)
         if mapped then
             changed = true
             parts[#parts + 1] = tostring(mapped)
@@ -203,52 +219,141 @@ local function RemapTreePath(path, maps)
     return table.concat(parts, "\001")
 end
 
-local function RemapLegacyRecordIds(records, map)
-    local legacyIds = {}
-    for id in pairs(records) do
-        if type(id) == "number" and id % 1 == 0 and id > LEGACY_LOCAL_ID_MAX then
-            legacyIds[#legacyIds + 1] = id
+local function ReserveSelectionPath(path, pages, categories, reserved)
+    for segment in path:gmatch("[^\001]+") do
+        local value = tonumber(segment)
+        if IsPositiveInteger(value) and pages[value] == nil then
+            reserved.page[value] = true
+        elseif type(value) == "number" and value < 0 and value % 1 == 0 and categories[-value] == nil then
+            reserved.category[-value] = true
         end
     end
-    table.sort(legacyIds)
+end
 
-    for _, oldId in ipairs(legacyIds) do
-        local newId = 1
-        while records[newId] ~= nil do
+local function ReserveDanglingCategoryReferences(pages, categories, reservedCategories)
+    for _, records in ipairs({ categories, pages }) do
+        for _, record in pairs(records) do
+            local categoryId = type(record) == "table" and record.CategoryId or nil
+            if IsPositiveInteger(categoryId) and categories[categoryId] == nil then
+                reservedCategories[categoryId] = true
+            end
+        end
+    end
+end
+
+local function CollectReservedLocalIds(pages, categories)
+    local reserved = {
+        page = {},
+        category = {},
+    }
+    ReserveDanglingCategoryReferences(pages, categories, reserved.category)
+
+    local state = AngryAssign_State
+    if type(state) ~= "table" then
+        return reserved
+    end
+
+    if IsPositiveInteger(state.displayed) and pages[state.displayed] == nil then
+        reserved.page[state.displayed] = true
+    end
+
+    local tree = type(state.tree) == "table" and state.tree or nil
+    local selected = tree and tree.selected or nil
+    if type(selected) == "string" then
+        ReserveSelectionPath(selected, pages, categories, reserved)
+    elseif IsPositiveInteger(selected) and pages[selected] == nil then
+        reserved.page[selected] = true
+    elseif type(selected) == "number" and selected < 0 and selected % 1 == 0 and categories[-selected] == nil then
+        reserved.category[-selected] = true
+    end
+
+    local groups = tree and type(tree.groups) == "table" and tree.groups or nil
+    if groups then
+        for key in pairs(groups) do
+            if type(key) == "string" then
+                ReserveSelectionPath(key, pages, categories, reserved)
+            else
+                local categoryId = type(key) == "number" and key < 0 and -key or key
+                if IsPositiveInteger(categoryId) and categories[categoryId] == nil then
+                    reserved.category[categoryId] = true
+                end
+            end
+        end
+    end
+    return reserved
+end
+
+local function BuildSequentialIdMap(records, reserved)
+    local oldIds = {}
+    for id in pairs(records) do
+        if IsPositiveInteger(id) then
+            oldIds[#oldIds + 1] = id
+        end
+    end
+    table.sort(oldIds)
+
+    local map = {}
+    local newId = 1
+    for _, oldId in ipairs(oldIds) do
+        while reserved[newId] do
             newId = newId + 1
         end
-        local record = records[oldId]
+        map[oldId] = newId
+        newId = newId + 1
+    end
+    return map, oldIds
+end
+
+local function ApplySequentialIdMap(records, map, oldIds)
+    local originals = {}
+    local migrated = 0
+    for _, oldId in ipairs(oldIds) do
+        originals[oldId] = records[oldId]
         records[oldId] = nil
+    end
+    for _, oldId in ipairs(oldIds) do
+        local newId = map[oldId]
+        local record = originals[oldId]
         records[newId] = record
         if type(record) == "table" then
             record.Id = newId
         end
-        map[oldId] = newId
+        if newId ~= oldId then
+            migrated = migrated + 1
+        end
     end
-    return #legacyIds
+    return migrated
 end
 
 --- Renumbers legacy hashed local ids to sequential ids.
 -- Legacy AngryAssignments allocated local page and category ids from FCS32
--- hashes spanning the full 32-bit range. This migration detects those ids,
--- moves the records to the lowest free sequential ids, and rewrites parent
--- references plus persisted display and tree state. It is idempotent and runs
--- on every load so restored backups are also repaired.
+-- hashes spanning the full 32-bit range. This versioned migration normalizes
+-- every pre-sequential library once, moves records to the lowest available ids,
+-- and rewrites parent references plus persisted display and tree state.
 -- @treturn number migrated Count of renumbered entities.
 function AngryEra:MigrateLegacyLocalIds()
-    if type(AngryAssign_Pages) ~= "table" or type(AngryAssign_Categories) ~= "table" then
+    if
+        type(AngryAssign_Pages) ~= "table"
+        or type(AngryAssign_Categories) ~= "table"
+        or type(AngryAssign_Meta) ~= "table"
+        or type(AngryAssign_Meta.Migrations) ~= "table"
+    then
+        return 0
+    end
+    local migrationVersion = AngryAssign_Meta.Migrations.SequentialLocalIds
+    if type(migrationVersion) == "number" and migrationVersion >= LOCAL_ID_MIGRATION_VERSION then
         return 0
     end
 
+    local reserved = CollectReservedLocalIds(AngryAssign_Pages, AngryAssign_Categories)
+    local pageMap, pageIds = BuildSequentialIdMap(AngryAssign_Pages, reserved.page)
+    local categoryMap, categoryIds = BuildSequentialIdMap(AngryAssign_Categories, reserved.category)
     local maps = {
-        page = {},
-        category = {},
+        page = pageMap,
+        category = categoryMap,
     }
-    local migrated = RemapLegacyRecordIds(AngryAssign_Pages, maps.page)
-        + RemapLegacyRecordIds(AngryAssign_Categories, maps.category)
-    if migrated == 0 then
-        return 0
-    end
+    local migrated = ApplySequentialIdMap(AngryAssign_Pages, maps.page, pageIds)
+        + ApplySequentialIdMap(AngryAssign_Categories, maps.category, categoryIds)
 
     for _, page in pairs(AngryAssign_Pages) do
         if type(page) == "table" and maps.category[page.CategoryId] then
@@ -272,7 +377,7 @@ function AngryEra:MigrateLegacyLocalIds()
             if type(tree.selected) == "string" then
                 tree.selected = RemapTreePath(tree.selected, maps) or tree.selected
             else
-                local remappedSelected = RemapTreeValue(tree.selected, maps)
+                local remappedSelected = RemapSelectionValue(tree.selected, maps)
                 if remappedSelected then
                     tree.selected = remappedSelected
                 end
@@ -283,7 +388,7 @@ function AngryEra:MigrateLegacyLocalIds()
                 for key, value in pairs(tree.groups) do
                     local newKey = key
                     if type(key) == "number" then
-                        newKey = RemapTreeValue(key, maps) or key
+                        newKey = RemapCategoryStateValue(key, maps.category) or key
                     elseif type(key) == "string" then
                         newKey = RemapTreePath(key, maps) or key
                     end
@@ -294,6 +399,7 @@ function AngryEra:MigrateLegacyLocalIds()
         end
     end
 
+    AngryAssign_Meta.Migrations.SequentialLocalIds = LOCAL_ID_MIGRATION_VERSION
     return migrated
 end
 
@@ -302,8 +408,9 @@ end
 -- @treturn number id
 function AngryEra:AllocateLocalEntityId(kind)
     local records = GetRecords(kind)
+    local reserved = CollectReservedLocalIds(AngryAssign_Pages, AngryAssign_Categories)[kind]
     local id = 1
-    while records[id] ~= nil do
+    while records[id] ~= nil or reserved[id] do
         id = id + 1
     end
     return id

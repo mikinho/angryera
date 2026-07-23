@@ -433,8 +433,9 @@ and live synchronization state are not template content.
 SavedVariables migration is idempotent:
 
 - legacy entities become locally owned;
-- legacy hashed local ids are renumbered to sequential ids at every load, with
-  parent references and persisted display and tree state rewritten to match;
+- pre-sequential local ids are normalized once under a durable migration
+  version, with parent references and persisted display and tree state
+  rewritten to match;
 - `allowall` migrates to `allowAllAssistants`;
 - names in `allowplayers` migrate to direct trusted-publisher entries rather
   than continuing the old "trusted leader enables every assistant" behavior.
