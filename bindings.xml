@@ -26,4 +26,55 @@
 	<Binding name="AngryEra_OUTPUT" category="BINDING_HEADER_AngryEra">
 		AngryEra_OutputDisplayed()
 	</Binding>
+	<Binding name="AngryEra_CLEAR_ALL_RAID_TARGETS" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_ClearAllRaidTargets()
+	</Binding>
+	<Binding name="AngryEra_MARK_TARGET_8" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("target", 8)
+	</Binding>
+	<Binding name="AngryEra_MARK_TARGET_7" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("target", 7)
+	</Binding>
+	<Binding name="AngryEra_MARK_TARGET_6" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("target", 6)
+	</Binding>
+	<Binding name="AngryEra_MARK_TARGET_5" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("target", 5)
+	</Binding>
+	<Binding name="AngryEra_MARK_TARGET_4" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("target", 4)
+	</Binding>
+	<Binding name="AngryEra_MARK_TARGET_3" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("target", 3)
+	</Binding>
+	<Binding name="AngryEra_MARK_TARGET_2" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("target", 2)
+	</Binding>
+	<Binding name="AngryEra_MARK_TARGET_1" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("target", 1)
+	</Binding>
+	<Binding name="AngryEra_MARK_MOUSEOVER_8" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("mouseover", 8)
+	</Binding>
+	<Binding name="AngryEra_MARK_MOUSEOVER_7" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("mouseover", 7)
+	</Binding>
+	<Binding name="AngryEra_MARK_MOUSEOVER_6" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("mouseover", 6)
+	</Binding>
+	<Binding name="AngryEra_MARK_MOUSEOVER_5" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("mouseover", 5)
+	</Binding>
+	<Binding name="AngryEra_MARK_MOUSEOVER_4" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("mouseover", 4)
+	</Binding>
+	<Binding name="AngryEra_MARK_MOUSEOVER_3" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("mouseover", 3)
+	</Binding>
+	<Binding name="AngryEra_MARK_MOUSEOVER_2" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("mouseover", 2)
+	</Binding>
+	<Binding name="AngryEra_MARK_MOUSEOVER_1" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
+		AngryEra_SetRaidTarget("mouseover", 1)
+	</Binding>
 </Bindings>

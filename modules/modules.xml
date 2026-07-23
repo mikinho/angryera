@@ -1,5 +1,6 @@
 <Ui>
 	<Include file="utils\utils.xml"/>
+	<Script file="smart_markers.lua"/>
 	<Script file="permissions.lua"/>
 	<Script file="network.lua"/>
 	<Script file="models.lua"/>
