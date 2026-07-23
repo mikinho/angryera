@@ -22,6 +22,14 @@ local displayPageDebounce = 0.125
 local pendingDisplayRecoveryDelay = math.max(updateFrequency * 15, 30)
 local requestedDisplayRecoveryDelay = math.max(updateFrequency * 2, 5)
 local maximumDisplayRecoveryAttempts = 3
+-- Keep early discovery retries responsive while reserving one attempt beyond
+-- the leader's successful-response throttle. This covers both a leader whose
+-- addon is still starting and the rarer case where a sent response is lost.
+local displayRequestRetryDelays = {
+    math.max(updateFrequency, 3),
+    math.max(updateFrequency * 2.5, 5),
+    math.max(updateFrequency * 6.5, 13),
+}
 
 local pageLastUpdate = {}
 local pageTimerId = {}
@@ -36,6 +44,10 @@ local pendingDisplayPageTimer
 local displayPageGeneration = 0
 local activeDisplayPageTransfer
 local publishedDisplayTuples = {}
+local displayRequestWatchdog
+local displayRequestWatchdogTimer
+local displayRequestWatchdogGeneration = 0
+local displayAuthorityRecoveryPageId
 local SamePageTuple
 
 local function PreciseNowMilliseconds()
@@ -410,6 +422,167 @@ local function SamePlayer(left, right)
     return type(left) == "string" and type(right) == "string" and left:lower() == right:lower()
 end
 
+local function ValidLocalPageId(id)
+    return type(id) == "number"
+        and id >= 1
+        and id == math.floor(id)
+        and type(AngryAssign_Pages) == "table"
+        and type(rawget(AngryAssign_Pages, id)) == "table"
+end
+
+--- Captures the SavedVariables display selection before startup clears volatile
+-- follower state. It is only used if this client becomes display authority
+-- before receiving a newer authoritative DISPLAY.
+-- @treturn boolean captured
+-- @treturn number|string pageIdOrError
+function AngryEra:CaptureDisplayAuthorityRecovery()
+    local state = type(AngryAssign_State) == "table" and AngryAssign_State or nil
+    local displayedId = state and rawget(state, "displayed") or nil
+    if not ValidLocalPageId(displayedId) then
+        displayAuthorityRecoveryPageId = nil
+        return false, "no-display-continuity"
+    end
+    displayAuthorityRecoveryPageId = displayedId
+    return true, displayedId
+end
+
+--- Discards a startup display candidate after a group boundary or an
+-- authenticated current-leader DISPLAY resolves discovery.
+-- @treturn boolean discarded
+function AngryEra:DiscardDisplayAuthorityRecovery()
+    local discarded = displayAuthorityRecoveryPageId ~= nil
+    displayAuthorityRecoveryPageId = nil
+    return discarded
+end
+
+--- Rebuilds and republishes the best local display anchor after this client
+-- becomes raid/party leader. The current accepted display wins over the
+-- startup candidate.
+-- @treturn boolean restored
+-- @treturn string|nil messageIdOrError
+-- @treturn boolean isLocalAuthority
+function AngryEra:RestoreDisplayAuthority()
+    if not IsGrouped() then
+        return false, "not-grouped", false
+    end
+
+    local leader = self:GetRaidLeader(true)
+    if not SamePlayer(leader, PlayerFullName()) then
+        return false, "not-display-authority", false
+    end
+
+    local state = type(AngryAssign_State) == "table" and AngryAssign_State or nil
+    if not state then
+        return false, "display-state-unavailable", true
+    end
+    local displayedId = rawget(state, "displayed")
+    if not ValidLocalPageId(displayedId) then
+        displayedId = displayAuthorityRecoveryPageId
+    end
+    if not ValidLocalPageId(displayedId) then
+        displayAuthorityRecoveryPageId = nil
+        return false, "no-display-continuity", true
+    end
+
+    local sent, result, activatedLocally = self:SendDisplayMessage(displayedId)
+    if activatedLocally ~= true then
+        return false, result or "display-continuity-activation-failed", true
+    end
+
+    state.displayed = displayedId
+    displayAuthorityRecoveryPageId = nil
+    if type(self.UpdateDisplayed) == "function" then
+        self:UpdateDisplayed()
+    end
+    if type(self.UpdateTree) == "function" then
+        self:UpdateTree()
+    end
+    return true, result, true
+end
+
+local function ScheduleDisplayRequestWatchdog(self, record)
+    local delay = displayRequestRetryDelays[record.Attempts]
+    if type(delay) ~= "number" then
+        displayRequestWatchdog = nil
+        displayRequestWatchdogTimer = nil
+        return true, "exhausted"
+    end
+    displayRequestWatchdogTimer = self:ScheduleTimer("RetryDisplayRequest", delay, record.Generation)
+    if not displayRequestWatchdogTimer then
+        displayRequestWatchdog = nil
+        return false, "display-request-watchdog-schedule-failed"
+    end
+    return true, "scheduled"
+end
+
+--- Cancels unanswered DISPLAY_REQUEST retry state.
+-- @treturn boolean canceled
+function AngryEra:CancelDisplayRequestWatchdog()
+    local timer = displayRequestWatchdogTimer
+    local pending = displayRequestWatchdog
+    displayRequestWatchdogGeneration = displayRequestWatchdogGeneration + 1
+    displayRequestWatchdog = nil
+    displayRequestWatchdogTimer = nil
+    CancelTimer(self, timer)
+    return timer ~= nil or pending ~= nil
+end
+
+--- Resolves startup/display discovery after any authenticated current-leader
+-- DISPLAY, including one whose promised page still needs exact-page recovery.
+-- @treturn boolean changed
+function AngryEra:ResolveDisplayDiscovery()
+    local canceled = self:CancelDisplayRequestWatchdog()
+    local discarded = self:DiscardDisplayAuthorityRecovery()
+    return canceled or discarded
+end
+
+--- Retries one unanswered current-display request. Attempts are bounded and
+-- re-resolve the online leader so a handoff does not retain a stale target.
+-- @tparam number generation AceTimer generation captured at scheduling time.
+-- @treturn boolean sentOrResolved
+-- @treturn string|nil messageIdOrStatus
+function AngryEra:RetryDisplayRequest(generation)
+    local record = displayRequestWatchdog
+    if not record or record.Generation ~= generation then
+        return true, "superseded"
+    end
+    displayRequestWatchdogTimer = nil
+
+    if not IsGrouped() then
+        self:CancelDisplayRequestWatchdog()
+        return false, "not-grouped"
+    end
+
+    local target = self:GetRaidLeader(true)
+    if SamePlayer(target, PlayerFullName()) then
+        self:CancelDisplayRequestWatchdog()
+        local restored, result = self:RestoreDisplayAuthority()
+        return restored, result
+    end
+
+    record.Attempts = record.Attempts + 1
+    local sent
+    local result
+    if target then
+        sent, result = self:SendProtocolDisplayRequest(target)
+        if sent then
+            record.MessageId = result
+            record.Target = target
+        end
+    else
+        sent, result = false, "leader-unavailable"
+    end
+
+    local scheduled, scheduleStatus = ScheduleDisplayRequestWatchdog(self, record)
+    if not scheduled and sent then
+        return true, result
+    end
+    if scheduleStatus == "exhausted" then
+        return sent, result or scheduleStatus
+    end
+    return sent, result
+end
+
 local function SameRecoveryContext(record, auth, reference)
     local current = record and record.Reference or nil
     return type(record) == "table"
@@ -449,6 +622,7 @@ end
 -- Callers must reset this state whenever the protocol session or group changes.
 function AngryEra:ResetDisplayPublicationState()
     self:CancelPendingDisplayRecovery()
+    self:CancelDisplayRequestWatchdog()
     CancelPendingDisplayPage(self, "reset")
     CancelPendingDisplayControl(self, "reset")
     for _, timerId in pairs(pageTimerId) do
@@ -575,10 +749,10 @@ function AngryEra:RecoverPendingDisplay(generation)
         end
         if not sent then
             recovery.Attempts = recovery.Attempts + 1
-            sent, result = self:SendRequestDisplay()
+            sent, result = self:SendRequestDisplay(true)
         end
     else
-        sent, result = self:SendRequestDisplay()
+        sent, result = self:SendRequestDisplay(true)
     end
 
     if recovery.Attempts < maximumDisplayRecoveryAttempts then
@@ -915,9 +1089,15 @@ function AngryEra:SendDisplayMessage(id)
 end
 
 --- Requests the current display from the online raid/party leader.
+-- Normal discovery installs a bounded response watchdog. Callers that already
+-- own a recovery timer may suppress it to avoid duplicate retry loops.
+-- @tparam[opt=false] boolean suppressWatchdog
 -- @treturn boolean sent
 -- @treturn string|nil messageIdOrError
-function AngryEra:SendRequestDisplay()
+function AngryEra:SendRequestDisplay(suppressWatchdog)
+    if suppressWatchdog ~= true then
+        self:CancelDisplayRequestWatchdog()
+    end
     if not IsGrouped() then
         return false, "not-grouped"
     end
@@ -926,10 +1106,23 @@ function AngryEra:SendRequestDisplay()
     if not target then
         return false, "leader-unavailable"
     end
-    if target == PlayerFullName() then
+    if SamePlayer(target, PlayerFullName()) then
         return false, "local-player-is-leader"
     end
-    return self:SendProtocolDisplayRequest(target)
+
+    local sent, result = self:SendProtocolDisplayRequest(target)
+    if not sent or suppressWatchdog == true then
+        return sent, result
+    end
+
+    displayRequestWatchdog = {
+        Attempts = 1,
+        Generation = displayRequestWatchdogGeneration,
+        MessageId = result,
+        Target = target,
+    }
+    ScheduleDisplayRequestWatchdog(self, displayRequestWatchdog)
+    return true, result
 end
 
 --- Returns the current raid or party leader full name.

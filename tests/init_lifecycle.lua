@@ -1,4 +1,5 @@
 local calls = {}
+local restoreAsAuthority = false
 
 local function Record(name, value)
     calls[#calls + 1] = {
@@ -57,6 +58,24 @@ end
 
 function AngryEra:CreateDisplay()
     Record("create-display")
+end
+
+function AngryEra:CaptureDisplayAuthorityRecovery()
+    Record("capture-display-authority-recovery")
+    return true, 7
+end
+
+function AngryEra:DiscardDisplayAuthorityRecovery()
+    Record("discard-display-authority-recovery")
+    return true
+end
+
+function AngryEra:RestoreDisplayAuthority()
+    Record("restore-display-authority")
+    if restoreAsAuthority then
+        return true, "display-message", true
+    end
+    return false, "not-display-authority", false
 end
 
 function AngryEra:ClearDisplayed(publish)
@@ -159,35 +178,56 @@ calls = {}
 AngryEra:OnEnable()
 
 local createIndex
+local captureIndex
 local startupClearIndex
 local sessionIndex
+local restoreIndex
 local registeredPrefixes = {}
 local registrationOrder = {}
+local registeredEvents = {}
 for index, call in ipairs(calls) do
     if call.Name == "create-display" then
         createIndex = index
+    elseif call.Name == "capture-display-authority-recovery" then
+        captureIndex = index
     elseif call.Name == "clear-displayed" then
         startupClearIndex = index
     elseif call.Name == "start-protocol-session" then
         sessionIndex = index
+    elseif call.Name == "restore-display-authority" then
+        restoreIndex = index
     elseif call.Name == "register-comm" then
         registeredPrefixes[call.Value.Prefix] = call.Value.Method
         registrationOrder[#registrationOrder + 1] = {
             Index = index,
             Prefix = call.Value.Prefix,
         }
+    elseif call.Name == "register-event" then
+        registeredEvents[call.Value] = true
     end
 end
-assert(createIndex and startupClearIndex and sessionIndex, "startup should create, clear, and start protocol state")
 assert(
-    createIndex < startupClearIndex and startupClearIndex < sessionIndex,
-    "startup must locally clear persisted display state before the new protocol session"
+    createIndex and captureIndex and startupClearIndex and sessionIndex and restoreIndex,
+    "startup should capture display continuity, clear follower state, start protocol, and attempt authority restore"
+)
+assert(
+    createIndex < captureIndex
+        and captureIndex < startupClearIndex
+        and startupClearIndex < sessionIndex
+        and registrationOrder[#registrationOrder].Index < restoreIndex,
+    "startup must capture the saved display before clearing and restore only after transport registration"
 )
 assert(registeredPrefixes.AngryEra3 == "ReceiveProtocolMessage", "startup should register the data prefix")
 assert(registeredPrefixes.AngryEra3D == "ReceiveProtocolMessage", "startup should register the display prefix")
 assert(registeredPrefixes.AngryEra3C == "ReceiveProtocolMessage", "startup should register the compact-page prefix")
 assert(registeredPrefixes.AngryEra3P == "ReceiveProtocolMessage", "startup should register the active-page prefix")
 assert(#registrationOrder == 4, "startup should register exactly four protocol prefixes")
+assert(
+    registeredEvents.PARTY_LEADER_CHANGED
+        and registeredEvents.GROUP_JOINED
+        and registeredEvents.GROUP_ROSTER_UPDATE,
+    "leader and group-boundary handlers must be active before delayed discovery"
+)
 assert(
     sessionIndex < registrationOrder[1].Index
         and registrationOrder[1].Prefix == "AngryEra3"
@@ -207,9 +247,13 @@ end
 calls = {}
 AngryEra._protocolStarted = true
 AngryEra:GROUP_JOINED()
-assert(calls[1].Name == "clear-displayed", "group join must clear the prior display before all new-group work")
-assert(calls[2].Name == "reset-protocol-peers", "group join should reset prior-group transport state after clearing")
-assert(calls[3].Name == "version-query", "group discovery should begin only after the local clear")
+assert(
+    calls[1].Name == "discard-display-authority-recovery",
+    "group join must invalidate a startup display candidate from the prior group"
+)
+assert(calls[2].Name == "clear-displayed", "group join must clear the prior display before all new-group work")
+assert(calls[3].Name == "reset-protocol-peers", "group join should reset prior-group transport state after clearing")
+assert(calls[4].Name == "version-query", "group discovery should begin only after the local clear")
 assert(calls[#calls].Name == "schedule", "the new leader display request should be scheduled last")
 assert(calls[#calls].Value.Method == "SendRequestDisplay", "group join should request the new leader's display")
 
@@ -220,6 +264,7 @@ local afterEnableDisplayRequestCount = 0
 for _, call in ipairs(calls) do
     assert(call.Name ~= "clear-displayed", "delayed setup must not duplicate the startup clear")
     assert(call.Name ~= "register-comm", "delayed setup must not leave a startup receive blind spot")
+    assert(call.Name ~= "register-event", "delayed setup must not leave a startup leader-event blind spot")
     if call.Name == "version-query" then
         afterEnableVersionQueryCount = afterEnableVersionQueryCount + 1
     elseif call.Name == "schedule" and call.Value.Method == "SendRequestDisplay" then
@@ -250,7 +295,17 @@ assert(
     "leader changes must reset ancestor announcements and queued publication state before reevaluating permissions"
 )
 assert(calls[4].Name == "version-query", "leader changes should explicitly rediscover protocol peers")
-assert(calls[5].Name == "request-display", "leader changes should explicitly request the new leader's display")
+assert(calls[5].Name == "restore-display-authority", "leader changes should first try to retain the current display")
+assert(calls[6].Name == "request-display", "followers should explicitly request the new leader's display")
+
+calls = {}
+restoreAsAuthority = true
+AngryEra:PARTY_LEADER_CHANGED()
+restoreAsAuthority = false
+assert(calls[5].Name == "restore-display-authority", "a promoted leader should restore its current display anchor")
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "request-display", "a promoted leader must not whisper a display request to itself")
+end
 
 calls = {}
 AngryEra:PARTY_CONVERTED_TO_RAID()

@@ -260,6 +260,18 @@ end
 
 function AngryEra:Print() end
 
+function AngryEra:UpdateDisplayed()
+    calls[#calls + 1] = {
+        Type = "UPDATE_DISPLAYED",
+    }
+end
+
+function AngryEra:UpdateTree()
+    calls[#calls + 1] = {
+        Type = "UPDATE_TREE",
+    }
+end
+
 assert(loadfile("modules/network.lua"))("AngryEra", app)
 
 AngryAssign_Pages = {
@@ -269,6 +281,9 @@ AngryAssign_Pages = {
     [6] = {
         Id = 6,
     },
+}
+AngryAssign_State = {
+    displayed = nil,
 }
 
 assert(AngryEra.ReceiveMessage == nil, "protocol-1 receive entrypoint must not exist")
@@ -662,10 +677,71 @@ sent, result = AngryEra:SendRequestDisplay()
 assert(sent and result == "request-message", "followers should request the current leader display")
 assert(calls[#calls].Type == "DISPLAY_REQUEST", "display request should use its named v3 message")
 assert(calls[#calls].Target == "Leader-Realm", "display request should target the online leader")
+local firstDisplayRequestWatchdog = timers[#timers]
+assert(
+    firstDisplayRequestWatchdog.Method == "RetryDisplayRequest" and firstDisplayRequestWatchdog.Delay == 3,
+    "an unanswered display request should schedule a short first retry"
+)
+local callsBeforeDisplayRequestRetry = #calls
+sent, result = AngryEra:RetryDisplayRequest(firstDisplayRequestWatchdog.Argument)
+assert(sent and result == "request-message", "the first unanswered display request should retry")
+assert(
+    #calls == callsBeforeDisplayRequestRetry + 1
+        and calls[#calls].Type == "DISPLAY_REQUEST"
+        and calls[#calls].Target == "Leader-Realm",
+    "a display-request retry should re-resolve and target the current online leader"
+)
+local secondDisplayRequestWatchdog = timers[#timers]
+assert(
+    secondDisplayRequestWatchdog.Method == "RetryDisplayRequest" and secondDisplayRequestWatchdog.Delay == 5,
+    "the bounded display-request watchdog should retain a second retry"
+)
+assert(AngryEra:ResolveDisplayDiscovery(), "an accepted display should resolve discovery state")
+assert(canceled[secondDisplayRequestWatchdog], "resolved discovery should cancel its pending retry")
+local callsBeforeStaleDisplayRetry = #calls
+sent, result = AngryEra:RetryDisplayRequest(secondDisplayRequestWatchdog.Argument)
+assert(sent and result == "superseded", "a canceled display retry should be harmless")
+assert(#calls == callsBeforeStaleDisplayRetry, "a stale display retry must not send traffic")
+
+sent, result = AngryEra:SendRequestDisplay()
+assert(sent and result == "request-message", "bounded retry coverage should start a new display request")
+local boundedFirstRetry = timers[#timers]
+sent, result = AngryEra:RetryDisplayRequest(boundedFirstRetry.Argument)
+assert(sent and result == "request-message", "bounded retry attempt two should send")
+local boundedSecondRetry = timers[#timers]
+sent, result = AngryEra:RetryDisplayRequest(boundedSecondRetry.Argument)
+assert(sent and result == "request-message", "bounded retry attempt three should send")
+local boundedFinalRetry = timers[#timers]
+assert(boundedFinalRetry.Delay == 13, "the final reserved retry should outlast the leader response throttle")
+local timersBeforeBoundedFinalRetry = #timers
+sent, result = AngryEra:RetryDisplayRequest(boundedFinalRetry.Argument)
+assert(sent and result == "request-message", "the final bounded retry should send")
+assert(#timers == timersBeforeBoundedFinalRetry, "the final display retry must not schedule unbounded work")
+local callsAfterDisplayRetryBudget = #calls
+sent, result = AngryEra:RetryDisplayRequest(boundedFinalRetry.Argument)
+assert(sent and result == "superseded", "an exhausted display retry generation should be inert")
+assert(#calls == callsAfterDisplayRetryBudget, "an exhausted display retry must not send again")
 
 currentPlayer = "Leader-Realm"
 sent, result = AngryEra:SendRequestDisplay()
 assert(not sent and result == "local-player-is-leader", "leader should not whisper a request to itself")
+
+AngryAssign_State.displayed = 5
+assert(AngryEra:CaptureDisplayAuthorityRecovery(), "startup should capture a valid saved display page")
+AngryAssign_State.displayed = nil
+local callsBeforeAuthorityRestore = #calls
+local restored, restoreResult, isLocalAuthority = AngryEra:RestoreDisplayAuthority()
+assert(restored and restoreResult == "display-message" and isLocalAuthority, "a promoted leader should restore its anchor")
+assert(AngryAssign_State.displayed == 5, "authority restore should reinstate the captured displayed page")
+assert(
+    #calls == callsBeforeAuthorityRestore + 4
+        and calls[callsBeforeAuthorityRestore + 1].Type == "ACTIVATE"
+        and calls[callsBeforeAuthorityRestore + 2].Type == "DISPLAY"
+        and calls[callsBeforeAuthorityRestore + 3].Type == "UPDATE_DISPLAYED"
+        and calls[callsBeforeAuthorityRestore + 4].Type == "UPDATE_TREE",
+    "authority restore should activate, publish, and redraw the saved page"
+)
+assert(not AngryEra:DiscardDisplayAuthorityRecovery(), "a successful restore should consume its startup candidate")
 
 currentPlayer = "Publisher-Realm"
 grouped = false
@@ -943,11 +1019,16 @@ sent, result, activatedLocally = AngryEra:SendDisplay(5)
 assert(sent and result == "scheduled" and activatedLocally, "reset should have a pending display timer")
 local resetDisplayTimer = timers[#timers]
 
+sent, result = AngryEra:SendRequestDisplay()
+assert(sent and result == "request-message", "reset should have an unanswered display request")
+local resetDisplayRequestWatchdog = timers[#timers]
+
 AngryEra:ResetDisplayPublicationState()
 assert(canceled[resetRecoveryTimer], "publication reset should cancel pending recovery")
 assert(canceled[resetDisplayPageTimer], "publication reset should cancel the debounced display page")
 assert(canceled[resetPageTimer], "publication reset should cancel page throttling")
 assert(canceled[resetDisplayTimer], "publication reset should cancel display throttling")
+assert(canceled[resetDisplayRequestWatchdog], "publication reset should cancel display discovery retries")
 local callsBeforeStaleResetDisplay = #calls
 sent, result = AngryEra:SendPendingDisplayControl(resetDisplayTimer.Argument)
 assert(sent and result == "superseded", "a reset display callback should be harmless")

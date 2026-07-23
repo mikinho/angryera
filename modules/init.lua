@@ -642,6 +642,9 @@ end
 function AngryEra:OnEnable()
     self:ResetOfficerRank()
     self:CreateDisplay()
+    if type(self.CaptureDisplayAuthorityRecovery) == "function" then
+        self:CaptureDisplayAuthorityRecovery()
+    end
     self:ClearDisplayed()
     if self.syncRuntimeStartupWarning then
         self:Print(self.syncRuntimeStartupWarning)
@@ -657,6 +660,9 @@ function AngryEra:OnEnable()
         self:RegisterComm(pageProtocolPrefix, "ReceiveProtocolMessage")
         self:RegisterComm(activePageProtocolPrefix, "ReceiveProtocolMessage")
         AngryEra._protocolStarted = true
+        if type(self.RestoreDisplayAuthority) == "function" then
+            self:RestoreDisplayAuthority()
+        end
     end
 
     self:ScheduleTimer("AfterEnable", 4)
@@ -665,6 +671,9 @@ function AngryEra:OnEnable()
     self:RegisterEvent("PLAYER_GUILD_UPDATE")
     self:RegisterEvent("GUILD_ROSTER_UPDATE")
     self:RegisterEvent("ENCOUNTER_END")
+    self:RegisterEvent("PARTY_LEADER_CHANGED")
+    self:RegisterEvent("GROUP_JOINED")
+    self:RegisterEvent("GROUP_ROSTER_UPDATE")
 
     if isClassic then
         RequestGuildRoster()
@@ -688,7 +697,14 @@ function AngryEra:PARTY_LEADER_CHANGED()
     self:PermissionsUpdated()
     if self._protocolStarted then
         self:SendProtocolVersionQuery()
-        self:SendRequestDisplay()
+        local localAuthority = false
+        if type(self.RestoreDisplayAuthority) == "function" then
+            local _, _, isLocalAuthority = self:RestoreDisplayAuthority()
+            localAuthority = isLocalAuthority == true
+        end
+        if not localAuthority then
+            self:SendRequestDisplay()
+        end
     end
 end
 
@@ -699,6 +715,9 @@ function AngryEra:PARTY_CONVERTED_TO_RAID()
 end
 
 function AngryEra:GROUP_JOINED()
+    if type(self.DiscardDisplayAuthorityRecovery) == "function" then
+        self:DiscardDisplayAuthorityRecovery()
+    end
     self:ClearDisplayed()
     self:ResetProtocolPeers()
     if self._protocolStarted then
@@ -717,6 +736,9 @@ end
 function AngryEra:GROUP_ROSTER_UPDATE()
     self:PermissionsUpdated()
     if not (IsInRaid() or IsInGroup()) then
+        if type(self.DiscardDisplayAuthorityRecovery) == "function" then
+            self:DiscardDisplayAuthorityRecovery()
+        end
         self:ClearDisplayed()
         self:ResetCurrentGroup()
         self:ResetPermissionWarning()
@@ -758,10 +780,6 @@ end
 --- Post-enable delayed setup hook for group discovery and event wiring.
 function AngryEra:AfterEnable()
     --self:RegisterEvent("PARTY_CONVERTED_TO_RAID")
-    self:RegisterEvent("PARTY_LEADER_CHANGED")
-    self:RegisterEvent("GROUP_JOINED")
-    self:RegisterEvent("GROUP_ROSTER_UPDATE")
-
     self:UpdateDisplayedIfNewGroup()
     if self._protocolStarted then
         self:SendProtocolVersionQuery(true)

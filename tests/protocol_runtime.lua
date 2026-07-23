@@ -367,6 +367,7 @@ local knownActivePages = {}
 local pendingActiveDisplay
 local activeResetCount = 0
 local publicationResetCount = 0
+resolvedDisplayDiscoveries = 0
 
 function AngryEra:ResetActivePageTransientState()
     activeResetCount = activeResetCount + 1
@@ -376,6 +377,11 @@ end
 
 function AngryEra:ResetDisplayPublicationState()
     publicationResetCount = publicationResetCount + 1
+end
+
+function AngryEra:ResolveDisplayDiscovery()
+    resolvedDisplayDiscoveries = resolvedDisplayDiscoveries + 1
+    return true
 end
 
 function AngryEra:GetActivePageRenderContext()
@@ -1828,9 +1834,14 @@ local requestedRemoteDisplay = BuildRemoteEnvelope("remote-request-response", "D
     ReplyTo = localDisplayRequestId,
     Sequence = 2,
 })
+discoveriesBeforeRequestedDisplay = resolvedDisplayDiscoveries
 accepted, result =
     AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, requestedRemoteDisplay, "WHISPER", "Alpha-Realm")
 assert(accepted and not result.RequestNeeded, "Correlated upsert then display should use exact cached tuple")
+assert(
+    resolvedDisplayDiscoveries == discoveriesBeforeRequestedDisplay + 1,
+    "an accepted correlated DISPLAY should resolve its unanswered-request watchdog"
+)
 
 sentMessages = {}
 sent, result = AngryEra:SendProtocolDisplayRequest("Alpha-Realm")

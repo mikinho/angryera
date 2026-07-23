@@ -2646,6 +2646,11 @@ function AngryEra:HandleProtocolDisplay(auth, _, envelope)
         end
         return false, result
     end
+    -- An authenticated, authorized DISPLAY resolves discovery even when its
+    -- promised exact page still needs the separate page-recovery watchdog.
+    if type(self.ResolveDisplayDiscovery) == "function" then
+        pcall(self.ResolveDisplayDiscovery, self)
+    end
     if debugEnabled then
         Trace(
             self,
