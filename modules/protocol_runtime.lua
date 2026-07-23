@@ -34,6 +34,12 @@ local DISPLAY_TIMESTAMP_MAX_AGE_SECONDS = 5 * 60
 local DISPLAY_TIMESTAMP_MAX_FUTURE_SECONDS = 10
 local MINIMUM_PLAUSIBLE_SERVER_EPOCH = 1000000000
 local MAX_SAFE_INTEGER = 9007199254740991
+local ACECOMM_SINGLE_BYTES = 255
+local ACECOMM_MULTIPART_BYTES = 254
+local ACECOMM_FIRST = "\001"
+local ACECOMM_NEXT = "\002"
+local ACECOMM_LAST = "\003"
+local ACECOMM_ESCAPE = "\004"
 
 local protocolSession
 local peers = {}
@@ -51,11 +57,84 @@ local lastQueryAt
 local warnedOutOfDate = false
 local transportOrdinal = 0
 local lastDisplaySentAt
+local activePageTransfer
+local activePageTransferGeneration = 0
+local activePageOutstandingFrame
 
 local HANDLERS
+local CancelActivePageTransfer
 
 local function Now()
     return time()
+end
+
+local function PreciseNowMilliseconds()
+    local clock
+    if type(GetTimePreciseSec) == "function" then
+        clock = GetTimePreciseSec
+    elseif type(GetTime) == "function" then
+        clock = GetTime
+    end
+    if not clock then
+        return 0
+    end
+
+    local ok, value = pcall(clock)
+    if not ok or type(value) ~= "number" or value < 0 then
+        return 0
+    end
+    return math.floor(value * TIMESTAMP_MILLISECONDS_PER_SECOND)
+end
+
+local function Trace(self, stage, formatText, ...)
+    local callback = self and self.SyncDebug
+    if type(callback) == "function" then
+        callback(self, stage, formatText, ...)
+    end
+end
+
+local function IsDebugEnabled(self)
+    local callback = self and self.IsSyncDebugEnabled
+    return type(callback) == "function" and callback(self) == true
+end
+
+local function IsActivePageMessage(messageType)
+    return messageType == "DISPLAY"
+        or messageType == "PAGE_UPSERT"
+        or messageType == "PAGE_REQUEST"
+        or messageType == "DISPLAY_REQUEST"
+end
+
+local function DebugReference(messageType, payload)
+    if type(payload) ~= "table" then
+        return "-", "-", "-"
+    end
+    local reference = messageType == "PAGE_UPSERT" and payload.Page or payload
+    if type(reference) ~= "table" then
+        return "-", "-", "-"
+    end
+    return tostring(reference.SyncId or "-"),
+        tostring(reference.RevisionId or "-"),
+        tostring(payload.ContextRevisionId or reference.ContextRevisionId or "-")
+end
+
+local function EncodedChunkCount(encodedBytes)
+    if encodedBytes <= ACECOMM_SINGLE_BYTES then
+        return 1
+    end
+    return math.ceil(encodedBytes / ACECOMM_MULTIPART_BYTES)
+end
+
+local function ActivePageFramePlan(encoded)
+    local encodedBytes = #encoded
+    local startsWithControl = encoded:match("^[\001-\009]") ~= nil
+    if encodedBytes <= ACECOMM_SINGLE_BYTES and not startsWithControl then
+        return 1, false, false
+    end
+    if encodedBytes + 1 <= ACECOMM_SINGLE_BYTES and startsWithControl then
+        return 1, false, true
+    end
+    return math.ceil(encodedBytes / ACECOMM_MULTIPART_BYTES), true, false
 end
 
 local function IsPlainTable(value)
@@ -454,6 +533,9 @@ local function RememberPendingQuery(messageId, now)
 end
 
 local function ResetTransportTables()
+    if CancelActivePageTransfer then
+        CancelActivePageTransfer("reset")
+    end
     peers = {}
     peerQueryOrdinals = {}
     pendingQueries = {}
@@ -948,24 +1030,21 @@ function AngryEra:GetProtocolSession()
     return protocolSession
 end
 
---- Sends one encoded protocol-v3 envelope.
--- @treturn boolean ok
--- @treturn string messageIdOrError
-function AngryEra:SendProtocolMessage(messageType, payload, options)
+local function PrepareProtocolPacket(messageType, payload, options)
     if not protocolSession then
-        return false, "session-not-started"
+        return nil, "session-not-started"
     end
     if options ~= nil and not IsPlainTable(options) then
-        return false, "invalid-options"
+        return nil, "invalid-options"
     end
     options = options or {}
 
     local channel = options.Channel or GroupChannel()
     if not channel then
-        return false, "no-channel"
+        return nil, "no-channel"
     end
     if channel == "WHISPER" and (type(options.Target) ~= "string" or options.Target == "") then
-        return false, "missing-target"
+        return nil, "missing-target"
     end
 
     local sentAt
@@ -977,7 +1056,7 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
         sentAtError = sentAt and nil or "invalid-clock"
     end
     if not sentAt then
-        return false, sentAtError
+        return nil, sentAtError
     end
 
     local envelope, envelopeError = protocol.BuildEnvelope(protocolSession, messageType, payload, {
@@ -985,21 +1064,351 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
         SentAt = sentAt,
     })
     if not envelope then
-        return false, envelopeError
+        return nil, envelopeError
     end
 
     local encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec)
     if not encoded then
-        return false, encodeError
+        return nil, encodeError
     end
 
-    local prefix = messageType == "DISPLAY" and protocol.DISPLAY_PREFIX or protocol.PREFIX
-    local priority = messageType == "DISPLAY" and "ALERT" or options.Priority or "NORMAL"
-    local sent = pcall(self.SendCommMessage, self, prefix, encoded, channel, options.Target, priority)
+    return {
+        Channel = channel,
+        Encoded = encoded,
+        Envelope = envelope,
+        Prefix = messageType == "DISPLAY" and protocol.DISPLAY_PREFIX or protocol.PREFIX,
+        Priority = messageType == "DISPLAY" and "ALERT" or options.Priority or "NORMAL",
+        Target = options.Target,
+    }
+end
+
+local function ProtocolSendDebugCallback(state, sentBytes, totalBytes, sendResult)
+    if not state or type(sentBytes) ~= "number" or type(totalBytes) ~= "number" then
+        return
+    end
+
+    local now = PreciseNowMilliseconds()
+    if not state.Started then
+        state.Started = true
+        Trace(
+            state.Self,
+            "tx-start",
+            "type=%s id=%s queue=%dms bytes=%d chunks=%d",
+            state.Type,
+            state.MessageId,
+            math.max(now - state.QueuedAt, 0),
+            state.Bytes,
+            state.Chunks
+        )
+    end
+    if not state.Completed and sentBytes >= totalBytes then
+        state.Completed = true
+        Trace(
+            state.Self,
+            "tx-done",
+            "type=%s id=%s drain=%dms bytes=%d result=%s",
+            state.Type,
+            state.MessageId,
+            math.max(now - state.QueuedAt, 0),
+            state.Bytes,
+            tostring(sendResult)
+        )
+    end
+end
+
+--- Sends one encoded protocol-v3 envelope through AceComm.
+-- @treturn boolean ok
+-- @treturn string messageIdOrError
+function AngryEra:SendProtocolMessage(messageType, payload, options)
+    local packet, packetError = PrepareProtocolPacket(messageType, payload, options)
+    if not packet then
+        return false, packetError
+    end
+
+    local debugState
+    local debugCallback
+    if IsActivePageMessage(messageType) and IsDebugEnabled(self) then
+        local encodedBytes = #packet.Encoded
+        local syncId, revisionId, contextRevisionId = DebugReference(messageType, payload)
+        Trace(
+            self,
+            "tx-submit",
+            "type=%s id=%s seq=%d sentAt=%d sync=%s rev=%s ctx=%s prefix=%s bytes=%d chunks=%d",
+            messageType,
+            packet.Envelope.MessageId,
+            packet.Envelope.Sequence,
+            packet.Envelope.SentAt,
+            syncId,
+            revisionId,
+            contextRevisionId,
+            packet.Prefix,
+            encodedBytes,
+            EncodedChunkCount(encodedBytes)
+        )
+        debugState = {
+            Bytes = encodedBytes,
+            Chunks = EncodedChunkCount(encodedBytes),
+            MessageId = packet.Envelope.MessageId,
+            QueuedAt = PreciseNowMilliseconds(),
+            Self = self,
+            Type = messageType,
+        }
+        debugCallback = ProtocolSendDebugCallback
+    end
+
+    local sent = pcall(
+        self.SendCommMessage,
+        self,
+        packet.Prefix,
+        packet.Encoded,
+        packet.Channel,
+        packet.Target,
+        packet.Priority,
+        debugCallback,
+        debugState
+    )
     if not sent then
         return false, "send-failed"
     end
-    return true, envelope.MessageId
+    return true, packet.Envelope.MessageId
+end
+
+local function FinishActivePageTransfer(state, succeeded, status)
+    if not state or state.Finished then
+        return
+    end
+    state.Finished = true
+    state.Succeeded = succeeded == true
+    state.Status = status
+    if activePageTransfer == state then
+        activePageTransfer = nil
+    end
+
+    if state.Debug then
+        Trace(
+            state.Self,
+            succeeded and "page-stream-done" or "page-stream-stop",
+            "id=%s generation=%d chunks=%d/%d elapsed=%dms status=%s",
+            state.MessageId,
+            state.Generation,
+            state.SentChunks,
+            state.TotalChunks,
+            math.max(PreciseNowMilliseconds() - state.QueuedAt, 0),
+            tostring(status)
+        )
+    end
+
+    if type(state.Callback) == "function" then
+        pcall(state.Callback, state.CallbackArg, succeeded == true, status, state.MessageId)
+    end
+end
+
+CancelActivePageTransfer = function(reason)
+    activePageTransferGeneration = activePageTransferGeneration + 1
+    local state = activePageTransfer
+    if not state then
+        return false, "idle"
+    end
+    FinishActivePageTransfer(state, false, reason or "canceled")
+    return true, reason or "canceled"
+end
+
+local QueueActivePageChunk
+
+local function ActivePageChunkSent(frameState, didSend, sendResult)
+    if not frameState or activePageOutstandingFrame ~= frameState then
+        return
+    end
+    activePageOutstandingFrame = nil
+
+    local state = frameState.Transfer
+    if
+        not state
+        or state.Finished
+        or state ~= activePageTransfer
+        or state.Generation ~= activePageTransferGeneration
+    then
+        local latest = activePageTransfer
+        if latest and not latest.Finished then
+            QueueActivePageChunk(latest)
+        end
+        return
+    end
+    if didSend ~= true then
+        FinishActivePageTransfer(state, false, "send-failed:" .. tostring(sendResult))
+        return
+    end
+    if not SafeCanPublish(state.Self, "display") or not SafeCanPublish(state.Self, "pageUpsert") then
+        FinishActivePageTransfer(state, false, "unauthorized")
+        return
+    end
+    state.SentChunks = state.Index
+
+    if state.Debug and not state.Started then
+        state.Started = true
+        Trace(
+            state.Self,
+            "page-stream-start",
+            "id=%s generation=%d queue=%dms bytes=%d chunks=%d",
+            state.MessageId,
+            state.Generation,
+            math.max(PreciseNowMilliseconds() - state.QueuedAt, 0),
+            state.Bytes,
+            state.TotalChunks
+        )
+    end
+
+    if state.Index >= state.TotalChunks then
+        FinishActivePageTransfer(state, true, "sent")
+        return
+    end
+    state.Index = state.Index + 1
+    QueueActivePageChunk(state)
+end
+
+QueueActivePageChunk = function(state)
+    if not state or state.Finished then
+        return false
+    end
+    if state ~= activePageTransfer or state.Generation ~= activePageTransferGeneration then
+        FinishActivePageTransfer(state, false, "superseded")
+        return false
+    end
+    if not SafeCanPublish(state.Self, "display") or not SafeCanPublish(state.Self, "pageUpsert") then
+        FinishActivePageTransfer(state, false, "unauthorized")
+        return false
+    end
+    if activePageOutstandingFrame then
+        return true
+    end
+
+    local encoded = state.Encoded
+    local frame
+    if not state.Multipart then
+        frame = state.EscapeSingle and (ACECOMM_ESCAPE .. encoded) or encoded
+    else
+        local firstByte = (state.Index - 1) * ACECOMM_MULTIPART_BYTES + 1
+        local lastByte = math.min(firstByte + ACECOMM_MULTIPART_BYTES - 1, #encoded)
+        local marker = state.Index == 1 and ACECOMM_FIRST
+            or (state.Index == state.TotalChunks and ACECOMM_LAST or ACECOMM_NEXT)
+        frame = marker .. encoded:sub(firstByte, lastByte)
+    end
+
+    local throttle = rawget(_G, "ChatThrottleLib")
+    if type(throttle) ~= "table" or type(throttle.SendAddonMessage) ~= "function" then
+        FinishActivePageTransfer(state, false, "chat-throttle-unavailable")
+        return false
+    end
+    local frameState = {
+        Transfer = state,
+    }
+    activePageOutstandingFrame = frameState
+    local queued = pcall(
+        throttle.SendAddonMessage,
+        throttle,
+        "ALERT",
+        protocol.ACTIVE_PAGE_PREFIX,
+        frame,
+        state.Channel,
+        state.Target,
+        protocol.ACTIVE_PAGE_PREFIX,
+        ActivePageChunkSent,
+        frameState
+    )
+    if not queued and activePageOutstandingFrame == frameState then
+        activePageOutstandingFrame = nil
+        if not state.Finished then
+            FinishActivePageTransfer(state, false, "send-failed")
+        end
+        local latest = activePageTransfer
+        if latest and latest ~= state and not latest.Finished then
+            QueueActivePageChunk(latest)
+        end
+        return false
+    end
+    return queued
+end
+
+--- Stops production of the current proactive active-page transfer.
+-- At most one already-enqueued ChatThrottleLib frame may still drain.
+-- @tparam[opt="canceled"] string reason
+-- @treturn boolean canceled
+-- @treturn string status
+function AngryEra:CancelProtocolActivePageTransfer(reason)
+    return CancelActivePageTransfer(reason)
+end
+
+--- Broadcasts a proactive PAGE_UPSERT through the replaceable active-page lane.
+-- Standard AceComm multipart frames are produced one at a time, allowing a
+-- newer display to stop obsolete chunks before they enter ChatThrottleLib.
+-- @tparam table payload Canonical PAGE_UPSERT payload.
+-- @tparam[opt] function callback Completion callback.
+-- @param callbackArg Opaque first callback argument.
+-- @treturn boolean queued
+-- @treturn string messageIdOrError
+function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
+    if not SafeCanPublish(self, "display") or not SafeCanPublish(self, "pageUpsert") then
+        return false, "unauthorized"
+    end
+    if callback ~= nil and type(callback) ~= "function" then
+        return false, "invalid-callback"
+    end
+
+    local safeOptions, optionsError = ValidateActiveSendOptions(nil)
+    if not safeOptions then
+        return false, optionsError
+    end
+    local packet, packetError = PrepareProtocolPacket("PAGE_UPSERT", payload, safeOptions)
+    if not packet then
+        return false, packetError
+    end
+
+    CancelActivePageTransfer("superseded")
+    local encodedBytes = #packet.Encoded
+    local totalChunks, multipart, escapeSingle = ActivePageFramePlan(packet.Encoded)
+    local debugEnabled = IsDebugEnabled(self)
+    local state = {
+        Bytes = encodedBytes,
+        Callback = callback,
+        CallbackArg = callbackArg,
+        Channel = packet.Channel,
+        Debug = debugEnabled,
+        Encoded = packet.Encoded,
+        EscapeSingle = escapeSingle,
+        Generation = activePageTransferGeneration,
+        Index = 1,
+        MessageId = packet.Envelope.MessageId,
+        Multipart = multipart,
+        QueuedAt = debugEnabled and PreciseNowMilliseconds() or 0,
+        Self = self,
+        SentChunks = 0,
+        Target = packet.Target,
+        TotalChunks = totalChunks,
+    }
+    activePageTransfer = state
+    if debugEnabled then
+        local syncId, revisionId, contextRevisionId = DebugReference("PAGE_UPSERT", payload)
+        Trace(
+            self,
+            "page-stream-submit",
+            "id=%s seq=%d sentAt=%d generation=%d sync=%s rev=%s ctx=%s bytes=%d chunks=%d",
+            state.MessageId,
+            packet.Envelope.Sequence,
+            packet.Envelope.SentAt,
+            state.Generation,
+            syncId,
+            revisionId,
+            contextRevisionId,
+            state.Bytes,
+            state.TotalChunks
+        )
+    end
+
+    local queued = QueueActivePageChunk(state)
+    if (not queued or state.Finished) and not state.Succeeded then
+        return false, state.Status or "send-failed"
+    end
+    return true, state.MessageId
 end
 
 --- Broadcasts a correlated protocol-v3 version query.
@@ -1270,9 +1679,32 @@ function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
 end
 
 function AngryEra:HandleProtocolDisplay(auth, _, envelope)
+    local debugEnabled = IsDebugEnabled(self)
     local accepted, result, warning = self:AcceptActiveDisplay(auth, envelope.Payload)
     if not accepted then
+        if debugEnabled then
+            Trace(
+                self,
+                "display-reject",
+                "id=%s sender=%s reason=%s",
+                envelope.MessageId,
+                auth.Sender,
+                tostring(result)
+            )
+        end
         return false, result
+    end
+    if debugEnabled then
+        Trace(
+            self,
+            "display-accept",
+            "id=%s sender=%s cache=%s applied=%s localId=%s",
+            envelope.MessageId,
+            auth.Sender,
+            result.RequestNeeded and "miss" or (result.ContextRebound and "rebound" or "hit"),
+            tostring(result.Applied == true),
+            tostring(result.LocalId)
+        )
     end
 
     local requestError
@@ -1292,6 +1724,18 @@ function AngryEra:HandleProtocolDisplay(auth, _, envelope)
             requested, requestError = self:SendProtocolPageRequest(auth.Sender, envelope, result.RequestPayload)
             result.RequestSent = requested == true
             result.RequestError = requestError
+        end
+        if debugEnabled then
+            Trace(
+                self,
+                "display-wait-page",
+                "id=%s sender=%s deferred=%s requestSent=%s status=%s",
+                envelope.MessageId,
+                auth.Sender,
+                tostring(result.RequestDeferred == true),
+                tostring(result.RequestSent == true),
+                tostring(result.RequestError)
+            )
         end
     elseif type(self.CancelPendingDisplayRecovery) == "function" then
         pcall(self.CancelPendingDisplayRecovery, self)
@@ -1342,6 +1786,7 @@ function AngryEra:HandleProtocolPageRequest(auth, _, envelope)
 end
 
 function AngryEra:HandleProtocolPageUpsert(auth, channel, envelope)
+    local debugEnabled = IsDebugEnabled(self)
     local accepted
     local result
     local warning
@@ -1353,7 +1798,22 @@ function AngryEra:HandleProtocolPageUpsert(auth, channel, envelope)
         accepted, result, warning = self:AcceptActivePageUpsert(auth, envelope.Payload)
     end
     if not accepted then
+        if debugEnabled then
+            Trace(self, "page-reject", "id=%s sender=%s reason=%s", envelope.MessageId, auth.Sender, tostring(result))
+        end
         return false, result
+    end
+    if debugEnabled then
+        Trace(
+            self,
+            "page-accept",
+            "id=%s sender=%s localId=%s pendingReady=%s applied=%s",
+            envelope.MessageId,
+            auth.Sender,
+            tostring(result.LocalId),
+            tostring(result.PendingDisplayReady == true),
+            tostring(result.Applied == true)
+        )
     end
 
     local reference = ReferenceFromPayload("PAGE_UPSERT", envelope.Payload)
@@ -1377,6 +1837,18 @@ function AngryEra:HandleProtocolPageUpsert(auth, channel, envelope)
         if displayAccepted then
             result.CompletedDisplay = displayResult
             displayWarning = completionWarning
+            if debugEnabled then
+                Trace(
+                    self,
+                    "display-resume",
+                    "pageMessage=%s sender=%s displayed=%s localId=%s ui=%s",
+                    envelope.MessageId,
+                    auth.Sender,
+                    tostring(displayResult.Displayed == true),
+                    tostring(displayResult.LocalId),
+                    tostring(displayResult.UIRefreshed == true)
+                )
+            end
             if type(self.CancelPendingDisplayRecovery) == "function" then
                 pcall(self.CancelPendingDisplayRecovery, self)
             end
@@ -1410,8 +1882,26 @@ end
 
 --- Receives, authenticates, correlates, deduplicates, and dispatches protocol v3.
 function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
-    if (prefix ~= protocol.PREFIX and prefix ~= protocol.DISPLAY_PREFIX) or type(sender) ~= "string" then
+    if
+        (prefix ~= protocol.PREFIX and prefix ~= protocol.DISPLAY_PREFIX and prefix ~= protocol.ACTIVE_PAGE_PREFIX)
+        or type(sender) ~= "string"
+    then
         return false, "invalid-transport"
+    end
+    if prefix == protocol.ACTIVE_PAGE_PREFIX and not IsCurrentGroupChannel(channel) then
+        return false, "invalid-transport-message-type"
+    end
+    local debugEnabled = IsDebugEnabled(self)
+    if debugEnabled then
+        Trace(
+            self,
+            "rx-raw",
+            "prefix=%s sender=%s channel=%s bytes=%d",
+            prefix,
+            sender,
+            tostring(channel),
+            type(data) == "string" and #data or 0
+        )
     end
 
     sender = EnsureUnitFullName(sender)
@@ -1432,9 +1922,33 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     end
     if
         (envelope.Type == "DISPLAY" and prefix ~= protocol.DISPLAY_PREFIX)
-        or (envelope.Type ~= "DISPLAY" and prefix ~= protocol.PREFIX)
+        or (
+            envelope.Type ~= "DISPLAY"
+            and prefix ~= protocol.PREFIX
+            and not (envelope.Type == "PAGE_UPSERT" and prefix == protocol.ACTIVE_PAGE_PREFIX)
+        )
     then
         return false, "invalid-transport-message-type"
+    end
+    if debugEnabled and IsActivePageMessage(envelope.Type) then
+        local syncId, revisionId, contextRevisionId = DebugReference(envelope.Type, envelope.Payload)
+        local receivedAt = CurrentEpochMilliseconds()
+        local approximateAge = receivedAt and (receivedAt - envelope.SentAt) or 0
+        Trace(
+            self,
+            "rx-decoded",
+            "type=%s id=%s seq=%d sentAt=%d age~=%dms sync=%s rev=%s ctx=%s sender=%s prefix=%s",
+            envelope.Type,
+            envelope.MessageId,
+            envelope.Sequence,
+            envelope.SentAt,
+            approximateAge,
+            syncId,
+            revisionId,
+            contextRevisionId,
+            sender,
+            prefix
+        )
     end
 
     local now = Now()
@@ -1446,6 +1960,9 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
 
     local action = RequiredAction(envelope.Type)
     if not action or not SafeCanReceive(self, sender, action) then
+        return false, "unauthorized"
+    end
+    if prefix == protocol.ACTIVE_PAGE_PREFIX and not SafeCanReceive(self, sender, "display") then
         return false, "unauthorized"
     end
     if envelope.Type == "DISPLAY" and not ValidateDisplayTimestamp(envelope.SentAt) then
@@ -1464,12 +1981,18 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         end
     end
     if IsSeen(replayState, sender, envelope.MessageId) then
+        if debugEnabled then
+            Trace(self, "rx-drop", "type=%s id=%s reason=duplicate", envelope.Type, envelope.MessageId)
+        end
         return false, "duplicate"
     end
     if envelope.Type == "DISPLAY" then
         local displayOrderValid, displayOrderError =
             ValidateDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence, envelope.SentAt)
         if not displayOrderValid then
+            if debugEnabled then
+                Trace(self, "rx-drop", "type=DISPLAY id=%s reason=%s", envelope.MessageId, tostring(displayOrderError))
+            end
             return false, displayOrderError
         end
     end
@@ -1482,9 +2005,27 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         return false, "duplicate"
     end
 
+    local traceActivePage = debugEnabled and IsActivePageMessage(envelope.Type)
+    local dispatchStarted = traceActivePage and PreciseNowMilliseconds() or 0
     local accepted, result, warning = self:DispatchProtocolMessage(auth, channel, envelope)
     if accepted and envelope.Type == "DISPLAY" then
         CommitDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence, envelope.SentAt)
+    end
+    if traceActivePage then
+        local requestNeeded = type(result) == "table" and result.RequestNeeded == true
+        local completedDisplay = type(result) == "table" and result.CompletedDisplay ~= nil
+        Trace(
+            self,
+            "rx-dispatch",
+            "type=%s id=%s accepted=%s elapsed=%dms waitPage=%s completedDisplay=%s status=%s",
+            envelope.Type,
+            envelope.MessageId,
+            tostring(accepted == true),
+            math.max(PreciseNowMilliseconds() - dispatchStarted, 0),
+            tostring(requestNeeded),
+            tostring(completedDisplay),
+            type(result) == "string" and result or (accepted and "ok" or "rejected")
+        )
     end
     return accepted, result, warning
 end

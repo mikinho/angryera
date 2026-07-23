@@ -168,7 +168,8 @@ variables.
 
 The protocol version is independent from the addon release version. This
 contract introduces protocol version `3`, the `AngryEra3` data prefix, and the
-`AngryEra3D` display-control prefix.
+`AngryEra3D` display-control prefix. Proactive active-page snapshots use the
+`AngryEra3P` replaceable page prefix.
 
 All messages use a named envelope. Each addon enable creates an in-memory
 client-session ID and starts a session-local sequence. This prevents message-ID
@@ -218,11 +219,13 @@ across rapid sends, protocol session rotation, and UI reloads. Other envelope
 types carry the current millisecond stamp without consuming the display-order
 counter.
 
-`DISPLAY` is the only message type allowed on `AngryEra3D`; every other envelope
-must use `AngryEra3`. Prefix/type mismatches are rejected before dispatch.
-Display control uses AceComm `ALERT` priority, while data remains `NORMAL`.
-Keeping the priority classes on separate prefixes prevents a multipart page
-stream from blocking or interleaving with display selection messages.
+`DISPLAY` is the only message type allowed on `AngryEra3D`. `AngryEra3P`
+accepts only an uncorrelated group `PAGE_UPSERT`; correlated replies and other
+data remain on `AngryEra3`. Prefix/type mismatches are rejected before
+dispatch. Display control and proactive active-page frames use `ALERT`, while
+ordinary data remains `NORMAL`. Keeping each multipart stream on its own prefix
+prevents page data from blocking or interleaving with display selection
+messages.
 
 `VERSION_QUERY` is broadcast to the group. Each protocol-3 client replies by
 whisper with `VERSION`. A client advertises only capabilities implemented by
@@ -252,8 +255,11 @@ The initial message families are:
 - shared changes: `CHANGE_PROPOSE`, `CHANGE_RESULT`, `DELTA`,
   `DELTA_REQUEST`.
 
-The hard cutover registers and sends only the protocol-3 `AngryEra3` and
-`AngryEra3D` prefixes. There is no positional protocol-1 fallback.
+The hard cutover registers and sends only the protocol-3 `AngryEra3`,
+`AngryEra3D`, and `AngryEra3P` prefixes. There is no positional protocol-1
+fallback. All three receive prefixes are registered immediately after the
+protocol session starts so a freshly loaded client has no delayed receive
+window.
 
 The raid leader is the canonical authority for each managed category scope.
 Publishing a scope or changing raid leadership creates a new
@@ -279,11 +285,21 @@ volatile display context. Changed owner revisions require the canonical
 `CHANGE_PROPOSE`/`DELTA` path.
 
 A non-empty leader display emits its `DISPLAY` reference immediately on the
-control lane. If the exact `PAGE_UPSERT` has not already been published during
-the current group/session, its data snapshot enters a short trailing debounce
-before the data lane. A newer selection replaces an older snapshot that has not
-yet entered AceComm, while exact tuples already known to the group omit the
-redundant snapshot entirely.
+control lane. Its exact `PAGE_UPSERT` enters a 125-millisecond trailing debounce
+before the active-page lane. That lane emits standard AceComm frames one at a
+time through ChatThrottleLib. A newer selection invalidates the old generation
+immediately, leaving at most one obsolete frame already queued; the receiver's
+next multipart first frame replaces any abandoned reassembly. Every completed
+selection republishes its compressed snapshot because sender-global publication
+history cannot prove that a newly joined or reloaded receiver has the tuple.
+Repeated selection while the same tuple is pending or in flight reuses that
+work instead of restarting it.
+
+`/aa debug` enables session-local timing traces for display selection, debounce
+replacement, encoded byte and chunk counts, local transport drain, approximate
+receive age, receiver cache hit or miss, page completion, and UI render time.
+It is off by default and is never saved. Traces omit page text and variable
+values, but include character names and message, page, and revision identifiers.
 
 Receivers defer recovery when a referenced tuple is missing because the
 proactive page normally completes it. After a 30-second fallback window, a

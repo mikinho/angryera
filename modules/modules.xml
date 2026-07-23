@@ -1,5 +1,6 @@
 <Ui>
 	<Include file="utils\utils.xml"/>
+	<Script file="debug.lua"/>
 	<Script file="identity.lua"/>
 	<Script file="utils\protocol.lua"/>
 	<Script file="utils\variables.lua"/>

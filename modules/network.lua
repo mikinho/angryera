@@ -14,7 +14,7 @@ local PlayerFullName = helpers.PlayerFullName
 local IterateGroupMembers = helpers.IterateGroupMembers
 
 local updateFrequency = AngryEra.core.updateFrequency
-local displayPageDebounce = 0.5
+local displayPageDebounce = 0.125
 -- Avoid a raid-wide recovery burst while a proactive multipart page is still
 -- draining, including ChatThrottleLib's reduced-throughput low-FPS mode.
 local pendingDisplayRecoveryDelay = math.max(updateFrequency * 15, 30)
@@ -24,13 +24,44 @@ local pageLastUpdate = {}
 local pageTimerId = {}
 local displayLastUpdate
 local displayTimerId
-local publishedPageTuples = {}
 local pendingDisplayRecoveryTimer
 local pendingDisplayRecovery
 local pendingDisplayRecoveryGeneration = 0
 local pendingDisplayPage
 local pendingDisplayPageTimer
 local displayPageGeneration = 0
+local activeDisplayPageTransfer
+local SamePageTuple
+
+local function PreciseNowMilliseconds()
+    local clock
+    if type(GetTimePreciseSec) == "function" then
+        clock = GetTimePreciseSec
+    elseif type(GetTime) == "function" then
+        clock = GetTime
+    end
+    if not clock then
+        return 0
+    end
+
+    local ok, value = pcall(clock)
+    if not ok or type(value) ~= "number" or value < 0 then
+        return 0
+    end
+    return math.floor(value * 1000)
+end
+
+local function Trace(self, stage, formatText, ...)
+    local callback = self and self.SyncDebug
+    if type(callback) == "function" then
+        callback(self, stage, formatText, ...)
+    end
+end
+
+local function IsDebugEnabled(self)
+    local callback = self and self.IsSyncDebugEnabled
+    return type(callback) == "function" and callback(self) == true
+end
 
 local function IsGrouped()
     return IsInRaid() or IsInGroup()
@@ -59,22 +90,30 @@ local function PageTuple(payload)
     }
 end
 
-local function PageTuplePublished(payload)
-    local tuple = PageTuple(payload)
-    local published = tuple and publishedPageTuples[tuple.SyncId] or nil
-    return published ~= nil
-        and published.RevisionId == tuple.RevisionId
-        and published.ContextRevisionId == tuple.ContextRevisionId
-end
-
-local function RememberPublishedPage(payload)
-    local tuple = PageTuple(payload)
-    if tuple then
-        publishedPageTuples[tuple.SyncId] = tuple
+local function DisplayPageTransferCompleted(state, succeeded, status, messageId)
+    if type(state) ~= "table" or not state.Self then
+        return
+    end
+    if succeeded then
+        pageLastUpdate[state.Id] = time()
+    end
+    if activeDisplayPageTransfer == state then
+        activeDisplayPageTransfer = nil
+    end
+    if state.Debug then
+        Trace(
+            state.Self,
+            succeeded and "page-published" or "page-not-published",
+            "id=%s generation=%d message=%s status=%s",
+            tostring(state.Id),
+            state.Generation,
+            tostring(messageId),
+            tostring(status)
+        )
     end
 end
 
-local function SamePageTuple(left, right)
+SamePageTuple = function(left, right)
     local leftTuple = PageTuple(left)
     local rightTuple = PageTuple(right)
     return leftTuple ~= nil
@@ -101,24 +140,75 @@ local function ActiveDisplayMatches(self, payload)
     })
 end
 
-local function CancelPendingDisplayPage(self)
+local function CancelPendingDisplayPage(self, reason)
+    local pending = pendingDisplayPage
     displayPageGeneration = displayPageGeneration + 1
     CancelTimer(self, pendingDisplayPageTimer)
     pendingDisplayPageTimer = nil
     pendingDisplayPage = nil
+    if pending and pending.Debug then
+        Trace(
+            self,
+            "page-debounce-drop",
+            "id=%s generation=%d reason=%s",
+            tostring(pending.Id),
+            pending.Generation,
+            tostring(reason or "superseded")
+        )
+    end
+    if type(self.CancelProtocolActivePageTransfer) == "function" then
+        self:CancelProtocolActivePageTransfer(reason or "superseded")
+    end
 end
 
 local function QueueDisplayPage(self, id, payload)
-    CancelPendingDisplayPage(self)
+    if pendingDisplayPage and SamePageTuple(pendingDisplayPage.Payload, payload) then
+        if pendingDisplayPage.Debug then
+            Trace(
+                self,
+                "page-debounce-reuse",
+                "id=%s generation=%d status=scheduled",
+                tostring(id),
+                pendingDisplayPage.Generation
+            )
+        end
+        return true, "already-scheduled"
+    end
+    if activeDisplayPageTransfer and SamePageTuple(activeDisplayPageTransfer.Payload, payload) then
+        if activeDisplayPageTransfer.Debug then
+            Trace(
+                self,
+                "page-stream-reuse",
+                "id=%s generation=%d status=in-flight",
+                tostring(id),
+                activeDisplayPageTransfer.Generation
+            )
+        end
+        return true, "already-streaming"
+    end
+    CancelPendingDisplayPage(self, "superseded")
+    local debugEnabled = IsDebugEnabled(self)
     pendingDisplayPage = {
+        Debug = debugEnabled,
         Generation = displayPageGeneration,
         Id = id,
         Payload = payload,
+        QueuedAt = debugEnabled and PreciseNowMilliseconds() or 0,
     }
     pendingDisplayPageTimer = self:ScheduleTimer("SendDisplayPageMessage", displayPageDebounce, displayPageGeneration)
     if not pendingDisplayPageTimer then
         pendingDisplayPage = nil
         return false, "page-publication-schedule-failed"
+    end
+    if debugEnabled then
+        Trace(
+            self,
+            "page-debounce-start",
+            "id=%s generation=%d delay=%dms",
+            tostring(id),
+            displayPageGeneration,
+            math.floor(displayPageDebounce * 1000)
+        )
     end
     return true, "scheduled"
 end
@@ -148,7 +238,6 @@ local function SendPreparedPage(self, id)
     if not sent then
         return false, result
     end
-    RememberPublishedPage(payload)
     pageLastUpdate[id] = time()
     return true, payload
 end
@@ -216,11 +305,11 @@ function AngryEra:CancelPendingDisplayRecovery()
     return timer ~= nil or recovery ~= nil
 end
 
---- Clears group/session-bound page publication knowledge and recovery state.
+--- Clears group/session-bound page publication and recovery state.
 -- Callers must reset this state whenever the protocol session or group changes.
 function AngryEra:ResetDisplayPublicationState()
     self:CancelPendingDisplayRecovery()
-    CancelPendingDisplayPage(self)
+    CancelPendingDisplayPage(self, "reset")
     CancelTimer(self, displayTimerId)
     displayTimerId = nil
     displayLastUpdate = nil
@@ -229,7 +318,6 @@ function AngryEra:ResetDisplayPublicationState()
     end
     pageTimerId = {}
     pageLastUpdate = {}
-    publishedPageTuples = {}
 end
 
 --- Defers recovery for an accepted DISPLAY whose exact page tuple is missing.
@@ -356,35 +444,63 @@ function AngryEra:RecoverPendingDisplay(generation)
 end
 
 --- Sends the newest debounced page snapshot associated with DISPLAY control.
--- Older unsent snapshots are discarded before they enter AceComm's
--- non-cancelable multipart queue.
+-- The active-page stream produces one AceComm frame at a time so a newer
+-- display can stop obsolete chunks before they enter ChatThrottleLib.
 -- @tparam number generation Publication generation captured by AceTimer.
 -- @treturn boolean sentOrSuperseded
 -- @treturn string|nil messageIdOrStatus
 function AngryEra:SendDisplayPageMessage(generation)
     local pending = pendingDisplayPage
     if not pending or pending.Generation ~= generation then
+        if IsDebugEnabled(self) then
+            Trace(self, "page-debounce-skip", "generation=%s reason=superseded", tostring(generation))
+        end
         return true, "superseded"
     end
     pendingDisplayPage = nil
     pendingDisplayPageTimer = nil
-
-    if PageTuplePublished(pending.Payload) then
-        return true, "already-published"
+    if pending.Debug then
+        Trace(
+            self,
+            "page-debounce-fire",
+            "id=%s generation=%d waited=%dms",
+            tostring(pending.Id),
+            pending.Generation,
+            math.max(PreciseNowMilliseconds() - pending.QueuedAt, 0)
+        )
     end
     if not self:CanLocalPlayerPublish("display") or not self:CanLocalPlayerPublish("pageUpsert") then
+        if pending.Debug then
+            Trace(self, "page-debounce-skip", "id=%s reason=unauthorized", tostring(pending.Id))
+        end
         return false, "unauthorized"
     end
     if not ActiveDisplayMatches(self, pending.Payload) then
+        if pending.Debug then
+            Trace(self, "page-debounce-skip", "id=%s reason=inactive-tuple", tostring(pending.Id))
+        end
         return true, "superseded"
     end
+    if type(self.SendProtocolActivePageUpsert) ~= "function" then
+        return false, "active-page-transport-unavailable"
+    end
 
-    local sent, result = self:SendProtocolPageUpsert(pending.Payload)
+    local completionState = {
+        Debug = pending.Debug,
+        Generation = pending.Generation,
+        Id = pending.Id,
+        Payload = pending.Payload,
+        Self = self,
+    }
+    activeDisplayPageTransfer = completionState
+    local sent, result =
+        self:SendProtocolActivePageUpsert(pending.Payload, DisplayPageTransferCompleted, completionState)
     if not sent then
+        if activeDisplayPageTransfer == completionState then
+            activeDisplayPageTransfer = nil
+        end
         return false, result
     end
-    RememberPublishedPage(pending.Payload)
-    pageLastUpdate[pending.Id] = time()
     return true, result
 end
 
@@ -429,9 +545,9 @@ function AngryEra:SendPageMessage(id)
 end
 
 --- Publishes an active display selection with throttling.
--- A non-empty selection sends its exact PAGE_UPSERT once per group/session;
--- peers that missed that publication recover through bounded exact-page and
--- current-display requests.
+-- Every non-empty selection follows its immediate DISPLAY with the exact
+-- PAGE_UPSERT so newly joined or reloaded peers cannot depend on sender-global
+-- publication history. Same pending or in-flight tuples are still reused.
 -- @tparam[opt] number id Local page id, or nil to clear the shared display.
 -- @tparam[opt=false] boolean force Bypass the publication delay.
 -- @treturn boolean sentOrScheduled
@@ -455,14 +571,18 @@ function AngryEra:SendDisplay(id, force)
 end
 
 --- Immediately sends DISPLAY control and queues its exact PAGE_UPSERT.
--- A short trailing debounce prevents rapid page A -> B navigation from placing
--- stale page A into AceComm's non-cancelable multipart queue.
+-- A short trailing debounce coalesces rapid page A -> B navigation before the
+-- replaceable active-page stream starts.
 -- @tparam[opt] number id Local page id, or nil to clear the shared display.
 -- @treturn boolean sent
 -- @treturn string|nil messageIdOrError
 -- @treturn boolean activatedLocally Whether the exact local display state committed.
 function AngryEra:SendDisplayMessage(id)
     displayTimerId = nil
+    local debugEnabled = IsDebugEnabled(self)
+    if debugEnabled then
+        Trace(self, "display-select", "id=%s", tostring(id))
+    end
     if not self:CanLocalPlayerPublish("display") then
         return false, "unauthorized", false
     end
@@ -501,7 +621,7 @@ function AngryEra:SendDisplayMessage(id)
         return false, activationError or "active-display-activation-failed", false
     end
 
-    if pagePayload and not PageTuplePublished(pagePayload) then
+    if pagePayload then
         CancelTimer(self, pageTimerId[id])
         pageTimerId[id] = nil
         local queued, queueResult = QueueDisplayPage(self, id, pagePayload)
@@ -509,14 +629,17 @@ function AngryEra:SendDisplayMessage(id)
             return false, queueResult, true
         end
     else
-        CancelPendingDisplayPage(self)
+        CancelPendingDisplayPage(self, "display-cleared")
     end
 
     local sent, result = self:SendProtocolDisplay(displayPayload)
     if sent then
         displayLastUpdate = time()
+        if debugEnabled then
+            Trace(self, "display-submit", "id=%s message=%s", tostring(id), tostring(result))
+        end
     else
-        CancelPendingDisplayPage(self)
+        CancelPendingDisplayPage(self, "display-send-failed")
     end
     return sent, result, true
 end

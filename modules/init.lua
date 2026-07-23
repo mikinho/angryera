@@ -14,6 +14,7 @@ local core = AngryEra.core
 local isClassic = core.isClassic
 local protocolPrefix = AngryEra.utils.protocol.PREFIX
 local displayProtocolPrefix = AngryEra.utils.protocol.DISPLAY_PREFIX
+local activePageProtocolPrefix = AngryEra.utils.protocol.ACTIVE_PAGE_PREFIX
 
 local colors = AngryEra.utils.colors
 local RGBToHex = colors.RGBToHex
@@ -157,6 +158,17 @@ function AngryEra:OnInitialize()
                 hidden = true,
                 func = function()
                     LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryEra", "")
+                end,
+            },
+            debug = {
+                type = "execute",
+                order = 98,
+                name = "Toggle Sync Debug",
+                desc = "Toggles session-local synchronization timing output",
+                hidden = true,
+                cmdHidden = false,
+                func = function()
+                    self:ToggleSyncDebug()
                 end,
             },
             toggle = {
@@ -610,8 +622,15 @@ function AngryEra:ChatCommand(input)
         local command = input:trim():lower()
         if command == "first" then
             self:FirstPage()
+        elseif command == "debug" then
+            self:HandleSyncDebugCommand("")
         else
-            LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryEra", input)
+            local debugArgument = command:match("^debug%s+(.+)$")
+            if debugArgument then
+                self:HandleSyncDebugCommand(debugArgument)
+            else
+                LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryEra", input)
+            end
         end
     end
 end
@@ -626,9 +645,15 @@ function AngryEra:OnEnable()
         self:Print(self.syncRuntimeStartupWarning)
         self.syncRuntimeStartupWarning = nil
     end
+    AngryEra._protocolStarted = false
     local protocolStarted, protocolError = self:StartProtocolSession()
     if not protocolStarted then
         self:Print("Unable to start synchronization session: " .. tostring(protocolError))
+    else
+        self:RegisterComm(protocolPrefix, "ReceiveProtocolMessage")
+        self:RegisterComm(displayProtocolPrefix, "ReceiveProtocolMessage")
+        self:RegisterComm(activePageProtocolPrefix, "ReceiveProtocolMessage")
+        AngryEra._protocolStarted = true
     end
 
     self:ScheduleTimer("AfterEnable", 4)
@@ -651,6 +676,9 @@ function AngryEra:OnEnable()
 end
 
 function AngryEra:PARTY_LEADER_CHANGED()
+    if type(self.ResetDisplayPublicationState) == "function" then
+        self:ResetDisplayPublicationState()
+    end
     self:PermissionsUpdated()
 end
 
@@ -717,18 +745,16 @@ function AngryEra:GUILD_ROSTER_UPDATE(...)
     end
 end
 
---- Post-enable delayed setup hook for communication/event wiring.
+--- Post-enable delayed setup hook for group discovery and event wiring.
 function AngryEra:AfterEnable()
-    self:RegisterComm(protocolPrefix, "ReceiveProtocolMessage")
-    self:RegisterComm(displayProtocolPrefix, "ReceiveProtocolMessage")
-    AngryEra._protocolStarted = true
-
     --self:RegisterEvent("PARTY_CONVERTED_TO_RAID")
     self:RegisterEvent("PARTY_LEADER_CHANGED")
     self:RegisterEvent("GROUP_JOINED")
     self:RegisterEvent("GROUP_ROSTER_UPDATE")
 
     self:UpdateDisplayedIfNewGroup()
-    self:SendProtocolVersionQuery(true)
-    self:ScheduleTimer("SendRequestDisplay", 0.5)
+    if self._protocolStarted then
+        self:SendProtocolVersionQuery(true)
+        self:ScheduleTimer("SendRequestDisplay", 0.5)
+    end
 end

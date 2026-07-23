@@ -65,6 +65,9 @@ local failPageSend = false
 local failPageRequest = false
 local canPublishDisplay = true
 local canPublishPage = true
+local completeActiveTransfersImmediately = true
+local activePageTransfer
+local canceledActiveTransfers = 0
 local activeDisplayReference
 local pageRevisionIds = {
     [5] = "fcs32:12345678",
@@ -164,6 +167,37 @@ function AngryEra:SendProtocolPageUpsert(payload)
     return true, "page-message"
 end
 
+function AngryEra:CancelProtocolActivePageTransfer(reason)
+    if not activePageTransfer then
+        return false, "idle"
+    end
+    local transfer = activePageTransfer
+    activePageTransfer = nil
+    canceledActiveTransfers = canceledActiveTransfers + 1
+    transfer.Callback(transfer.CallbackArg, false, reason or "canceled", transfer.MessageId)
+    return true, reason or "canceled"
+end
+
+function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
+    calls[#calls + 1] = {
+        Type = "PAGE_UPSERT",
+        Payload = payload,
+    }
+    if failPageSend then
+        return false, "page-send-failed"
+    end
+    activePageTransfer = {
+        Callback = callback,
+        CallbackArg = callbackArg,
+        MessageId = "page-message",
+    }
+    if completeActiveTransfersImmediately then
+        activePageTransfer = nil
+        callback(callbackArg, true, "sent", "page-message")
+    end
+    return true, "page-message"
+end
+
 function AngryEra:SendProtocolDisplay(payload)
     calls[#calls + 1] = {
         Type = "DISPLAY",
@@ -253,29 +287,69 @@ assert(calls[1].Type == "ACTIVATE", "exact display tuple must activate before tr
 assert(calls[2].Type == "DISPLAY", "display selection should use the immediate control lane")
 local firstDisplayPageTimer = timers[#timers]
 assert(
-    firstDisplayPageTimer.Method == "SendDisplayPageMessage" and firstDisplayPageTimer.Delay == 0.5,
-    "an uncached display should debounce its page snapshot for half a second"
+    firstDisplayPageTimer.Method == "SendDisplayPageMessage" and firstDisplayPageTimer.Delay == 0.125,
+    "an uncached display should debounce its page snapshot for 125 milliseconds"
 )
+
+local callsBeforePendingReuse = #calls
+local timersBeforePendingReuse = #timers
+local canceledTransfersBeforePendingReuse = canceledActiveTransfers
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message", "a repeated pending tuple should publish its newer selection")
+assert(activatedLocally, "a repeated pending tuple should activate locally")
+assert(
+    #calls == callsBeforePendingReuse + 2
+        and calls[callsBeforePendingReuse + 1].Type == "ACTIVATE"
+        and calls[callsBeforePendingReuse + 2].Type == "DISPLAY",
+    "a repeated pending tuple should activate and send its newer DISPLAY immediately"
+)
+assert(
+    #timers == timersBeforePendingReuse
+        and timers[#timers] == firstDisplayPageTimer
+        and not canceled[firstDisplayPageTimer]
+        and canceledActiveTransfers == canceledTransfersBeforePendingReuse,
+    "a repeated pending tuple must retain its original debounce without adding or canceling work"
+)
+
+local latestPendingDisplay = calls[callsBeforePendingReuse + 2]
+local callsBeforeFirstDisplayPageFlush = #calls
 sent, result = AngryEra:SendDisplayPageMessage(firstDisplayPageTimer.Argument)
 assert(sent and result == "page-message", "the captured display-page timer should flush its snapshot")
-assert(calls[3].Type == "PAGE_UPSERT", "the debounced page snapshot should follow immediate DISPLAY")
+assert(
+    #calls == callsBeforeFirstDisplayPageFlush + 1 and calls[#calls].Type == "PAGE_UPSERT",
+    "the retained debounced page snapshot should follow the newer immediate DISPLAY"
+)
 assert(
     calls[1].PagePayload.Page.RevisionId == calls[1].DisplayPayload.RevisionId
         and calls[1].PagePayload.ContextRevisionId == calls[1].DisplayPayload.ContextRevisionId
-        and calls[3].Payload.Page.RevisionId == calls[2].Payload.RevisionId
-        and calls[3].Payload.ContextRevisionId == calls[2].Payload.ContextRevisionId,
-    "the delayed page and immediate display should carry one exact tuple"
+        and calls[#calls].Payload.Page.SyncId == latestPendingDisplay.Payload.SyncId
+        and calls[#calls].Payload.Page.RevisionId == latestPendingDisplay.Payload.RevisionId
+        and calls[#calls].Payload.ContextRevisionId == latestPendingDisplay.Payload.ContextRevisionId,
+    "the retained delayed page and newer immediate display should carry one exact tuple"
 )
 
 local callsBeforeCachedDisplay = #calls
 local timersBeforeCachedDisplay = #timers
 sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
-assert(sent and result == "display-message", "a cached display tuple should still publish its selection")
-assert(activatedLocally, "a cached display tuple should still activate locally")
-assert(#calls == callsBeforeCachedDisplay + 2, "a cached display tuple should skip its redundant page envelope")
-assert(calls[callsBeforeCachedDisplay + 1].Type == "ACTIVATE", "cached display should still activate first")
-assert(calls[#calls].Type == "DISPLAY", "cached display should publish only the selection after activation")
-assert(#timers == timersBeforeCachedDisplay, "a cached display tuple should not schedule a page timer")
+assert(sent and result == "display-message", "a repeated display tuple should publish its selection")
+assert(activatedLocally, "a repeated display tuple should activate locally")
+assert(#calls == callsBeforeCachedDisplay + 2, "a repeated display should activate and send DISPLAY immediately")
+assert(calls[callsBeforeCachedDisplay + 1].Type == "ACTIVATE", "repeated display should still activate first")
+assert(calls[#calls].Type == "DISPLAY", "repeated display should send control before its exact page snapshot")
+assert(
+    #timers == timersBeforeCachedDisplay + 1,
+    "a completed transfer must not suppress the repeated display's page snapshot"
+)
+local repeatedDisplayPageTimer = timers[#timers]
+sent, result = AngryEra:SendDisplayPageMessage(repeatedDisplayPageTimer.Argument)
+assert(sent and result == "page-message", "the repeated display should send its exact page snapshot again")
+assert(
+    calls[#calls].Type == "PAGE_UPSERT"
+        and calls[#calls].Payload.Page.SyncId == Upsert(5).Page.SyncId
+        and calls[#calls].Payload.Page.RevisionId == pageRevisionIds[5]
+        and calls[#calls].Payload.ContextRevisionId == contextRevisionIds[5],
+    "the repeated display must republish the exact selected tuple"
+)
 
 pageRevisionIds[5] = "fcs32:12345679"
 callsBeforeCachedDisplay = #calls
@@ -318,6 +392,48 @@ assert(
     calls[#calls].Type == "PAGE_UPSERT" and calls[#calls].Payload.Page.SyncId == Upsert(6).Page.SyncId,
     "only rapid page B should enter page transport"
 )
+
+do
+    completeActiveTransfersImmediately = false
+    pageRevisionIds[5] = "fcs32:12345690"
+    sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+    assert(sent and result == "display-message" and activatedLocally, "in-flight cancellation setup should display A")
+    local firstTransferTimer = timers[#timers]
+    sent, result = AngryEra:SendDisplayPageMessage(firstTransferTimer.Argument)
+    assert(sent and result == "page-message" and activePageTransfer, "page A should enter the active stream")
+
+    local timersBeforeSameTuple = #timers
+    local canceledBeforeSameTuple = canceledActiveTransfers
+    local firstActiveTransfer = activePageTransfer
+    sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+    assert(sent and result == "display-message" and activatedLocally, "repeating page A should resend DISPLAY")
+    assert(
+        #timers == timersBeforeSameTuple
+            and canceledActiveTransfers == canceledBeforeSameTuple
+            and activePageTransfer == firstActiveTransfer,
+        "repeating the same tuple must not restart its in-flight page stream"
+    )
+
+    local canceledBeforeReplacement = canceledActiveTransfers
+    sent, result, activatedLocally = AngryEra:SendDisplayMessage(6)
+    assert(sent and result == "display-message" and activatedLocally, "cached page B should replace in-flight page A")
+    assert(
+        canceledActiveTransfers == canceledBeforeReplacement + 1 and activePageTransfer == nil,
+        "a newer display should stop production of the older active-page stream"
+    )
+
+    local timersBeforeRetry = #timers
+    sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+    assert(sent and result == "display-message" and activatedLocally, "canceled page A should remain displayable")
+    assert(#timers == timersBeforeRetry + 1, "a canceled transfer must not mark page A as published")
+    local retryTimer = timers[#timers]
+    sent, result = AngryEra:SendDisplayPageMessage(retryTimer.Argument)
+    assert(sent and result == "page-message" and activePageTransfer, "page A should retry through the active stream")
+    local completedTransfer = activePageTransfer
+    activePageTransfer = nil
+    completedTransfer.Callback(completedTransfer.CallbackArg, true, "sent", completedTransfer.MessageId)
+    completeActiveTransfersImmediately = true
+end
 
 pageRevisionIds[5] = "fcs32:12345681"
 sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
@@ -396,10 +512,17 @@ assert(preparationCount == preparationBeforePage + 1, "page publication should p
 assert(calls[#calls].Type == "PAGE_UPSERT", "page publication should use protocol v3")
 
 callsBeforeCachedDisplay = #calls
+local timersBeforeDisplayAfterPageSend = #timers
 sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
-assert(sent and result == "display-message" and activatedLocally, "a directly published page should seed display cache")
-assert(#calls == callsBeforeCachedDisplay + 2, "SendPage should prevent an identical display snapshot retransmission")
-assert(calls[#calls].Type == "DISPLAY", "cached page publication should be followed by only DISPLAY")
+assert(sent and result == "display-message" and activatedLocally, "a directly published page should remain displayable")
+assert(#calls == callsBeforeCachedDisplay + 2, "display selection should still activate and send DISPLAY immediately")
+assert(
+    #timers == timersBeforeDisplayAfterPageSend + 1,
+    "a generic queued page send must not suppress the replaceable active-page stream"
+)
+local displayAfterPageSendTimer = timers[#timers]
+sent, result = AngryEra:SendDisplayPageMessage(displayAfterPageSendTimer.Argument)
+assert(sent and result == "page-message", "the active-page stream should republish after a generic page send")
 
 currentTime = 105
 sent, result = AngryEra:SendPage(5)

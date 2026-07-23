@@ -13,6 +13,10 @@ local displayRequiresLeader = false
 local localDisplayAuthority = true
 local sentMessages = {}
 local printedMessages = {}
+local throttleFrames = {}
+local throttleAutoDrain = false
+local encodedPadding = 0
+local encodedLeadingControl = false
 
 _G.AngryAssign_Meta = {
     InstallationId = "ae3i:1:2:3:4",
@@ -82,11 +86,12 @@ end
 
 local libD = {}
 function libD:EncodeForWoWAddonChannel(value)
-    return "encoded:" .. value
+    local prefix = encodedLeadingControl and "\001" or "encoded:"
+    return prefix .. value .. string.rep("x", encodedPadding)
 end
 function libD:DecodeForWoWAddonChannel(value)
     if value:sub(1, 8) == "encoded:" then
-        return value:sub(9)
+        return value:sub(9, #value - encodedPadding)
     end
 end
 
@@ -155,8 +160,10 @@ function AngryEra:IsPlayerRaidLeader()
     return localDisplayAuthority
 end
 
-function AngryEra:SendCommMessage(prefix, data, channel, target, priority)
+function AngryEra:SendCommMessage(prefix, data, channel, target, priority, callback, callbackArg)
     sentMessages[#sentMessages + 1] = {
+        Callback = callback,
+        CallbackArg = callbackArg,
         Prefix = prefix,
         Data = data,
         Channel = channel,
@@ -169,6 +176,25 @@ function AngryEra:Print(message)
     printedMessages[#printedMessages + 1] = message
 end
 
+_G.ChatThrottleLib = {
+    SendAddonMessage = function(_, priority, prefix, data, channel, target, queueName, callback, callbackArg)
+        local frame = {
+            Callback = callback,
+            CallbackArg = callbackArg,
+            Channel = channel,
+            Data = data,
+            Prefix = prefix,
+            Priority = priority,
+            QueueName = queueName,
+            Target = target,
+        }
+        throttleFrames[#throttleFrames + 1] = frame
+        if throttleAutoDrain then
+            callback(callbackArg, true, 0)
+        end
+    end,
+}
+
 local app = {
     AngryEra = AngryEra,
     libs = {
@@ -178,6 +204,7 @@ local app = {
     },
 }
 
+assert(loadfile("modules/debug.lua"))("AngryEra", app)
 assert(loadfile("modules/identity.lua"))("AngryEra", app)
 assert(loadfile("modules/utils/protocol.lua"))("AngryEra", app)
 
@@ -537,6 +564,22 @@ accepted, result = AngryEra:ReceiveProtocolMessage("WrongPrefix", wrongChannelQu
 AssertError(accepted, result, "invalid-transport", "wrong prefix")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
 AssertError(accepted, result, "invalid-transport-message-type", "non-display envelope over display prefix")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
+AssertError(accepted, result, "invalid-transport-message-type", "non-page envelope over active-page prefix")
+local activePrefixPage = BuildRemoteEnvelope("remote-active-prefix", "PAGE_UPSERT", remoteUpsert)
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, activePrefixPage, "WHISPER", "Alpha-Realm")
+AssertError(accepted, result, "invalid-transport-message-type", "active-page prefix outside the current group channel")
+displayRequiresLeader = true
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, activePrefixPage, "RAID", "Alpha-Realm")
+AssertError(accepted, result, "unauthorized", "assistant page over leader-only active-page prefix")
+members["alpha-realm"] = "leader"
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, activePrefixPage, "RAID", "Alpha-Realm")
+assert(accepted, result)
+assert(knownActivePages[remoteReference.SyncId], "active-page prefix should deliver a complete PAGE_UPSERT")
+members["alpha-realm"] = "assistant"
+displayRequiresLeader = false
+knownActivePages = {}
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, "malformed", "RAID", "Beta-Realm")
 AssertError(accepted, result, "decode-failed", "malformed encoded payload")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, "malformed", "RAID", "Outside-Realm")
@@ -735,6 +778,133 @@ assert(
     AngryAssign_Meta.LastDisplaySentAt == displayEnvelope.SentAt,
     "The latest display timestamp should persist across reloads"
 )
+
+local debugOutputBeforeTransport = #printedMessages
+AngryEra._syncDebugEnabled = true
+sent, result = AngryEra:SendProtocolMessage("PAGE_UPSERT", localUpsert)
+assert(sent, result)
+local debugTransport = sentMessages[#sentMessages]
+assert(
+    type(debugTransport.Callback) == "function" and type(debugTransport.CallbackArg) == "table",
+    "debug mode should attach an AceComm drain callback"
+)
+debugTransport.Callback(debugTransport.CallbackArg, #debugTransport.Data, #debugTransport.Data, 0)
+AngryEra._syncDebugEnabled = false
+assert(
+    #printedMessages >= debugOutputBeforeTransport + 3
+        and printedMessages[#printedMessages]:find("tx%-done")
+        and printedMessages[#printedMessages]:find("drain="),
+    "debug transport callbacks should report queue start and final drain timing"
+)
+sentMessages[#sentMessages] = nil
+
+do
+    local completions = {}
+    local function RecordActiveTransfer(label, succeeded, status, messageId)
+        completions[#completions + 1] = {
+            Label = label,
+            MessageId = messageId,
+            Status = status,
+            Succeeded = succeeded,
+        }
+    end
+
+    throttleFrames = {}
+    encodedLeadingControl = true
+    sent, result = AngryEra:SendProtocolActivePageUpsert(localUpsert, RecordActiveTransfer, "escaped")
+    assert(sent, result)
+    assert(
+        #throttleFrames == 1 and throttleFrames[1].Data:byte(1) == 4 and throttleFrames[1].Data:byte(2) == 1,
+        "a short control-prefixed packet should use AceComm's escape frame"
+    )
+    throttleFrames[1].Callback(throttleFrames[1].CallbackArg, true, 0)
+    assert(
+        #completions == 1 and completions[1].Label == "escaped" and completions[1].Succeeded == true,
+        "the escaped single-frame transfer should complete"
+    )
+
+    throttleFrames = {}
+    completions = {}
+    encodedLeadingControl = false
+    encodedPadding = 700
+    sent, result = AngryEra:SendProtocolActivePageUpsert(localUpsert, RecordActiveTransfer, "authority")
+    assert(sent, result)
+    localDisplayAuthority = false
+    throttleFrames[1].Callback(throttleFrames[1].CallbackArg, true, 0)
+    localDisplayAuthority = true
+    assert(
+        #throttleFrames == 1
+            and #completions == 1
+            and completions[1].Label == "authority"
+            and completions[1].Succeeded == false
+            and completions[1].Status == "unauthorized",
+        "losing display authority should stop the active page after its outstanding frame"
+    )
+
+    throttleFrames = {}
+    completions = {}
+    sent, result = AngryEra:SendProtocolActivePageUpsert(localUpsert, RecordActiveTransfer, "first")
+    assert(sent, result)
+    assert(#throttleFrames == 1, "the replaceable active-page sender should enqueue only its first frame")
+    assert(
+        throttleFrames[1].Prefix == protocol.ACTIVE_PAGE_PREFIX
+            and throttleFrames[1].Priority == "ALERT"
+            and throttleFrames[1].QueueName == protocol.ACTIVE_PAGE_PREFIX,
+        "active-page frames should use their isolated alert lane"
+    )
+    assert(
+        throttleFrames[1].Data:byte(1) == 1 and #throttleFrames[1].Data == 255,
+        "a multipart active page should begin with one standard AceComm first frame"
+    )
+
+    throttleFrames[1].Callback(throttleFrames[1].CallbackArg, true, 0)
+    assert(#throttleFrames == 2, "a successful first frame should enqueue exactly one continuation")
+    assert(throttleFrames[2].Data:byte(1) == 2, "the second active-page frame should be a continuation")
+
+    sent, result = AngryEra:SendProtocolActivePageUpsert(localUpsert, RecordActiveTransfer, "second")
+    assert(sent, result)
+    assert(
+        #completions == 1
+            and completions[1].Label == "first"
+            and completions[1].Succeeded == false
+            and completions[1].Status == "superseded",
+        "a newer active page should stop the older transfer"
+    )
+    assert(
+        #throttleFrames == 2,
+        "the replacement should wait instead of queuing behind the one outstanding stale frame"
+    )
+
+    sent, result = AngryEra:SendProtocolActivePageUpsert(localUpsert, RecordActiveTransfer, "third")
+    assert(sent, result)
+    assert(
+        #completions == 2
+            and completions[2].Label == "second"
+            and completions[2].Succeeded == false
+            and completions[2].Status == "superseded",
+        "another replacement should discard the waiting middle transfer"
+    )
+    assert(#throttleFrames == 2, "repeated replacements must not accumulate stale first frames")
+
+    throttleFrames[2].Callback(throttleFrames[2].CallbackArg, true, 0)
+    assert(
+        #throttleFrames == 3 and throttleFrames[3].Data:byte(1) == 1,
+        "the stale callback should release only the newest transfer's first frame"
+    )
+
+    local frameIndex = 3
+    while #completions < 3 do
+        local frame = throttleFrames[frameIndex]
+        assert(frame, "replacement active-page transfer should keep producing one frame at a time")
+        frame.Callback(frame.CallbackArg, true, 0)
+        frameIndex = frameIndex + 1
+    end
+    assert(
+        completions[3].Label == "third" and completions[3].Succeeded == true and completions[3].Status == "sent",
+        "the latest active-page transfer should complete normally"
+    )
+    encodedPadding = 0
+end
 
 timestampTest.TimeBeforeRollback = currentTime
 currentTime = currentTime - 1

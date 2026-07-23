@@ -20,6 +20,7 @@ local protocol = AngryEra.utils.protocol
 protocol.VERSION = 3
 protocol.PREFIX = "AngryEra3"
 protocol.DISPLAY_PREFIX = "AngryEra3D"
+protocol.ACTIVE_PAGE_PREFIX = "AngryEra3P"
 
 protocol.WIRE_LIMITS = {
     EncodedBytes = 256 * 1024,

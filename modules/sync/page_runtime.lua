@@ -71,6 +71,36 @@ local REVISION_FIELDS = {
     "UpdatedBy",
 }
 
+local function PreciseNowMilliseconds()
+    local clock
+    if type(GetTimePreciseSec) == "function" then
+        clock = GetTimePreciseSec
+    elseif type(GetTime) == "function" then
+        clock = GetTime
+    end
+    if not clock then
+        return 0
+    end
+
+    local ok, value = pcall(clock)
+    if not ok or type(value) ~= "number" or value < 0 then
+        return 0
+    end
+    return math.floor(value * 1000)
+end
+
+local function Trace(self, stage, formatText, ...)
+    local callback = self and self.SyncDebug
+    if type(callback) == "function" then
+        callback(self, stage, formatText, ...)
+    end
+end
+
+local function IsDebugEnabled(self)
+    local callback = self and self.IsSyncDebugEnabled
+    return type(callback) == "function" and callback(self) == true
+end
+
 local function IsPlainTable(value)
     return type(value) == "table" and getmetatable(value) == nil
 end
@@ -1056,15 +1086,31 @@ local function RefreshAfterPageUpsert(self, summary, sender)
 end
 
 local function RefreshAfterDisplay(self, displayed)
+    local debugEnabled = IsDebugEnabled(self)
+    local startedAt = debugEnabled and PreciseNowMilliseconds() or 0
     local refreshed = RefreshTreeWithoutSelectionReload(self)
+    local treeFinishedAt = debugEnabled and PreciseNowMilliseconds() or 0
     if not CallUiMethod(self, "UpdateDisplayed") then
         refreshed = false
     end
+    local displayFinishedAt = debugEnabled and PreciseNowMilliseconds() or 0
     if displayed and not CallUiMethod(self, "ShowDisplay") then
         refreshed = false
     end
     if displayed and not CallUiMethod(self, "DisplayUpdateNotification") then
         refreshed = false
+    end
+    if debugEnabled then
+        Trace(
+            self,
+            "display-render",
+            "displayed=%s tree=%dms note=%dms total=%dms success=%s",
+            tostring(displayed == true),
+            math.max(treeFinishedAt - startedAt, 0),
+            math.max(displayFinishedAt - treeFinishedAt, 0),
+            math.max(PreciseNowMilliseconds() - startedAt, 0),
+            tostring(refreshed == true)
+        )
     end
     return refreshed and true or false, refreshed and nil or "ui-refresh-failed"
 end

@@ -57,7 +57,7 @@ Shared page changes are always accepted from the current group leader. A raid as
 
 Each installation applies its own receiver policy and rejects unauthorized messages. **Leader Only** rejects assistant page changes, while **Ignore Shared Changes** keeps the local library private. **Allow All Raid Assistants** is an explicit override for groups where every assistant should be trusted to publish non-destructive page changes; it never grants shared display control and is disabled by default. Creating, organizing, deleting, importing, and exporting private local content does not require raid authority.
 
-Shared page snapshots are compressed in transit. Display selections use a separate time-critical control lane, so a large page transfer cannot hold the leader's newest selection signal behind it. Rapid unsent snapshots are coalesced before transport, and selections are ordered by both the leader's protocol sequence and a monotonic millisecond send-order stamp: a delayed older selection, including one queued by an earlier sender session, can never replace the newest one. Pages and inherited-variable contexts already seen by the group are reused, including across a raid-leader handoff, while a missing snapshot is recovered automatically.
+Shared page snapshots are compressed in transit. Display selections use a separate time-critical control lane, so a large page transfer cannot hold the leader's newest selection signal behind it. A new snapshot waits only 125 milliseconds for rapid navigation to settle, then uses a replaceable active-page stream that feeds one transport frame at a time. Selecting a newer page immediately stops production of obsolete frames instead of draining the old page first. Selections are ordered by both the leader's protocol sequence and a monotonic millisecond send-order stamp, so a delayed older selection can never replace the newest one. A cached exact page renders immediately, but every selection still republishes its compressed snapshot so a newly joined or reloaded client is not left behind.
 
 You will likely want to configure a keybinding for "Toggle Window" in the game keybindings.  This brings up the edit window, which is what officers and raid assistants will use to modify the assignment pages.  The edit window can be scaled up or down via the "Scale" parameter in the configuration menu (or via "/aa scale").
 
@@ -255,6 +255,8 @@ The "/aa version" command (also available from the config menu) will perform a v
 The "/aa backup" command (also available from the config menu) will store the current version of every page for later "Restore" (similar to if you had just edited every page and made no actual changes).
 
 The "/aa deleteall" command will delete all pages you have stored.  This could be used occasionally to clean out old assignment pages that are no longer used, for example, when beginning a new tier.  Of course, if others in the guild still have those pages, and choose to edit them and/or send them out for display, you'll get them back if you're online at the time.
+
+The "/aa debug" command toggles session-local synchronization timing output. Use "/aa debug on", "/aa debug off", or "/aa debug status" for an explicit state. Debug mode resets to off when the UI reloads and never prints page contents or variable values. It does include character names plus message, page, and revision identifiers, so review the output before sharing it publicly.
 
 WeakAuras & Addon API
 --------------------
