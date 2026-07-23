@@ -177,6 +177,14 @@ local function MakeCompactCodec(overrides)
     return codec
 end
 
+local function TestHash(value)
+    local hash = 0
+    for index = 1, #value do
+        hash = (hash * 131 + value:byte(index)) % 4294967296
+    end
+    return string.format("%08x", hash)
+end
+
 local function MakeCompactPageCodec(overrides)
     local codec = {
         compress = function(value)
@@ -194,6 +202,7 @@ local function MakeCompactPageCodec(overrides)
         decode = function(value)
             return value
         end,
+        hash = TestHash,
     }
     for name, callback in pairs(overrides or {}) do
         codec[name] = callback
@@ -340,10 +349,10 @@ AssertEqual(protocol.COMPACT_DISPLAY_FORMAT, 1, "compact display format")
 AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes, 254, "compact display single-frame bound")
 AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.PackedBytes, 237, "compact display safe-alphabet bound")
 AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.RawBytes, 207, "compact display raw bound")
-AssertEqual(protocol.COMPACT_PAGE_FORMAT, 1, "compact page format")
+AssertEqual(protocol.COMPACT_PAGE_FORMAT, 2, "compact page format")
 AssertEqual(protocol.COMPACT_PAGE_LIMITS.EncodedBytes, 256 * 1024, "compact page encoded bound")
 AssertEqual(protocol.COMPACT_PAGE_LIMITS.CompressedBytes, 256 * 1024 - 5, "compact page compressed bound")
-AssertEqual(protocol.COMPACT_PAGE_LIMITS.RawBytes, 186158, "compact page exact semantic bound")
+AssertEqual(protocol.COMPACT_PAGE_LIMITS.RawBytes, 186162, "compact page exact semantic bound")
 
 local installationId = "ae3i:1234abcd:11111111:22222222:33333333"
 local session, sessionError = protocol.NewSession(installationId, "session_B-2")
@@ -1015,20 +1024,32 @@ local compactPageEnvelope = assert(protocol.BuildEnvelope(compactPageSession, "P
     ReplyTo = queryEnvelope.MessageId,
     SentAt = 1750000000100,
 }))
-local compactPageEncoded, compactPageEncodeError =
+local compactPageEncoded, compactPageEncodeError, compactPageEncodeMetadata =
     protocol.EncodeCompactPageEnvelope(compactPageEnvelope, compactPageCodec)
 Assert(compactPageEncoded ~= nil and compactPageEncodeError == nil, "valid compact page encodes")
 local compactPageRaw = ReadCompactPageFrameForTest(compactPageEncoded)
-AssertEqual(compactPageRaw:byte(1), 1, "compact page reply flag")
+AssertEqual(compactPageRaw:byte(1), 3, "compact page reply and inline ancestor flags")
+AssertEqual(compactPageEncodeMetadata.AncestorContextIncluded, true, "compact page metadata records inline context")
+AssertEqual(compactPageEncodeMetadata.AncestorContextBytes, 65, "compact page metadata records ancestor wire bytes")
+Assert(
+    compactPageEncodeMetadata.AncestorContextId:match("^fcs32:[0-9a-f]+$") ~= nil,
+    "compact page metadata records canonical ancestor identity"
+)
+AssertEqual(
+    compactPageEncodeMetadata.Reference.SyncId,
+    compactPageEnvelope.Payload.Page.SyncId,
+    "compact page metadata records page reference"
+)
 Assert(
     #compactPageRaw < #compactPageEnvelope.Payload.Page.Contents + 512,
     "compact page metadata stays small for the representative payload"
 )
 
-local compactPageDecoded, compactPageDecodeError =
+local compactPageDecoded, compactPageDecodeError, compactPageDecodeMetadata =
     protocol.DecodeCompactPageEnvelope(compactPageEncoded, compactPageCodec)
 Assert(compactPageDecoded ~= nil and compactPageDecodeError == nil, "valid compact page decodes")
 Assert(DeepEqual(compactPageDecoded, compactPageEnvelope), "compact page canonical envelope round trip")
+Assert(DeepEqual(compactPageDecodeMetadata, compactPageEncodeMetadata), "compact page metadata round trip")
 AssertEqual(
     compactPageDecoded.Payload.Page.OwnerId,
     compactPageDecoded.Payload.Page.SyncId:match("^(.*):page:"),
@@ -1051,17 +1072,251 @@ AssertEqual(
     "compact page retains parent variables"
 )
 
+do
+    local hashedBytes
+    local ancestorContextId, ancestorContextError, ancestorContextBytes =
+        protocol.BuildCompactPageAncestorContextId(compactPageEnvelope.Payload.AncestorVariableLayers, {
+            hash = function(value)
+                hashedBytes = value
+                return TestHash(value)
+            end,
+        })
+    Assert(ancestorContextId ~= nil and ancestorContextError == nil, "compact page ancestor context identity builds")
+    AssertEqual(ancestorContextBytes, 65, "ancestor context identity reports canonical byte count")
+    AssertEqual(#hashedBytes, ancestorContextBytes, "ancestor context hashes the exact inline bytes")
+    AssertEqual(ancestorContextId, "fcs32:" .. TestHash(hashedBytes), "ancestor context identity uses the codec digest")
+    AssertEqual(
+        ancestorContextId,
+        compactPageEncodeMetadata.AncestorContextId,
+        "standalone and encoded ancestor identities agree"
+    )
+
+    local changedLayers = DeepCopy(compactPageEnvelope.Payload.AncestorVariableLayers)
+    changedLayers[2].Vars = "role=changed"
+    local changedContextId = assert(protocol.BuildCompactPageAncestorContextId(changedLayers, compactPageCodec))
+    Assert(changedContextId ~= ancestorContextId, "ancestor variables contribute to context identity")
+
+    changedLayers = {
+        DeepCopy(compactPageEnvelope.Payload.AncestorVariableLayers[2]),
+        DeepCopy(compactPageEnvelope.Payload.AncestorVariableLayers[1]),
+    }
+    changedContextId = assert(protocol.BuildCompactPageAncestorContextId(changedLayers, compactPageCodec))
+    Assert(changedContextId ~= ancestorContextId, "ancestor order contributes to context identity")
+
+    local emptyContextId, emptyContextError, emptyContextBytes =
+        protocol.BuildCompactPageAncestorContextId({}, compactPageCodec)
+    Assert(emptyContextId ~= nil and emptyContextError == nil, "empty ancestor context identity builds")
+    AssertEqual(emptyContextBytes, 1, "empty ancestor identity hashes its count byte")
+
+    local invalidContextId
+    invalidContextId, ancestorContextError = protocol.BuildCompactPageAncestorContextId("layers", compactPageCodec)
+    AssertError(
+        invalidContextId,
+        ancestorContextError,
+        "invalid-ancestor-layers",
+        "ancestor context identity validates layers"
+    )
+    invalidContextId, ancestorContextError = protocol.BuildCompactPageAncestorContextId({}, {})
+    AssertError(
+        invalidContextId,
+        ancestorContextError,
+        "invalid-compact-page-hash-codec",
+        "ancestor context identity requires a hash callback"
+    )
+    invalidContextId, ancestorContextError = protocol.BuildCompactPageAncestorContextId({}, {
+        hash = function()
+            error("hash")
+        end,
+    })
+    AssertError(
+        invalidContextId,
+        ancestorContextError,
+        "compact-page-ancestor-hash-failed",
+        "ancestor context identity contains hash exceptions"
+    )
+    for _, invalidDigest in ipairs({ false, "", "1234567", "123456789", "ABCDEF12", "abcdefg1" }) do
+        invalidContextId, ancestorContextError = protocol.BuildCompactPageAncestorContextId({}, {
+            hash = function()
+                return invalidDigest
+            end,
+        })
+        AssertError(
+            invalidContextId,
+            ancestorContextError,
+            "invalid-compact-page-ancestor-digest",
+            "ancestor context identity rejects a noncanonical digest"
+        )
+    end
+end
+
+do
+    local omittedPageEncoded, omittedPageError, omittedPageEncodeMetadata =
+        protocol.EncodeCompactPageEnvelope(compactPageEnvelope, compactPageCodec, { IncludeAncestorContext = false })
+    Assert(
+        omittedPageEncoded ~= nil and omittedPageError == nil,
+        "nonempty compact page ancestor context may be omitted"
+    )
+    local omittedPageRaw = ReadCompactPageFrameForTest(omittedPageEncoded)
+    AssertEqual(omittedPageRaw:byte(1), 1, "omitted compact page retains only its reply flag")
+    AssertEqual(
+        #compactPageRaw - #omittedPageRaw,
+        compactPageEncodeMetadata.AncestorContextBytes,
+        "omitted compact page removes the entire canonical ancestor block"
+    )
+    AssertEqual(
+        omittedPageEncodeMetadata.AncestorContextId,
+        compactPageEncodeMetadata.AncestorContextId,
+        "inline and omitted packets share an ancestor identity"
+    )
+    AssertEqual(
+        omittedPageEncodeMetadata.AncestorContextIncluded,
+        false,
+        "omitted compact page metadata records exclusion"
+    )
+    AssertEqual(
+        omittedPageEncodeMetadata.AncestorContextBytes,
+        compactPageEncodeMetadata.AncestorContextBytes,
+        "omitted encode metadata retains the reusable context size"
+    )
+
+    local missingPage, missingPageError, missingPageMetadata =
+        protocol.DecodeCompactPageEnvelope(omittedPageEncoded, compactPageCodec)
+    AssertError(
+        missingPage,
+        missingPageError,
+        "compact-page-ancestor-context-missing",
+        "omitted compact page requires a cached ancestor context"
+    )
+    AssertEqual(
+        missingPageMetadata.AncestorContextId,
+        omittedPageEncodeMetadata.AncestorContextId,
+        "resolver miss exposes the validated ancestor identity"
+    )
+    AssertEqual(missingPageMetadata.AncestorContextIncluded, false, "resolver miss metadata records omitted context")
+    Assert(
+        missingPageMetadata.AncestorContextBytes == nil,
+        "resolver miss does not guess the absent context byte count"
+    )
+    AssertEqual(
+        missingPageMetadata.SenderInstallationId,
+        compactPageEnvelope.SenderInstallationId,
+        "resolver miss exposes validated sender installation"
+    )
+    AssertEqual(
+        missingPageMetadata.SenderSessionId,
+        compactPageEnvelope.SenderSessionId,
+        "resolver miss exposes validated sender session"
+    )
+    AssertEqual(
+        missingPageMetadata.MessageId,
+        compactPageEnvelope.MessageId,
+        "resolver miss exposes validated message identity"
+    )
+    AssertEqual(missingPageMetadata.Sequence, compactPageEnvelope.Sequence, "resolver miss exposes validated sequence")
+    AssertEqual(missingPageMetadata.SentAt, compactPageEnvelope.SentAt, "resolver miss exposes validated timestamp")
+    AssertEqual(
+        missingPageMetadata.ReplyTo,
+        compactPageEnvelope.ReplyTo,
+        "resolver miss exposes validated reply identity"
+    )
+    Assert(
+        DeepEqual(missingPageMetadata.Reference, compactPageEncodeMetadata.Reference),
+        "resolver miss exposes only the validated page reference tuple"
+    )
+
+    local resolvedLayers = DeepCopy(compactPageEnvelope.Payload.AncestorVariableLayers)
+    local observedInstallationId
+    local observedSessionId
+    local observedContextId
+    local resolvedPage, resolvedPageError, resolvedPageMetadata =
+        protocol.DecodeCompactPageEnvelope(omittedPageEncoded, compactPageCodec, {
+            ResolveAncestorContext = function(senderInstallationId, senderSessionId, contextId)
+                observedInstallationId = senderInstallationId
+                observedSessionId = senderSessionId
+                observedContextId = contextId
+                return resolvedLayers
+            end,
+        })
+    Assert(resolvedPage ~= nil and resolvedPageError == nil, "cached ancestor context resolves omitted page")
+    Assert(DeepEqual(resolvedPage, compactPageEnvelope), "resolved omitted page is canonical")
+    AssertEqual(
+        observedInstallationId,
+        compactPageEnvelope.SenderInstallationId,
+        "resolver receives sender installation"
+    )
+    AssertEqual(observedSessionId, compactPageEnvelope.SenderSessionId, "resolver receives sender session")
+    AssertEqual(
+        observedContextId,
+        compactPageEncodeMetadata.AncestorContextId,
+        "resolver receives ancestor context identity"
+    )
+    Assert(DeepEqual(resolvedPageMetadata, omittedPageEncodeMetadata), "resolved omitted page metadata round trips")
+    resolvedLayers[1].Vars = "mutated-after-resolve"
+    AssertEqual(
+        resolvedPage.Payload.AncestorVariableLayers[1].Vars,
+        compactPageEnvelope.Payload.AncestorVariableLayers[1].Vars,
+        "resolved ancestor context is detached from the cache"
+    )
+
+    local badResolvedPage
+    badResolvedPage, resolvedPageError = protocol.DecodeCompactPageEnvelope(omittedPageEncoded, compactPageCodec, {
+        ResolveAncestorContext = function()
+            return {
+                {
+                    SyncId = activeRootSyncId,
+                    Vars = "wrong",
+                },
+            }
+        end,
+    })
+    AssertError(
+        badResolvedPage,
+        resolvedPageError,
+        "compact-page-ancestor-context-id-mismatch",
+        "resolved ancestor context must match its wire identity"
+    )
+    badResolvedPage, resolvedPageError = protocol.DecodeCompactPageEnvelope(omittedPageEncoded, compactPageCodec, {
+        ResolveAncestorContext = function()
+            error("resolver")
+        end,
+    })
+    AssertError(
+        badResolvedPage,
+        resolvedPageError,
+        "compact-page-ancestor-context-resolver-failed",
+        "compact page contains resolver exceptions"
+    )
+    badResolvedPage, resolvedPageError = protocol.DecodeCompactPageEnvelope(omittedPageEncoded, compactPageCodec, {
+        ResolveAncestorContext = function()
+            return "invalid"
+        end,
+    })
+    AssertError(
+        badResolvedPage,
+        resolvedPageError,
+        "invalid-resolved-ancestor-context",
+        "compact page validates resolved ancestor contexts"
+    )
+end
+
 local orphanPagePayload = MakePageUpsertPayload()
 orphanPagePayload.Page.ParentSyncId = nil
 orphanPagePayload.AncestorVariableLayers = {}
 local orphanPageEnvelope = assert(protocol.BuildEnvelope(compactPageSession, "PAGE_UPSERT", orphanPagePayload, {
     SentAt = 1750000000101,
 }))
-local orphanPageEncoded = assert(protocol.EncodeCompactPageEnvelope(orphanPageEnvelope, compactPageCodec))
+local orphanPageEncoded, _, orphanPageEncodeMetadata =
+    protocol.EncodeCompactPageEnvelope(orphanPageEnvelope, compactPageCodec, { IncludeAncestorContext = false })
+assert(orphanPageEncoded)
 local orphanPageRaw = ReadCompactPageFrameForTest(orphanPageEncoded)
-AssertEqual(orphanPageRaw:byte(1), 0, "uncorrelated compact page has no flags")
-local orphanPageDecoded = assert(protocol.DecodeCompactPageEnvelope(orphanPageEncoded, compactPageCodec))
+AssertEqual(orphanPageRaw:byte(1), 2, "empty ancestor context remains inline")
+AssertEqual(orphanPageEncodeMetadata.AncestorContextIncluded, true, "empty ancestor context is never omitted")
+AssertEqual(orphanPageEncodeMetadata.AncestorContextBytes, 1, "empty ancestor context has one canonical byte")
+local orphanPageDecoded, _, orphanPageDecodeMetadata =
+    protocol.DecodeCompactPageEnvelope(orphanPageEncoded, compactPageCodec)
+assert(orphanPageDecoded)
 Assert(DeepEqual(orphanPageDecoded, orphanPageEnvelope), "orphan compact page round trip")
+Assert(DeepEqual(orphanPageDecodeMetadata, orphanPageEncodeMetadata), "orphan compact page metadata round trip")
 Assert(orphanPageDecoded.Payload.Page.ParentSyncId == nil, "orphan compact page derives no parent")
 AssertEqual(#orphanPageDecoded.Payload.AncestorVariableLayers, 0, "orphan compact page retains empty layers")
 
@@ -1139,7 +1394,7 @@ AssertError(
     "compact-page-type-mismatch",
     "compact page encoder rejects non-page envelope"
 )
-for _, missingCallback in ipairs({ "compress", "decompress", "encode", "decode" }) do
+for _, missingCallback in ipairs({ "compress", "decompress", "encode", "decode", "hash" }) do
     local invalidCompactPageCodec = MakeCompactPageCodec()
     invalidCompactPageCodec[missingCallback] = nil
     compactPageValue, compactPageError =
@@ -1283,7 +1538,7 @@ AssertError(compactPageValue, compactPageError, "compact-page-encoded-too-large"
 
 compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope("", compactPageCodec)
 AssertError(compactPageValue, compactPageError, "invalid-compact-page-encoded", "compact page empty input")
-for _, missingCallback in ipairs({ "compress", "decompress", "encode", "decode" }) do
+for _, missingCallback in ipairs({ "compress", "decompress", "encode", "decode", "hash" }) do
     local invalidCompactPageCodec = MakeCompactPageCodec()
     invalidCompactPageCodec[missingCallback] = nil
     compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(compactPageEncoded, invalidCompactPageCodec)
@@ -1456,7 +1711,7 @@ AssertError(
 )
 
 compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
-    BuildCompactPageFrameForTest(ReplaceByte(compactPageRaw, 1, 2)),
+    BuildCompactPageFrameForTest(ReplaceByte(compactPageRaw, 1, 4)),
     compactPageCodec
 )
 AssertError(compactPageValue, compactPageError, "invalid-compact-page-flags", "compact page unknown flag")
@@ -1484,7 +1739,8 @@ local compactPageOrderStart = compactPageUpdatedByLength + 1 + #compactPageEnvel
 local compactPageNameLength = compactPageOrderStart + 2
 local compactPageVarsLength = compactPageNameLength + 1 + #compactPageEnvelope.Payload.Page.Name
 local compactPageContentsLength = compactPageVarsLength + 2 + #compactPageEnvelope.Payload.Page.Vars
-local compactPageLayerCount = compactPageContentsLength + 2 + #compactPageEnvelope.Payload.Page.Contents
+local compactPageAncestorContextId = compactPageContentsLength + 2 + #compactPageEnvelope.Payload.Page.Contents
+local compactPageLayerCount = compactPageAncestorContextId + 4
 local compactPageFirstLayerStart = compactPageLayerCount + 1
 local compactPageFirstLayerVarsLength = compactPageFirstLayerStart + 20
 

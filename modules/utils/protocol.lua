@@ -42,13 +42,13 @@ protocol.COMPACT_DISPLAY_LIMITS = {
 -- Compact PAGE_UPSERT keeps the binary payload below the generic serializer
 -- ceiling while leaving room for a compressor header and channel encoding.
 -- Every variable-length field also has its own semantic bound below.
-protocol.COMPACT_PAGE_FORMAT = 1
+protocol.COMPACT_PAGE_FORMAT = 2
 protocol.COMPACT_PAGE_LIMITS = {
     EncodedBytes = 256 * 1024,
     CompressedBytes = 256 * 1024 - 5,
     -- Exact maximum produced by the current bounded fields, including all 32
     -- maximum-size ancestor layers and the longest correlated identity.
-    RawBytes = 186158,
+    RawBytes = 186162,
 }
 
 protocol.LIMITS = {
@@ -96,7 +96,8 @@ local COMPACT_DISPLAY_KNOWN_FLAGS = COMPACT_DISPLAY_FLAG_DISPLAYED
     + COMPACT_DISPLAY_FLAG_REPLY_TO
     + COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS
 local COMPACT_PAGE_FLAG_REPLY_TO = 1
-local COMPACT_PAGE_KNOWN_FLAGS = COMPACT_PAGE_FLAG_REPLY_TO
+local COMPACT_PAGE_FLAG_ANCESTOR_CONTEXT_INCLUDED = 2
+local COMPACT_PAGE_KNOWN_FLAGS = COMPACT_PAGE_FLAG_REPLY_TO + COMPACT_PAGE_FLAG_ANCESTOR_CONTEXT_INCLUDED
 local HEX_DIGITS = "0123456789abcdef"
 
 local CLIENT_FLAVORS = {
@@ -244,6 +245,7 @@ local function ValidateCompactPageCodec(codec)
         and type(codec.decompress) == "function"
         and type(codec.encode) == "function"
         and type(codec.decode) == "function"
+        and type(codec.hash) == "function"
 end
 
 local function CallStringTransform(callback, input, errorCode)
@@ -1006,6 +1008,68 @@ local function ReadCompactRevisionId(raw, cursor)
     return "fcs32:" .. EncodeHexInteger(revision, 8), cursor
 end
 
+local function BuildCompactPageAncestorContextBytes(layers)
+    local valid, validationError = ValidateShallowAncestorLayers(layers)
+    if not valid then
+        return nil, nil, validationError
+    end
+
+    local count = #layers
+    local parts = {}
+    if not AppendUnsigned(parts, count, 1, protocol.LIMITS.ActivePageAncestorCount) then
+        return nil, nil, "unsupported-compact-page-ancestor-count"
+    end
+    local safeLayers = {}
+    for index = 1, count do
+        local layer = layers[index]
+        if
+            not AppendCompactSyncId(parts, layer.SyncId, "category")
+            or not AppendLengthPrefixedString(parts, layer.Vars, 2, protocol.LIMITS.ActivePageVarsBytes, true)
+        then
+            return nil, nil, "unsupported-compact-page-layer"
+        end
+        safeLayers[index] = {
+            SyncId = layer.SyncId,
+            Vars = layer.Vars,
+        }
+    end
+    return table.concat(parts), safeLayers
+end
+
+local function HashCompactPageAncestorContext(ancestorContextBytes, codec)
+    if type(codec) ~= "table" or type(codec.hash) ~= "function" then
+        return nil, "invalid-compact-page-hash-codec"
+    end
+    local ok, digest = pcall(codec.hash, ancestorContextBytes)
+    if not ok then
+        return nil, "compact-page-ancestor-hash-failed"
+    end
+    if type(digest) ~= "string" or #digest ~= 8 or digest:match("^[0-9a-f]+$") == nil then
+        return nil, "invalid-compact-page-ancestor-digest"
+    end
+    return "fcs32:" .. digest
+end
+
+--- Builds the compact wire identity for one canonical ancestor-variable context.
+-- The hashed bytes are exactly the inline wire block: count followed by each
+-- compact category SyncId and length-prefixed variable string.
+-- @tparam table layers Ordered root-to-parent ancestor layers.
+-- @tparam table codec Codec containing a regular `hash` callback.
+-- @treturn string|nil ancestorContextId
+-- @treturn string|nil errorCode
+-- @treturn number|nil ancestorContextBytes
+function protocol.BuildCompactPageAncestorContextId(layers, codec)
+    local ancestorContextBytes, _, contextError = BuildCompactPageAncestorContextBytes(layers)
+    if not ancestorContextBytes then
+        return nil, contextError
+    end
+    local contextId, hashError = HashCompactPageAncestorContext(ancestorContextBytes, codec)
+    if not contextId then
+        return nil, hashError
+    end
+    return contextId, nil, #ancestorContextBytes
+end
+
 local function AppendCompactDisplayReference(parts, payload)
     local installationId, kind, sequence = identity.ParseSyncId(payload.SyncId)
     local revision = ParseRevisionCode(payload.RevisionId)
@@ -1270,7 +1334,90 @@ function protocol.DecodeCompactDisplayEnvelope(encoded, codec)
     return envelope
 end
 
-local function EncodeCompactPageRaw(envelope)
+local function ValidateCompactPageEncodeOptions(options)
+    if options == nil then
+        return true
+    end
+    if not IsPlainTable(options) then
+        return nil, "invalid-compact-page-options"
+    end
+    for key in pairs(options) do
+        if key ~= "IncludeAncestorContext" then
+            return nil, "compact-page-options-unknown-field"
+        end
+    end
+    if options.IncludeAncestorContext ~= nil and type(options.IncludeAncestorContext) ~= "boolean" then
+        return nil, "invalid-ancestor-context-inclusion"
+    end
+    return options.IncludeAncestorContext ~= false
+end
+
+local function ValidateCompactPageDecodeOptions(options)
+    if options == nil then
+        return nil
+    end
+    if not IsPlainTable(options) then
+        return nil, "invalid-compact-page-options"
+    end
+    for key in pairs(options) do
+        if key ~= "ResolveAncestorContext" then
+            return nil, "compact-page-options-unknown-field"
+        end
+    end
+    if options.ResolveAncestorContext ~= nil and type(options.ResolveAncestorContext) ~= "function" then
+        return nil, "invalid-ancestor-context-resolver"
+    end
+    return options.ResolveAncestorContext
+end
+
+local function ReadCompactPageAncestorContextBytes(raw, cursor)
+    local first = cursor
+    local count
+    count, cursor = ReadUnsigned(raw, cursor, 1, protocol.LIMITS.ActivePageAncestorCount)
+    if count == nil then
+        return nil
+    end
+
+    local layers = {}
+    for index = 1, count do
+        local syncId
+        syncId, cursor = ReadCompactSyncId(raw, cursor, "category")
+        if not syncId then
+            return nil
+        end
+        local vars
+        vars, cursor = ReadLengthPrefixedString(raw, cursor, 2, protocol.LIMITS.ActivePageVarsBytes, true)
+        if vars == nil then
+            return nil
+        end
+        layers[index] = {
+            SyncId = syncId,
+            Vars = vars,
+        }
+    end
+    return layers, cursor, raw:sub(first, cursor - 1)
+end
+
+local function BuildCompactPageMetadata(envelope, ancestorContextId, ancestorContextIncluded, ancestorContextBytes)
+    return {
+        AncestorContextId = ancestorContextId,
+        AncestorContextIncluded = ancestorContextIncluded,
+        AncestorContextBytes = ancestorContextBytes,
+        SenderInstallationId = envelope.SenderInstallationId,
+        SenderSessionId = envelope.SenderSessionId,
+        MessageId = envelope.MessageId,
+        Sequence = envelope.Sequence,
+        SentAt = envelope.SentAt,
+        ReplyTo = envelope.ReplyTo,
+        Reference = {
+            SyncId = envelope.Payload.Page.SyncId,
+            RevisionId = envelope.Payload.Page.RevisionId,
+            ContextRevisionId = envelope.Payload.ContextRevisionId,
+        },
+    }
+end
+
+local function EncodeCompactPageRaw(envelope, codec, includeAncestorContext)
     local page = envelope.Payload.Page
     local layers = envelope.Payload.AncestorVariableLayers
     local layerCount = #layers
@@ -1279,7 +1426,20 @@ local function EncodeCompactPageRaw(envelope)
         return nil, "unsupported-compact-page-parent"
     end
 
+    local ancestorContextBytes, _, contextError = BuildCompactPageAncestorContextBytes(layers)
+    if not ancestorContextBytes then
+        return nil, contextError
+    end
+    local ancestorContextId, hashError = HashCompactPageAncestorContext(ancestorContextBytes, codec)
+    if not ancestorContextId then
+        return nil, hashError
+    end
+    local ancestorContextIncluded = includeAncestorContext or layerCount == 0
+
     local flags = envelope.ReplyTo ~= nil and COMPACT_PAGE_FLAG_REPLY_TO or 0
+    if ancestorContextIncluded then
+        flags = flags + COMPACT_PAGE_FLAG_ANCESTOR_CONTEXT_INCLUDED
+    end
     local parts = {
         string.char(flags),
     }
@@ -1305,32 +1465,29 @@ local function EncodeCompactPageRaw(envelope)
         or not AppendLengthPrefixedString(parts, page.Name, 1, protocol.LIMITS.ActivePageNameBytes, false)
         or not AppendLengthPrefixedString(parts, page.Vars, 2, protocol.LIMITS.ActivePageVarsBytes, true)
         or not AppendLengthPrefixedString(parts, page.Contents, 2, protocol.LIMITS.ActivePageContentsBytes, true)
-        or not AppendUnsigned(parts, layerCount, 1, protocol.LIMITS.ActivePageAncestorCount)
+        or not AppendCompactRevisionId(parts, ancestorContextId)
     then
         return nil, "unsupported-compact-page-payload"
     end
 
-    for index = 1, layerCount do
-        local layer = layers[index]
-        if
-            not AppendCompactSyncId(parts, layer.SyncId, "category")
-            or not AppendLengthPrefixedString(parts, layer.Vars, 2, protocol.LIMITS.ActivePageVarsBytes, true)
-        then
-            return nil, "unsupported-compact-page-layer"
-        end
+    if ancestorContextIncluded then
+        parts[#parts + 1] = ancestorContextBytes
     end
     if not AppendCompactRevisionId(parts, envelope.Payload.ContextRevisionId) then
         return nil, "unsupported-compact-page-context-revision"
     end
-    return table.concat(parts)
+    return table.concat(parts),
+        nil,
+        BuildCompactPageMetadata(envelope, ancestorContextId, ancestorContextIncluded, #ancestorContextBytes)
 end
 
-local function DecodeCompactPageRaw(raw)
+local function DecodeCompactPageRaw(raw, codec, resolveAncestorContext)
     local flags = raw:byte(1)
     if flags == nil or flags > COMPACT_PAGE_KNOWN_FLAGS then
         return nil, "invalid-compact-page-flags"
     end
     local hasReplyTo = flags % 2 == COMPACT_PAGE_FLAG_REPLY_TO
+    local ancestorContextIncluded = math.floor(flags / COMPACT_PAGE_FLAG_ANCESTOR_CONTEXT_INCLUDED) % 2 == 1
     local cursor = 2
 
     local senderInstallationId
@@ -1409,27 +1566,19 @@ local function DecodeCompactPageRaw(raw)
         return nil, "invalid-compact-page"
     end
 
-    local layerCount
-    layerCount, cursor = ReadUnsigned(raw, cursor, 1, protocol.LIMITS.ActivePageAncestorCount)
-    if layerCount == nil then
+    local ancestorContextId
+    ancestorContextId, cursor = ReadCompactRevisionId(raw, cursor)
+    if not ancestorContextId then
         return nil, "invalid-compact-page"
     end
-    local layers = {}
-    for index = 1, layerCount do
-        local syncId
-        syncId, cursor = ReadCompactSyncId(raw, cursor, "category")
-        if not syncId then
+
+    local embeddedLayers
+    local embeddedAncestorContextBytes
+    if ancestorContextIncluded then
+        embeddedLayers, cursor, embeddedAncestorContextBytes = ReadCompactPageAncestorContextBytes(raw, cursor)
+        if not embeddedLayers then
             return nil, "invalid-compact-page"
         end
-        local vars
-        vars, cursor = ReadLengthPrefixedString(raw, cursor, 2, protocol.LIMITS.ActivePageVarsBytes, true)
-        if vars == nil then
-            return nil, "invalid-compact-page"
-        end
-        layers[index] = {
-            SyncId = syncId,
-            Vars = vars,
-        }
     end
 
     local contextRevisionId
@@ -1441,49 +1590,109 @@ local function DecodeCompactPageRaw(raw)
         return nil, "compact-page-trailing-data"
     end
 
-    local envelope = {
-        Protocol = protocol.VERSION,
-        Type = "PAGE_UPSERT",
-        MessageId = table.concat({ senderInstallationId, senderSessionId, tostring(sequence) }, ":"),
-        ReplyTo = replyTo,
-        SenderInstallationId = senderInstallationId,
-        SenderSessionId = senderSessionId,
-        Sequence = sequence,
-        SentAt = sentAt,
-        Payload = {
-            Page = {
-                Kind = "page",
-                SyncId = pageSyncId,
-                OwnerId = pageOwnerId,
-                Revision = pageRevision,
-                RevisionId = pageRevisionId,
-                UpdatedAt = pageUpdatedAt,
-                UpdatedBy = pageUpdatedBy,
-                ParentSyncId = layerCount > 0 and layers[layerCount].SyncId or nil,
-                Order = pageOrder,
-                Name = pageName,
-                Vars = pageVars,
-                Contents = pageContents,
+    local function BuildEnvelope(layers)
+        return {
+            Protocol = protocol.VERSION,
+            Type = "PAGE_UPSERT",
+            MessageId = table.concat({ senderInstallationId, senderSessionId, tostring(sequence) }, ":"),
+            ReplyTo = replyTo,
+            SenderInstallationId = senderInstallationId,
+            SenderSessionId = senderSessionId,
+            Sequence = sequence,
+            SentAt = sentAt,
+            Payload = {
+                Page = {
+                    Kind = "page",
+                    SyncId = pageSyncId,
+                    OwnerId = pageOwnerId,
+                    Revision = pageRevision,
+                    RevisionId = pageRevisionId,
+                    UpdatedAt = pageUpdatedAt,
+                    UpdatedBy = pageUpdatedBy,
+                    ParentSyncId = #layers > 0 and layers[#layers].SyncId or nil,
+                    Order = pageOrder,
+                    Name = pageName,
+                    Vars = pageVars,
+                    Contents = pageContents,
+                },
+                AncestorVariableLayers = layers,
+                ContextRevisionId = contextRevisionId,
             },
-            AncestorVariableLayers = layers,
-            ContextRevisionId = contextRevisionId,
-        },
-    }
+        }
+    end
+
+    -- Validate every embedded envelope field before exposing identity metadata
+    -- to a resolver or caller. The temporary empty layer set is never returned.
+    local embeddedEnvelope = BuildEnvelope({})
+    local embeddedValid, embeddedError = protocol.ValidateEnvelope(embeddedEnvelope)
+    if not embeddedValid then
+        return nil, embeddedError
+    end
+
+    local ancestorContextBytes
+    local layers
+    if ancestorContextIncluded then
+        local rebuiltBytes, safeLayers, contextError = BuildCompactPageAncestorContextBytes(embeddedLayers)
+        if not rebuiltBytes then
+            return nil, contextError
+        end
+        if rebuiltBytes ~= embeddedAncestorContextBytes then
+            return nil, "noncanonical-compact-page-ancestor-context"
+        end
+        ancestorContextBytes = rebuiltBytes
+        layers = safeLayers
+    else
+        local missingMetadata = BuildCompactPageMetadata(embeddedEnvelope, ancestorContextId, false, nil)
+        if not resolveAncestorContext then
+            return nil, "compact-page-ancestor-context-missing", missingMetadata
+        end
+        local ok, resolvedLayers =
+            pcall(resolveAncestorContext, senderInstallationId, senderSessionId, ancestorContextId)
+        if not ok then
+            return nil, "compact-page-ancestor-context-resolver-failed"
+        end
+        if resolvedLayers == nil then
+            return nil, "compact-page-ancestor-context-missing", missingMetadata
+        end
+        local resolvedBytes, safeLayers = BuildCompactPageAncestorContextBytes(resolvedLayers)
+        if not resolvedBytes then
+            return nil, "invalid-resolved-ancestor-context"
+        end
+        if #safeLayers == 0 then
+            return nil, "compact-page-empty-ancestor-context-omitted"
+        end
+        ancestorContextBytes = resolvedBytes
+        layers = safeLayers
+    end
+
+    local expectedAncestorContextId, hashError = HashCompactPageAncestorContext(ancestorContextBytes, codec)
+    if not expectedAncestorContextId then
+        return nil, hashError
+    end
+    if expectedAncestorContextId ~= ancestorContextId then
+        return nil, "compact-page-ancestor-context-id-mismatch"
+    end
+
+    local envelope = BuildEnvelope(layers)
     local valid, validationError = protocol.ValidateEnvelope(envelope)
     if not valid then
         return nil, validationError
     end
-    return envelope
+    return envelope,
+        nil,
+        BuildCompactPageMetadata(envelope, ancestorContextId, ancestorContextIncluded, #ancestorContextBytes)
 end
 
 --- Encodes one PAGE_UPSERT envelope into the compact binary page wire format.
 -- Protocol/type/message identity, page kind/owner, and direct parent are
 -- reconstructed canonically instead of being repeated on the wire.
 -- @tparam table envelope Valid protocol-v3 PAGE_UPSERT envelope.
--- @tparam table codec Bounded compression and channel codec callbacks.
+-- @tparam table codec Bounded compression, channel codec, and hash callbacks.
+-- @tparam[opt] table options Compact page encoding options.
 -- @treturn string|nil encoded
 -- @treturn string|nil errorCode
-function protocol.EncodeCompactPageEnvelope(envelope, codec)
+-- @treturn table|nil metadata
+function protocol.EncodeCompactPageEnvelope(envelope, codec, options)
     local valid, validationError = protocol.ValidateEnvelope(envelope)
     if not valid then
         return nil, validationError
@@ -1494,8 +1703,12 @@ function protocol.EncodeCompactPageEnvelope(envelope, codec)
     if not ValidateCompactPageCodec(codec) then
         return nil, "invalid-compact-page-codec"
     end
+    local includeAncestorContext, optionsError = ValidateCompactPageEncodeOptions(options)
+    if optionsError then
+        return nil, optionsError
+    end
 
-    local raw, rawError = EncodeCompactPageRaw(envelope)
+    local raw, rawError, metadata = EncodeCompactPageRaw(envelope, codec, includeAncestorContext)
     if not raw then
         return nil, rawError
     end
@@ -1526,22 +1739,28 @@ function protocol.EncodeCompactPageEnvelope(envelope, codec)
     if #encoded > protocol.COMPACT_PAGE_LIMITS.EncodedBytes then
         return nil, "compact-page-encoded-too-large"
     end
-    return encoded
+    return encoded, nil, metadata
 end
 
 --- Decodes a compact PAGE_UPSERT into the canonical named protocol envelope.
 -- The decompressor must enforce the supplied output budget before allocation
 -- and return `nil, "output-too-large"` if that budget would be exceeded.
 -- @tparam string encoded Compact channel-encoded PAGE_UPSERT.
--- @tparam table codec Bounded compression and channel codec callbacks.
+-- @tparam table codec Bounded compression, channel codec, and hash callbacks.
+-- @tparam[opt] table options Compact page decoding options.
 -- @treturn table|nil envelope
 -- @treturn string|nil errorCode
-function protocol.DecodeCompactPageEnvelope(encoded, codec)
+-- @treturn table|nil metadata
+function protocol.DecodeCompactPageEnvelope(encoded, codec, options)
     if type(encoded) ~= "string" or encoded == "" then
         return nil, "invalid-compact-page-encoded"
     end
     if not ValidateCompactPageCodec(codec) then
         return nil, "invalid-compact-page-codec"
+    end
+    local resolveAncestorContext, optionsError = ValidateCompactPageDecodeOptions(options)
+    if optionsError then
+        return nil, optionsError
     end
     if #encoded > protocol.COMPACT_PAGE_LIMITS.EncodedBytes then
         return nil, "compact-page-encoded-too-large"
@@ -1592,7 +1811,7 @@ function protocol.DecodeCompactPageEnvelope(encoded, codec)
     if #raw > protocol.COMPACT_PAGE_LIMITS.RawBytes then
         return nil, "compact-page-raw-too-large"
     end
-    return DecodeCompactPageRaw(raw)
+    return DecodeCompactPageRaw(raw, codec, resolveAncestorContext)
 end
 
 --- Returns the mutually supported version for each shared capability.
