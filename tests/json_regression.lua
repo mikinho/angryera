@@ -113,6 +113,31 @@ do
     assert_equal(parsed.y, "a\nb", "Expected ParseVariables JSON path to decode escaped newline")
 end
 
+-- Variable references should resolve recursively while preserving invalid references.
+do
+    local modularApp = { AngryEra = { utils = {} } }
+    assert(loadfile("modules/utils/json.lua"))("AngryEra", modularApp)
+    local resolved = modularApp.AngryEra.utils.json.ResolveVariableReferences({
+        LIP1 = "{{FURY12}}",
+        FURY12 = "Blah",
+        CHAIN1 = "{{CHAIN2}}",
+        CHAIN2 = "{{FURY12}}",
+        LABEL = "Tank: {{FURY12}}",
+        UNKNOWN = "{{MISSING}}",
+        CYCLE_A = "{{CYCLE_B}}",
+        CYCLE_B = "{{CYCLE_A}}",
+    })
+
+    assert_equal(resolved.LIP1, "Blah", "Expected direct variable references to resolve")
+    assert_equal(resolved.CHAIN1, "Blah", "Expected chained variable references to resolve")
+    assert_equal(resolved.LABEL, "Tank: Blah", "Expected embedded variable references to resolve")
+    assert_equal(resolved.UNKNOWN, "{{MISSING}}", "Expected unknown references to remain visible")
+    assert_truthy(
+        resolved.CYCLE_A:match("{{.-}}") and resolved.CYCLE_B:match("{{.-}}"),
+        "Expected cyclic references to remain visible"
+    )
+end
+
 -- Parser should reject excessively deep nesting.
 do
     local deep = string.rep("[", 300) .. string.rep("]", 300)

@@ -414,3 +414,55 @@ function json.ParseVariables(str)
     end
     return obj
 end
+
+--- Resolves references between parsed template variables.
+-- Unknown references and cyclic references remain visible in Mustache form.
+-- @tparam table variables Parsed variable map.
+-- @tparam[opt=20] number maxDepth Maximum reference depth.
+-- @treturn table Resolved copy of the variable map.
+function json.ResolveVariableReferences(variables, maxDepth)
+    maxDepth = maxDepth or 20
+
+    local resolved = {}
+    local resolving = {}
+
+    local function ResolveValue(key, depth)
+        if resolved[key] ~= nil then
+            return resolved[key]
+        end
+
+        local value = variables[key]
+        if type(value) ~= "string" or depth >= maxDepth then
+            resolved[key] = value
+            return value
+        end
+
+        resolving[key] = true
+        local result = value:gsub("{{%s*([^{}]-)%s*}}", function(reference)
+            reference = reference:match("^%s*(.-)%s*$")
+            if reference == "" or variables[reference] == nil or resolving[reference] then
+                return "{{" .. reference .. "}}"
+            end
+
+            local referenceValue = ResolveValue(reference, depth + 1)
+            if
+                type(referenceValue) == "string"
+                or type(referenceValue) == "number"
+                or type(referenceValue) == "boolean"
+            then
+                return tostring(referenceValue)
+            end
+
+            return "{{" .. reference .. "}}"
+        end)
+        resolving[key] = nil
+        resolved[key] = result
+        return result
+    end
+
+    for key in pairs(variables) do
+        ResolveValue(key, 0)
+    end
+
+    return resolved
+end

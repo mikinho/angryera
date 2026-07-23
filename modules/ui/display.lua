@@ -524,6 +524,9 @@ function AngryEra:RenderPageContent(page, ctx)
         -- Merge Page Variables (Override Category)
         MergeAppVars(page.Vars)
 
+        -- Resolve references between merged variables before rendering the page.
+        mergedVars = AngryEra.utils.json.ResolveVariableReferences(mergedVars)
+
         -- Add Variables to Context for Mustache
         for k, v in pairs(mergedVars) do
             ctx[k] = v

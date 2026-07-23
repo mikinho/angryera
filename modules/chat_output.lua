@@ -20,12 +20,38 @@ local isClassic = core.isClassic
 local isClassicTBC = core.isClassicTBC
 local isClassicWrath = core.isClassicWrath
 
+local RaidTargetChatMap = {
+    star = "{rt1}",
+    rt1 = "{rt1}",
+    circle = "{rt2}",
+    rt2 = "{rt2}",
+    diamond = "{rt3}",
+    rt3 = "{rt3}",
+    triangle = "{rt4}",
+    rt4 = "{rt4}",
+    moon = "{rt5}",
+    rt5 = "{rt5}",
+    square = "{rt6}",
+    rt6 = "{rt6}",
+    cross = "{rt7}",
+    x = "{rt7}",
+    rt7 = "{rt7}",
+    skull = "{rt8}",
+    rt8 = "{rt8}",
+}
+
 function AngryEra_OutputDisplayed()
     return AngryEra:OutputDisplayed(AngryEra:SelectedId())
 end
 
 local function ResolveChatOutputTag(self, tagContent)
-    local lowerTag = "{" .. tagContent:lower() .. "}"
+    local normalizedTag = tagContent:lower()
+    local raidTargetTag = RaidTargetChatMap[normalizedTag]
+    if raidTargetTag then
+        return raidTargetTag
+    end
+
+    local lowerTag = "{" .. normalizedTag .. "}"
 
     if ChatOutputClassMap[lowerTag] then
         return ChatOutputClassMap[lowerTag]

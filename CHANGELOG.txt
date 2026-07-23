@@ -1,3 +1,9 @@
+## v3.0.1
+
+* New Feature: Added recursive variable references, allowing variables such as `LIP1={{FURY12}}` to resolve through other page or category variables.
+* Fix: Named raid target tags such as `{STAR}`, `{CIRCLE}`, `{X}`, and `{SKULL}` now output the corresponding native `{rt1}` through `{rt8}` chat tokens in every chat-output mode.
+* Developer: Added regression coverage for recursive, missing, and cyclic variable references and named raid target chat output.
+
 ## v3.0.0
 
 * New Feature: Added Smart Marker keybindings for assigning every raid target icon to the current target or mouseover unit.
