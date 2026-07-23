@@ -1,3 +1,16 @@
+## v3.0.0
+
+* New Feature: Added Smart Marker keybindings for assigning every raid target icon to the current target or mouseover unit.
+* New Feature: Added a keybinding to clear all raid target icons.
+* Improvement: Updated compatibility for Classic Era 1.15.9 and Burning Crusade Anniversary 2.5.6.
+* Improvement: Decomposed the addon into focused core, utility, UI, and domain modules to improve maintainability.
+* Improvement: Added strict syntax, formatting, static-analysis, and regression-test coverage.
+* Fix: Restored addon bootstrap and embedded-library load ordering after the module refactor.
+* Fix: Updated Settings panel navigation to use the numeric category ID required by current Classic clients.
+* Fix: Added compatibility wrappers and guards for shared APIs that differ between Classic clients.
+* Fix: Corrected invalid tooltip text arguments when displaying or hovering over assignment trees.
+* Fix: Preserved the visible tree order when exporting category output.
+
 ## v2.8.0-BETA1
 
 * Developer: Decomposed monolithic `Core.lua` and `Data.lua` into 20 focused modules under `modules/` (core, utils, ui, and domain modules).
