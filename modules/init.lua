@@ -635,6 +635,7 @@ function AngryEra:OnEnable()
     self:RegisterEvent("PLAYER_REGEN_DISABLED")
     self:RegisterEvent("PLAYER_GUILD_UPDATE")
     self:RegisterEvent("GUILD_ROSTER_UPDATE")
+    self:RegisterEvent("ENCOUNTER_END")
 
     if isClassic then
         RequestGuildRoster()

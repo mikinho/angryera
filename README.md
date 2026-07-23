@@ -21,9 +21,7 @@ The **AngryEra | Smart Markers** section in the game's keybinding menu provides 
 Assigning a marker that is already on the selected unit leaves it in place instead of toggling it off. The **Clear All Raid Targets** keybinding removes every active raid target icon.
 
 **Metadata auto-markers:** page metadata can assign markers to raiders
-automatically. Set `$STAR`, `$CIRCLE`, `$DIAMOND`, `$TRIANGLE`, `$MOON`,
-`$SQUARE`, `$X` (or `$CROSS`), or `$SKULL` to a player name or a variable
-reference, and the marker is applied whenever that page is displayed:
+automatically whenever a page is displayed:
 
 ```
 MT=Zessy
@@ -31,11 +29,8 @@ $SQUARE=$MT
 $SKULL=Kway-OtherRealm
 ```
 
-Values resolve realm-aware — exact `Name-Realm` matches win, an unqualified
-name accepts a unique cross-realm match, and an ambiguous name is skipped
-instead of guessed. Markers apply only when you are allowed to mark (raid
-leader or assistant in a raid; anyone in a party). Category metadata inherits,
-so a raid-wide `$SQUARE=$MT` set on the category follows every page.
+See the **Page Metadata ($ Variables)** section for the full rules, including
+realm-aware name resolution and marking permissions.
 
 Using AngryEra as a raider
 ------------------------------
@@ -105,6 +100,49 @@ You can define custom variables for each page or category to simplify your templ
 
 **Class Coloring:**
 Names of players in your Raid or Guild will automatically be **class-colored** when displayed in the assignment window.
+
+Page Metadata ($ Variables)
+---------------------------
+
+Any variable whose name starts with `$` is **page metadata**: a machine-facing
+channel that travels with your assignments. Metadata behaves exactly like a
+normal template variable — it inherits from category to page, resolves
+`{{references}}`, and can be rendered in note text — but it is never
+auto-highlighted, and it is published to WeakAuras and other addons with the
+`$` prefix stripped. Set metadata on a category to apply it to every page
+inside; set it on a page to override.
+
+The intent: your assignment pages describe *what the raid does*, and metadata
+describes *what the addon should do about it*. Everything below rides the
+existing variable sync, so the whole raid stays consistent with zero extra
+setup.
+
+**Reserved keys AngryEra acts on:**
+
+* `$STAR`, `$CIRCLE`, `$DIAMOND`, `$TRIANGLE`, `$MOON`, `$SQUARE`, `$X` (or
+  `$CROSS`), `$SKULL` — **auto-markers**. Set one to a player name or a
+  variable reference (`$SQUARE=$MT`) and the marker is applied to that raider
+  whenever the page is displayed. Names resolve realm-aware: exact
+  `Name-Realm` first, a unique cross-realm match for unqualified names, and
+  ambiguous names are skipped instead of guessed. Only clients allowed to
+  mark will act (raid leader or assistant in a raid; anyone in a party).
+* `$AUTOADVANCE` — **kill-driven page advancement**. Set `$AUTOADVANCE=true`
+  on a category and, after each boss kill, the raid leader's client advances
+  the display to the next page — so the upcoming assignments are on screen
+  ahead of the pull. Wipes never advance. Set `$AUTOADVANCE=false` on a
+  specific page to stop the chain at that boss (for example, the final boss
+  of the night).
+* `$ENCOUNTER` / `$ENCOUNTERID` — **encounter binding** for auto-advance.
+  Kills are matched to pages by encounter id, then by `$ENCOUNTER` or the
+  page's own name (so template pages named "Lucifron" bind automatically),
+  preferring the displayed page's category, and finally falling back to the
+  currently displayed page. Use these when a page's name differs from the
+  boss (`$ENCOUNTER=Patchwerk` on a page called "Patch").
+
+**Custom keys** are yours: anything else (`$phase=2`, `$note=swap fast`) is
+carried along, inherited, and exposed through `AngryEra:GetDisplayedMeta()`
+and the `ANGRYERA_NOTE_UPDATE` event for WeakAuras — see the WeakAuras &
+Addon API section.
 
 Importing
 ---------
