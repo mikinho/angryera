@@ -73,6 +73,9 @@ _G.AngryAssign_Config = _G.AngryAssign_Config
 -- type AngryEraTemplate[]
 _G.AngryAssign_Templates = _G.AngryAssign_Templates
 
+-- type table Durable installation, ownership, and synchronization metadata
+_G.AngryAssign_Meta = _G.AngryAssign_Meta
+
 --- Addon initialization hook.
 -- Creates saved variable tables, migrates legacy category data, and registers options.
 function AngryEra:OnInitialize()
@@ -104,6 +107,8 @@ function AngryEra:OnInitialize()
             end
         end
     end
+
+    self:InitializeIdentityStorage()
 
     -- Run cleanup once on load
     self:CleanupOrphanedStates()

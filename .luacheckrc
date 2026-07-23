@@ -21,6 +21,7 @@ globals = {
    "AngryAssign_State",
    "AngryAssign_Config",
    "AngryAssign_Templates",
+   "AngryAssign_Meta",
 
    -- Keybind and Display Globals
    "AngryEra_ToggleWindow",
