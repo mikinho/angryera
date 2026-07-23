@@ -109,6 +109,7 @@ function AngryEra:OnInitialize()
     end
 
     self:InitializeIdentityStorage()
+    self:MigratePermissionConfig()
     self:MigrateEntityIdentities()
 
     -- Run cleanup once on load
@@ -518,29 +519,47 @@ function AngryEra:OnInitialize()
                 name = "Permissions",
                 inline = true,
                 args = {
-                    allowall = {
-                        type = "toggle",
+                    receiveMode = {
+                        type = "select",
                         order = 1,
-                        name = "Allow All",
-                        desc = "Enable to allow changes from any raid assistant, even if you aren't in a guild raid",
+                        name = "Receive Shared Changes",
+                        desc = "Choose who may change shared pages and displays on this installation",
+                        values = {
+                            standard = "Leader + Qualified Assistants",
+                            leaderOnly = "Leader Only",
+                            ignoreShared = "Ignore Shared Changes",
+                        },
                         get = function(info)
-                            return self:GetConfig("allowall")
+                            return self:GetConfig("receiveMode")
                         end,
                         set = function(info, val)
-                            self:SetConfig("allowall", val)
+                            self:SetConfig("receiveMode", val)
                             self:PermissionsUpdated()
                         end,
                     },
-                    allowplayers = {
-                        type = "input",
+                    allowAllAssistants = {
+                        type = "toggle",
                         order = 2,
-                        name = "Allow Players",
-                        desc = "A list of players that when they are the raid leader to allow changes from all raid assistants",
+                        name = "Allow All Raid Assistants",
+                        desc = "Explicitly trust every raid assistant for non-destructive shared changes",
                         get = function(info)
-                            return self:GetConfig("allowplayers")
+                            return self:GetConfig("allowAllAssistants")
                         end,
                         set = function(info, val)
-                            self:SetConfig("allowplayers", val)
+                            self:SetConfig("allowAllAssistants", val)
+                            self:PermissionsUpdated()
+                        end,
+                    },
+                    trustedPublishers = {
+                        type = "input",
+                        order = 3,
+                        name = "Trusted Assistants",
+                        desc = "Names of raid assistants trusted directly for non-destructive changes (Name-Realm, separated by spaces or commas)",
+                        get = function(info)
+                            return self:GetConfig("trustedPublishers")
+                        end,
+                        set = function(info, val)
+                            self:SetConfig("trustedPublishers", val)
                             self:PermissionsUpdated()
                         end,
                     },
@@ -600,9 +619,6 @@ end
 
 function AngryEra:PARTY_LEADER_CHANGED()
     self:PermissionsUpdated()
-    if AngryAssign_State.displayed and not (self:IsGuildRaid() or self:IsValidRaid()) then
-        self:ClearDisplayed()
-    end
 end
 
 function AngryEra:PARTY_CONVERTED_TO_RAID()
@@ -625,7 +641,7 @@ function AngryEra:PLAYER_REGEN_DISABLED()
 end
 
 function AngryEra:GROUP_ROSTER_UPDATE()
-    self:UpdateSelected()
+    self:PermissionsUpdated()
     if not (IsInRaid() or IsInGroup()) then
         if AngryAssign_State.displayed then
             self:ClearDisplayed()
@@ -646,6 +662,7 @@ local guildUpdatePending = false
 function AngryEra:GUILD_ROSTER_UPDATE(...)
     local canRequestRosterUpdate = ...
     self:ResetOfficerRank()
+    self:PermissionsUpdated()
     self:UpdateGuildColors()
 
     if not guildUpdatePending then

@@ -120,10 +120,16 @@ end
 -- @treturn number Imported page id.
 function AngryEra:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
     local existing = overwriteId and AngryAssign_Pages[overwriteId]
+    local importedName = data.Name
+    if existing and not self:CanEditEntityLocally(existing) then
+        overwriteId = nil
+        existing = nil
+        importedName = self:GetUniqueEntityName(importedName, "Page")
+    end
     local fields = {
         Updated = time(),
-        UpdateId = self:Hash(data.Name, data.Contents, data.Vars),
-        Name = data.Name,
+        UpdateId = self:Hash(importedName, data.Contents, data.Vars),
+        Name = importedName,
         Contents = data.Contents,
         Vars = data.Vars,
         CategoryId = (existing and existing.CategoryId) or parentId,
@@ -216,13 +222,19 @@ end
 -- @treturn number Imported category id.
 function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpdate)
     local existing = overwriteId and AngryAssign_Categories[overwriteId]
+    local importedName = data.Name
+    if existing and not self:CanEditEntityLocally(existing) then
+        overwriteId = nil
+        existing = nil
+        importedName = self:GetUniqueEntityName(importedName, "Category")
+    end
 
     if overwriteId then
         self:DeleteCategoryChildren(overwriteId)
     end
 
     local fields = {
-        Name = data.Name,
+        Name = importedName,
         CategoryId = (existing and existing.CategoryId) or parentId,
         Index = (existing and existing.Index) or data.Index,
     }
@@ -406,6 +418,10 @@ local function AngryEra_ImportPage()
                         break
                     end
                 end
+                if catId and not AngryEra:CanEditEntityLocally(AngryAssign_Categories[catId]) then
+                    title = AngryEra:GetUniqueEntityName(title, "Category")
+                    catId = nil
+                end
 
                 if not catId then
                     local success, err, newId = AngryEra:CreateCategory(title)
@@ -429,6 +445,10 @@ local function AngryEra_ImportPage()
                                 break
                             end
                         end
+                        if pageId and not AngryEra:CanEditEntityLocally(AngryAssign_Pages[pageId]) then
+                            pName = AngryEra:GetUniqueEntityName(pName, "Page")
+                            pageId = nil
+                        end
 
                         if pageId then
                             AngryEra:UpdateContents(pageId, pContent)
@@ -450,6 +470,10 @@ local function AngryEra_ImportPage()
                         existingId = page.Id
                         break
                     end
+                end
+                if existingId and not AngryEra:CanEditEntityLocally(AngryAssign_Pages[existingId]) then
+                    title = AngryEra:GetUniqueEntityName(title, "Page")
+                    existingId = nil
                 end
 
                 if existingId then
@@ -493,6 +517,10 @@ local function AngryEra_ImportPage()
                     break
                 end
             end
+            if existingId and not AngryEra:CanEditEntityLocally(AngryAssign_Pages[existingId]) then
+                nameStr = AngryEra:GetUniqueEntityName(nameStr, "Page")
+                existingId = nil
+            end
 
             if existingId then
                 AngryEra:UpdateContents(existingId, s)
@@ -512,6 +540,10 @@ local function AngryEra_ImportPage()
                     catId = cat.Id
                     break
                 end
+            end
+            if catId and not AngryEra:CanEditEntityLocally(AngryAssign_Categories[catId]) then
+                nameStr = AngryEra:GetUniqueEntityName(nameStr, "Category")
+                catId = nil
             end
 
             if not catId then
@@ -534,13 +566,18 @@ local function AngryEra_ImportPage()
                             break
                         end
                     end
+                    local pageTitle = h.title
+                    if pageId and not AngryEra:CanEditEntityLocally(AngryAssign_Pages[pageId]) then
+                        pageTitle = AngryEra:GetUniqueEntityName(pageTitle, "Page")
+                        pageId = nil
+                    end
 
                     if pageId then
                         AngryEra:UpdateContents(pageId, block)
                         AngryAssign_Pages[pageId].Index = i
                         AngryEra:PageUpdated(pageId)
                     else
-                        AngryEra:CreatePage(h.title, block, catId, i)
+                        AngryEra:CreatePage(pageTitle, block, catId, i)
                     end
                 end
                 frame:Hide()

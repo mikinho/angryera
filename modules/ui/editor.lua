@@ -814,15 +814,12 @@ local function AngryEra_AssignCategory(frame, entryId, catId)
 end
 
 local function AngryEra_DisplayPage(widget, event, value)
-    if not AngryEra:PermissionCheck() then
-        return
-    end
     local id = AngryEra:SelectedId()
     AngryEra:DisplayPage(id)
 end
 
 local function AngryEra_ClearPage(widget, event, value)
-    if not AngryEra:PermissionCheck() then
+    if not AngryEra:CanLocalPlayerPublish("display") then
         return
     end
 
@@ -1023,22 +1020,16 @@ local function AngryEra_CategoryMenuList(entryId, parentId)
 end
 
 local function AngryEra_EditVariables(id, type)
-    if not AngryEra:PermissionCheck() then
+    local entity
+    if type == "category" then
+        entity = AngryAssign_Categories[id]
+    else
+        entity = AngryAssign_Pages[id]
+    end
+    if not AngryEra:CanEditEntityLocally(entity) then
         return
     end
-
-    local vars = nil
-    if type == "category" then
-        local cat = AngryAssign_Categories[id]
-        if cat then
-            vars = cat.Vars
-        end
-    else
-        local page = AngryAssign_Pages[id]
-        if page then
-            vars = page.Vars
-        end
-    end
+    local vars = entity.Vars
 
     local DEFAULT_VARS_TEMPLATE = "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK="
     if not vars or vars == "" or vars == "{}" then
@@ -1074,13 +1065,13 @@ local function AngryEra_EditVariables(id, type)
 
         if type == "category" then
             local cat = AngryAssign_Categories[id]
-            if cat then
+            if cat and AngryEra:CanEditEntityLocally(cat) then
                 cat.Vars = text
                 AngryEra:CategoryUpdated(id)
             end
         else
             local page = AngryAssign_Pages[id]
-            if page then
+            if page and AngryEra:CanEditEntityLocally(page) then
                 page.Vars = text
                 AngryEra:PageUpdated(id)
             end
@@ -1166,13 +1157,14 @@ function AngryEra_PageMenu(pageId)
         }
     end
 
-    local permission = AngryEra:PermissionCheck()
+    local permission = AngryEra:CanEditEntityLocally(page)
 
     PagesDropDownList[1].text = page.Name
     PagesDropDownList[2].arg1 = pageId
     PagesDropDownList[2].disabled = not permission
     PagesDropDownList[3].arg1 = pageId
     PagesDropDownList[4].arg1 = pageId
+    PagesDropDownList[4].disabled = not permission
     for _, item in ipairs(PagesDropDownList[5].menuList) do
         item.arg1 = pageId
     end
@@ -1268,9 +1260,11 @@ local function AngryEra_CategoryMenu(catId)
     end
     CategoriesDropDownList[1].text = cat.Name
     CategoriesDropDownList[2].arg1 = catId
+    CategoriesDropDownList[2].disabled = not AngryEra:CanEditEntityLocally(cat)
     CategoriesDropDownList[3].arg1 = catId
     CategoriesDropDownList[4].arg1 = catId
     CategoriesDropDownList[5].arg1 = catId
+    CategoriesDropDownList[5].disabled = not AngryEra:CanEditEntityLocally(cat)
     CategoriesDropDownList[6].arg1 = catId
     for _, item in ipairs(CategoriesDropDownList[6].menuList) do
         item.arg1 = catId
@@ -1970,7 +1964,8 @@ function AngryEra:UpdateSelected(destructive)
         return
     end
     local page = AngryAssign_Pages[self:SelectedId()]
-    local permission = self:PermissionCheck()
+    local canEdit = self:CanEditEntityLocally(page)
+    local canPublish = self:CanLocalPlayerPublish("display")
     if destructive or not self.window.text.button:IsEnabled() then
         if page then
             self.window.text:SetText(page.Contents)
@@ -1979,10 +1974,10 @@ function AngryEra:UpdateSelected(destructive)
         end
         self.window.text.button:Disable()
     end
-    if page and permission then
+    if page and canEdit then
         self.window.button_revert:SetDisabled(not self.window.text.button:IsEnabled())
-        self.window.button_display:SetDisabled(self.window.text.button:IsEnabled())
-        self.window.button_output:SetDisabled(self.window.text.button:IsEnabled())
+        self.window.button_display:SetDisabled(self.window.text.button:IsEnabled() or not canPublish)
+        self.window.button_output:SetDisabled(self.window.text.button:IsEnabled() or not canPublish)
         -- Always enable Restore button so users can see the menu (even if empty)
         self.window.button_restore:SetDisabled(false)
         self.window.text:SetDisabled(false)
@@ -1993,9 +1988,5 @@ function AngryEra:UpdateSelected(destructive)
         self.window.button_restore:SetDisabled(true)
         self.window.text:SetDisabled(true)
     end
-    if permission then
-        self.window.button_menu:SetDisabled(false)
-    else
-        self.window.button_menu:SetDisabled(true)
-    end
+    self.window.button_menu:SetDisabled(false)
 end

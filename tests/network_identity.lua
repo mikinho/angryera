@@ -101,7 +101,11 @@ function AngryEra:Hash(name)
     return nextLocalId
 end
 
-function AngryEra:PermissionCheck()
+function AngryEra:CanReceiveFrom()
+    return true
+end
+
+function AngryEra:CanLocalPlayerPublish()
     return true
 end
 

@@ -31,7 +31,7 @@ end
 -- @tparam number id Page id.
 -- @treturn boolean|nil `true` on success, or `nil` when permission fails.
 function AngryEra:DisplayPage(id)
-    if not self:PermissionCheck() then
+    if not self:CanLocalPlayerPublish("display") then
         return
     end
 
@@ -306,11 +306,6 @@ end
 -- @treturn string|nil err Error message on failure.
 -- @treturn number|nil id New page id on success.
 function AngryEra:CreatePage(nameOrFrame, content, categoryId, index)
-    -- Check Permissions first
-    if not self:PermissionCheck() then
-        return false, "Permission denied."
-    end
-
     -- Validate and Clean Input
     local name, err = ExtractAndValidateName(nameOrFrame)
     if not name then
@@ -359,8 +354,7 @@ function AngryEra:RenamePage(id, nameOrFrame)
         return false, "Page not found."
     end
 
-    -- Check Permissions
-    if not self:PermissionCheck() then
+    if not self:CanEditEntityLocally(page) then
         return false, "Permission denied."
     end
 
@@ -406,9 +400,6 @@ function AngryEra:DeletePage(id)
 end
 
 function AngryEra:TouchPage(id)
-    if not self:PermissionCheck() then
-        return
-    end
     local page = self:Get(id)
     if not page then
         return
@@ -451,6 +442,9 @@ function AngryEra:RenameCategory(id, nameOrFrame)
     local cat = self:GetCat(id)
     if not cat then
         return false, "Category not found."
+    end
+    if not self:CanEditEntityLocally(cat) then
+        return false, "Permission denied."
     end
 
     -- Use the helper to validate input (Consistency with CreatePage/RenamePage)
@@ -570,11 +564,11 @@ end
 -- @tparam number id Page id.
 -- @tparam string value New page content.
 function AngryEra:UpdateContents(id, value)
-    if not self:PermissionCheck() then
-        return
-    end
     local page = self:Get(id)
     if not page then
+        return
+    end
+    if not self:CanEditEntityLocally(page) then
         return
     end
 

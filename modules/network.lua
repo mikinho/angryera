@@ -143,7 +143,7 @@ function AngryEra:ProcessMessage(sender, data)
         if sender == PlayerFullName() then
             return
         end
-        if not self:PermissionCheck(sender) then
+        if not self:CanReceiveFrom(sender, "pageUpsert") then
             self:PermissionCheckFailError(sender)
             return
         end
@@ -227,7 +227,7 @@ function AngryEra:ProcessMessage(sender, data)
         if sender == PlayerFullName() then
             return
         end
-        if not self:PermissionCheck(sender) then
+        if not self:CanReceiveFrom(sender, "display") then
             if data[DISPLAY_Id] then
                 self:PermissionCheckFailError(sender)
             end
@@ -268,13 +268,16 @@ function AngryEra:ProcessMessage(sender, data)
         if sender == PlayerFullName() then
             return
         end
-        if not self:IsPlayerRaidLeader() then
+        if not self:CanReceiveFrom(sender, "request") or not self:IsPlayerRaidLeader() then
             return
         end
 
         self:SendDisplay(AngryAssign_State.displayed)
     elseif cmd == "REQUEST_PAGE" then
         if sender == PlayerFullName() then
+            return
+        end
+        if not self:CanReceiveFrom(sender, "request") then
             return
         end
 
@@ -287,8 +290,13 @@ function AngryEra:ProcessMessage(sender, data)
             end
         end
     elseif cmd == "VER_QUERY" then
-        self:SendVersion()
+        if self:CanReceiveFrom(sender, "version") then
+            self:SendVersion()
+        end
     elseif cmd == "VERSION" then
+        if not self:CanReceiveFrom(sender, "version") then
+            return
+        end
         -- Existing version logic is mostly safe as it casts tostring/tonumber
         -- but let's wrap the assignments just to be sure
         local ver = tostring(data[VERSION_Version] or "")
@@ -347,6 +355,9 @@ end
 -- @tparam number id Page id.
 -- @tparam[opt=false] boolean force When `true`, bypasses throttle delay.
 function AngryEra:SendPage(id, force)
+    if not self:CanLocalPlayerPublish("pageUpsert") then
+        return false
+    end
     local lastUpdate = pageLastUpdate[id]
     local timerId = pageTimerId[id]
     local curTime = time()
@@ -371,6 +382,9 @@ end
 -- @tparam number id Page id.
 function AngryEra:SendPageMessage(id)
     pageTimerId[id] = nil
+    if not self:CanLocalPlayerPublish("pageUpsert") then
+        return false
+    end
 
     local page = AngryAssign_Pages[id]
     if not page then
@@ -408,6 +422,9 @@ end
 -- @tparam[opt] number id Page id to display, or `nil` to clear.
 -- @tparam[opt=false] boolean force When `true`, bypasses throttle delay.
 function AngryEra:SendDisplay(id, force)
+    if not self:CanLocalPlayerPublish("display") then
+        return false
+    end
     local curTime = time()
 
     if displayLastUpdate and (curTime - displayLastUpdate <= updateFrequency) then
@@ -430,8 +447,11 @@ end
 --- Sends one DISPLAY payload.
 -- @tparam[opt] number id Page id to display, or `nil` to clear.
 function AngryEra:SendDisplayMessage(id)
-    displayLastUpdate = time()
     displayTimerId = nil
+    if not self:CanLocalPlayerPublish("display") then
+        return false
+    end
+    displayLastUpdate = time()
 
     local page = AngryAssign_Pages[id]
     if not page then

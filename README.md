@@ -37,10 +37,12 @@ For initial setup, unlock the on-screen display if necessary (use the button men
 
 During raids, whenever any change in assignments occurs, the new assignments will re-appear on your screen if you had hidden them (along with a noticeable visual indicator).  They will auto-hide during combat, if you selected that option above, but you can bring them back up at any time during combat by using the Toggle Display keybinding or other methods.  If you re-log or reload your UI during the raid, your addon will pull information from the raid leader to get back in sync (if you are the raid leader yourself, it will use saved data).  Upon leaving the raid, the on-screen assignments will go away.  
 
-Using AA as an officer/raid assistant
----------------------------------------------------
+Using AngryEra as an officer/raid assistant
+-------------------------------------------
 
-Editing of assignment pages and changing of on-screen display is restricted to officers in your guild , and people who are raid assistants in a raid you're in (if the raid is led by a guild officer).  Officer ranks in your guild are autodetected based on which ranks have officer chat access.  Each player's addon will reject any page changes or display requests from unauthorized players.
+Shared page changes and on-screen display requests are always accepted from the current group leader. A raid assistant may also publish non-destructive changes when that assistant is a guild officer (or higher) in the receiver's guild, or is named in the receiver's **Trusted Assistants** setting. Officer rank without raid assist does not grant shared write access, and raid assist alone is not enough.
+
+Each installation applies its own receiver policy and rejects unauthorized messages. **Leader Only** rejects assistant changes, while **Ignore Shared Changes** keeps the local library private. **Allow All Raid Assistants** is an explicit override for groups where every assistant should be trusted; it is disabled by default. Creating, organizing, deleting, importing, and exporting private local content does not require raid authority.
 
 You will likely want to configure a keybinding for "Toggle Window" in the game keybindings.  This brings up the edit window, which is what officers and raid assistants will use to modify the assignment pages.  The edit window can be scaled up or down via the "Scale" parameter in the configuration menu (or via "/aa scale").
 
