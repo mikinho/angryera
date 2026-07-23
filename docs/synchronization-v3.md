@@ -177,8 +177,7 @@ Receivers reject envelopes with:
 - an unsupported protocol;
 - an unknown message type;
 - malformed identifiers or payloads;
-- fields exceeding the existing communication limits;
-- a sender without the capability required for that message type.
+- fields exceeding the existing communication limits.
 
 `VERSION_QUERY` is broadcast to the group. Each protocol-3 client replies by
 whisper with `VERSION`, including:
@@ -205,8 +204,7 @@ The initial message families are:
 - manifest transfer: `MANIFEST_BEGIN`, `MANIFEST_CHUNK`, `MANIFEST_END`,
   `MANIFEST_NACK`, `MANIFEST_APPLIED`;
 - shared changes: `CHANGE_PROPOSE`, `CHANGE_RESULT`, `DELTA`,
-  `DELTA_REQUEST`;
-- destructive changes: `TOMBSTONE`.
+  `DELTA_REQUEST`.
 
 The hard cutover registers and sends only `AngryEra3`. There is no positional
 protocol-1 fallback.
@@ -220,7 +218,7 @@ A qualified assistant whispers a non-destructive `CHANGE_PROPOSE` containing
 the base scope and entity revisions. The leader rechecks authorization,
 validates the proposal, assigns canonical revisions, and broadcasts `DELTA`.
 Only the leader broadcasts manifests, canonical deltas, deletions, and
-tombstones. The assistant receives `CHANGE_RESULT`.
+tombstone operations. The assistant receives `CHANGE_RESULT`.
 
 Active-page-only clients that have not opted into hierarchy synchronization
 still receive `PAGE_UPSERT`. It contains ordered ancestor variable layers so
@@ -236,7 +234,6 @@ Every published entity carries:
     OwnerId = "owner-installation",
     Revision = 4,
     RevisionId = "content-identity",
-    BaseRevisionId = "previous-content-identity",
     UpdatedAt = 1234567890,
     UpdatedBy = "Name-Realm",
 }
@@ -257,8 +254,29 @@ Category wire records contain `SyncId`, ownership and revision metadata,
 
 `SyncId` and `OwnerId` are immutable after creation.
 
-An update whose base revision does not match the stored revision is a conflict,
-not an unconditional last-packet-wins overwrite.
+`BaseRevisionId` belongs to a proposal or delta operation rather than stored
+entity state. An operation whose base revision does not match the stored
+revision is a conflict, not an unconditional last-packet-wins overwrite.
+
+Every canonical `DELTA` contains:
+
+```lua
+{
+    ScopeId = "root-category-sync-id",
+    AuthorityEpoch = "leader-session-identity",
+    BaseScopeRevision = 11,
+    ScopeRevision = 12,
+    TransactionId = "leader-installation:session:sequence",
+    TransactionHash = "deterministic-change-identity",
+    Operations = {
+        -- ordered upsert, move, and tombstone operations
+    },
+}
+```
+
+Operations apply in order and commit atomically. A revision gap triggers
+`DELTA_REQUEST`; if the missing transaction cannot be supplied, the receiver
+requests a fresh manifest.
 
 ## Selected-category manifests
 
@@ -273,6 +291,9 @@ One selected category is published recursively as a flat, bounded manifest:
     RootSyncId = "root-category-sync-id",
     Entities = {
         -- category and page records
+    },
+    Tombstones = {
+        -- retained canonical deletion records
     },
 }
 ```
@@ -327,7 +348,9 @@ Manifest absence and tombstones are distinct:
 
 - absence means an entity is no longer present in the latest selected-category
   snapshot and may become an optional cleanup candidate;
-- a tombstone is an explicit leader-issued shared deletion.
+- a tombstone is an explicit leader-issued shared deletion represented as a
+  canonical `DELTA` operation and retained in later manifests for offline
+  clients.
 
 Cleanup candidates and tombstones cannot remove:
 
