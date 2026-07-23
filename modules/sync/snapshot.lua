@@ -67,13 +67,22 @@ local function IsSender(value)
     return true
 end
 
-local function MessageInstallationId(value)
+local function ParseMessageId(value)
     if type(value) ~= "string" then
         return nil
     end
-    local installationId = value:match("^(.*):[^:]+:[0-9]+$")
-    if identity.ValidateInstallationId(installationId) then
-        return installationId
+    local installationId, sessionId, sequenceText = value:match("^(.*):([^:]+):([0-9]+)$")
+    local sequence = tonumber(sequenceText)
+    if
+        identity.ValidateInstallationId(installationId)
+        and type(sessionId) == "string"
+        and sessionId ~= ""
+        and #sessionId <= schema.LIMITS.SessionIdBytes
+        and sessionId:match("^[A-Za-z0-9][A-Za-z0-9_-]*$")
+        and IsInteger(sequence, 1, schema.LIMITS.Revision)
+        and sequenceText == tostring(sequence)
+    then
+        return installationId, sessionId, sequence
     end
     return nil
 end
@@ -235,11 +244,14 @@ local function ValidateCurrentScope(scopeId, scope, hashCallback)
             return nil, "invalid-pending-scope-membership"
         end
     else
+        local epochInstallationId, epochSessionId = ParseMessageId(scope.AuthorityEpoch)
+        local manifestInstallationId, manifestSessionId = ParseMessageId(scope.ManifestId)
         if
             not IsSender(scope.AuthoritySender)
             or not identity.ValidateInstallationId(scope.AuthorityInstallationId)
-            or MessageInstallationId(scope.AuthorityEpoch) ~= scope.AuthorityInstallationId
-            or MessageInstallationId(scope.ManifestId) ~= scope.AuthorityInstallationId
+            or epochInstallationId ~= scope.AuthorityInstallationId
+            or manifestInstallationId ~= scope.AuthorityInstallationId
+            or epochSessionId ~= manifestSessionId
             or not IsRevisionId(scope.ManifestHash)
         then
             return nil, "invalid-current-scope-authority"
@@ -297,6 +309,7 @@ local function ValidateContext(context)
         if
             key ~= "Sender"
             and key ~= "SenderInstallationId"
+            and key ~= "SenderSessionId"
             and key ~= "ReceivedAt"
             and key ~= "AllowAuthorityTransition"
         then
@@ -308,6 +321,14 @@ local function ValidateContext(context)
     end
     if not identity.ValidateInstallationId(context.SenderInstallationId) then
         return false, "invalid-snapshot-installation"
+    end
+    if
+        type(context.SenderSessionId) ~= "string"
+        or context.SenderSessionId == ""
+        or #context.SenderSessionId > schema.LIMITS.SessionIdBytes
+        or context.SenderSessionId:match("^[A-Za-z0-9][A-Za-z0-9_-]*$") == nil
+    then
+        return false, "invalid-snapshot-session"
     end
     if not IsInteger(context.ReceivedAt, 0, schema.LIMITS.Timestamp) then
         return false, "invalid-snapshot-time"
@@ -655,11 +676,16 @@ local function BuildCleanupCandidates(manifest, scopeIndex, currentIndex)
 end
 
 local function CheckAuthority(manifest, expectedHash, currentScope, context)
+    local manifestInstallationId, manifestSessionId = ParseMessageId(manifest.ManifestId)
+    local epochInstallationId, epochSessionId = ParseMessageId(manifest.AuthorityEpoch)
     if
-        MessageInstallationId(manifest.ManifestId) ~= context.SenderInstallationId
-        or MessageInstallationId(manifest.AuthorityEpoch) ~= context.SenderInstallationId
+        manifestInstallationId ~= context.SenderInstallationId
+        or epochInstallationId ~= context.SenderInstallationId
     then
         return nil, "manifest-authority-installation-mismatch"
+    end
+    if manifestSessionId ~= context.SenderSessionId or epochSessionId ~= context.SenderSessionId then
+        return nil, "manifest-authority-session-mismatch"
     end
 
     if currentScope.ScopeRevision == 0 then
@@ -786,6 +812,7 @@ function snapshot.Stage(manifest, expectedHash, currentState, context, hashCallb
         ScopeId = manifest.ScopeId,
         Sender = context.Sender,
         SenderInstallationId = context.SenderInstallationId,
+        SenderSessionId = context.SenderSessionId,
         ReceivedAt = context.ReceivedAt,
         AuthorityTransition = authorityTransition,
         NoOp = matchingMetadata == true

@@ -252,6 +252,7 @@ local function Context(overrides)
     local context = {
         Sender = "Leader-Realm",
         SenderInstallationId = remoteInstallationId,
+        SenderSessionId = "leader_session",
         ReceivedAt = 1200,
     }
     for key, value in pairs(overrides or {}) do
@@ -319,6 +320,19 @@ AssertError(
     "manifest-authority-installation-mismatch",
     "manifest IDs must bind to authenticated installation metadata"
 )
+
+invalid, invalidError =
+    snapshot.Stage(manifest, manifestHash, emptyState, Context({ SenderSessionId = "other_session" }), TestHash)
+AssertError(
+    invalid,
+    invalidError,
+    "manifest-authority-session-mismatch",
+    "manifest IDs must bind to authenticated session metadata"
+)
+
+invalid, invalidError =
+    snapshot.Stage(manifest, manifestHash, emptyState, Context({ SenderSessionId = "bad:session" }), TestHash)
+AssertError(invalid, invalidError, "invalid-snapshot-session", "malformed authenticated session metadata")
 
 local localRoot = MakeEntity("category", 1, nil, 1, {
     OwnerId = localInstallationId,
@@ -417,6 +431,16 @@ AssertError(invalid, invalidError, "too-many-sync-scopes", "malformed current sc
 local appliedState = StateWithScope(manifest, AppliedScope(manifest, manifestHash))
 staged, stageError = snapshot.Stage(manifest, manifestHash, appliedState, Context(), TestHash)
 Assert(staged ~= nil and stageError == nil and staged.NoOp, "exact applied manifest should be idempotent")
+
+local mismatchedScopeSessionState = DeepCopy(appliedState)
+mismatchedScopeSessionState.SyncScopes[manifest.ScopeId].ManifestId = MessageId(3, nil, "other_session")
+invalid, invalidError = snapshot.Stage(manifest, manifestHash, mismatchedScopeSessionState, Context(), TestHash)
+AssertError(
+    invalid,
+    invalidError,
+    "invalid-current-scope-authority",
+    "persisted manifest and authority epoch sessions must agree"
+)
 
 local missingMaterializedState = DeepCopy(appliedState)
 missingMaterializedState.Pages[20] = nil

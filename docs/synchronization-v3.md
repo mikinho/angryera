@@ -224,7 +224,9 @@ The raid leader is the canonical authority for each managed category scope.
 Publishing a scope or changing raid leadership creates a new
 `AuthorityEpoch`. Each canonical transaction increments `ScopeRevision`
 exactly once. `ScopeRevision` remains monotonic when the authority epoch
-changes so retained tombstone and cleanup revisions stay comparable.
+changes so retained tombstone and cleanup revisions stay comparable. Manifest
+and epoch identifiers must match both the authenticated sender installation
+and its current protocol session.
 
 A qualified assistant whispers a non-destructive `CHANGE_PROPOSE` containing
 the base scope and entity revisions. The leader rechecks authorization,
