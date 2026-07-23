@@ -458,7 +458,13 @@ assert(
 local function DecodeSent(index)
     local sent = sentMessages[index or #sentMessages]
     assert(sent, "Expected a sent protocol message")
-    local envelope, decodeError = protocol.DecodeEnvelope(sent.Data, AngryEra:GetProtocolCodec())
+    local envelope
+    local decodeError
+    if sent.Prefix == protocol.DISPLAY_PREFIX then
+        envelope, decodeError = protocol.DecodeCompactDisplayEnvelope(sent.Data, AngryEra:GetProtocolCodec())
+    else
+        envelope, decodeError = protocol.DecodeEnvelope(sent.Data, AngryEra:GetProtocolCodec())
+    end
     assert(envelope, decodeError)
     return sent, envelope
 end
@@ -492,7 +498,12 @@ local function BuildRemoteEnvelope(sessionId, messageType, payload, options)
         ReplyTo = options.ReplyTo,
         SentAt = options.SentAt or timestampTest.NextRemoteSentAt(),
     }))
-    local encoded = assert(protocol.EncodeEnvelope(envelope, AngryEra:GetProtocolCodec()))
+    local encoded
+    if messageType == "DISPLAY" then
+        encoded = assert(protocol.EncodeCompactDisplayEnvelope(envelope, AngryEra:GetProtocolCodec()))
+    else
+        encoded = assert(protocol.EncodeEnvelope(envelope, AngryEra:GetProtocolCodec()))
+    end
     return encoded, envelope
 end
 
@@ -563,7 +574,7 @@ assert(#sentMessages == 3, "A wrong-channel packet must not poison deduplication
 accepted, result = AngryEra:ReceiveProtocolMessage("WrongPrefix", wrongChannelQuery, "RAID", "Beta-Realm")
 AssertError(accepted, result, "invalid-transport", "wrong prefix")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
-AssertError(accepted, result, "invalid-transport-message-type", "non-display envelope over display prefix")
+AssertError(accepted, result, "invalid-compact-display-packing", "non-display envelope over display prefix")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
 AssertError(accepted, result, "invalid-transport-message-type", "non-page envelope over active-page prefix")
 local activePrefixPage = BuildRemoteEnvelope("remote-active-prefix", "PAGE_UPSERT", remoteUpsert)
@@ -766,6 +777,7 @@ local displayTransport, displayEnvelope = DecodeSent()
 assert(displayTransport.Prefix == protocol.DISPLAY_PREFIX, "DISPLAY should use the isolated control prefix")
 assert(displayTransport.Priority == "ALERT", "DISPLAY should use alert priority on its isolated prefix")
 assert(displayTransport.Channel == "RAID", "Uncorrelated DISPLAY should use the current group channel")
+assert(#displayTransport.Data <= 254, "DISPLAY control must fit one escaped-safe AceComm frame")
 assert(displayEnvelope.ReplyTo == nil, "Group DISPLAY must not carry correlation")
 assert(
     type(displayEnvelope.SentAt) == "number"
@@ -781,12 +793,26 @@ assert(
 
 local debugOutputBeforeTransport = #printedMessages
 AngryEra._syncDebugEnabled = true
-sent, result = AngryEra:SendProtocolMessage("PAGE_UPSERT", localUpsert)
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, "malformed", "RAID", "Alpha-Realm")
+AssertError(accepted, result, "compact-display-decode-failed", "malformed compact display while debugging")
+assert(
+    printedMessages[#printedMessages]:find("rx%-drop")
+        and printedMessages[#printedMessages]:find("reason=compact%-display%-decode%-failed"),
+    "debug mode should report sanitized decode failures without logging successful discovery traffic"
+)
+sent, result = AngryEra:SendProtocolDisplay({
+    Displayed = false,
+})
 assert(sent, result)
 local debugTransport = sentMessages[#sentMessages]
+local _, debugDisplayEnvelope = DecodeSent()
 assert(
     type(debugTransport.Callback) == "function" and type(debugTransport.CallbackArg) == "table",
     "debug mode should attach an AceComm drain callback"
+)
+assert(
+    debugTransport.CallbackArg.Chunks == 1 and #debugTransport.Data <= 254,
+    "debug transport should confirm compact DISPLAY uses one physical frame"
 )
 debugTransport.Callback(debugTransport.CallbackArg, #debugTransport.Data, #debugTransport.Data, 0)
 AngryEra._syncDebugEnabled = false
@@ -811,13 +837,50 @@ do
 
     throttleFrames = {}
     encodedLeadingControl = true
+    local debugBeforeActiveTransfer = #printedMessages
+    _G.GetFramerate = function()
+        return 18
+    end
+    _G.ChatThrottleLib.avail = -123
+    _G.ChatThrottleLib.Prio = {
+        ALERT = {
+            Ring = {
+                pos = {},
+            },
+        },
+        NORMAL = {
+            Blocked = {
+                pos = {},
+            },
+        },
+        BULK = {},
+    }
+    AngryEra._syncDebugEnabled = true
     sent, result = AngryEra:SendProtocolActivePageUpsert(localUpsert, RecordActiveTransfer, "escaped")
     assert(sent, result)
+    local activeSubmitTrace
+    for index = debugBeforeActiveTransfer + 1, #printedMessages do
+        if printedMessages[index]:find("page%-stream%-submit") then
+            activeSubmitTrace = printedMessages[index]
+            break
+        end
+    end
+    assert(
+        activeSubmitTrace
+            and activeSubmitTrace:find("fps=18")
+            and activeSubmitTrace:find("ctlAvail=%-123")
+            and activeSubmitTrace:find("ctlQueues=ALERT,NORMAL"),
+        "active-page debug should expose sender frame rate and existing throttle congestion"
+    )
     assert(
         #throttleFrames == 1 and throttleFrames[1].Data:byte(1) == 4 and throttleFrames[1].Data:byte(2) == 1,
         "a short control-prefixed packet should use AceComm's escape frame"
     )
     throttleFrames[1].Callback(throttleFrames[1].CallbackArg, true, 0)
+    AngryEra._syncDebugEnabled = false
+    _G.GetFramerate = nil
+    _G.ChatThrottleLib.avail = nil
+    _G.ChatThrottleLib.Prio = nil
     assert(
         #completions == 1 and completions[1].Label == "escaped" and completions[1].Succeeded == true,
         "the escaped single-frame transfer should complete"
@@ -914,7 +977,7 @@ sent, result = AngryEra:SendProtocolMessage("DISPLAY", {
 assert(sent, result)
 timestampTest.RollbackDisplayEnvelope = select(2, DecodeSent())
 assert(
-    timestampTest.RollbackDisplayEnvelope.SentAt == displayEnvelope.SentAt + 1,
+    timestampTest.RollbackDisplayEnvelope.SentAt == debugDisplayEnvelope.SentAt + 1,
     "A backwards clock should advance the display timestamp by one logical tick"
 )
 sentMessages[#sentMessages] = nil
@@ -1063,6 +1126,7 @@ assert(
 assert(requestedDisplayTransport.Channel == "WHISPER", "Requested display should be whispered")
 assert(requestedDisplayEnvelope.Type == "DISPLAY", "Display response should end with DISPLAY")
 assert(requestedDisplayEnvelope.ReplyTo == displayRequestEnvelope.MessageId, "Display response should correlate")
+assert(requestedDisplayEnvelope.Payload.PageFollows == true, "Display response should announce its queued page reply")
 local repeatedDisplayRequest = BuildRemoteEnvelope("remote-display-request", "DISPLAY_REQUEST", {}, {
     Sequence = 2,
 })
@@ -1101,7 +1165,7 @@ local remoteDisplayEncoded, remoteDisplayEnvelope =
         Sequence = 10,
     })
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, remoteDisplayEncoded, "RAID", "Alpha-Realm")
-AssertError(accepted, result, "invalid-transport-message-type", "display envelope over data prefix")
+AssertError(accepted, result, "decompress-failed", "compact display envelope over data prefix")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, remoteDisplayEncoded, "RAID", "Alpha-Realm")
 assert(accepted, result)
 assert(result.RequestNeeded and result.RequestSent, "A missing exact tuple should send PAGE_REQUEST")
@@ -1156,11 +1220,13 @@ assert(accepted and result.Displayed == false, "A newer display clear should app
 local deferredRecoveryCalls = 0
 local canceledRecoveryCalls = 0
 local deferredRecoveryContexts = {}
-function AngryEra:DeferPendingDisplayRecovery(auth, envelope, reference)
+function AngryEra:DeferPendingDisplayRecovery(auth, envelope, reference, completedAttempts, expedited)
     deferredRecoveryCalls = deferredRecoveryCalls + 1
     deferredRecoveryContexts[#deferredRecoveryContexts + 1] = {
         Auth = auth,
+        CompletedAttempts = completedAttempts,
         Envelope = envelope,
+        Expedited = expedited,
         Reference = reference,
     }
     return true, "scheduled"
@@ -1173,13 +1239,37 @@ end
 sentMessages = {}
 knownActivePages = {}
 pendingActiveDisplay = nil
+local onDemandDisplay = BuildRemoteEnvelope("on-demand-display-flow", "DISPLAY", remoteDisplayPayload)
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, onDemandDisplay, "RAID", "Alpha-Realm")
+assert(
+    accepted and result.RequestNeeded and result.RequestSent and not result.RequestDeferred and result.RecoveryScheduled,
+    "a cache miss without a page promise should request immediately and retain a retry watchdog"
+)
+assert(deferredRecoveryCalls == 1, "an unpromised page should install one bounded retry watchdog")
+assert(
+    deferredRecoveryContexts[1].CompletedAttempts == 1 and deferredRecoveryContexts[1].Expedited == true,
+    "an immediate exact request should seed one attempt and use the single-client watchdog"
+)
+assert(#sentMessages == 1, "an unpromised cache miss should send one targeted page request")
+
+sentMessages = {}
+knownActivePages = {}
+pendingActiveDisplay = nil
+deferredRecoveryCalls = 0
+deferredRecoveryContexts = {}
 local newerRemoteReference = {
     SyncId = remoteInstallationId .. ":page:2",
     RevisionId = "fcs32:55555555",
     ContextRevisionId = "fcs32:66666666",
 }
 local newerRemoteUpsert = PageUpsert(newerRemoteReference, remoteInstallationId, "Alpha-Realm")
-local firstRapidDisplay = BuildRemoteEnvelope("rapid-display-flow", "DISPLAY", remoteDisplayPayload, {
+local firstRapidDisplay = BuildRemoteEnvelope("rapid-display-flow", "DISPLAY", {
+    Displayed = true,
+    SyncId = remoteReference.SyncId,
+    RevisionId = remoteReference.RevisionId,
+    ContextRevisionId = remoteReference.ContextRevisionId,
+    PageFollows = true,
+}, {
     Sequence = 20,
 })
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, firstRapidDisplay, "RAID", "Alpha-Realm")
@@ -1192,12 +1282,17 @@ local latestRapidDisplay, latestRapidDisplayEnvelope = BuildRemoteEnvelope("rapi
     SyncId = newerRemoteReference.SyncId,
     RevisionId = newerRemoteReference.RevisionId,
     ContextRevisionId = newerRemoteReference.ContextRevisionId,
+    PageFollows = true,
 }, {
     Sequence = 21,
 })
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, latestRapidDisplay, "RAID", "Alpha-Realm")
 assert(accepted and result.RequestDeferred, "a newer rapid display should replace the deferred target")
 assert(deferredRecoveryCalls == 2, "each missing rapid display should move the trailing recovery wait")
+assert(
+    deferredRecoveryContexts[1].Expedited == false and deferredRecoveryContexts[2].Expedited == false,
+    "uncorrelated promised group pages should retain the raid-safe recovery grace"
+)
 assert(
     deferredRecoveryContexts[2].Auth.Sender == "Alpha-Realm"
         and deferredRecoveryContexts[2].Envelope.MessageId == latestRapidDisplayEnvelope.MessageId,
@@ -1259,18 +1354,25 @@ assert(sent, result)
 local reorderedDisplayRequestId = result
 local reorderedDeferredCalls = 0
 local reorderedCancelCalls = 0
-function AngryEra:DeferPendingDisplayRecovery(auth, envelope, reference)
+function AngryEra:DeferPendingDisplayRecovery(auth, envelope, reference, completedAttempts, expedited)
     reorderedDeferredCalls = reorderedDeferredCalls + 1
     assert(auth.Sender == "Alpha-Realm", "reordered recovery should retain the response sender")
     assert(envelope.ReplyTo == reorderedDisplayRequestId, "reordered recovery should retain request correlation")
     assert(reference.SyncId == remoteReference.SyncId, "reordered recovery should retain the exact tuple")
+    assert(completedAttempts == 0 and expedited == true, "a correlated response should use its short watchdog")
     return true, "scheduled"
 end
 function AngryEra:CancelPendingDisplayRecovery()
     reorderedCancelCalls = reorderedCancelCalls + 1
     return true
 end
-local reorderedRemoteDisplay = BuildRemoteEnvelope("remote-reordered-response", "DISPLAY", remoteDisplayPayload, {
+local reorderedRemoteDisplay = BuildRemoteEnvelope("remote-reordered-response", "DISPLAY", {
+    Displayed = true,
+    SyncId = remoteReference.SyncId,
+    RevisionId = remoteReference.RevisionId,
+    ContextRevisionId = remoteReference.ContextRevisionId,
+    PageFollows = true,
+}, {
     ReplyTo = reorderedDisplayRequestId,
     Sequence = 1,
 })

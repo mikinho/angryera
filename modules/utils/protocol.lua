@@ -28,9 +28,19 @@ protocol.WIRE_LIMITS = {
     SerializedBytes = 1024 * 1024,
 }
 
+-- AceComm reserves one byte when a single-frame payload starts with one of its
+-- control markers. Keeping compact DISPLAY below 255 bytes guarantees that
+-- even the escaped representation remains one physical addon-message frame.
+protocol.COMPACT_DISPLAY_FORMAT = 1
+protocol.COMPACT_DISPLAY_LIMITS = {
+    EncodedBytes = 254,
+    PackedBytes = 237,
+    RawBytes = 207,
+}
+
 protocol.LIMITS = {
     MessageTypeBytes = 32,
-    InstallationIdBytes = 96,
+    InstallationIdBytes = 40,
     SessionIdBytes = 64,
     MessageIdBytes = 192,
     SenderBytes = 128,
@@ -63,6 +73,16 @@ local MESSAGE_TYPES = {
     PAGE_UPSERT = true,
 }
 protocol.MESSAGE_TYPES = MESSAGE_TYPES
+
+local UINT32_MAXIMUM = 4294967295
+local MAX_SAFE_INTEGER = 9007199254740991
+local COMPACT_DISPLAY_FLAG_DISPLAYED = 1
+local COMPACT_DISPLAY_FLAG_REPLY_TO = 2
+local COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS = 4
+local COMPACT_DISPLAY_KNOWN_FLAGS = COMPACT_DISPLAY_FLAG_DISPLAYED
+    + COMPACT_DISPLAY_FLAG_REPLY_TO
+    + COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS
+local HEX_DIGITS = "0123456789abcdef"
 
 local CLIENT_FLAVORS = {
     ERA = true,
@@ -199,6 +219,10 @@ local function ValidateCodec(codec)
         and type(codec.decode) == "function"
 end
 
+local function ValidateCompactDisplayCodec(codec)
+    return type(codec) == "table" and type(codec.encode) == "function" and type(codec.decode) == "function"
+end
+
 local function CallStringTransform(callback, input, errorCode)
     local ok, output = pcall(callback, input)
     if not ok or type(output) ~= "string" or output == "" then
@@ -235,6 +259,7 @@ local ACTIVE_REFERENCE_REQUIRED_FIELDS = {
 
 local DISPLAY_FIELDS = {
     Displayed = true,
+    PageFollows = true,
     SyncId = true,
     RevisionId = true,
     ContextRevisionId = true,
@@ -324,10 +349,16 @@ local function ValidateDisplayPayload(payload)
     if type(payload.Displayed) ~= "boolean" then
         return false, "invalid-displayed"
     end
+    if payload.PageFollows ~= nil and type(payload.PageFollows) ~= "boolean" then
+        return false, "invalid-page-follows"
+    end
 
     if not payload.Displayed then
         if payload.SyncId ~= nil or payload.RevisionId ~= nil or payload.ContextRevisionId ~= nil then
             return false, "display-clear-has-page"
+        end
+        if payload.PageFollows == true then
+            return false, "display-clear-page-follows"
         end
         return true
     end
@@ -736,6 +767,422 @@ function protocol.DecodeEnvelope(encoded, codec, limits)
         return nil, validationError
     end
 
+    return envelope
+end
+
+local function EncodeHexInteger(value, minimumDigits)
+    local encoded = {}
+    repeat
+        local digit = value % 16
+        table.insert(encoded, 1, HEX_DIGITS:sub(digit + 1, digit + 1))
+        value = math.floor(value / 16)
+    until value == 0
+    while #encoded < (minimumDigits or 1) do
+        table.insert(encoded, 1, "0")
+    end
+    return table.concat(encoded)
+end
+
+local function ParseCompactInstallationId(value)
+    if not IsInstallationId(value) then
+        return nil
+    end
+    local first, second, third, fourth = value:match("^ae3i:([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):([0-9a-f]+)$")
+    local encoded = {}
+    for index, component in ipairs({ first, second, third, fourth }) do
+        if #component > 8 then
+            return nil
+        end
+        local number = tonumber(component, 16)
+        if not IsInteger(number, 0, UINT32_MAXIMUM) or EncodeHexInteger(number) ~= component then
+            return nil
+        end
+        encoded[index] = number
+    end
+    return encoded
+end
+
+local function AppendUnsigned(parts, value, byteCount, maximum)
+    if not IsInteger(value, 0, maximum) then
+        return false
+    end
+    for _ = 1, byteCount do
+        local byte = value % 256
+        parts[#parts + 1] = string.char(byte)
+        value = math.floor(value / 256)
+    end
+    return value == 0
+end
+
+local function ReadUnsigned(raw, cursor, byteCount, maximum)
+    if cursor + byteCount - 1 > #raw then
+        return nil
+    end
+
+    local value = 0
+    local multiplier = 1
+    for offset = 0, byteCount - 1 do
+        local byte = raw:byte(cursor + offset)
+        if byte > math.floor((maximum - value) / multiplier) then
+            return nil
+        end
+        value = value + byte * multiplier
+        multiplier = multiplier * 256
+    end
+    return value, cursor + byteCount
+end
+
+local function AppendCompactInstallationId(parts, value)
+    local components = ParseCompactInstallationId(value)
+    if not components then
+        return false
+    end
+    for _, component in ipairs(components) do
+        if not AppendUnsigned(parts, component, 4, UINT32_MAXIMUM) then
+            return false
+        end
+    end
+    return true
+end
+
+local function ReadCompactInstallationId(raw, cursor)
+    local components = {}
+    for index = 1, 4 do
+        local component
+        component, cursor = ReadUnsigned(raw, cursor, 4, UINT32_MAXIMUM)
+        if component == nil then
+            return nil
+        end
+        components[index] = EncodeHexInteger(component)
+    end
+    return "ae3i:" .. table.concat(components, ":"), cursor
+end
+
+local function AppendCompactSessionId(parts, value)
+    if not IsIdentifier(value, protocol.LIMITS.SessionIdBytes) then
+        return false
+    end
+    parts[#parts + 1] = string.char(#value)
+    parts[#parts + 1] = value
+    return true
+end
+
+local function ReadCompactSessionId(raw, cursor)
+    local length = raw:byte(cursor)
+    if not length or length < 1 or length > protocol.LIMITS.SessionIdBytes then
+        return nil
+    end
+    local first = cursor + 1
+    local last = first + length - 1
+    if last > #raw then
+        return nil
+    end
+    return raw:sub(first, last), last + 1
+end
+
+local function ParseMessageIdComponents(value)
+    if not ValidateMessageId(value) then
+        return nil
+    end
+    local installationId, sessionId, sequenceText = value:match("^(.*):([^:]+):([0-9]+)$")
+    return installationId, sessionId, tonumber(sequenceText)
+end
+
+local function AppendCompactMessageId(parts, value)
+    local installationId, sessionId, sequence = ParseMessageIdComponents(value)
+    return installationId ~= nil
+        and AppendCompactInstallationId(parts, installationId)
+        and AppendCompactSessionId(parts, sessionId)
+        and AppendUnsigned(parts, sequence, 4, UINT32_MAXIMUM)
+end
+
+local function ReadCompactMessageId(raw, cursor)
+    local installationId
+    installationId, cursor = ReadCompactInstallationId(raw, cursor)
+    if not installationId then
+        return nil
+    end
+    local sessionId
+    sessionId, cursor = ReadCompactSessionId(raw, cursor)
+    if not sessionId then
+        return nil
+    end
+    local sequence
+    sequence, cursor = ReadUnsigned(raw, cursor, 4, UINT32_MAXIMUM)
+    if sequence == nil then
+        return nil
+    end
+    return table.concat({ installationId, sessionId, tostring(sequence) }, ":"), cursor
+end
+
+local function ParseRevisionCode(value)
+    if not IsRevisionId(value) then
+        return nil
+    end
+    return tonumber(value:sub(7), 16)
+end
+
+local function AppendCompactDisplayReference(parts, payload)
+    local installationId, kind, sequence = identity.ParseSyncId(payload.SyncId)
+    local revision = ParseRevisionCode(payload.RevisionId)
+    local contextRevision = ParseRevisionCode(payload.ContextRevisionId)
+    return kind == "page"
+        and AppendCompactInstallationId(parts, installationId)
+        and AppendUnsigned(parts, sequence, 4, UINT32_MAXIMUM)
+        and AppendUnsigned(parts, revision, 4, UINT32_MAXIMUM)
+        and AppendUnsigned(parts, contextRevision, 4, UINT32_MAXIMUM)
+end
+
+local function ReadCompactDisplayReference(raw, cursor)
+    local installationId
+    installationId, cursor = ReadCompactInstallationId(raw, cursor)
+    if not installationId then
+        return nil
+    end
+    local sequence
+    sequence, cursor = ReadUnsigned(raw, cursor, 4, UINT32_MAXIMUM)
+    if sequence == nil then
+        return nil
+    end
+    local revision
+    revision, cursor = ReadUnsigned(raw, cursor, 4, UINT32_MAXIMUM)
+    if revision == nil then
+        return nil
+    end
+    local contextRevision
+    contextRevision, cursor = ReadUnsigned(raw, cursor, 4, UINT32_MAXIMUM)
+    if contextRevision == nil then
+        return nil
+    end
+    return {
+        Displayed = true,
+        SyncId = installationId .. ":page:" .. tostring(sequence),
+        RevisionId = "fcs32:" .. EncodeHexInteger(revision, 8),
+        ContextRevisionId = "fcs32:" .. EncodeHexInteger(contextRevision, 8),
+    },
+        cursor
+end
+
+local function PackCompactDisplayRaw(raw)
+    local packed = {}
+    local buffer = 0
+    local bufferedBits = 0
+    for index = 1, #raw do
+        buffer = buffer + raw:byte(index) * 2 ^ bufferedBits
+        bufferedBits = bufferedBits + 8
+        while bufferedBits >= 7 do
+            local symbol = buffer % 128
+            packed[#packed + 1] = string.char(symbol + 2)
+            buffer = math.floor(buffer / 128)
+            bufferedBits = bufferedBits - 7
+        end
+    end
+    if bufferedBits > 0 then
+        packed[#packed + 1] = string.char(buffer + 2)
+    end
+    return table.concat(packed)
+end
+
+local function UnpackCompactDisplayRaw(packed)
+    if #packed > protocol.COMPACT_DISPLAY_LIMITS.PackedBytes then
+        return nil, "compact-display-packed-too-large"
+    end
+
+    local raw = {}
+    local buffer = 0
+    local bufferedBits = 0
+    for index = 1, #packed do
+        local byte = packed:byte(index)
+        if byte < 2 or byte > 129 then
+            return nil, "invalid-compact-display-packing"
+        end
+        buffer = buffer + (byte - 2) * 2 ^ bufferedBits
+        bufferedBits = bufferedBits + 7
+        while bufferedBits >= 8 do
+            raw[#raw + 1] = string.char(buffer % 256)
+            buffer = math.floor(buffer / 256)
+            bufferedBits = bufferedBits - 8
+        end
+    end
+
+    local decoded = table.concat(raw)
+    if #packed ~= math.ceil(#decoded * 8 / 7) then
+        return nil, "noncanonical-compact-display-length"
+    end
+    if buffer ~= 0 then
+        return nil, "noncanonical-compact-display-padding"
+    end
+    return decoded
+end
+
+--- Encodes one DISPLAY envelope into the bounded single-frame wire format.
+-- Protocol/type/message identity fields that can be derived canonically are
+-- omitted and reconstructed by `DecodeCompactDisplayEnvelope`.
+-- @tparam table envelope Valid protocol-v3 DISPLAY envelope.
+-- @tparam table codec Channel codec with regular `encode` and `decode` functions.
+-- @treturn string|nil encoded
+-- @treturn string|nil errorCode
+function protocol.EncodeCompactDisplayEnvelope(envelope, codec)
+    local valid, validationError = protocol.ValidateEnvelope(envelope)
+    if not valid then
+        return nil, validationError
+    end
+    if envelope.Type ~= "DISPLAY" then
+        return nil, "compact-display-type-mismatch"
+    end
+    if not ValidateCompactDisplayCodec(codec) then
+        return nil, "invalid-compact-display-codec"
+    end
+
+    local flags = envelope.Payload.Displayed and COMPACT_DISPLAY_FLAG_DISPLAYED or 0
+    if envelope.ReplyTo ~= nil then
+        flags = flags + COMPACT_DISPLAY_FLAG_REPLY_TO
+    end
+    if envelope.Payload.PageFollows == true then
+        flags = flags + COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS
+    end
+    local parts = {
+        string.char(protocol.COMPACT_DISPLAY_FORMAT),
+        string.char(flags),
+    }
+    if
+        not AppendCompactInstallationId(parts, envelope.SenderInstallationId)
+        or not AppendCompactSessionId(parts, envelope.SenderSessionId)
+        or not AppendUnsigned(parts, envelope.Sequence, 4, UINT32_MAXIMUM)
+        or not AppendUnsigned(parts, envelope.SentAt, 7, MAX_SAFE_INTEGER)
+    then
+        return nil, "unsupported-compact-display-identity"
+    end
+    if envelope.ReplyTo ~= nil and not AppendCompactMessageId(parts, envelope.ReplyTo) then
+        return nil, "unsupported-compact-display-reply-to"
+    end
+    if envelope.Payload.Displayed and not AppendCompactDisplayReference(parts, envelope.Payload) then
+        return nil, "unsupported-compact-display-reference"
+    end
+
+    local raw = table.concat(parts)
+    if #raw > protocol.COMPACT_DISPLAY_LIMITS.RawBytes then
+        return nil, "compact-display-raw-too-large"
+    end
+    local packed = PackCompactDisplayRaw(raw)
+    if #packed > protocol.COMPACT_DISPLAY_LIMITS.PackedBytes then
+        return nil, "compact-display-packed-too-large"
+    end
+    local encoded, encodeError = CallStringTransform(codec.encode, packed, "compact-display-encode-failed")
+    if not encoded then
+        return nil, encodeError
+    end
+    if #encoded > protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes then
+        return nil, "compact-display-encoded-too-large"
+    end
+    return encoded
+end
+
+--- Decodes the bounded single-frame DISPLAY representation into a normal
+-- validated protocol envelope.
+-- @tparam string encoded Compact channel-encoded DISPLAY.
+-- @tparam table codec Channel codec with regular `encode` and `decode` functions.
+-- @treturn table|nil envelope
+-- @treturn string|nil errorCode
+function protocol.DecodeCompactDisplayEnvelope(encoded, codec)
+    if type(encoded) ~= "string" or encoded == "" then
+        return nil, "invalid-compact-display-encoded"
+    end
+    if not ValidateCompactDisplayCodec(codec) then
+        return nil, "invalid-compact-display-codec"
+    end
+    if #encoded > protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes then
+        return nil, "compact-display-encoded-too-large"
+    end
+
+    local packed, decodeError = CallStringTransform(codec.decode, encoded, "compact-display-decode-failed")
+    if not packed then
+        return nil, decodeError
+    end
+    local raw, packingError = UnpackCompactDisplayRaw(packed)
+    if not raw then
+        return nil, packingError
+    end
+    if #raw > protocol.COMPACT_DISPLAY_LIMITS.RawBytes then
+        return nil, "compact-display-raw-too-large"
+    end
+    if raw:byte(1) ~= protocol.COMPACT_DISPLAY_FORMAT then
+        return nil, "unsupported-compact-display-format"
+    end
+    local flags = raw:byte(2)
+    if not flags or flags < 0 or flags > COMPACT_DISPLAY_KNOWN_FLAGS then
+        return nil, "invalid-compact-display-flags"
+    end
+    local displayed = flags % 2 == COMPACT_DISPLAY_FLAG_DISPLAYED
+    local hasReplyTo = math.floor(flags / COMPACT_DISPLAY_FLAG_REPLY_TO) % 2 == 1
+    local pageFollows = math.floor(flags / COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS) % 2 == 1
+    if pageFollows and not displayed then
+        return nil, "invalid-compact-display-flags"
+    end
+
+    local cursor = 3
+    local senderInstallationId
+    senderInstallationId, cursor = ReadCompactInstallationId(raw, cursor)
+    if not senderInstallationId then
+        return nil, "invalid-compact-display"
+    end
+    local senderSessionId
+    senderSessionId, cursor = ReadCompactSessionId(raw, cursor)
+    if not senderSessionId then
+        return nil, "invalid-compact-display"
+    end
+    local sequence
+    sequence, cursor = ReadUnsigned(raw, cursor, 4, UINT32_MAXIMUM)
+    if sequence == nil then
+        return nil, "invalid-compact-display"
+    end
+    local sentAt
+    sentAt, cursor = ReadUnsigned(raw, cursor, 7, MAX_SAFE_INTEGER)
+    if sentAt == nil then
+        return nil, "invalid-compact-display"
+    end
+
+    local replyTo
+    if hasReplyTo then
+        replyTo, cursor = ReadCompactMessageId(raw, cursor)
+        if not replyTo then
+            return nil, "invalid-compact-display"
+        end
+    end
+
+    local payload
+    if displayed then
+        payload, cursor = ReadCompactDisplayReference(raw, cursor)
+        if not payload then
+            return nil, "invalid-compact-display"
+        end
+        if pageFollows then
+            payload.PageFollows = true
+        end
+    else
+        payload = {
+            Displayed = false,
+        }
+    end
+    if cursor ~= #raw + 1 then
+        return nil, "compact-display-trailing-data"
+    end
+
+    local envelope = {
+        Protocol = protocol.VERSION,
+        Type = "DISPLAY",
+        MessageId = table.concat({ senderInstallationId, senderSessionId, tostring(sequence) }, ":"),
+        ReplyTo = replyTo,
+        SenderInstallationId = senderInstallationId,
+        SenderSessionId = senderSessionId,
+        Sequence = sequence,
+        SentAt = sentAt,
+        Payload = payload,
+    }
+    local valid, validationError = protocol.ValidateEnvelope(envelope)
+    if not valid then
+        return nil, validationError
+    end
     return envelope
 end
 

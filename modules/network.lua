@@ -15,9 +15,11 @@ local IterateGroupMembers = helpers.IterateGroupMembers
 
 local updateFrequency = AngryEra.core.updateFrequency
 local displayPageDebounce = 0.125
--- Avoid a raid-wide recovery burst while a proactive multipart page is still
--- draining, including ChatThrottleLib's reduced-throughput low-FPS mode.
+-- Promised group pages need a long grace period so a large/low-FPS transfer
+-- does not make every receiver request a duplicate at once. A targeted request
+-- gets a shorter watchdog because only that receiver retries it.
 local pendingDisplayRecoveryDelay = math.max(updateFrequency * 15, 30)
+local requestedDisplayRecoveryDelay = math.max(updateFrequency * 2, 5)
 local maximumDisplayRecoveryAttempts = 3
 
 local pageLastUpdate = {}
@@ -31,6 +33,7 @@ local pendingDisplayPage
 local pendingDisplayPageTimer
 local displayPageGeneration = 0
 local activeDisplayPageTransfer
+local publishedDisplayTuples = {}
 local SamePageTuple
 
 local function PreciseNowMilliseconds()
@@ -90,12 +93,84 @@ local function PageTuple(payload)
     }
 end
 
+local function IsPublishedDisplayTuple(payload)
+    local tuple = PageTuple(payload)
+    local published = tuple and publishedDisplayTuples[tuple.SyncId] or nil
+    return type(published) == "table"
+        and published.RevisionId == tuple.RevisionId
+        and published.ContextRevisionId == tuple.ContextRevisionId
+end
+
+local function RememberPublishedDisplayTuple(payload)
+    local tuple = PageTuple(payload)
+    if not tuple then
+        return false
+    end
+    publishedDisplayTuples[tuple.SyncId] = {
+        RevisionId = tuple.RevisionId,
+        ContextRevisionId = tuple.ContextRevisionId,
+    }
+    return true
+end
+
+local function ReannounceFailedDisplayPage(state, status)
+    if
+        type(state) ~= "table"
+        or state.FailureReannounced
+        or status == "superseded"
+        or type(state.Self) ~= "table"
+        or type(state.Self.GetActiveDisplayReference) ~= "function"
+        or type(state.Self.SendProtocolDisplay) ~= "function"
+        or type(state.Self.CanLocalPlayerPublish) ~= "function"
+        or not state.Self:CanLocalPlayerPublish("display")
+    then
+        return false
+    end
+
+    local queried, active = pcall(state.Self.GetActiveDisplayReference, state.Self)
+    local tuple = PageTuple(state.Payload)
+    if
+        not queried
+        or type(active) ~= "table"
+        or not tuple
+        or active.SyncId ~= tuple.SyncId
+        or active.RevisionId ~= tuple.RevisionId
+        or active.ContextRevisionId ~= tuple.ContextRevisionId
+    then
+        return false
+    end
+
+    state.FailureReannounced = true
+    local sent, result = state.Self:SendProtocolDisplay({
+        Displayed = true,
+        SyncId = tuple.SyncId,
+        RevisionId = tuple.RevisionId,
+        ContextRevisionId = tuple.ContextRevisionId,
+    })
+    if state.Debug then
+        Trace(
+            state.Self,
+            "page-failure-reannounce",
+            "id=%s generation=%d sent=%s status=%s message=%s",
+            tostring(state.Id),
+            state.Generation,
+            tostring(sent == true),
+            tostring(status),
+            tostring(result)
+        )
+    end
+    return sent == true
+end
+
 local function DisplayPageTransferCompleted(state, succeeded, status, messageId)
     if type(state) ~= "table" or not state.Self then
         return
     end
     if succeeded then
+        RememberPublishedDisplayTuple(state.Payload)
         pageLastUpdate[state.Id] = time()
+    else
+        ReannounceFailedDisplayPage(state, status)
     end
     if activeDisplayPageTransfer == state then
         activeDisplayPageTransfer = nil
@@ -162,6 +237,13 @@ local function CancelPendingDisplayPage(self, reason)
 end
 
 local function QueueDisplayPage(self, id, payload)
+    if IsPublishedDisplayTuple(payload) then
+        CancelPendingDisplayPage(self, "superseded")
+        if IsDebugEnabled(self) then
+            Trace(self, "page-cache-hit", "id=%s status=already-published", tostring(id))
+        end
+        return true, "already-published"
+    end
     if pendingDisplayPage and SamePageTuple(pendingDisplayPage.Payload, payload) then
         if pendingDisplayPage.Debug then
             Trace(
@@ -270,22 +352,26 @@ local function PendingRecoveryMatches(record, pending)
         and payload.ContextRevisionId == reference.ContextRevisionId
 end
 
-local function SameRecoveryReference(record, reference)
+local function SamePlayer(left, right)
+    return type(left) == "string" and type(right) == "string" and left:lower() == right:lower()
+end
+
+local function SameRecoveryContext(record, auth, reference)
     local current = record and record.Reference or nil
-    return type(current) == "table"
+    return type(record) == "table"
+        and type(auth) == "table"
+        and SamePlayer(record.Sender, auth.Sender)
+        and record.SenderInstallationId == auth.SenderInstallationId
+        and record.SenderSessionId == auth.SenderSessionId
+        and type(current) == "table"
         and type(reference) == "table"
         and current.SyncId == reference.SyncId
         and current.RevisionId == reference.RevisionId
         and current.ContextRevisionId == reference.ContextRevisionId
 end
 
-local function SamePlayer(left, right)
-    return type(left) == "string" and type(right) == "string" and left:lower() == right:lower()
-end
-
 local function SchedulePendingDisplayRecovery(self, record)
-    pendingDisplayRecoveryTimer =
-        self:ScheduleTimer("RecoverPendingDisplay", pendingDisplayRecoveryDelay, record.Generation)
+    pendingDisplayRecoveryTimer = self:ScheduleTimer("RecoverPendingDisplay", record.Delay, record.Generation)
     if not pendingDisplayRecoveryTimer then
         pendingDisplayRecovery = nil
         return false, "recovery-schedule-failed"
@@ -318,6 +404,7 @@ function AngryEra:ResetDisplayPublicationState()
     end
     pageTimerId = {}
     pageLastUpdate = {}
+    publishedDisplayTuples = {}
 end
 
 --- Defers recovery for an accepted DISPLAY whose exact page tuple is missing.
@@ -325,13 +412,16 @@ end
 -- @tparam table auth Authenticated sender identity.
 -- @tparam table displayEnvelope Validated DISPLAY envelope.
 -- @tparam table reference Exact missing page/context tuple.
+-- @tparam[opt=0] number completedAttempts Recovery sends already queued.
+-- @tparam[opt=false] boolean expedited Use the targeted-request watchdog.
 -- @treturn boolean scheduled
 -- @treturn string|nil statusOrError
-function AngryEra:DeferPendingDisplayRecovery(auth, displayEnvelope, reference)
+function AngryEra:DeferPendingDisplayRecovery(auth, displayEnvelope, reference, completedAttempts, expedited)
     local previousRecovery = pendingDisplayRecovery
-    local inheritedAttempts = SameRecoveryReference(previousRecovery, reference) and previousRecovery.Attempts or 0
     self:CancelPendingDisplayRecovery()
     local envelopeCopy = CopyDisplayEnvelope(displayEnvelope)
+    completedAttempts = completedAttempts or 0
+    expedited = expedited == true
     if
         type(auth) ~= "table"
         or type(auth.Sender) ~= "string"
@@ -339,9 +429,15 @@ function AngryEra:DeferPendingDisplayRecovery(auth, displayEnvelope, reference)
         or type(auth.SenderSessionId) ~= "string"
         or not envelopeCopy
         or type(reference) ~= "table"
+        or type(completedAttempts) ~= "number"
+        or completedAttempts ~= math.floor(completedAttempts)
+        or completedAttempts < 0
+        or completedAttempts > maximumDisplayRecoveryAttempts
     then
         return false, "invalid-recovery-context"
     end
+    local inheritedAttempts = SameRecoveryContext(previousRecovery, auth, reference) and previousRecovery.Attempts or 0
+    local attempts = math.max(inheritedAttempts, completedAttempts)
     if type(self.GetPendingActiveDisplayRequest) ~= "function" then
         return false, "active-page-runtime-unavailable"
     end
@@ -354,7 +450,8 @@ function AngryEra:DeferPendingDisplayRecovery(auth, displayEnvelope, reference)
     end
     pendingDisplayRecovery = {
         Generation = pendingDisplayRecoveryGeneration,
-        Attempts = inheritedAttempts,
+        Attempts = attempts,
+        Delay = expedited and requestedDisplayRecoveryDelay or pendingDisplayRecoveryDelay,
         Sender = auth.Sender,
         SenderInstallationId = auth.SenderInstallationId,
         SenderSessionId = auth.SenderSessionId,
@@ -496,6 +593,7 @@ function AngryEra:SendDisplayPageMessage(generation)
     local sent, result =
         self:SendProtocolActivePageUpsert(pending.Payload, DisplayPageTransferCompleted, completionState)
     if not sent then
+        ReannounceFailedDisplayPage(completionState, result)
         if activeDisplayPageTransfer == completionState then
             activeDisplayPageTransfer = nil
         end
@@ -545,9 +643,8 @@ function AngryEra:SendPageMessage(id)
 end
 
 --- Publishes an active display selection with throttling.
--- Every non-empty selection follows its immediate DISPLAY with the exact
--- PAGE_UPSERT so newly joined or reloaded peers cannot depend on sender-global
--- publication history. Same pending or in-flight tuples are still reused.
+-- A page tuple is proactively published once per group/session. Later
+-- selections send only DISPLAY; a receiver without that tuple requests it.
 -- @tparam[opt] number id Local page id, or nil to clear the shared display.
 -- @tparam[opt=false] boolean force Bypass the publication delay.
 -- @treturn boolean sentOrScheduled
@@ -570,7 +667,7 @@ function AngryEra:SendDisplay(id, force)
     return self:SendDisplayMessage(id)
 end
 
---- Immediately sends DISPLAY control and queues its exact PAGE_UPSERT.
+--- Immediately sends DISPLAY control and, for a new tuple, queues PAGE_UPSERT.
 -- A short trailing debounce coalesces rapid page A -> B navigation before the
 -- replaceable active-page stream starts.
 -- @tparam[opt] number id Local page id, or nil to clear the shared display.
@@ -628,6 +725,9 @@ function AngryEra:SendDisplayMessage(id)
         if not queued then
             return false, queueResult, true
         end
+        if queueResult ~= "already-published" then
+            displayPayload.PageFollows = true
+        end
     else
         CancelPendingDisplayPage(self, "display-cleared")
     end
@@ -636,7 +736,14 @@ function AngryEra:SendDisplayMessage(id)
     if sent then
         displayLastUpdate = time()
         if debugEnabled then
-            Trace(self, "display-submit", "id=%s message=%s", tostring(id), tostring(result))
+            Trace(
+                self,
+                "display-submit",
+                "id=%s message=%s pageFollows=%s",
+                tostring(id),
+                tostring(result),
+                tostring(displayPayload.PageFollows == true)
+            )
         end
     else
         CancelPendingDisplayPage(self, "display-send-failed")

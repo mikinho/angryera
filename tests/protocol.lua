@@ -137,6 +137,109 @@ local function MakeCodec(overrides)
     return codec
 end
 
+local function MakeCompactCodec(overrides)
+    local codec = {
+        encode = function(value)
+            return value
+        end,
+        decode = function(value)
+            return value
+        end,
+    }
+    for name, callback in pairs(overrides or {}) do
+        codec[name] = callback
+    end
+    return codec
+end
+
+local function MakeFaithfulAddonCodec(onEncode)
+    return {
+        encode = function(value)
+            if onEncode then
+                onEncode(value)
+            end
+            local encoded = {}
+            for index = 1, #value do
+                local byte = value:byte(index)
+                if byte == 0 then
+                    encoded[#encoded + 1] = "\001\002"
+                elseif byte == 1 then
+                    encoded[#encoded + 1] = "\001\003"
+                else
+                    encoded[#encoded + 1] = string.char(byte)
+                end
+            end
+            return table.concat(encoded)
+        end,
+        decode = function(value)
+            local decoded = {}
+            local cursor = 1
+            while cursor <= #value do
+                local byte = value:byte(cursor)
+                if byte == 0 then
+                    return nil
+                elseif byte == 1 then
+                    local suffix = value:byte(cursor + 1)
+                    if suffix == 2 then
+                        decoded[#decoded + 1] = "\000"
+                    elseif suffix == 3 then
+                        decoded[#decoded + 1] = "\001"
+                    else
+                        return nil
+                    end
+                    cursor = cursor + 2
+                else
+                    decoded[#decoded + 1] = string.char(byte)
+                    cursor = cursor + 1
+                end
+            end
+            return table.concat(decoded)
+        end,
+    }
+end
+
+local function PackCompactForTest(raw)
+    local packed = {}
+    local buffer = 0
+    local bufferedBits = 0
+    for index = 1, #raw do
+        buffer = buffer + raw:byte(index) * 2 ^ bufferedBits
+        bufferedBits = bufferedBits + 8
+        while bufferedBits >= 7 do
+            packed[#packed + 1] = string.char(buffer % 128 + 2)
+            buffer = math.floor(buffer / 128)
+            bufferedBits = bufferedBits - 7
+        end
+    end
+    if bufferedBits > 0 then
+        packed[#packed + 1] = string.char(buffer + 2)
+    end
+    return table.concat(packed)
+end
+
+local function UnpackCompactForTest(packed)
+    local raw = {}
+    local buffer = 0
+    local bufferedBits = 0
+    for index = 1, #packed do
+        local byte = packed:byte(index)
+        assert(byte >= 2 and byte <= 129, "packed test fixture must use the compact safe alphabet")
+        buffer = buffer + (byte - 2) * 2 ^ bufferedBits
+        bufferedBits = bufferedBits + 7
+        while bufferedBits >= 8 do
+            raw[#raw + 1] = string.char(buffer % 256)
+            buffer = math.floor(buffer / 256)
+            bufferedBits = bufferedBits - 8
+        end
+    end
+    assert(buffer == 0, "packed test fixture must have canonical zero padding")
+    return table.concat(raw)
+end
+
+local function ReplaceByte(value, index, byte)
+    return value:sub(1, index - 1) .. string.char(byte) .. value:sub(index + 1)
+end
+
 AssertEqual(protocol.VERSION, 3, "protocol version")
 AssertEqual(protocol.PREFIX, "AngryEra3", "protocol prefix")
 AssertEqual(protocol.DISPLAY_PREFIX, "AngryEra3D", "display protocol prefix")
@@ -144,6 +247,11 @@ AssertEqual(protocol.ACTIVE_PAGE_PREFIX, "AngryEra3P", "active-page protocol pre
 AssertEqual(protocol.WIRE_LIMITS.EncodedBytes, 256 * 1024, "encoded byte limit")
 AssertEqual(protocol.WIRE_LIMITS.CompressedBytes, 256 * 1024, "compressed byte limit")
 AssertEqual(protocol.WIRE_LIMITS.SerializedBytes, 1024 * 1024, "serialized byte limit")
+AssertEqual(protocol.LIMITS.InstallationIdBytes, 40, "compact installation identity bound")
+AssertEqual(protocol.COMPACT_DISPLAY_FORMAT, 1, "compact display format")
+AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes, 254, "compact display single-frame bound")
+AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.PackedBytes, 237, "compact display safe-alphabet bound")
+AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.RawBytes, 207, "compact display raw bound")
 
 local installationId = "ae3i:1234abcd:11111111:22222222:33333333"
 local session, sessionError = protocol.NewSession(installationId, "session_B-2")
@@ -160,6 +268,8 @@ invalidSession, invalidSessionError = protocol.NewSession("install", "session")
 AssertError(invalidSession, invalidSessionError, "invalid-installation-id", "noncanonical installation ID")
 invalidSession, invalidSessionError = protocol.NewSession("ae3i:1:2:3:4:", "session")
 AssertError(invalidSession, invalidSessionError, "invalid-installation-id", "trailing installation ID segment")
+invalidSession, invalidSessionError = protocol.NewSession("ae3i:100000000:1:2:3", "session")
+AssertError(invalidSession, invalidSessionError, "invalid-installation-id", "oversized installation ID component")
 invalidSession, invalidSessionError = protocol.NewSession(installationId, Repeat("s", 65))
 AssertError(invalidSession, invalidSessionError, "invalid-session-id", "long session ID")
 
@@ -350,11 +460,38 @@ payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
 AssertError(payloadValid, payloadError, "display-clear-has-page", "clear display with page identity")
 payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
     Displayed = true,
+    PageFollows = true,
     SyncId = activePageSyncId,
     RevisionId = "fcs32:12345678",
     ContextRevisionId = "fcs32:87654321",
 })
 Assert(payloadValid and payloadError == nil, "set display payload")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = true,
+    PageFollows = false,
+    SyncId = activePageSyncId,
+    RevisionId = "fcs32:12345678",
+    ContextRevisionId = "fcs32:87654321",
+})
+Assert(payloadValid and payloadError == nil, "display may explicitly omit a following page")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = false,
+    PageFollows = false,
+})
+Assert(payloadValid and payloadError == nil, "clear display permits a false page-follows hint")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = false,
+    PageFollows = true,
+})
+AssertError(payloadValid, payloadError, "display-clear-page-follows", "clear display cannot promise a page")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = true,
+    PageFollows = "yes",
+    SyncId = activePageSyncId,
+    RevisionId = "fcs32:12345678",
+    ContextRevisionId = "fcs32:87654321",
+})
+AssertError(payloadValid, payloadError, "invalid-page-follows", "page-follows hint must be boolean")
 payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
     Displayed = true,
     SyncId = activePageSyncId,
@@ -779,6 +916,320 @@ encoded, encodeError = protocol.EncodeEnvelope(queryEnvelope, codec, {
     SerializedBytes = 8,
 })
 AssertError(encoded, encodeError, "invalid-limits", "invalid custom limits")
+
+local compactCodec = MakeCompactCodec()
+local compactSession = assert(protocol.NewSession(installationId, "compact-display"))
+local compactDisplayEnvelope = assert(protocol.BuildEnvelope(compactSession, "DISPLAY", {
+    Displayed = true,
+    PageFollows = true,
+    SyncId = activePageSyncId,
+    RevisionId = "fcs32:12345678",
+    ContextRevisionId = "fcs32:87654321",
+}, {
+    ReplyTo = queryEnvelope.MessageId,
+    SentAt = 1750000000123,
+}))
+local compactEncoded, compactEncodeError = protocol.EncodeCompactDisplayEnvelope(compactDisplayEnvelope, compactCodec)
+Assert(compactEncoded ~= nil and compactEncodeError == nil, "valid compact display encodes")
+local compactRaw = UnpackCompactForTest(compactEncoded)
+AssertEqual(compactRaw:byte(1), protocol.COMPACT_DISPLAY_FORMAT, "compact display format byte")
+AssertEqual(compactRaw:byte(2), 7, "compact display combines displayed, reply, and page-follows flags")
+for index = 1, #compactEncoded do
+    local byte = compactEncoded:byte(index)
+    Assert(byte >= 2 and byte <= 129, "compact display uses safe packed byte " .. tostring(index))
+end
+
+local compactDecoded, compactDecodeError = protocol.DecodeCompactDisplayEnvelope(compactEncoded, compactCodec)
+Assert(compactDecoded ~= nil and compactDecodeError == nil, "valid compact display decodes")
+AssertEqual(compactDecoded.Protocol, compactDisplayEnvelope.Protocol, "compact display protocol")
+AssertEqual(compactDecoded.Type, compactDisplayEnvelope.Type, "compact display type")
+AssertEqual(compactDecoded.MessageId, compactDisplayEnvelope.MessageId, "compact display message identity")
+AssertEqual(compactDecoded.ReplyTo, compactDisplayEnvelope.ReplyTo, "compact display reply correlation")
+AssertEqual(
+    compactDecoded.SenderInstallationId,
+    compactDisplayEnvelope.SenderInstallationId,
+    "compact display sender installation"
+)
+AssertEqual(compactDecoded.SenderSessionId, compactDisplayEnvelope.SenderSessionId, "compact display sender session")
+AssertEqual(compactDecoded.Sequence, compactDisplayEnvelope.Sequence, "compact display sequence")
+AssertEqual(compactDecoded.SentAt, compactDisplayEnvelope.SentAt, "compact display timestamp")
+AssertEqual(compactDecoded.Payload.Displayed, true, "compact display selected state")
+AssertEqual(compactDecoded.Payload.PageFollows, true, "compact display page-follows hint")
+AssertEqual(compactDecoded.Payload.SyncId, compactDisplayEnvelope.Payload.SyncId, "compact display sync identity")
+AssertEqual(compactDecoded.Payload.RevisionId, compactDisplayEnvelope.Payload.RevisionId, "compact display revision")
+AssertEqual(
+    compactDecoded.Payload.ContextRevisionId,
+    compactDisplayEnvelope.Payload.ContextRevisionId,
+    "compact display context revision"
+)
+
+local groupDisplayEnvelope = assert(protocol.BuildEnvelope(compactSession, "DISPLAY", {
+    Displayed = true,
+    PageFollows = true,
+    SyncId = activePageSyncId,
+    RevisionId = "fcs32:12345678",
+    ContextRevisionId = "fcs32:87654321",
+}, {
+    SentAt = 1750000000124,
+}))
+local groupDisplayPacked = assert(protocol.EncodeCompactDisplayEnvelope(groupDisplayEnvelope, compactCodec))
+AssertEqual(UnpackCompactForTest(groupDisplayPacked):byte(2), 5, "page-follows flag does not imply reply correlation")
+compactDecoded = assert(protocol.DecodeCompactDisplayEnvelope(groupDisplayPacked, compactCodec))
+Assert(compactDecoded.ReplyTo == nil, "uncorrelated compact display stays uncorrelated")
+AssertEqual(compactDecoded.Payload.PageFollows, true, "uncorrelated compact display retains page-follows hint")
+
+local clearDisplayEnvelope = assert(protocol.BuildEnvelope(compactSession, "DISPLAY", {
+    Displayed = false,
+    PageFollows = false,
+}, {
+    ReplyTo = queryEnvelope.MessageId,
+    SentAt = 1750000000125,
+}))
+local clearDisplayPacked = assert(protocol.EncodeCompactDisplayEnvelope(clearDisplayEnvelope, compactCodec))
+local clearDisplayRaw = UnpackCompactForTest(clearDisplayPacked)
+AssertEqual(clearDisplayRaw:byte(2), 2, "clear display retains only reply flag")
+compactDecoded = assert(protocol.DecodeCompactDisplayEnvelope(clearDisplayPacked, compactCodec))
+AssertEqual(compactDecoded.Payload.Displayed, false, "compact clear display state")
+Assert(compactDecoded.Payload.PageFollows == nil, "false page-follows hint decodes canonically as omitted")
+AssertEqual(compactDecoded.ReplyTo, queryEnvelope.MessageId, "compact clear display correlation")
+
+local maximumInstallationId = "ae3i:ffffffff:ffffffff:ffffffff:ffffffff"
+local maximumSessionId = Repeat("s", protocol.LIMITS.SessionIdBytes)
+local maximumReplySessionId = Repeat("r", protocol.LIMITS.SessionIdBytes)
+local maximumCompactSession = assert(protocol.NewSession(maximumInstallationId, maximumSessionId))
+maximumCompactSession.Sequence = protocol.LIMITS.Sequence - 1
+local maximumCompactEnvelope = assert(protocol.BuildEnvelope(maximumCompactSession, "DISPLAY", {
+    Displayed = true,
+    PageFollows = true,
+    SyncId = maximumInstallationId .. ":page:" .. protocol.LIMITS.ActivePageRevision,
+    RevisionId = "fcs32:ffffffff",
+    ContextRevisionId = "fcs32:00000000",
+}, {
+    ReplyTo = table.concat({
+        maximumInstallationId,
+        maximumReplySessionId,
+        tostring(protocol.LIMITS.Sequence),
+    }, ":"),
+    SentAt = 9007199254740991,
+}))
+local maximumCompactPacked = assert(protocol.EncodeCompactDisplayEnvelope(maximumCompactEnvelope, compactCodec))
+AssertEqual(
+    #maximumCompactPacked,
+    protocol.COMPACT_DISPLAY_LIMITS.PackedBytes,
+    "maximum compact display exactly fills packed budget"
+)
+local maximumCompactRaw = UnpackCompactForTest(maximumCompactPacked)
+AssertEqual(
+    #maximumCompactRaw,
+    protocol.COMPACT_DISPLAY_LIMITS.RawBytes,
+    "maximum compact display exactly fills raw budget"
+)
+for index = 1, #maximumCompactPacked do
+    local byte = maximumCompactPacked:byte(index)
+    Assert(byte >= 2 and byte <= 129, "maximum compact display uses safe packed byte " .. tostring(index))
+end
+compactDecoded = assert(protocol.DecodeCompactDisplayEnvelope(maximumCompactPacked, compactCodec))
+AssertEqual(compactDecoded.MessageId, maximumCompactEnvelope.MessageId, "maximum compact message identity")
+AssertEqual(compactDecoded.ReplyTo, maximumCompactEnvelope.ReplyTo, "maximum compact reply identity")
+AssertEqual(compactDecoded.SentAt, maximumCompactEnvelope.SentAt, "maximum compact safe timestamp")
+AssertEqual(compactDecoded.Payload.SyncId, maximumCompactEnvelope.Payload.SyncId, "maximum compact page identity")
+AssertEqual(compactDecoded.Payload.RevisionId, "fcs32:ffffffff", "maximum compact revision")
+AssertEqual(compactDecoded.Payload.ContextRevisionId, "fcs32:00000000", "zero compact context revision")
+
+local faithfulSawUnsafeByte = false
+local faithfulAddonCodec = MakeFaithfulAddonCodec(function(packed)
+    faithfulSawUnsafeByte = packed:find("\000", 1, true) ~= nil or packed:find("\001", 1, true) ~= nil
+end)
+local faithfulCompact = assert(protocol.EncodeCompactDisplayEnvelope(maximumCompactEnvelope, faithfulAddonCodec))
+Assert(not faithfulSawUnsafeByte, "maximum compact display avoids bytes escaped by the addon-channel codec")
+AssertEqual(#faithfulCompact, 237, "maximum compact display remains bounded through addon-channel encoding")
+Assert(
+    #faithfulCompact < protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes,
+    "maximum encoded compact display leaves AceComm escape room"
+)
+compactDecoded = assert(protocol.DecodeCompactDisplayEnvelope(faithfulCompact, faithfulAddonCodec))
+AssertEqual(compactDecoded.MessageId, maximumCompactEnvelope.MessageId, "faithful codec compact round trip")
+
+local exactLimitCompact = assert(protocol.EncodeCompactDisplayEnvelope(
+    maximumCompactEnvelope,
+    MakeCompactCodec({
+        encode = function()
+            return Repeat("e", protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes)
+        end,
+    })
+))
+AssertEqual(#exactLimitCompact, 254, "compact display accepts exact single-frame bound")
+
+local compactValue
+local compactError
+compactValue, compactError = protocol.EncodeCompactDisplayEnvelope(queryEnvelope, compactCodec)
+AssertError(compactValue, compactError, "compact-display-type-mismatch", "compact codec rejects non-display envelope")
+compactValue, compactError = protocol.EncodeCompactDisplayEnvelope(compactDisplayEnvelope, {})
+AssertError(compactValue, compactError, "invalid-compact-display-codec", "compact encode requires channel codec")
+
+compactValue, compactError = protocol.EncodeCompactDisplayEnvelope(
+    compactDisplayEnvelope,
+    MakeCompactCodec({
+        encode = function()
+            error("encode")
+        end,
+    })
+)
+AssertError(compactValue, compactError, "compact-display-encode-failed", "compact encode exception")
+compactValue, compactError = protocol.EncodeCompactDisplayEnvelope(
+    compactDisplayEnvelope,
+    MakeCompactCodec({
+        encode = function()
+            return nil
+        end,
+    })
+)
+AssertError(compactValue, compactError, "compact-display-encode-failed", "compact encode nil")
+compactValue, compactError = protocol.EncodeCompactDisplayEnvelope(
+    maximumCompactEnvelope,
+    MakeCompactCodec({
+        encode = function()
+            return Repeat("e", protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes + 1)
+        end,
+    })
+)
+AssertError(compactValue, compactError, "compact-display-encoded-too-large", "compact encode single-frame bound")
+
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope("", compactCodec)
+AssertError(compactValue, compactError, "invalid-compact-display-encoded", "compact decode empty input")
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope("encoded", {})
+AssertError(compactValue, compactError, "invalid-compact-display-codec", "compact decode requires channel codec")
+compactValue, compactError =
+    protocol.DecodeCompactDisplayEnvelope(Repeat("e", protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes + 1), compactCodec)
+AssertError(compactValue, compactError, "compact-display-encoded-too-large", "compact decode single-frame bound")
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope(
+    "encoded",
+    MakeCompactCodec({
+        decode = function()
+            error("decode")
+        end,
+    })
+)
+AssertError(compactValue, compactError, "compact-display-decode-failed", "compact decode exception")
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope(
+    "encoded",
+    MakeCompactCodec({
+        decode = function()
+            return Repeat(string.char(2), protocol.COMPACT_DISPLAY_LIMITS.PackedBytes + 1)
+        end,
+    })
+)
+AssertError(compactValue, compactError, "compact-display-packed-too-large", "compact decode packed bound")
+
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope("\001", compactCodec)
+AssertError(
+    compactValue,
+    compactError,
+    "invalid-compact-display-packing",
+    "compact display rejects bytes outside the safe alphabet"
+)
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope(Repeat(string.char(2), 9), compactCodec)
+AssertError(
+    compactValue,
+    compactError,
+    "noncanonical-compact-display-length",
+    "compact display rejects redundant zero symbols"
+)
+local maximumLastPackedByte = maximumCompactPacked:byte(#maximumCompactPacked)
+local noncanonicalPaddingCompact = ReplaceByte(maximumCompactPacked, #maximumCompactPacked, maximumLastPackedByte + 16)
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope(noncanonicalPaddingCompact, compactCodec)
+AssertError(
+    compactValue,
+    compactError,
+    "noncanonical-compact-display-padding",
+    "compact display rejects nonzero padding bits"
+)
+
+compactValue, compactError =
+    protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(ReplaceByte(compactRaw, 1, 2)), compactCodec)
+AssertError(compactValue, compactError, "unsupported-compact-display-format", "compact display format mismatch")
+compactValue, compactError =
+    protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(ReplaceByte(compactRaw, 2, 8)), compactCodec)
+AssertError(compactValue, compactError, "invalid-compact-display-flags", "compact display unknown flag")
+compactValue, compactError =
+    protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(ReplaceByte(clearDisplayRaw, 2, 4)), compactCodec)
+AssertError(compactValue, compactError, "invalid-compact-display-flags", "compact clear display cannot promise a page")
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(compactRaw .. "\0"), compactCodec)
+AssertError(compactValue, compactError, "compact-display-trailing-data", "compact display trailing byte")
+
+for length = 1, #compactEncoded - 1 do
+    compactValue, compactError = protocol.DecodeCompactDisplayEnvelope(compactEncoded:sub(1, length), compactCodec)
+    Assert(
+        compactValue == nil and compactError ~= nil,
+        "every truncated compact display must fail at byte " .. tostring(length)
+    )
+end
+
+local compactSequenceStart = 2 + 16 + 1 + #compactDisplayEnvelope.SenderSessionId + 1
+local zeroSequenceRaw = compactRaw:sub(1, compactSequenceStart - 1)
+    .. "\0\0\0\0"
+    .. compactRaw:sub(compactSequenceStart + 4)
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(zeroSequenceRaw), compactCodec)
+AssertError(compactValue, compactError, "invalid-sequence", "compact display zero sequence")
+
+local invalidSessionRaw = ReplaceByte(compactRaw, 20, string.byte(":"))
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(invalidSessionRaw), compactCodec)
+AssertError(compactValue, compactError, "invalid-session-id", "compact display invalid session character")
+
+local compactSentAtHighByte = 2 + 16 + 1 + #compactDisplayEnvelope.SenderSessionId + 4 + 7
+local oversizedSentAtRaw = ReplaceByte(compactRaw, compactSentAtHighByte, 32)
+compactValue, compactError = protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(oversizedSentAtRaw), compactCodec)
+AssertError(compactValue, compactError, "invalid-compact-display", "compact display timestamp exceeds uint53")
+
+local everyByteSession = assert(protocol.NewSession(installationId, "compact-every-byte"))
+for byte = 0, 255 do
+    local revisionId = "fcs32:000000" .. string.format("%02x", byte)
+    local everyByteEnvelope = assert(protocol.BuildEnvelope(everyByteSession, "DISPLAY", {
+        Displayed = true,
+        SyncId = activePageSyncId,
+        RevisionId = revisionId,
+        ContextRevisionId = "fcs32:00000000",
+    }, {
+        SentAt = 1750000001000 + byte,
+    }))
+    local everyBytePacked = assert(protocol.EncodeCompactDisplayEnvelope(everyByteEnvelope, compactCodec))
+    for index = 1, #everyBytePacked do
+        local packedByte = everyBytePacked:byte(index)
+        Assert(
+            packedByte >= 2 and packedByte <= 129,
+            "source byte " .. tostring(byte) .. " produces safe packed byte " .. tostring(index)
+        )
+    end
+    local everyByteDecoded = assert(protocol.DecodeCompactDisplayEnvelope(everyBytePacked, compactCodec))
+    AssertEqual(
+        everyByteDecoded.Payload.RevisionId,
+        revisionId,
+        "compact round trip for source byte " .. tostring(byte)
+    )
+end
+
+for sessionLength = 1, protocol.LIMITS.SessionIdBytes do
+    local paddingSessionId = Repeat("p", sessionLength)
+    local paddingSession = assert(protocol.NewSession(installationId, paddingSessionId))
+    local paddingEnvelope = assert(protocol.BuildEnvelope(paddingSession, "DISPLAY", {
+        Displayed = false,
+    }, {
+        SentAt = 1750000002000 + sessionLength,
+    }))
+    local paddingPacked = assert(protocol.EncodeCompactDisplayEnvelope(paddingEnvelope, compactCodec))
+    local paddingRaw = UnpackCompactForTest(paddingPacked)
+    AssertEqual(
+        #paddingPacked,
+        math.ceil(#paddingRaw * 8 / 7),
+        "compact canonical length for sender session length " .. tostring(sessionLength)
+    )
+    local paddingDecoded = assert(protocol.DecodeCompactDisplayEnvelope(paddingPacked, compactCodec))
+    AssertEqual(
+        paddingDecoded.SenderSessionId,
+        paddingSessionId,
+        "compact padding round trip for sender session length " .. tostring(sessionLength)
+    )
+end
 
 local seenCache, seenCacheError = protocol.NewSeenCache(2)
 Assert(seenCache ~= nil and seenCacheError == nil, "bounded seen cache should build")

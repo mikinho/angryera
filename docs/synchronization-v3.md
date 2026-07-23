@@ -196,19 +196,30 @@ Receivers reject envelopes with:
 - malformed identifiers or payloads;
 - fields exceeding the existing communication limits.
 
-The envelope bounds installation IDs to 96 bytes, session IDs to 64 bytes,
+The envelope bounds installation IDs to four canonical unsigned 32-bit
+components (40 bytes total), session IDs to 64 bytes,
 message IDs to 192 bytes, message types to 32 bytes, and capability maps to 32
 entries with 32-byte names. Encoded and compressed messages are limited to 256
 KiB; serialized messages are limited to 1 MiB. These limits are enforced both
 while sending and receiving.
 
-Every envelope is serialized, passed through LibCompress's Huffman codec, and
+Data envelopes are serialized, passed through LibCompress's Huffman codec, and
 encoded for the WoW addon channel. The codec may use its stored representation
 when compression would not help. Both representations declare or imply their
 exact decompressed length before decoding. Receivers reject an oversized length
 before calling the decompressor, then verify that the decoded length exactly
 matches it. Raw DEFLATE is not accepted because its bundled decoder cannot
 enforce the output limit before expansion.
+
+`DISPLAY` uses a type-specific packed representation on `AngryEra3D`. The
+decoder reconstructs the same validated envelope before authorization,
+correlation, replay, and ordering checks. Sender identity, session, sequence,
+millisecond `SentAt`, optional `ReplyTo`, and the exact page tuple are preserved.
+The encoded representation is capped at 254 bytes, including maximum supported
+session IDs, so AceComm always emits one physical frame even when it must escape
+a leading control byte. Its four installation-ID components are packed as
+unsigned 32-bit integers, the same range enforced by protocol identity
+validation.
 
 `SentAt` is a hybrid server-epoch millisecond order stamp. For `DISPLAY`, the
 sender combines the synchronized `GetServerTime()` second with the millisecond
@@ -225,7 +236,7 @@ data remain on `AngryEra3`. Prefix/type mismatches are rejected before
 dispatch. Display control and proactive active-page frames use `ALERT`, while
 ordinary data remains `NORMAL`. Keeping each multipart stream on its own prefix
 prevents page data from blocking or interleaving with display selection
-messages.
+messages, and compact display control never becomes multipart.
 
 `VERSION_QUERY` is broadcast to the group. Each protocol-3 client replies by
 whisper with `VERSION`. A client advertises only capabilities implemented by
@@ -284,31 +295,45 @@ During leader handoff, an identical relay from the current leader may provide
 volatile display context. Changed owner revisions require the canonical
 `CHANGE_PROPOSE`/`DELTA` path.
 
-A non-empty leader display emits its `DISPLAY` reference immediately on the
-control lane. Its exact `PAGE_UPSERT` enters a 125-millisecond trailing debounce
-before the active-page lane. That lane emits standard AceComm frames one at a
-time through ChatThrottleLib. A newer selection invalidates the old generation
-immediately, leaving at most one obsolete frame already queued; the receiver's
-next multipart first frame replaces any abandoned reassembly. Every completed
-selection republishes its compressed snapshot because sender-global publication
-history cannot prove that a newly joined or reloaded receiver has the tuple.
-Repeated selection while the same tuple is pending or in flight reuses that
-work instead of restarting it.
+A non-empty leader display emits its compact `DISPLAY` reference immediately on
+the control lane. The first selection of an exact page revision/context tuple in
+the current group session marks `PageFollows` and places its `PAGE_UPSERT` in a
+125-millisecond trailing debounce before the active-page lane. That lane emits
+standard AceComm frames one at a time through ChatThrottleLib. A newer selection
+invalidates the old generation immediately, leaving at most one obsolete frame
+already queued; the receiver's next multipart first frame replaces any
+abandoned reassembly. A completed tuple is remembered for the session, so
+switching back to it sends only `DISPLAY`. Repeated selection while the same
+tuple is pending or in flight reuses that work instead of restarting it. If the
+current tuple's page stream reports failure, the leader immediately reannounces
+the same display without `PageFollows`; receivers that still miss it then use
+the targeted request path instead of trusting a failed promise.
 
 `/aa debug` enables session-local timing traces for display selection, debounce
 replacement, encoded byte and chunk counts, local transport drain, approximate
 receive age, receiver cache hit or miss, page completion, and UI render time.
-It is off by default and is never saved. Traces omit page text and variable
-values, but include character names and message, page, and revision identifiers.
+Page-stream submissions also capture sender frame rate, ChatThrottleLib's
+available-byte balance, and which priority pools were already active, making
+first-snapshot congestion distinguishable from client decode or render time. It
+is off by default and is never saved. Traces omit page text and variable values,
+but include character names and message, page, and revision identifiers.
 
-Receivers defer recovery when a referenced tuple is missing because the
-proactive page normally completes it. After a 30-second fallback window, a
-still-missing selection first requests only the exact tuple when its
-authenticated publisher is still the current online leader. Otherwise, and on
-further bounded attempts, it requests the current leader's display. This covers
-packet loss and a leadership change without asking a demoted publisher for more
-data or creating an immediate raid-wide request burst. Display and page-request
+Receivers defer recovery only when `PageFollows` promises that a proactive page
+is already in flight. After a 30-second fallback window, a still-missing
+selection first requests only the exact tuple when its authenticated publisher
+is still the current online leader. A cache miss without that promise requests
+the exact tuple immediately and installs a five-second single-client watchdog,
+which covers newly joined, reloaded, or previously out-of-date clients while
+keeping cached page changes control-only. That watchdog treats the queued exact
+request as its first attempt, so its next action requests current display state
+instead of replaying a consumed correlation. Otherwise, and on further bounded
+attempts, recovery requests the current leader's display. This covers packet
+loss and a leadership change without asking a demoted publisher for more data
+or creating an immediate raid-wide request burst. Display and page-request
 correlations are retained long enough for throttled multipart responses.
+The correlated one-client response to `DISPLAY_REQUEST` also uses the shorter
+watchdog; only an uncorrelated page promised to the whole group uses the longer
+raid-safe grace period.
 
 The current leader may also select an exact, already validated page/context
 tuple cached under a former publisher or protocol session. The receiver

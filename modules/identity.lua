@@ -12,6 +12,8 @@ local identity = AngryEra.identity
 
 local CURRENT_SCHEMA_VERSION = 1
 local MAX_SYNC_ID_BYTES = 160
+local MAX_INSTALLATION_ID_BYTES = 40
+local INSTALLATION_COMPONENT_MODULUS = 4294967296
 
 local function NormalizeInteger(value)
     if type(value) ~= "number" or value < 0 or value % 1 ~= 0 then
@@ -24,7 +26,7 @@ end
 -- @tparam any value Candidate identifier.
 -- @treturn boolean valid
 function identity.ValidateInstallationId(value)
-    if type(value) ~= "string" or #value > 96 then
+    if type(value) ~= "string" or #value > MAX_INSTALLATION_ID_BYTES then
         return false
     end
 
@@ -34,7 +36,7 @@ function identity.ValidateInstallationId(value)
     end
 
     for _, segment in ipairs({ first, second, third, fourth }) do
-        if #segment > 1 and segment:sub(1, 1) == "0" then
+        if #segment > 8 or (#segment > 1 and segment:sub(1, 1) == "0") then
             return false
         end
     end
@@ -84,10 +86,10 @@ function identity.GenerateInstallationId(dependencies)
     local random = dependencies.random
     return string.format(
         "ae3i:%x:%x:%x:%x",
-        now,
-        NormalizeInteger(random(1, 2147483647)),
-        NormalizeInteger(random(1, 2147483647)),
-        NormalizeInteger(random(1, 2147483647))
+        now % INSTALLATION_COMPONENT_MODULUS,
+        NormalizeInteger(random(1, 2147483647)) % INSTALLATION_COMPONENT_MODULUS,
+        NormalizeInteger(random(1, 2147483647)) % INSTALLATION_COMPONENT_MODULUS,
+        NormalizeInteger(random(1, 2147483647)) % INSTALLATION_COMPONENT_MODULUS
     )
 end
 

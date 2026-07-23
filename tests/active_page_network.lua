@@ -285,6 +285,7 @@ assert(preparationCount == 1, "active display should be prepared exactly once")
 assert(#calls == 2, "active display should activate locally and send DISPLAY immediately")
 assert(calls[1].Type == "ACTIVATE", "exact display tuple must activate before transport")
 assert(calls[2].Type == "DISPLAY", "display selection should use the immediate control lane")
+assert(calls[2].Payload.PageFollows == true, "an uncached display should announce its queued page snapshot")
 local firstDisplayPageTimer = timers[#timers]
 assert(
     firstDisplayPageTimer.Method == "SendDisplayPageMessage" and firstDisplayPageTimer.Delay == 0.125,
@@ -303,6 +304,7 @@ assert(
         and calls[callsBeforePendingReuse + 2].Type == "DISPLAY",
     "a repeated pending tuple should activate and send its newer DISPLAY immediately"
 )
+assert(calls[#calls].Payload.PageFollows == true, "a repeated pending tuple should retain its page promise")
 assert(
     #timers == timersBeforePendingReuse
         and timers[#timers] == firstDisplayPageTimer
@@ -335,20 +337,10 @@ assert(sent and result == "display-message", "a repeated display tuple should pu
 assert(activatedLocally, "a repeated display tuple should activate locally")
 assert(#calls == callsBeforeCachedDisplay + 2, "a repeated display should activate and send DISPLAY immediately")
 assert(calls[callsBeforeCachedDisplay + 1].Type == "ACTIVATE", "repeated display should still activate first")
-assert(calls[#calls].Type == "DISPLAY", "repeated display should send control before its exact page snapshot")
+assert(calls[#calls].Type == "DISPLAY", "repeated display should send its compact control")
 assert(
-    #timers == timersBeforeCachedDisplay + 1,
-    "a completed transfer must not suppress the repeated display's page snapshot"
-)
-local repeatedDisplayPageTimer = timers[#timers]
-sent, result = AngryEra:SendDisplayPageMessage(repeatedDisplayPageTimer.Argument)
-assert(sent and result == "page-message", "the repeated display should send its exact page snapshot again")
-assert(
-    calls[#calls].Type == "PAGE_UPSERT"
-        and calls[#calls].Payload.Page.SyncId == Upsert(5).Page.SyncId
-        and calls[#calls].Payload.Page.RevisionId == pageRevisionIds[5]
-        and calls[#calls].Payload.ContextRevisionId == contextRevisionIds[5],
-    "the repeated display must republish the exact selected tuple"
+    #timers == timersBeforeCachedDisplay and calls[#calls].Payload.PageFollows == nil,
+    "an exact tuple published in this session should not retransmit its page"
 )
 
 pageRevisionIds[5] = "fcs32:12345679"
@@ -356,6 +348,7 @@ callsBeforeCachedDisplay = #calls
 sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
 assert(sent and result == "display-message" and activatedLocally, "a new page revision should publish")
 assert(#calls == callsBeforeCachedDisplay + 2, "a new page revision should send DISPLAY before its page")
+assert(calls[#calls].Payload.PageFollows == true, "a new page revision should promise its queued page snapshot")
 local revisedPageTimer = timers[#timers]
 assert(revisedPageTimer.Method == "SendDisplayPageMessage", "a new page revision should queue its snapshot")
 sent, result = AngryEra:SendDisplayPageMessage(revisedPageTimer.Argument)
@@ -472,6 +465,10 @@ assert(preparationCount == preparationBeforeFailure + 1, "failed transport must 
 assert(calls[callsBeforeFailure + 1].Type == "ACTIVATE", "local activation must precede failed transport")
 assert(calls[callsBeforeFailure + 2].Type == "DISPLAY", "DISPLAY should succeed before an async page failure")
 assert(calls[callsBeforeFailure + 3].Type == "PAGE_UPSERT", "failed async page transport should be attempted")
+assert(
+    calls[callsBeforeFailure + 4].Type == "DISPLAY" and calls[callsBeforeFailure + 4].Payload.PageFollows == nil,
+    "a failed current page stream should reannounce the tuple without a page promise"
+)
 
 local preparationBeforeActivationFailure = preparationCount
 local callsBeforeActivationFailure = #calls
@@ -599,6 +596,23 @@ assert(AngryEra:CancelPendingDisplayRecovery(), "explicit recovery cancellation 
 assert(canceled[replacementRecoveryTimer], "explicit recovery cancellation should cancel the active timer")
 assert(not AngryEra:CancelPendingDisplayRecovery(), "recovery cancellation should be idempotent")
 
+recoveryScheduled, recoveryStatus =
+    AngryEra:DeferPendingDisplayRecovery(recoveryAuth, recoveryEnvelope, recoveryReference, 1, true)
+assert(recoveryScheduled and recoveryStatus == "scheduled", "a queued exact request should retain a retry watchdog")
+local requestedPageWatchdog = timers[#timers]
+assert(
+    requestedPageWatchdog.Method == "RecoverPendingDisplay" and requestedPageWatchdog.Delay == 5,
+    "a targeted page request should use the short single-client watchdog"
+)
+local callsBeforeRequestedPageWatchdog = #calls
+sent, result = AngryEra:RecoverPendingDisplay(requestedPageWatchdog.Argument)
+assert(sent and result == "request-message", "the first targeted-request watchdog should ask for current display state")
+assert(
+    #calls == callsBeforeRequestedPageWatchdog + 1 and calls[#calls].Type == "DISPLAY_REQUEST",
+    "a queued exact request must not retry a response correlation that the publisher already consumed"
+)
+assert(AngryEra:CancelPendingDisplayRecovery(), "targeted-request watchdog cleanup should cancel its fallback")
+
 local callsBeforeResolvedRecovery = #calls
 pendingDisplayRequest = nil
 recoveryScheduled, recoveryStatus =
@@ -674,6 +688,37 @@ recoveryScheduled, recoveryStatus =
 assert(recoveryScheduled and recoveryStatus == "exhausted", "same-tuple DISPLAY should inherit recovery exhaustion")
 assert(#timers == timersAfterRecoveryBudget, "same-tuple fallback must not reset the recovery timer budget")
 assert(#calls == callsAfterRecoveryBudget, "same-tuple fallback must not issue more transport")
+
+local reloadedRecoveryAuth = {
+    Sender = recoveryAuth.Sender,
+    SenderInstallationId = recoveryAuth.SenderInstallationId,
+    SenderSessionId = "leader-session-reloaded",
+}
+local reloadedRecoveryEnvelope = {
+    Type = "DISPLAY",
+    MessageId = "leader-installation:leader-session-reloaded:1",
+    Payload = {
+        Displayed = true,
+        SyncId = exhaustedReference.SyncId,
+        RevisionId = exhaustedReference.RevisionId,
+        ContextRevisionId = exhaustedReference.ContextRevisionId,
+    },
+}
+pendingDisplayRequest = {
+    Sender = reloadedRecoveryAuth.Sender,
+    SenderInstallationId = reloadedRecoveryAuth.SenderInstallationId,
+    SenderSessionId = reloadedRecoveryAuth.SenderSessionId,
+    Payload = {
+        SyncId = exhaustedReference.SyncId,
+        RevisionId = exhaustedReference.RevisionId,
+        ContextRevisionId = exhaustedReference.ContextRevisionId,
+    },
+}
+recoveryScheduled, recoveryStatus =
+    AngryEra:DeferPendingDisplayRecovery(reloadedRecoveryAuth, reloadedRecoveryEnvelope, exhaustedReference)
+assert(recoveryScheduled and recoveryStatus == "scheduled", "a reloaded publisher session gets a fresh recovery budget")
+assert(#timers == timersAfterRecoveryBudget + 1, "session rotation should not inherit exhausted recovery attempts")
+assert(AngryEra:CancelPendingDisplayRecovery(), "reloaded-session recovery cleanup should cancel its timer")
 
 local formerLeaderAuth = {
     Sender = "Former-Realm",
@@ -781,6 +826,7 @@ sent, result, activatedLocally = AngryEra:SendDisplayMessage(6)
 assert(sent and result == "display-message" and activatedLocally, "display should publish after a session reset")
 assert(#calls == callsBeforeCachedDisplay + 2, "reset display should send DISPLAY before its snapshot")
 assert(#timers == timersBeforeResetDisplay + 1, "session reset should clear the exact page tuple cache")
+assert(calls[#calls].Payload.PageFollows == true, "a reset tuple cache should restore the proactive page promise")
 local postResetPageTimer = timers[#timers]
 sent, result = AngryEra:SendDisplayPageMessage(postResetPageTimer.Argument)
 assert(sent and result == "page-message", "the reset display should resend its page snapshot")

@@ -20,12 +20,25 @@ assert(meta.InstallationId == "ae3i:3e8:10:20:30", "Expected deterministic insta
 assert(AngryEra.identity.ValidateInstallationId(meta.InstallationId), "Generated installation identity should validate")
 assert(not AngryEra.identity.ValidateInstallationId("ae3i:03e8:10:20:30"), "Leading-zero segments should be rejected")
 assert(not AngryEra.identity.ValidateInstallationId("ae3i:3E8:10:20:30"), "Uppercase hex segments should be rejected")
+assert(
+    not AngryEra.identity.ValidateInstallationId("ae3i:100000000:1:2:3"),
+    "Installation identity components must fit compact unsigned fields"
+)
 assert(AngryEra.identity.ValidateInstallationId("ae3i:0:1:2:3"), "Canonical zero segments should remain valid")
 assert(meta.SchemaVersion == 1, "Expected identity schema version 1")
 assert(meta.NextEntitySequence == 0, "Expected a fresh entity sequence")
 assert(type(meta.EntityLocal) == "table", "Expected local entity metadata storage")
 assert(type(meta.SyncScopes) == "table", "Expected sync scope storage")
 assert(meta.Migrations.InstallationIdentity == 1, "Expected completed installation identity migration")
+
+randomIndex = 0
+local wrapped = AngryEra.identity.GenerateInstallationId({
+    now = function()
+        return 4294967297
+    end,
+    random = dependencies.random,
+})
+assert(wrapped == "ae3i:1:10:20:30", "Generated installation components should remain unsigned 32-bit values")
 
 meta.NextEntitySequence = 27
 meta.EntityLocal.example = { OwnedLocally = true }

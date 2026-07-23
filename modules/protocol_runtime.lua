@@ -98,6 +98,43 @@ local function IsDebugEnabled(self)
     return type(callback) == "function" and callback(self) == true
 end
 
+local function ChatThrottleDebugSnapshot()
+    local frameRate = "-"
+    local getFrameRate = rawget(_G, "GetFramerate")
+    if type(getFrameRate) == "function" then
+        local ok, value = pcall(getFrameRate)
+        if ok and type(value) == "number" and value >= 0 then
+            frameRate = tostring(math.floor(value + 0.5))
+        end
+    end
+
+    local available = "-"
+    local activeQueues = {}
+    local throttle = rawget(_G, "ChatThrottleLib")
+    if type(throttle) == "table" then
+        if type(throttle.avail) == "number" then
+            available = tostring(math.floor(throttle.avail))
+        end
+        local priorities = throttle.Prio
+        if type(priorities) == "table" then
+            for _, priority in ipairs({ "ALERT", "NORMAL", "BULK" }) do
+                local state = priorities[priority]
+                if
+                    type(state) == "table"
+                    and (
+                        (type(state.Ring) == "table" and state.Ring.pos ~= nil)
+                        or (type(state.Blocked) == "table" and state.Blocked.pos ~= nil)
+                    )
+                then
+                    activeQueues[#activeQueues + 1] = priority
+                end
+            end
+        end
+    end
+
+    return frameRate, available, #activeQueues > 0 and table.concat(activeQueues, ",") or "-"
+end
+
 local function IsActivePageMessage(messageType)
     return messageType == "DISPLAY"
         or messageType == "PAGE_UPSERT"
@@ -1067,7 +1104,13 @@ local function PrepareProtocolPacket(messageType, payload, options)
         return nil, envelopeError
     end
 
-    local encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec)
+    local encoded
+    local encodeError
+    if messageType == "DISPLAY" then
+        encoded, encodeError = protocol.EncodeCompactDisplayEnvelope(envelope, protocolCodec)
+    else
+        encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec)
+    end
     if not encoded then
         return nil, encodeError
     end
@@ -1093,9 +1136,11 @@ local function ProtocolSendDebugCallback(state, sentBytes, totalBytes, sendResul
         Trace(
             state.Self,
             "tx-start",
-            "type=%s id=%s queue=%dms bytes=%d chunks=%d",
+            "type=%s id=%s channel=%s target=%s queue=%dms bytes=%d chunks=%d",
             state.Type,
             state.MessageId,
+            state.Channel,
+            state.Target or "-",
             math.max(now - state.QueuedAt, 0),
             state.Bytes,
             state.Chunks
@@ -1106,9 +1151,11 @@ local function ProtocolSendDebugCallback(state, sentBytes, totalBytes, sendResul
         Trace(
             state.Self,
             "tx-done",
-            "type=%s id=%s drain=%dms bytes=%d result=%s",
+            "type=%s id=%s channel=%s target=%s drain=%dms bytes=%d result=%s",
             state.Type,
             state.MessageId,
+            state.Channel,
+            state.Target or "-",
             math.max(now - state.QueuedAt, 0),
             state.Bytes,
             tostring(sendResult)
@@ -1133,7 +1180,7 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
         Trace(
             self,
             "tx-submit",
-            "type=%s id=%s seq=%d sentAt=%d sync=%s rev=%s ctx=%s prefix=%s bytes=%d chunks=%d",
+            "type=%s id=%s seq=%d sentAt=%d sync=%s rev=%s ctx=%s prefix=%s channel=%s target=%s replyTo=%s bytes=%d chunks=%d",
             messageType,
             packet.Envelope.MessageId,
             packet.Envelope.Sequence,
@@ -1142,15 +1189,20 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
             revisionId,
             contextRevisionId,
             packet.Prefix,
+            packet.Channel,
+            packet.Target or "-",
+            packet.Envelope.ReplyTo or "-",
             encodedBytes,
             EncodedChunkCount(encodedBytes)
         )
         debugState = {
             Bytes = encodedBytes,
+            Channel = packet.Channel,
             Chunks = EncodedChunkCount(encodedBytes),
             MessageId = packet.Envelope.MessageId,
             QueuedAt = PreciseNowMilliseconds(),
             Self = self,
+            Target = packet.Target,
             Type = messageType,
         }
         debugCallback = ProtocolSendDebugCallback
@@ -1388,10 +1440,11 @@ function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
     activePageTransfer = state
     if debugEnabled then
         local syncId, revisionId, contextRevisionId = DebugReference("PAGE_UPSERT", payload)
+        local frameRate, throttleAvailable, throttleQueues = ChatThrottleDebugSnapshot()
         Trace(
             self,
             "page-stream-submit",
-            "id=%s seq=%d sentAt=%d generation=%d sync=%s rev=%s ctx=%s bytes=%d chunks=%d",
+            "id=%s seq=%d sentAt=%d generation=%d sync=%s rev=%s ctx=%s channel=%s bytes=%d chunks=%d fps=%s ctlAvail=%s ctlQueues=%s",
             state.MessageId,
             packet.Envelope.Sequence,
             packet.Envelope.SentAt,
@@ -1399,8 +1452,12 @@ function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
             syncId,
             revisionId,
             contextRevisionId,
+            state.Channel,
             state.Bytes,
-            state.TotalChunks
+            state.TotalChunks,
+            frameRate,
+            throttleAvailable,
+            throttleQueues
         )
     end
 
@@ -1665,7 +1722,11 @@ function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
         end
     end
 
-    local sent, result = self:SendProtocolDisplay(plan.Payload, {
+    local displayPayload = CopyMap(plan.Payload)
+    if plan.PageUpsertPayload then
+        displayPayload.PageFollows = true
+    end
+    local sent, result = self:SendProtocolDisplay(displayPayload, {
         Channel = "WHISPER",
         Target = auth.Sender,
         ReplyTo = envelope.MessageId,
@@ -1710,31 +1771,59 @@ function AngryEra:HandleProtocolDisplay(auth, _, envelope)
     local requestError
     if result.RequestNeeded then
         local deferred
-        if type(self.DeferPendingDisplayRecovery) == "function" then
-            local called, scheduled, status =
-                pcall(self.DeferPendingDisplayRecovery, self, auth, envelope, result.RequestPayload)
+        local recoveryStatus
+        if type(self.DeferPendingDisplayRecovery) == "function" and envelope.Payload.PageFollows == true then
+            local called, scheduled, status = pcall(
+                self.DeferPendingDisplayRecovery,
+                self,
+                auth,
+                envelope,
+                result.RequestPayload,
+                0,
+                envelope.ReplyTo ~= nil
+            )
             if called and scheduled then
                 deferred = true
                 result.RequestDeferred = true
-                result.RequestError = status
+                result.RecoveryScheduled = status == "scheduled"
+                recoveryStatus = status
             end
         end
         if not deferred then
             local requested
             requested, requestError = self:SendProtocolPageRequest(auth.Sender, envelope, result.RequestPayload)
             result.RequestSent = requested == true
-            result.RequestError = requestError
+            if type(self.DeferPendingDisplayRecovery) == "function" then
+                local called, scheduled, status = pcall(
+                    self.DeferPendingDisplayRecovery,
+                    self,
+                    auth,
+                    envelope,
+                    result.RequestPayload,
+                    requested and 1 or 0,
+                    true
+                )
+                if called and scheduled then
+                    result.RecoveryScheduled = status == "scheduled"
+                    recoveryStatus = status
+                end
+            end
         end
+        result.RequestError = requestError
+        result.RecoveryStatus = recoveryStatus
         if debugEnabled then
             Trace(
                 self,
                 "display-wait-page",
-                "id=%s sender=%s deferred=%s requestSent=%s status=%s",
+                "id=%s sender=%s pageFollows=%s deferred=%s requestSent=%s watchdog=%s request=%s recovery=%s",
                 envelope.MessageId,
                 auth.Sender,
+                tostring(envelope.Payload.PageFollows == true),
                 tostring(result.RequestDeferred == true),
                 tostring(result.RequestSent == true),
-                tostring(result.RequestError)
+                tostring(result.RecoveryScheduled == true),
+                tostring(result.RequestError),
+                tostring(result.RecoveryStatus)
             )
         end
     elseif type(self.CancelPendingDisplayRecovery) == "function" then
@@ -1892,17 +1981,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         return false, "invalid-transport-message-type"
     end
     local debugEnabled = IsDebugEnabled(self)
-    if debugEnabled then
-        Trace(
-            self,
-            "rx-raw",
-            "prefix=%s sender=%s channel=%s bytes=%d",
-            prefix,
-            sender,
-            tostring(channel),
-            type(data) == "string" and #data or 0
-        )
-    end
+    local decodeStarted = debugEnabled and PreciseNowMilliseconds() or 0
 
     sender = EnsureUnitFullName(sender)
     if not sender or NormalizePlayerKey(sender) == NormalizePlayerKey(PlayerFullName()) then
@@ -1916,8 +1995,27 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         return false, "unauthorized"
     end
 
-    local envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec)
+    local envelope
+    local decodeError
+    if prefix == protocol.DISPLAY_PREFIX then
+        envelope, decodeError = protocol.DecodeCompactDisplayEnvelope(data, protocolCodec)
+    else
+        envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec)
+    end
     if not envelope then
+        if debugEnabled then
+            Trace(
+                self,
+                "rx-drop",
+                "prefix=%s sender=%s channel=%s bytes=%d decode=%dms reason=%s",
+                prefix,
+                sender,
+                tostring(channel),
+                type(data) == "string" and #data or 0,
+                math.max(PreciseNowMilliseconds() - decodeStarted, 0),
+                tostring(decodeError)
+            )
+        end
         return false, decodeError
     end
     if
@@ -1937,7 +2035,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         Trace(
             self,
             "rx-decoded",
-            "type=%s id=%s seq=%d sentAt=%d age~=%dms sync=%s rev=%s ctx=%s sender=%s prefix=%s",
+            "type=%s id=%s seq=%d sentAt=%d age~=%dms sync=%s rev=%s ctx=%s sender=%s prefix=%s channel=%s replyTo=%s bytes=%d decode=%dms",
             envelope.Type,
             envelope.MessageId,
             envelope.Sequence,
@@ -1947,7 +2045,11 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
             revisionId,
             contextRevisionId,
             sender,
-            prefix
+            prefix,
+            tostring(channel),
+            envelope.ReplyTo or "-",
+            type(data) == "string" and #data or 0,
+            math.max(PreciseNowMilliseconds() - decodeStarted, 0)
         )
     end
 
