@@ -1,6 +1,7 @@
 <Ui>
 	<Include file="utils\utils.xml"/>
 	<Script file="identity.lua"/>
+	<Script file="utils\protocol.lua"/>
 	<Script file="entities.lua"/>
 	<Script file="smart_markers.lua"/>
 	<Script file="permissions.lua"/>

@@ -53,11 +53,13 @@ exports. A pinned entity cannot be removed by cleanup or a remote tombstone,
 but pinning does not freeze ordinary remote updates. Forking is the mechanism
 for diverging from authoritative content.
 
-The local provenance maps live under metadata, for example:
+Local provenance lives under metadata, for example:
 
 ```lua
-AngryAssign_Meta.localOwnership[syncId] = true
-AngryAssign_Meta.pins[syncId] = true
+AngryAssign_Meta.EntityLocal[syncId] = {
+    OwnedLocally = true,
+    Pinned = true,
+}
 ```
 
 ## Permission model
@@ -167,6 +169,8 @@ reuse after a reload:
     MessageId = "installation-id:session-id:sequence",
     ReplyTo = nil,
     SenderInstallationId = "installation-id",
+    SenderSessionId = "session-id",
+    Sequence = 1,
     SentAt = 1234567890,
     Payload = {},
 }
@@ -179,8 +183,15 @@ Receivers reject envelopes with:
 - malformed identifiers or payloads;
 - fields exceeding the existing communication limits.
 
+The envelope bounds installation IDs to 96 bytes, session IDs to 64 bytes,
+message IDs to 192 bytes, message types to 32 bytes, and capability maps to 32
+entries with 32-byte names. Encoded and compressed messages are limited to 256
+KiB; serialized messages are limited to 1 MiB. These limits are enforced both
+while sending and receiving.
+
 `VERSION_QUERY` is broadcast to the group. Each protocol-3 client replies by
-whisper with `VERSION`, including:
+whisper with `VERSION`. A client advertises only capabilities implemented by
+its current code. The capability map may grow to include:
 
 ```lua
 {
