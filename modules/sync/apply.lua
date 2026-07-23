@@ -32,7 +32,7 @@ end
 AngryEra.sync.apply = {}
 local apply = AngryEra.sync.apply
 
-local MAX_LOCAL_ID = 2147483647
+local MAX_LOCAL_ID = schema.LIMITS.LocalId
 local HISTORY_LIMIT = 10
 
 local STATE_KEYS = {

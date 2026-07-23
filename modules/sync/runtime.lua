@@ -36,7 +36,7 @@ end
 AngryEra.sync.runtime = {}
 local runtime = AngryEra.sync.runtime
 
-local MAX_LOCAL_ID = 2147483647
+local MAX_LOCAL_ID = schema.LIMITS.LocalId
 local AUTH_KEYS = {
     Sender = true,
     SenderInstallationId = true,

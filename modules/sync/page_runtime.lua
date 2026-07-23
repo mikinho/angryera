@@ -42,7 +42,7 @@ end
 AngryEra.sync.pageRuntime = {}
 local pageRuntime = AngryEra.sync.pageRuntime
 
-local MAX_LOCAL_ID = 2147483647
+local MAX_LOCAL_ID = schema.LIMITS.LocalId
 local MAX_RUNTIME_RECORDS = schema.LIMITS.EntityCount * 128
 local MAX_CONTEXT_ENTRIES = 32
 local HISTORY_LIMIT = 10

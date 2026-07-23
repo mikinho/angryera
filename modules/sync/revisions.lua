@@ -22,7 +22,7 @@ AngryEra.sync.revisions = {}
 local revisions = AngryEra.sync.revisions
 
 local UINT32_MODULUS = 4294967296
-local MAX_LOCAL_ID = 9007199254740991
+local MAX_LOCAL_ID = schema.LIMITS.LocalId
 local MAX_LOCAL_COPY_DEPTH = 16
 local MAX_LOCAL_COPY_ITEMS = 1024
 local CONTEXT_MARKER = {}

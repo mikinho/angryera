@@ -22,6 +22,7 @@ schema.LIMITS = {
     EntityCount = 512,
     TombstoneCount = 512,
     HierarchyDepth = 32,
+    LocalId = 9007199254740991,
     NameBytes = 100,
     ContentsBytes = 20000,
     VarsBytes = 5000,

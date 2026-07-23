@@ -116,6 +116,8 @@ local remoteInstallationId = "ae3i:a:b:c:d"
 local categorySyncId = localInstallationId .. ":category:1"
 local pageSyncId = localInstallationId .. ":page:2"
 local remotePageSyncId = remoteInstallationId .. ":page:9"
+local hashedCategorySyncId = localInstallationId .. ":category:5"
+local hashedPageSyncId = localInstallationId .. ":page:6"
 
 _G.AngryAssign_Meta = {
     SchemaVersion = 1,
@@ -124,6 +126,8 @@ _G.AngryAssign_Meta = {
     EntityLocal = {
         [categorySyncId] = { OwnedLocally = true },
         [pageSyncId] = { OwnedLocally = true },
+        [hashedCategorySyncId] = { OwnedLocally = true },
+        [hashedPageSyncId] = { OwnedLocally = true },
     },
     SyncScopes = {},
 }
@@ -134,6 +138,13 @@ _G.AngryAssign_Categories = {
         SyncId = categorySyncId,
         OwnerId = localInstallationId,
         Vars = "",
+    },
+    [4025479151] = {
+        Id = 4025479151,
+        Name = "Legacy Folder",
+        SyncId = hashedCategorySyncId,
+        OwnerId = localInstallationId,
+        Vars = "$raid=Legacy",
     },
 }
 _G.AngryAssign_Pages = {
@@ -152,6 +163,15 @@ _G.AngryAssign_Pages = {
         SyncId = remotePageSyncId,
         OwnerId = remoteInstallationId,
         Contents = "remote body",
+        Vars = "",
+    },
+    [3221957842] = {
+        Id = 3221957842,
+        Name = "Legacy Page",
+        SyncId = hashedPageSyncId,
+        OwnerId = localInstallationId,
+        CategoryId = 4025479151,
+        Contents = "Raid: {{$raid}}",
         Vars = "",
     },
 }
@@ -256,5 +276,19 @@ end
 AngryEra:UpdateDisplayed()
 assert(#rendered > 1, "a failing note API must not blank the display")
 assert(RenderedBody():find("Zessy", 1, true), "rendering should complete despite note API errors")
+
+-- Legacy hashed ids above 2^31 must prepare, activate, and render.
+AngryEra:ResetActivePageTransientState()
+local legacyDisplay, legacyPage = AngryEra:BuildActiveDisplayPayload(3221957842, {
+    UpdatedAt = time(),
+    UpdatedBy = "Viewer-Realm",
+})
+assert(legacyDisplay, "hashed local page ids should prepare: " .. tostring(legacyPage))
+local legacyActivated, legacyActivationError = AngryEra:ActivatePreparedActiveDisplay(legacyDisplay, legacyPage)
+assert(legacyActivated == true, "hashed local page ids should activate: " .. tostring(legacyActivationError))
+AngryAssign_State.displayed = 3221957842
+AngryEra.NotifyDisplayedNoteChanged = nil
+AngryEra:UpdateDisplayed()
+assert(RenderedBody():find("Raid: Legacy", 1, true), "hashed ids should render with inherited metadata")
 
 print("Display fallback tests passed.")

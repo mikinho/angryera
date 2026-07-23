@@ -277,7 +277,7 @@ local function IndexLocalRecords(currentState)
     }) do
         for localId, record in pairs(collection.Records) do
             if
-                not IsInteger(localId, 1, 2147483647)
+                not IsInteger(localId, 1, schema.LIMITS.LocalId)
                 or not IsPlainTable(record)
                 or record.Id ~= localId
                 or not identity.ValidateSyncId(record.SyncId, collection.Kind)
