@@ -186,7 +186,12 @@ function AngryEra:ConfirmImportCategory(data)
             end,
             OnCancel = function(popup, _, reason)
                 if reason == "clicked" then
-                    local newData = { Name = popup.data.Name, Children = popup.data.Children, Index = popup.data.Index }
+                    local newData = {
+                        Name = popup.data.Name,
+                        Vars = popup.data.Vars,
+                        Children = popup.data.Children,
+                        Index = popup.data.Index,
+                    }
                     newData.Name = AngryEra:GetUniqueEntityName(newData.Name, "Category")
                     AngryEra:DoImportCategory(newData)
                 end
@@ -230,11 +235,15 @@ function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpda
     end
 
     if overwriteId then
-        self:DeleteCategoryChildren(overwriteId)
+        local deleted, deleteError = self:DeleteCategoryChildren(overwriteId)
+        if not deleted then
+            return nil, deleteError
+        end
     end
 
     local fields = {
         Name = importedName,
+        Vars = data.Vars,
         CategoryId = (existing and existing.CategoryId) or parentId,
         Index = (existing and existing.Index) or data.Index,
     }
@@ -777,7 +786,11 @@ function AngryEra:Export(id, type, format)
         table.sort(pages, CompareIndexedEntries)
 
         if format == "Encoded AA" then
-            local data = self:GetCategoryExportData(id)
+            local data, exportError = self:GetCategoryExportData(id)
+            if not data then
+                self:Print("Unable to export category: " .. tostring(exportError or "invalid hierarchy"))
+                return
+            end
             local serialized = libS:Serialize(data)
             local compressed = libD:CompressDeflate(serialized)
             local encoded = libD:EncodeForPrint(compressed)

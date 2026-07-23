@@ -9,6 +9,7 @@ local AngryEra = app.AngryEra
 local helpers = AngryEra.utils.helpers
 local colors = AngryEra.utils.colors
 local tags = AngryEra.utils.tags
+local variableHelpers = AngryEra.utils.variables
 
 local EnsureUnitShortName = helpers.EnsureUnitShortName
 local IterateGroupMembers = helpers.IterateGroupMembers
@@ -496,50 +497,57 @@ end
 -- @treturn string text Rendered text.
 -- @treturn table mergedVars Merged variable map used for rendering.
 function AngryEra:RenderPageContent(page, ctx)
-    local text = page.Contents:gsub("||", "|")
+    local contents = type(page.Contents) == "string" and page.Contents or ""
+    local text = contents:gsub("||", "|")
+    local layers
+    local variableError
 
-    local mergedVars = {}
-
-    -- Helper to merge variables strings
-    local function MergeAppVars(varStr)
-        if varStr and varStr ~= "" and varStr ~= "{}" then
-            local vars = AngryEra.utils.json.ParseVariables(varStr)
-            for k, v in pairs(vars) do
-                mergedVars[k] = v
-            end
+    if page.CategoryId then
+        local chain, chainError = variableHelpers.CollectCategoryChain(AngryAssign_Categories, page.CategoryId)
+        if chain then
+            layers, variableError = variableHelpers.BuildAncestorVariableLayers(chain)
+        else
+            variableError = chainError
         end
     end
 
-    if LibMustache then
-        -- Merge Category Variables
-        if page.CategoryId then
-            local cat = AngryAssign_Categories[page.CategoryId]
-            if cat then
-                MergeAppVars(cat.Vars)
-            end
-        elseif page.CatVars then
-            MergeAppVars(page.CatVars)
+    if not layers and page.AncestorVariableLayers then
+        local wireLayers, wireError =
+            variableHelpers.ValidateAncestorVariableLayers(page.AncestorVariableLayers, page.ParentSyncId)
+        if wireLayers then
+            layers = wireLayers
+        else
+            variableError = variableError or wireError
         end
+    end
 
-        -- Merge Page Variables (Override Category)
-        MergeAppVars(page.Vars)
+    -- Temporary protocol-1 fallback until the final hard cutover.
+    if not layers and type(page.CatVars) == "string" then
+        layers = {
+            { Vars = page.CatVars },
+        }
+    end
+    layers = layers or {}
 
-        -- Resolve references between merged variables before rendering the page.
-        mergedVars = AngryEra.utils.json.ResolveVariableReferences(mergedVars)
+    local mergedVars, mergeError = variableHelpers.MergeVariableLayers(layers, page.Vars)
+    if not mergedVars then
+        variableError = variableError or mergeError
+        mergedVars = variableHelpers.MergeVariableLayers({}, page.Vars) or {}
+    end
 
-        -- Add Variables to Context for Mustache
+    if LibMustache then
+        ctx = ctx or {}
         for k, v in pairs(mergedVars) do
             ctx[k] = v
         end
 
-        -- Render
         local success, result = pcall(LibMustache.render, text, ctx)
         if success then
             text = result
         end
     end
 
-    return text, mergedVars
+    return text, mergedVars, variableError
 end
 
 --- Applies lightweight markdown transformations used by the display layer.

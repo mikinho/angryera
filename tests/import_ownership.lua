@@ -91,6 +91,7 @@ end
 
 function AngryEra:DeleteCategoryChildren()
     deletedCategoryChildren = deletedCategoryChildren + 1
+    return true
 end
 
 function AngryEra:UpdateTree() end
@@ -147,6 +148,7 @@ AngryAssign_Categories[3] = {
 }
 local forkedCategoryId = AngryEra:DoImportCategory({
     Name = "Remote Category",
+    Vars = "MT=ForkedTank",
     Children = {},
 }, nil, 3)
 assert(forkedCategoryId ~= 3, "An uneditable remote category should import as a new local record")
@@ -155,6 +157,10 @@ assert(
     "A local category fork should have a unique name"
 )
 assert(AngryAssign_Categories[forkedCategoryId].LocallyOwned, "The imported category fork should be locally owned")
+assert(
+    AngryAssign_Categories[forkedCategoryId].Vars == "MT=ForkedTank",
+    "A category fork should retain imported variables"
+)
 assert(deletedCategoryChildren == 0, "Remote descendants must not be deleted before the fork decision")
 assert(replacedCategories == 0, "Forking a remote category must not preserve its remote identity")
 
@@ -166,9 +172,11 @@ AngryAssign_Categories[4] = {
 }
 local replacedCategoryId = AngryEra:DoImportCategory({
     Name = "Local Category",
+    Vars = "MT=ReplacementTank",
     Children = {},
 }, nil, 4)
 assert(replacedCategoryId == 4, "A locally owned category should remain replaceable")
+assert(AngryAssign_Categories[4].Vars == "MT=ReplacementTank", "Category replacement should retain variables")
 assert(deletedCategoryChildren == 1, "Replacing a local category should clear its prior descendants")
 assert(replacedCategories == 1, "Local category replacement should preserve its identity")
 

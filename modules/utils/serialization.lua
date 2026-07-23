@@ -33,22 +33,48 @@ end
 
 serialization.ValidateEncodedPagePayload = ValidateEncodedPagePayload
 
+local MAX_CATEGORY_DEPTH = 32
+
 local ValidateEncodedCategoryPayload
-ValidateEncodedCategoryPayload = function(data, path)
+ValidateEncodedCategoryPayload = function(data, path, state)
     if type(data) ~= "table" then
         return false, path .. " must be a table."
     end
+    state = state or {
+        depth = 0,
+        seen = {},
+    }
+    if state.seen[data] then
+        return false, path .. " contains a repeated or cyclic category."
+    end
+    if state.depth >= MAX_CATEGORY_DEPTH then
+        return false, path .. " exceeds the maximum category depth."
+    end
+    state.seen[data] = true
+
     if type(data.Name) ~= "string" or data.Name:match("^%s*$") then
         return false, path .. ".Name must be a non-empty string."
     end
     if type(data.Children) ~= "table" then
         return false, path .. ".Children must be a table."
     end
+    if data.Vars ~= nil and type(data.Vars) ~= "string" then
+        return false, path .. ".Vars must be a string when provided."
+    end
 
+    local childCount = 0
+    local highestChildIndex = 0
     for key in pairs(data.Children) do
         if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
             return false, path .. ".Children must be an array."
         end
+        childCount = childCount + 1
+        if key > highestChildIndex then
+            highestChildIndex = key
+        end
+    end
+    if childCount ~= highestChildIndex then
+        return false, path .. ".Children must be a dense array."
     end
 
     for index, child in ipairs(data.Children) do
@@ -57,7 +83,10 @@ ValidateEncodedCategoryPayload = function(data, path)
         if
             childType == "Category" or (childType == nil and type(child) == "table" and type(child.Children) == "table")
         then
-            local ok, err = ValidateEncodedCategoryPayload(child, childPath)
+            local ok, err = ValidateEncodedCategoryPayload(child, childPath, {
+                depth = state.depth + 1,
+                seen = state.seen,
+            })
             if not ok then
                 return false, err
             end
@@ -143,13 +172,28 @@ function serialization.EncodeExportString(data, dataType)
     return "AA:" .. dataType .. ":1:" .. encoded
 end
 
-function serialization.GetCategoryExportData(self, catId)
+function serialization.GetCategoryExportData(self, catId, state)
+    state = state or {
+        depth = 0,
+        seen = {},
+    }
+    if state.seen[catId] then
+        return nil, "category-cycle"
+    end
+    if state.depth >= MAX_CATEGORY_DEPTH then
+        return nil, "category-depth-exceeded"
+    end
+    state.seen[catId] = true
+
     local cat = self:GetCat(catId)
     if not cat then
         return nil
     end
 
     local data = { Type = "Category", Name = cat.Name, Children = {} }
+    if cat.Vars and cat.Vars ~= "" and cat.Vars ~= "{}" then
+        data.Vars = cat.Vars
+    end
 
     local entries = {}
     for _, p in pairs(AngryAssign_Pages) do
@@ -163,11 +207,15 @@ function serialization.GetCategoryExportData(self, catId)
     end
     for _, c in pairs(AngryAssign_Categories) do
         if c.CategoryId == catId then
-            local childCatData = serialization.GetCategoryExportData(self, c.Id)
-            if childCatData then
-                childCatData.Index = c.Index or 0
-                table.insert(entries, childCatData)
+            local childCatData, childError = serialization.GetCategoryExportData(self, c.Id, {
+                depth = state.depth + 1,
+                seen = state.seen,
+            })
+            if not childCatData then
+                return nil, childError
             end
+            childCatData.Index = c.Index or 0
+            table.insert(entries, childCatData)
         end
     end
 

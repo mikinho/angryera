@@ -8,9 +8,9 @@ local _, app = ...
 local AngryEra = app.AngryEra
 local helpers = AngryEra.utils.helpers
 local selectedLastValue = helpers.selectedLastValue
-local tReverse = helpers.tReverse
 local IsCategoryDescendant = helpers.IsCategoryDescendant
 local ExtractAndValidateName = helpers.ExtractAndValidateName
+local unpackValues = unpack or rawget(table, "unpack")
 
 local libC = app.libs.libC
 
@@ -103,28 +103,94 @@ function AngryEra:GetUniqueEntityName(name, type)
     return newName
 end
 
+local function CollectCategoryDescendants(rootId)
+    local children = {}
+    for id, category in pairs(AngryAssign_Categories) do
+        if type(category) ~= "table" or type(id) ~= "number" or id < 1 or id % 1 ~= 0 or category.Id ~= id then
+            return nil, "invalid-category-id"
+        end
+        if category.CategoryId then
+            if type(category.CategoryId) ~= "number" or category.CategoryId < 1 or category.CategoryId % 1 ~= 0 then
+                return nil, "invalid-category-parent"
+            end
+            children[category.CategoryId] = children[category.CategoryId] or {}
+            children[category.CategoryId][#children[category.CategoryId] + 1] = id
+        end
+    end
+    for _, childIds in pairs(children) do
+        table.sort(childIds)
+    end
+
+    local visiting = {}
+    local visited = {}
+    local descendants = {}
+    local function Visit(categoryId, depth)
+        if visiting[categoryId] then
+            return false, "category-cycle"
+        end
+        if visited[categoryId] then
+            return true
+        end
+        if depth > 32 then
+            return false, "category-depth-exceeded"
+        end
+
+        visiting[categoryId] = true
+        for _, childId in ipairs(children[categoryId] or {}) do
+            local ok, traversalError = Visit(childId, depth + 1)
+            if not ok then
+                return false, traversalError
+            end
+        end
+        visiting[categoryId] = nil
+        visited[categoryId] = true
+        if categoryId ~= rootId then
+            descendants[#descendants + 1] = categoryId
+        end
+        return true
+    end
+
+    local ok, traversalError = Visit(rootId, 1)
+    if not ok then
+        return nil, traversalError
+    end
+    return descendants, visited
+end
+
 --- Deletes all nested categories and pages under a category id.
 -- @tparam number catId Category id to recursively clear.
+-- @treturn boolean ok
+-- @treturn string|nil errorCode
 function AngryEra:DeleteCategoryChildren(catId)
-    -- Delete sub-categories recursively
-    for id, cat in pairs(AngryAssign_Categories) do
-        if cat.CategoryId == catId then
-            self:DeleteCategoryChildren(id)
-            self:RemoveCategoryRecord(id)
-            if AngryAssign_State.tree.groups then
-                AngryAssign_State.tree.groups[-id] = nil
-            end
-        end
+    local descendantIds, categorySet = CollectCategoryDescendants(catId)
+    if not descendantIds then
+        return false, categorySet
     end
-    -- Delete pages
+
+    local pageIds = {}
     for id, page in pairs(AngryAssign_Pages) do
-        if page.CategoryId == catId then
-            self:RemovePageRecord(id)
-            if AngryAssign_State.displayed == id then
-                self:ClearDisplayed()
+        if type(page) == "table" and categorySet[page.CategoryId] then
+            if type(id) ~= "number" or id < 1 or id % 1 ~= 0 then
+                return false, "invalid-page-id"
             end
+            pageIds[#pageIds + 1] = id
         end
     end
+    table.sort(pageIds)
+
+    for _, pageId in ipairs(pageIds) do
+        self:RemovePageRecord(pageId)
+        if AngryAssign_State.displayed == pageId then
+            self:ClearDisplayed()
+        end
+    end
+    for _, categoryId in ipairs(descendantIds) do
+        self:RemoveCategoryRecord(categoryId)
+        if AngryAssign_State.tree.groups then
+            AngryAssign_State.tree.groups[-categoryId] = nil
+        end
+    end
+    return true
 end
 
 -- ----------------------------------
@@ -242,25 +308,25 @@ function AngryEra:SetSelectedId(selectedId)
     local page = AngryAssign_Pages[selectedId]
     if page then
         if page.CategoryId then
-            local cat = AngryAssign_Categories[page.CategoryId]
-            local path = {}
-            while cat do
-                table.insert(path, -cat.Id)
-                if cat.CategoryId then
-                    cat = AngryAssign_Categories[cat.CategoryId]
-                else
-                    cat = nil
-                end
+            local chain = AngryEra.utils.variables.CollectCategoryChain(AngryAssign_Categories, page.CategoryId)
+            if not chain then
+                self.window.tree:SelectByValue(page.Id)
+                return false
             end
-            tReverse(path)
+            local path = {}
+            for _, category in ipairs(chain) do
+                path[#path + 1] = -category.Id
+            end
             table.insert(path, page.Id)
-            self.window.tree:SelectByPath(unpack(path))
+            self.window.tree:SelectByPath(unpackValues(path))
         else
             self.window.tree:SelectByValue(page.Id)
         end
+        return true
     else
         self.window.tree:SetSelected()
     end
+    return false
 end
 
 --- Returns a page by id or current selection.
@@ -506,7 +572,10 @@ function AngryEra:DeleteCategoryAndChildren(id)
 
     local selectedId = self:SelectedId()
 
-    self:DeleteCategoryChildren(id)
+    local deleted = self:DeleteCategoryChildren(id)
+    if not deleted then
+        return false
+    end
 
     if AngryAssign_State.tree.groups then
         AngryAssign_State.tree.groups[-id] = nil
@@ -516,6 +585,7 @@ function AngryEra:DeleteCategoryAndChildren(id)
 
     self:UpdateTree()
     self:SetSelectedId(selectedId)
+    return true
 end
 
 --- Assigns a page/category into a category (or toggles back to root).

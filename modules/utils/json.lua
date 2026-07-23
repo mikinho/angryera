@@ -460,7 +460,23 @@ function json.ResolveVariableReferences(variables, maxDepth)
         return result
     end
 
+    local keys = {}
     for key in pairs(variables) do
+        keys[#keys + 1] = key
+    end
+    table.sort(keys, function(a, b)
+        local aType = type(a)
+        local bType = type(b)
+        if aType ~= bType then
+            return aType < bType
+        end
+        if aType == "number" or aType == "string" then
+            return a < b
+        end
+        return tostring(a) < tostring(b)
+    end)
+
+    for _, key in ipairs(keys) do
         ResolveValue(key, 0)
     end
 
