@@ -143,7 +143,7 @@ local function ParseMessageId(value)
     then
         return nil
     end
-    return installationId
+    return installationId, sessionId
 end
 
 local function ValidateRevisionId(value)
@@ -315,11 +315,16 @@ local function ValidateScopeRecordInternal(record, hashCallback)
     if not identity.ValidateInstallationId(record.AuthorityInstallationId) then
         return false, "invalid-authority-installation-id"
     end
-    if ParseMessageId(record.AuthorityEpoch) ~= record.AuthorityInstallationId then
+    local epochInstallationId, epochSessionId = ParseMessageId(record.AuthorityEpoch)
+    if epochInstallationId ~= record.AuthorityInstallationId then
         return false, "invalid-authority-epoch"
     end
-    if ParseMessageId(record.ManifestId) ~= record.AuthorityInstallationId then
+    local manifestInstallationId, manifestSessionId = ParseMessageId(record.ManifestId)
+    if manifestInstallationId ~= record.AuthorityInstallationId then
         return false, "invalid-scope-manifest-id"
+    end
+    if epochSessionId ~= manifestSessionId then
+        return false, "authority-session-mismatch"
     end
     if not ValidateRevisionId(record.ManifestHash) then
         return false, "invalid-scope-manifest-hash"

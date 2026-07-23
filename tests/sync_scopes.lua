@@ -275,6 +275,13 @@ local invalidRecordCases = {
         end,
     },
     {
+        Name = "manifest from another authority session",
+        Error = "authority-session-mismatch",
+        Mutate = function(record)
+            record.ManifestId = installationId .. ":session_B-2:10"
+        end,
+    },
+    {
         Name = "bad manifest hash",
         Error = "invalid-scope-manifest-hash",
         Mutate = function(record)
