@@ -11,6 +11,7 @@ assert(loadfile("modules/api.lua"))("AngryEra", app)
 
 local AngryEra = app.AngryEra
 local json = app.AngryEra.utils.json
+local variables = app.AngryEra.utils.variables
 
 assert(AngryEra.NOTE_API_VERSION == 1, "The note API version should be published")
 assert(AngryEra.NOTE_UPDATE_EVENT == "ANGRYERA_NOTE_UPDATE", "The note event name should be published")
@@ -78,11 +79,30 @@ local wirePage = {
     UpdatedAt = 1234567890,
     UpdatedBy = "Zessy-Pagle",
 }
+local deepJsonValue = "\"bottom\""
+for _ = 1, 96 do
+    deepJsonValue = "{\"level\":" .. deepJsonValue .. "}"
+end
+local parsedDeepVariables, deepParseError = variables.MergeVariableLayers({}, "{\"Deep\":" .. deepJsonValue .. "}")
+assert(parsedDeepVariables and not deepParseError, "The variable parser should accept nesting deeper than 64")
+
+local structuredMeta = {
+    assignments = {
+        tanks = { "Zessy", "Kwayteow" },
+    },
+    optional = json.JSON_NULL,
+}
+local cyclicValue = {}
+cyclicValue.self = cyclicValue
 local mergedVariables = {
     MT = "Zessy",
+    Cycle = cyclicValue,
+    Deep = parsedDeepVariables.Deep,
     NullValue = json.JSON_NULL,
     ["$encounter"] = "Patchwerk",
     ["$phase"] = 2,
+    ["$strategy"] = structuredMeta,
+    ["$null"] = json.JSON_NULL,
 }
 
 local announced = AngryEra:NotifyDisplayedNoteChanged({
@@ -114,22 +134,48 @@ assert(note.Raw == wirePage.Contents, "Raw contents should be exposed")
 assert(note.Rendered == "PATCHWERK - MT: Zessy", "Rendered text should be exposed")
 assert(note.UpdatedAt == 1234567890 and note.UpdatedBy == "Zessy-Pagle", "Revision audit fields should be exposed")
 assert(note.Vars.MT == "Zessy", "Public variables should be exposed")
-assert(note.Vars.NullValue == json.JSON_NULL, "JSON null identity should survive the snapshot clone")
+assert(note.Vars.Cycle ~= cyclicValue, "Cyclic public values should detach from their source")
+assert(note.Vars.Cycle.self == note.Vars.Cycle, "Cyclic public values should retain their topology")
+assert(note.Vars.NullValue ~= json.JSON_NULL, "The internal JSON null singleton should not escape")
+assert(AngryEra:IsDisplayedNull(note.Vars.NullValue), "Public JSON null markers should be recognizable")
 assert(note.Vars["$encounter"] == nil, "Metadata should not leak into public variables")
 assert(note.Meta.encounter == "Patchwerk" and note.Meta.phase == 2, "Metadata should be exposed with prefix stripped")
+assert(note.Meta.strategy ~= structuredMeta, "Structured metadata should detach from the source")
+assert(note.Meta.strategy.assignments.tanks[2] == "Kwayteow", "Structured metadata should be published")
+assert(AngryEra:IsDisplayedNull(note.Meta.strategy.optional), "Nested metadata nulls should be recognizable")
+assert(AngryEra:IsDisplayedNull(note.Meta.null), "Top-level metadata nulls should be recognizable")
+
+local deepCursor = note.Vars.Deep
+for _ = 1, 96 do
+    assert(type(deepCursor) == "table", "Deep parser values should not be truncated by the getter")
+    deepCursor = deepCursor.level
+end
+assert(deepCursor == "bottom", "The deepest parser value should survive the detached copy")
 
 local meta = AngryEra:GetDisplayedMeta()
 local vars = AngryEra:GetDisplayedVars()
 assert(meta.encounter == "Patchwerk", "GetDisplayedMeta should expose stripped metadata")
 assert(vars.MT == "Zessy" and vars["$phase"] == nil, "GetDisplayedVars should exclude metadata")
+assert(AngryEra:IsDisplayedNull(meta.null), "The metadata getter should preserve public null semantics")
 
 note.Meta.encounter = "Mutated"
+note.Meta.strategy.assignments.tanks[1] = "Mutated"
 note.Vars.MT = "Mutated"
 note.Ancestors[1].Name = "Mutated"
+note.Vars.NullValue.consumerMutation = true
+structuredMeta.assignments.tanks[1] = "Source mutation"
 local secondNote = AngryEra:GetDisplayedNote()
 assert(secondNote.Meta.encounter == "Patchwerk", "Snapshot metadata should be detached per call")
+assert(secondNote.Meta.strategy.assignments.tanks[1] == "Zessy", "Structured metadata should be deeply detached")
 assert(secondNote.Vars.MT == "Zessy", "Snapshot variables should be detached per call")
 assert(secondNote.Ancestors[1].Name == "Naxxramas", "Snapshot ancestors should be detached per call")
+assert(
+    AngryEra:IsDisplayedNull(secondNote.Vars.NullValue) and secondNote.Vars.NullValue.consumerMutation == nil,
+    "Mutating a public null marker should not affect later getters"
+)
+assert(secondNote.Vars.NullValue ~= note.Vars.NullValue, "Every getter should own its public null markers")
+assert(json.JSON_NULL.consumerMutation == nil, "Public null mutations should not reach the codec singleton")
+structuredMeta.assignments.tanks[1] = "Zessy"
 
 announced = AngryEra:NotifyDisplayedNoteChanged({
     Page = wirePage,
@@ -156,16 +202,80 @@ announced = AngryEra:NotifyDisplayedNoteChanged({
 assert(announced == true, "A category rename should announce")
 assert(scanEvents[3][3] == "Renamed Quarter", "The renamed category should be carried by the event")
 
+categoriesBySyncId[rootSyncId].Name = "Renamed Naxxramas"
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK - MT: Kwayteow",
+    MergedVariables = mergedVariables,
+})
+assert(announced == true, "A non-direct ancestor rename should announce")
+assert(#scanEvents == 4, "The ancestor rename should fire both event pathways once")
+assert(AngryEra:GetDisplayedNote().Ancestors[1].Name == "Renamed Naxxramas", "The renamed ancestor should publish")
+
+wirePage.UpdatedBy = "Kwayteow-Pagle"
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK - MT: Kwayteow",
+    MergedVariables = mergedVariables,
+})
+assert(announced == true, "A published audit-field change should announce")
+assert(#scanEvents == 5, "The audit-field change should fire the event")
+
+structuredMeta.assignments.tanks[1] = "Thorn"
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK - MT: Kwayteow",
+    MergedVariables = mergedVariables,
+})
+assert(announced == true, "A metadata-only change should announce")
+assert(#scanEvents == 6, "The metadata-only change should fire the event")
+assert(AngryEra:GetDisplayedMeta().strategy.assignments.tanks[1] == "Thorn", "Changed metadata should publish")
+
 announced = AngryEra:NotifyDisplayedNoteChanged(nil)
 assert(announced == true, "Clearing the display should announce")
 assert(AngryEra:GetDisplayedNote() == nil, "A cleared display should expose no note")
 assert(AngryEra:GetDisplayedVars() == nil, "A cleared display should expose no variables")
 assert(AngryEra:GetDisplayedMeta() == nil, "A cleared display should expose no metadata")
-assert(scanEvents[4][1] == nil and scanEvents[4][2] == nil, "The cleared event should carry nil identifiers")
+assert(scanEvents[7][1] == nil and scanEvents[7][2] == nil, "The cleared event should carry nil identifiers")
 
 announced = AngryEra:NotifyDisplayedNoteChanged(nil)
 assert(announced == false, "A repeated clear should not announce")
-assert(#scanEvents == 4, "Repeated clears should not repeat events")
+assert(#scanEvents == 7, "Repeated clears should not repeat events")
+
+-- JSON null and an empty object are distinct published values.
+local nullObjectVariables = { Shape = json.JSON_NULL }
+local nullObjectEventCount = #scanEvents
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK",
+    MergedVariables = nullObjectVariables,
+})
+assert(announced == true, "Restoring a note with a JSON null should announce")
+
+nullObjectVariables.Shape = {}
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK",
+    MergedVariables = nullObjectVariables,
+})
+assert(announced == true, "Changing JSON null to an empty object should announce")
+assert(
+    not AngryEra:IsDisplayedNull(AngryEra:GetDisplayedVars().Shape),
+    "An empty object should not publish as JSON null"
+)
+
+nullObjectVariables.Shape = json.JSON_NULL
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK",
+    MergedVariables = nullObjectVariables,
+})
+assert(announced == true, "Changing an empty object back to JSON null should announce")
+assert(#scanEvents == nullObjectEventCount + 3, "Each null/object transition should fire the event")
+assert(
+    AngryEra:IsDisplayedNull(AngryEra:GetDisplayedVars().Shape),
+    "The restored JSON null should publish as a null marker"
+)
 
 -- Local fallback: the active reference belongs to a different page.
 local localPage = {

@@ -20,16 +20,29 @@ assert(variables.IsMetaVariableKey("M$T") == false, "Only a leading $ marks meta
 assert(variables.IsMetaVariableKey(nil) == false, "Nil keys should not be metadata")
 assert(variables.IsMetaVariableKey(7) == false, "Numeric keys should not be metadata")
 
-local nestedValue = { inner = "table" }
+local nestedValue = {
+    inner = "table",
+    child = { role = "healer" },
+}
+local sharedValue = { marker = "shared" }
+local structuredMeta = {
+    difficulty = "normal",
+    phases = {
+        { name = "one" },
+        { name = "two" },
+    },
+}
 local resolved = {
     MT = "Zessy",
     OT1 = "Kwayteow",
     Healers = nestedValue,
+    Shared = sharedValue,
     NullValue = json.JSON_NULL,
     ["$encounter"] = "Patchwerk",
     ["$phase"] = 2,
     ["$optional"] = false,
-    ["$table"] = { dropped = true },
+    ["$table"] = structuredMeta,
+    ["$shared"] = sharedValue,
     ["$null"] = json.JSON_NULL,
     ["$"] = "dropped",
     ["$$raw"] = "kept",
@@ -40,23 +53,45 @@ assert(publicVariables and meta and not partitionError, "A valid resolved map sh
 
 assert(publicVariables.MT == "Zessy", "Public values should be preserved")
 assert(publicVariables.OT1 == "Kwayteow", "All public keys should be preserved")
-assert(publicVariables.Healers == nestedValue, "Public table values should be copied by reference")
+assert(publicVariables.Healers ~= nestedValue, "Public table values should be detached")
+assert(publicVariables.Healers.child ~= nestedValue.child, "Nested public tables should be detached")
+assert(publicVariables.Healers.child.role == "healer", "Nested public data should be preserved")
 assert(publicVariables.NullValue == json.JSON_NULL, "JSON null identity should survive partitioning")
 assert(publicVariables["$encounter"] == nil, "Metadata keys should not leak into public values")
 
 assert(meta.encounter == "Patchwerk", "String metadata should strip the prefix")
 assert(meta.phase == 2, "Numeric metadata should be preserved")
 assert(meta.optional == false, "Boolean false metadata should be preserved")
-assert(meta.table == nil, "Table metadata values should be dropped")
-assert(meta.null == nil, "JSON null metadata values should be dropped")
+assert(meta.table ~= structuredMeta, "Structured metadata should be detached")
+assert(meta.table.phases ~= structuredMeta.phases, "Nested metadata tables should be detached")
+assert(meta.table.phases[2].name == "two", "Structured metadata should be preserved")
+assert(meta.null == json.JSON_NULL, "JSON null metadata should be preserved")
 assert(meta[""] == nil, "A bare $ key should be dropped")
 assert(meta["$raw"] == "kept", "Only the first $ should be stripped")
+assert(publicVariables.Shared == meta.shared, "Shared references should survive across partition outputs")
+assert(publicVariables.Shared ~= sharedValue, "Shared output values should still detach from input")
 
 assert(resolved["$encounter"] == "Patchwerk", "The input map should not be mutated")
 publicVariables.MT = "Changed"
+publicVariables.Healers.child.role = "changed"
 meta.encounter = "Changed"
+meta.table.phases[2].name = "changed"
 assert(resolved.MT == "Zessy", "Public output should be detached from the input")
+assert(nestedValue.child.role == "healer", "Nested public mutations should not reach the input")
 assert(resolved["$encounter"] == "Patchwerk", "Metadata output should be detached from the input")
+assert(structuredMeta.phases[2].name == "two", "Nested metadata mutations should not reach the input")
+
+-- Cyclic and aliased values remain bounded and detached rather than recursing forever.
+local cyclicValue = {}
+cyclicValue.self = cyclicValue
+local cyclicPublic, cyclicMeta, cyclicError = variables.PartitionResolvedVariables({
+    Cycle = cyclicValue,
+    ["$cycle"] = cyclicValue,
+})
+assert(cyclicPublic and cyclicMeta and not cyclicError, "Cyclic variable graphs should partition safely")
+assert(cyclicPublic.Cycle ~= cyclicValue, "Cyclic output should detach from its source")
+assert(cyclicPublic.Cycle.self == cyclicPublic.Cycle, "A detached cycle should retain its topology")
+assert(cyclicMeta.cycle == cyclicPublic.Cycle, "Aliases spanning public and metadata values should survive")
 
 local invalidPublic, invalidMeta, invalidError = variables.PartitionResolvedVariables("nope")
 assert(invalidPublic == nil and invalidMeta == nil, "Non-table input should fail")

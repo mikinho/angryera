@@ -322,6 +322,82 @@ end
 
 variables.META_VARIABLE_PREFIX = "$"
 
+local MAX_PARTITION_TABLES = 4096
+local MAX_PARTITION_ENTRIES = 32768
+
+local function CloneVariableGraph(value)
+    if type(value) ~= "table" or value == json.JSON_NULL then
+        return value
+    end
+
+    local copies = {}
+    local pending = {}
+    local tableCount = 0
+    local entryCount = 0
+
+    local function QueueTable(source)
+        if source == json.JSON_NULL then
+            return source
+        end
+
+        local existing = copies[source]
+        if existing then
+            return existing
+        end
+
+        tableCount = tableCount + 1
+        if tableCount > MAX_PARTITION_TABLES then
+            return nil, "variables-too-complex"
+        end
+
+        local copy = {}
+        copies[source] = copy
+        pending[#pending + 1] = {
+            Source = source,
+            Copy = copy,
+        }
+        return copy
+    end
+
+    local root, rootError = QueueTable(value)
+    if not root then
+        return nil, rootError
+    end
+
+    while #pending > 0 do
+        local work = pending[#pending]
+        pending[#pending] = nil
+
+        for key, entry in pairs(work.Source) do
+            entryCount = entryCount + 1
+            if entryCount > MAX_PARTITION_ENTRIES then
+                return nil, "variables-too-complex"
+            end
+
+            local copiedKey = key
+            if type(key) == "table" then
+                local keyError
+                copiedKey, keyError = QueueTable(key)
+                if not copiedKey then
+                    return nil, keyError
+                end
+            end
+
+            local copiedEntry = entry
+            if type(entry) == "table" then
+                local entryError
+                copiedEntry, entryError = QueueTable(entry)
+                if not copiedEntry then
+                    return nil, entryError
+                end
+            end
+            work.Copy[copiedKey] = copiedEntry
+        end
+    end
+
+    return root
+end
+
 --- Reports whether a resolved variable key is reserved page metadata.
 -- Metadata keys start with the `$` prefix and never enter display highlights.
 -- @tparam any key Candidate variable key.
@@ -331,9 +407,10 @@ function variables.IsMetaVariableKey(key)
 end
 
 --- Splits resolved variables into public template values and `$` metadata.
--- Metadata keys are exposed with the prefix stripped; empty stripped names and
--- non-scalar metadata values are dropped. The input table is never mutated and
--- both returned tables are new tables whose values are copied by reference.
+-- Metadata keys are exposed with the prefix stripped; only empty stripped names
+-- are dropped. The input table is never mutated. Returned values are deeply
+-- detached while preserving shared references, cycles, and the JSON-null
+-- sentinel used by the internal codec.
 -- @tparam table resolved Resolved variable map from `MergeVariableLayers`.
 -- @treturn table|nil publicVariables
 -- @treturn table|nil meta
@@ -343,19 +420,25 @@ function variables.PartitionResolvedVariables(resolved)
         return nil, nil, "invalid-variables"
     end
 
-    local publicVariables = {}
-    local meta = {}
-    for key, value in pairs(resolved) do
+    for key in pairs(resolved) do
         if type(key) ~= "string" then
             return nil, nil, "invalid-variables"
         end
+    end
 
+    local detached, cloneError = CloneVariableGraph(resolved)
+    if not detached then
+        return nil, nil, cloneError
+    end
+
+    local publicVariables = {}
+    local meta = {}
+    for key, value in pairs(detached) do
         if not variables.IsMetaVariableKey(key) then
             publicVariables[key] = value
         else
             local metaKey = key:sub(2)
-            local valueType = type(value)
-            if metaKey ~= "" and (valueType == "string" or valueType == "number" or valueType == "boolean") then
+            if metaKey ~= "" then
                 meta[metaKey] = value
             end
         end

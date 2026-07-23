@@ -17,32 +17,170 @@ end
 AngryEra.NOTE_API_VERSION = 1
 AngryEra.NOTE_UPDATE_EVENT = "ANGRYERA_NOTE_UPDATE"
 
-local MAX_CLONE_DEPTH = 64
+local MAX_PUBLIC_CLONE_TABLES = 8192
+local MAX_PUBLIC_CLONE_ENTRIES = 65536
+local MAX_EQUAL_TABLES = 8192
+local publicNulls = setmetatable({}, { __mode = "k" })
 
 local function IsPlainTable(value)
     return type(value) == "table"
 end
 
-local function CloneValue(value, depth)
+local function NewPublicNull()
+    local marker = {}
+    publicNulls[marker] = true
+    return marker
+end
+
+local function CloneValue(value)
+    local json = AngryEra.utils.json
     if not IsPlainTable(value) then
         return value
     end
 
-    local json = AngryEra.utils.json
     if json and value == json.JSON_NULL then
-        return value
+        return NewPublicNull()
     end
 
-    depth = depth or 0
-    if depth >= MAX_CLONE_DEPTH then
-        return nil
+    local copies = {}
+    local pending = {}
+    local tableCount = 0
+    local entryCount = 0
+
+    local function QueueTable(source)
+        if json and source == json.JSON_NULL then
+            return NewPublicNull()
+        end
+
+        local existing = copies[source]
+        if existing then
+            return existing
+        end
+
+        tableCount = tableCount + 1
+        if tableCount > MAX_PUBLIC_CLONE_TABLES then
+            return nil, "snapshot-too-complex"
+        end
+
+        local copy = {}
+        copies[source] = copy
+        pending[#pending + 1] = {
+            Source = source,
+            Copy = copy,
+        }
+        return copy
     end
 
-    local copy = {}
-    for key, entry in pairs(value) do
-        copy[key] = CloneValue(entry, depth + 1)
+    local root, rootError = QueueTable(value)
+    if not root then
+        return nil, rootError
     end
-    return copy
+
+    while #pending > 0 do
+        local work = pending[#pending]
+        pending[#pending] = nil
+
+        for key, entry in pairs(work.Source) do
+            entryCount = entryCount + 1
+            if entryCount > MAX_PUBLIC_CLONE_ENTRIES then
+                return nil, "snapshot-too-complex"
+            end
+
+            local copiedKey = key
+            if IsPlainTable(key) then
+                local keyError
+                copiedKey, keyError = QueueTable(key)
+                if not copiedKey then
+                    return nil, keyError
+                end
+            end
+
+            local copiedEntry = entry
+            if IsPlainTable(entry) then
+                local entryError
+                copiedEntry, entryError = QueueTable(entry)
+                if not copiedEntry then
+                    return nil, entryError
+                end
+            end
+            work.Copy[copiedKey] = copiedEntry
+        end
+    end
+
+    return root
+end
+
+local function ValuesEqual(left, right)
+    if left == right then
+        return true
+    end
+    if type(left) ~= type(right) or not IsPlainTable(left) then
+        return false
+    end
+
+    local leftToRight = {}
+    local rightToLeft = {}
+    local json = AngryEra.utils.json
+    local pending = {
+        {
+            Left = left,
+            Right = right,
+        },
+    }
+    local tableCount = 0
+
+    while #pending > 0 do
+        local work = pending[#pending]
+        pending[#pending] = nil
+        local leftValue = work.Left
+        local rightValue = work.Right
+
+        if leftValue ~= rightValue then
+            if json and (rawequal(leftValue, json.JSON_NULL) or rawequal(rightValue, json.JSON_NULL)) then
+                return false
+            end
+            if type(leftValue) ~= type(rightValue) or not IsPlainTable(leftValue) then
+                return false
+            end
+
+            local mappedRight = leftToRight[leftValue]
+            local mappedLeft = rightToLeft[rightValue]
+            if mappedRight or mappedLeft then
+                if mappedRight ~= rightValue or mappedLeft ~= leftValue then
+                    return false
+                end
+            else
+                tableCount = tableCount + 1
+                if tableCount > MAX_EQUAL_TABLES then
+                    return false
+                end
+
+                leftToRight[leftValue] = rightValue
+                rightToLeft[rightValue] = leftValue
+
+                for key, entry in pairs(leftValue) do
+                    if IsPlainTable(key) then
+                        return false
+                    end
+                    local otherEntry = rawget(rightValue, key)
+                    if otherEntry == nil then
+                        return false
+                    end
+                    pending[#pending + 1] = {
+                        Left = entry,
+                        Right = otherEntry,
+                    }
+                end
+                for key in pairs(rightValue) do
+                    if IsPlainTable(key) or rawget(leftValue, key) == nil then
+                        return false
+                    end
+                end
+            end
+        end
+    end
+
+    return true
 end
 
 local function ResolveCategoryName(self, syncId)
@@ -156,11 +294,7 @@ local function SnapshotChanged(previous, snapshot)
     if previous == nil or snapshot == nil then
         return true
     end
-    return previous.SyncId ~= snapshot.SyncId
-        or previous.RevisionId ~= snapshot.RevisionId
-        or previous.ContextRevisionId ~= snapshot.ContextRevisionId
-        or previous.Rendered ~= snapshot.Rendered
-        or previous.Category ~= snapshot.Category
+    return not ValuesEqual(previous, snapshot)
 end
 
 local function EmitNoteEvent(self, snapshot)
@@ -179,7 +313,7 @@ end
 --- Records the latest displayed-note render and announces meaningful changes.
 -- Called by the display pipeline after every rebuild; `context` is nil when the
 -- display cleared. The stored snapshot always tracks the latest render, while
--- ANGRYERA_NOTE_UPDATE fires only when identity, content, or category changed.
+-- ANGRYERA_NOTE_UPDATE fires when any published snapshot field changes.
 -- @tparam table|nil context `{ Page = wireOrLocalPage, RenderedText = string, MergedVariables = table }`.
 -- @treturn boolean announced
 function AngryEra:NotifyDisplayedNoteChanged(context)
@@ -198,11 +332,22 @@ function AngryEra:NotifyDisplayedNoteChanged(context)
     return true
 end
 
+--- Reports whether a displayed-note API value represents JSON null.
+-- Each getter call creates fresh null marker tables so callers may mutate their
+-- detached result without changing the codec singleton or future results.
+-- @tparam any value Value returned by a displayed-note getter.
+-- @treturn boolean isNull
+function AngryEra:IsDisplayedNull(value)
+    return IsPlainTable(value) and publicNulls[value] == true
+end
+
 --- Returns a detached snapshot of the displayed note, or nil when cleared.
 -- Fields: LocalId, SyncId, RevisionId, ContextRevisionId, Name, Category,
 -- CategorySyncId, Ancestors (root-to-parent `{ SyncId, Name? }`), Raw,
 -- Rendered, UpdatedAt, UpdatedBy, Vars, and Meta.
+-- JSON null values are fresh marker tables recognized by `IsDisplayedNull`.
 -- @treturn table|nil note
+-- @treturn string|nil errorCode
 function AngryEra:GetDisplayedNote()
     local snapshot = self._displayedNoteSnapshot
     if not IsPlainTable(snapshot) then
@@ -213,7 +358,9 @@ end
 
 --- Returns detached resolved template variables for the displayed note.
 -- Metadata (`$`) entries are excluded; see `GetDisplayedMeta`.
+-- JSON null values are fresh marker tables recognized by `IsDisplayedNull`.
 -- @treturn table|nil vars
+-- @treturn string|nil errorCode
 function AngryEra:GetDisplayedVars()
     local snapshot = self._displayedNoteSnapshot
     if not IsPlainTable(snapshot) then
@@ -223,7 +370,9 @@ function AngryEra:GetDisplayedVars()
 end
 
 --- Returns detached `$` metadata for the displayed note, prefix stripped.
+-- JSON null values are fresh marker tables recognized by `IsDisplayedNull`.
 -- @treturn table|nil meta
+-- @treturn string|nil errorCode
 function AngryEra:GetDisplayedMeta()
     local snapshot = self._displayedNoteSnapshot
     if not IsPlainTable(snapshot) then

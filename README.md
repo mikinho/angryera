@@ -198,7 +198,9 @@ AngryEra exposes the actively displayed note to WeakAuras and other addons.
 Metadata behaves like a normal template variable (it inherits from category to
 page, resolves `{{references}}`, and can be rendered in note text), but it is
 never auto-highlighted and is additionally published to the API with the `$`
-prefix stripped. Example page variables:
+prefix stripped. Scalars work in `Key=Value` form; tables, arrays, and JSON null
+are also preserved when the variables are entered as a JSON object. Example
+page variables:
 
 ```
 MT=Zessy
@@ -206,16 +208,19 @@ $encounter=Patchwerk
 $phase=2
 ```
 
-**Event:** `ANGRYERA_NOTE_UPDATE` fires whenever the displayed note
-meaningfully changes (page, revision, rendered text, or category name), and
-once when the display clears. It is delivered both as a WeakAuras custom event
+**Event:** `ANGRYERA_NOTE_UPDATE` fires whenever any published field in the
+displayed-note snapshot changes, including metadata or ancestor names, and once
+when the display clears. It is delivered both as a WeakAuras custom event
 (`ScanEvents`) and as an AceEvent message, with `syncId, pageName,
 categoryName` arguments.
 
 **API:** the stable public entry point is the global `AngryEra` object
 (`_G.AngryEra`). It references the same addon object used internally. AngryEra
 will not overwrite an existing global with that name during startup. Every
-getter returns a detached copy.
+successful getter returns a detached copy. JSON null values are represented by
+fresh marker tables; use `AngryEra:IsDisplayedNull(value)` to recognize them.
+If a snapshot exceeds the defensive graph-copy limits, a getter returns nil
+plus the `snapshot-too-complex` error code.
 
 * `AngryEra:GetDisplayedNote()` returns the full snapshot: `Name`, `Category`,
   `CategorySyncId`, `Ancestors` (root-to-parent `{ SyncId, Name }`), `Raw`,
@@ -224,6 +229,8 @@ getter returns a detached copy.
 * `AngryEra:GetDisplayedVars()` returns resolved template variables with
   metadata excluded.
 * `AngryEra:GetDisplayedMeta()` returns `$` metadata with the prefix stripped.
+* `AngryEra:IsDisplayedNull(value)` identifies JSON null markers returned
+  anywhere inside a detached snapshot.
 * `AngryEra.NOTE_API_VERSION` and `AngryEra.NOTE_UPDATE_EVENT` support feature
   detection.
 
