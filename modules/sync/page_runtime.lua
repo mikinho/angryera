@@ -591,6 +591,11 @@ local function RestorePreparedRevision(record, preparedPage, snapshot)
     end
 end
 
+local WIRE_DEFAULTED_TEXT_FIELDS = {
+    Vars = true,
+    Contents = true,
+}
+
 local function StoredPageMatchesWire(existing, incoming)
     for _, field in ipairs({
         "SyncId",
@@ -603,7 +608,11 @@ local function StoredPageMatchesWire(existing, incoming)
         "Vars",
         "Contents",
     }) do
-        if rawget(existing, field) ~= rawget(incoming, field) then
+        local existingValue = rawget(existing, field)
+        if existingValue == nil and WIRE_DEFAULTED_TEXT_FIELDS[field] then
+            existingValue = ""
+        end
+        if existingValue ~= rawget(incoming, field) then
             return false
         end
     end
