@@ -247,6 +247,61 @@ local function AppendLengthPrefixed(parts, value)
     parts[#parts + 1] = value
 end
 
+local RESERVED_METADATA_IDENTITIES = {
+    AUTOADVANCE = true,
+    CIRCLE = true,
+    DIAMOND = true,
+    ENCOUNTER = true,
+    ENCOUNTERID = true,
+    MOON = true,
+    SKULL = true,
+    SQUARE = true,
+    STAR = true,
+    TRIANGLE = true,
+    X = true,
+}
+
+local function ReservedMetadataIdentity(key)
+    if type(key) ~= "string" or key:sub(1, 1) ~= "$" then
+        return nil
+    end
+
+    local identityKey = key:sub(2):upper()
+    if identityKey == "CROSS" then
+        identityKey = "X"
+    end
+    if not RESERVED_METADATA_IDENTITIES[identityKey] then
+        return nil
+    end
+    return identityKey
+end
+
+local function MergeParsedVariableLayer(merged, reservedKeys, parsed)
+    local layerReservedKeys = {}
+    for key in pairs(parsed) do
+        local identityKey = ReservedMetadataIdentity(key)
+        if identityKey then
+            if layerReservedKeys[identityKey] ~= nil then
+                return nil, "conflicting-reserved-metadata"
+            end
+            layerReservedKeys[identityKey] = key
+        end
+    end
+
+    for key, value in pairs(parsed) do
+        local identityKey = ReservedMetadataIdentity(key)
+        if identityKey then
+            local previousKey = reservedKeys[identityKey]
+            if previousKey ~= nil and previousKey ~= key then
+                merged[previousKey] = nil
+            end
+            reservedKeys[identityKey] = key
+        end
+        merged[key] = value
+    end
+    return true
+end
+
 --- Builds collision-resistant canonical input for a page render context revision.
 -- Layer order and identity are intentionally significant.
 -- @tparam table layers Root-to-parent variable layers.
@@ -310,13 +365,16 @@ function variables.MergeVariableLayers(layers, pageVariables)
     end
 
     local merged = {}
+    local reservedKeys = {}
     for index = 1, count do
-        for key, value in pairs(parsedLayers[index]) do
-            merged[key] = value
+        local mergedLayer, mergeError = MergeParsedVariableLayer(merged, reservedKeys, parsedLayers[index])
+        if not mergedLayer then
+            return nil, mergeError
         end
     end
-    for key, value in pairs(parsedPage) do
-        merged[key] = value
+    local mergedPage, mergePageError = MergeParsedVariableLayer(merged, reservedKeys, parsedPage)
+    if not mergedPage then
+        return nil, mergePageError
     end
     return json.ResolveVariableReferences(
         merged,

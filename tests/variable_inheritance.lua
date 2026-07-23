@@ -63,6 +63,52 @@ assert(merged.role == "page", "Page variables should override every ancestor")
 assert(merged.rootOnly == "yes" and merged.parentOnly == "yes", "Broad and narrow variables should remain")
 assert(merged.resolved == "page", "References should resolve after all layers and page variables merge")
 
+-- Reserved action metadata is one case-insensitive namespace across layers.
+-- Preserve the spelling from the winning layer so consumers can expose exactly
+-- what the author entered while preventing inherited variants from competing.
+local reservedCaseKeys = {
+    "STAR",
+    "CIRCLE",
+    "DIAMOND",
+    "TRIANGLE",
+    "MOON",
+    "SQUARE",
+    "SKULL",
+    "AUTOADVANCE",
+    "ENCOUNTER",
+    "ENCOUNTERID",
+}
+for _, key in ipairs(reservedCaseKeys) do
+    local lowerKey = key:lower()
+    merged, mergeError = variables.MergeVariableLayers({
+        { Vars = "$" .. key .. "=ancestor" },
+    }, "$" .. lowerKey .. "=page")
+    assert(merged and not mergeError, key .. " case override should merge")
+    assert(merged["$" .. key] == nil, key .. " inherited spelling should be removed")
+    assert(merged["$" .. lowerKey] == "page", key .. " should preserve the winning spelling and value")
+end
+
+merged, mergeError = variables.MergeVariableLayers({
+    { Vars = "$CROSS=ancestor" },
+}, "$X=page")
+assert(merged and not mergeError, "CROSS to X alias override should merge")
+assert(merged["$CROSS"] == nil, "An inherited CROSS alias should be removed")
+assert(merged["$X"] == "page", "The page X alias should win and preserve its spelling")
+
+merged, mergeError = variables.MergeVariableLayers({
+    { Vars = "$Custom=title-ancestor\n$custom=lower-ancestor" },
+}, "$CUSTOM=upper-page\n$custom=lower-page")
+assert(merged and not mergeError, "Custom metadata case variants should merge independently")
+assert(merged["$Custom"] == "title-ancestor", "Custom metadata should retain inherited case variants")
+assert(merged["$CUSTOM"] == "upper-page", "Custom metadata should retain page case variants")
+assert(merged["$custom"] == "lower-page", "Exact custom metadata keys should still override normally")
+
+merged, mergeError = variables.MergeVariableLayers({}, "$CROSS=Alice\n$X=Bob")
+AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer marker alias conflict")
+
+merged, mergeError = variables.MergeVariableLayers({}, "$AUTOADVANCE=true\n$autoadvance=false")
+AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer reserved case conflict")
+
 local emptyLayers, emptyLayerError = variables.ValidateAncestorVariableLayers({}, nil)
 assert(emptyLayers and not emptyLayerError and #emptyLayers == 0, "A root-level page should accept no ancestors")
 merged, mergeError = variables.MergeVariableLayers(emptyLayers, "pageOnly=yes")
