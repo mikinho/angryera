@@ -1,4 +1,4 @@
-.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression test-order-regression test-smart-markers test-chat-output test-model-updates test-identity-meta check check-strict
+.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression test-order-regression test-smart-markers test-chat-output test-model-updates test-identity-meta test-entity-identity test-network-identity check check-strict
 
 LDOC ?= ldoc
 LDOC_CONFIG ?= .ldoc
@@ -59,7 +59,7 @@ lint-luacheck-strict:
 	@command -v $(LUACHECK) >/dev/null 2>&1 || { echo "Error: $(LUACHECK) not found."; exit 1; }
 	@$(LUACHECK) --config $(LUACHECK_CONFIG) -- $(LUA_FILES)
 
-test: test-json-regression test-order-regression test-smart-markers test-chat-output test-model-updates test-identity-meta
+test: test-json-regression test-order-regression test-smart-markers test-chat-output test-model-updates test-identity-meta test-entity-identity test-network-identity
 
 test-json-regression:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
@@ -84,6 +84,14 @@ test-model-updates:
 test-identity-meta:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
 	@$(LUA_RUN) tests/identity_meta.lua
+
+test-entity-identity:
+	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
+	@$(LUA_RUN) tests/entity_identity.lua
+
+test-network-identity:
+	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
+	@$(LUA_RUN) tests/network_identity.lua
 
 check: lint test docs
 

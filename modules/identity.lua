@@ -12,6 +12,7 @@ local identity = AngryEra.identity
 
 local CURRENT_SCHEMA_VERSION = 1
 local INSTALLATION_ID_PATTERN = "^ae3i:%x+:%x+:%x+:%x+$"
+local MAX_SYNC_ID_BYTES = 160
 
 local function NormalizeInteger(value)
     if type(value) ~= "number" or value < 0 or value % 1 ~= 0 then
@@ -25,6 +26,40 @@ end
 -- @treturn boolean valid
 function identity.ValidateInstallationId(value)
     return type(value) == "string" and #value <= 96 and value:match(INSTALLATION_ID_PATTERN) ~= nil
+end
+
+--- Parses a protocol-3 entity synchronization identifier.
+-- @tparam any value Candidate identifier.
+-- @treturn string|nil installationId
+-- @treturn string|nil kind
+-- @treturn number|nil sequence
+function identity.ParseSyncId(value)
+    if type(value) ~= "string" or #value > MAX_SYNC_ID_BYTES then
+        return nil
+    end
+
+    local installationId, kind, sequenceText = value:match("^(.*):([%a]+):(%d+)$")
+    local sequence = tonumber(sequenceText)
+    if
+        not identity.ValidateInstallationId(installationId)
+        or (kind ~= "page" and kind ~= "category")
+        or not sequence
+        or sequence < 1
+        or sequence % 1 ~= 0
+    then
+        return nil
+    end
+
+    return installationId, kind, sequence
+end
+
+--- Returns whether a SyncId is valid and optionally matches an entity kind.
+-- @tparam any value Candidate identifier.
+-- @tparam[opt] string expectedKind `"page"` or `"category"`.
+-- @treturn boolean valid
+function identity.ValidateSyncId(value, expectedKind)
+    local _, kind = identity.ParseSyncId(value)
+    return kind ~= nil and (expectedKind == nil or kind == expectedKind)
 end
 
 --- Generates a non-secret, opaque installation identifier.

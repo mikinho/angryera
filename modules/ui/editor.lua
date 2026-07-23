@@ -377,14 +377,13 @@ local function AngryEra_LoadTemplate(template, catIndex)
     end
 
     if not catId then
-        local newId = 1
-        -- Find new positive ID
-        while AngryAssign_Categories[newId] do
-            newId = newId + 1
-        end
-
-        AngryAssign_Categories[newId] = { Id = newId, Name = catName, CategoryId = nil, Index = catIndex } -- Root category
-        catId = newId
+        local category = AngryEra:NewLocalCategoryRecord({
+            Name = catName,
+            CategoryId = nil,
+            Index = catIndex,
+        })
+        catId = category.Id
+        AngryAssign_Categories[catId] = category
         AngryEra:UpdateTree()
     else
         -- Category exists, update index if none?

@@ -52,6 +52,12 @@ local versionTimerId = nil
 
 local warnedOOD = false
 local versionList = {}
+local legacyPendingDisplaySyncId
+
+local function BuildLegacyPageIdentity(self, sender, remoteId)
+    local authority = self:GetRaidLeader() or sender
+    return self:BuildLegacyRemoteIdentity(EnsureUnitFullName(authority), "page", remoteId)
+end
 
 --- Receives and validates incoming addon communication payloads.
 -- Performs decode/decompress/deserialize and dispatches valid messages.
@@ -148,15 +154,16 @@ function AngryEra:ProcessMessage(sender, data)
         local safeContents = ValidateString(data[PAGE_Contents], 20000, "Contents")
 
         local contents_updated = true
-        local id = data[PAGE_Id]
-
-        -- Type check ID to prevent table index errors
-        if type(id) ~= "number" then
+        local remoteId = data[PAGE_Id]
+        local wireIdentity = BuildLegacyPageIdentity(self, sender, remoteId)
+        if not wireIdentity then
             return
         end
 
-        local page = AngryAssign_Pages[id]
+        local page = self:GetPageBySyncId(wireIdentity.SyncId)
+        local id = page and page.Id
         if page then
+            self:SetLegacyRemoteId(page, remoteId)
             if data[PAGE_UpdateId] and page.UpdateId == data[PAGE_UpdateId] then
                 local newCatVars = ValidateString(data[8], 5000, "CatVars")
                 if page.CatVars ~= newCatVars then
@@ -184,7 +191,11 @@ function AngryEra:ProcessMessage(sender, data)
                 self:UpdateSelected()
             end
         else
-            AngryAssign_Pages[id] = {
+            id = remoteId
+            if AngryAssign_Pages[id] then
+                id = self:AllocateLocalEntityId("page")
+            end
+            local pageRecord = {
                 Id = id,
                 Updated = data[PAGE_Updated],
                 UpdateId = data[PAGE_UpdateId],
@@ -193,6 +204,16 @@ function AngryEra:ProcessMessage(sender, data)
                 Vars = ValidateString(data[PAGE_Vars], 5000, "Vars"),
                 CatVars = ValidateString(data[8], 5000, "CatVars"),
             }
+            local registered = self:RegisterRemoteEntityIdentity(pageRecord, "page", wireIdentity)
+            if not registered then
+                return
+            end
+            self:SetLegacyRemoteId(pageRecord, remoteId)
+            AngryAssign_Pages[id] = pageRecord
+        end
+        if legacyPendingDisplaySyncId == wireIdentity.SyncId then
+            legacyPendingDisplaySyncId = nil
+            AngryAssign_State.displayed = id
         end
         if AngryAssign_State.displayed == id then
             self:UpdateDisplayed()
@@ -213,21 +234,27 @@ function AngryEra:ProcessMessage(sender, data)
             return
         end
 
-        local id = data[DISPLAY_Id]
-        -- Safety check on ID
-        if id and type(id) ~= "number" then
-            return
-        end
-
+        local remoteId = data[DISPLAY_Id]
         local updated = data[DISPLAY_Updated]
         local updateId = data[DISPLAY_UpdateId]
-        local page = AngryAssign_Pages[id]
+        local wireIdentity
+        local page
+        local id
+        if remoteId ~= nil then
+            wireIdentity = BuildLegacyPageIdentity(self, sender, remoteId)
+            if not wireIdentity then
+                return
+            end
+            page = self:GetPageBySyncId(wireIdentity.SyncId)
+            id = page and page.Id
+        end
         local sameVersion = (updateId and page and updateId == page.UpdateId)
             or (not updateId and page and updated == page.Updated)
-        if id and not sameVersion then
-            self:SendRequestPage(id, sender)
+        if remoteId and not sameVersion then
+            self:SendRequestPage(remoteId, sender)
         end
 
+        legacyPendingDisplaySyncId = remoteId and not page and wireIdentity.SyncId or nil
         if AngryAssign_State.displayed ~= id then
             AngryAssign_State.displayed = id
             self:UpdateTree()
@@ -251,9 +278,13 @@ function AngryEra:ProcessMessage(sender, data)
             return
         end
 
-        -- Safety check on requested ID
-        if type(data[REQUEST_PAGE_Id]) == "number" then
-            self:SendPage(data[REQUEST_PAGE_Id])
+        local requestedId = data[REQUEST_PAGE_Id]
+        local wireIdentity = BuildLegacyPageIdentity(self, sender, requestedId)
+        if wireIdentity then
+            local page = self:GetPageBySyncId(wireIdentity.SyncId) or AngryAssign_Pages[requestedId]
+            if page then
+                self:SendPage(page.Id)
+            end
         end
     elseif cmd == "VER_QUERY" then
         self:SendVersion()
@@ -360,9 +391,10 @@ function AngryEra:SendPageMessage(id)
         end
     end
 
+    local wireId = self:GetLegacyRemoteId(page) or page.Id
     self:SendOutMessage({
         "PAGE",
-        [PAGE_Id] = page.Id,
+        [PAGE_Id] = wireId,
         [PAGE_Updated] = page.Updated,
         [PAGE_Name] = page.Name,
         [PAGE_Contents] = page.Contents,
@@ -408,9 +440,10 @@ function AngryEra:SendDisplayMessage(id)
         if not page.UpdateId then
             page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
         end
+        local wireId = self:GetLegacyRemoteId(page) or page.Id
         self:SendOutMessage({
             "DISPLAY",
-            [DISPLAY_Id] = page.Id,
+            [DISPLAY_Id] = wireId,
             [DISPLAY_Updated] = page.Updated,
             [DISPLAY_UpdateId] = page.UpdateId,
         })

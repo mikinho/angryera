@@ -110,7 +110,7 @@ function AngryEra:DeleteCategoryChildren(catId)
     for id, cat in pairs(AngryAssign_Categories) do
         if cat.CategoryId == catId then
             self:DeleteCategoryChildren(id)
-            AngryAssign_Categories[id] = nil
+            self:RemoveCategoryRecord(id)
             if AngryAssign_State.tree.groups then
                 AngryAssign_State.tree.groups[-id] = nil
             end
@@ -119,7 +119,7 @@ function AngryEra:DeleteCategoryChildren(catId)
     -- Delete pages
     for id, page in pairs(AngryAssign_Pages) do
         if page.CategoryId == catId then
-            AngryAssign_Pages[id] = nil
+            self:RemovePageRecord(id)
             if AngryAssign_State.displayed == id then
                 self:ClearDisplayed()
             end
@@ -322,17 +322,16 @@ function AngryEra:CreatePage(nameOrFrame, content, categoryId, index)
     end
 
     -- Original Business Logic
-    local id = self:Hash("page", math.random(2000000000))
-
-    AngryAssign_Pages[id] = {
-        Id = id,
+    local page = self:NewLocalPageRecord({
         Updated = time(),
         UpdateId = self:Hash(name, content or ""),
         Name = name,
         Contents = content or "",
         CategoryId = categoryId,
         Index = index,
-    }
+    })
+    local id = page.Id
+    AngryAssign_Pages[id] = page
 
     if categoryId then
         if AngryAssign_State.tree.groups then
@@ -395,9 +394,7 @@ end
 --- Deletes a page from local storage and selection state.
 -- @tparam number id Page id.
 function AngryEra:DeletePage(id)
-    self:CancelPageTimer(id)
-
-    AngryAssign_Pages[id] = nil
+    self:RemovePageRecord(id)
     if self.window and self:SelectedId() == id then
         self:SetSelectedId(nil)
         self:UpdateSelected(true)
@@ -433,9 +430,9 @@ function AngryEra:CreateCategory(nameOrFrame)
     end
 
     -- Generate ID and Save
-    local id = self:Hash("cat", math.random(2000000000))
-
-    AngryAssign_Categories[id] = { Id = id, Name = name }
+    local category = self:NewLocalCategoryRecord({ Name = name })
+    local id = category.Id
+    AngryAssign_Categories[id] = category
 
     if AngryAssign_State.tree.groups then
         AngryAssign_State.tree.groups[-id] = true
@@ -499,7 +496,7 @@ function AngryEra:DeleteCategory(id)
         AngryAssign_State.tree.groups[-id] = nil
     end
 
-    AngryAssign_Categories[id] = nil
+    self:RemoveCategoryRecord(id)
 
     self:UpdateTree()
     self:SetSelectedId(selectedId)
@@ -521,7 +518,7 @@ function AngryEra:DeleteCategoryAndChildren(id)
         AngryAssign_State.tree.groups[-id] = nil
     end
 
-    AngryAssign_Categories[id] = nil
+    self:RemoveCategoryRecord(id)
 
     self:UpdateTree()
     self:SetSelectedId(selectedId)

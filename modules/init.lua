@@ -109,6 +109,7 @@ function AngryEra:OnInitialize()
     end
 
     self:InitializeIdentityStorage()
+    self:MigrateEntityIdentities()
 
     -- Run cleanup once on load
     self:CleanupOrphanedStates()
@@ -160,8 +161,7 @@ function AngryEra:OnInitialize()
                 confirm = true,
                 func = function()
                     AngryAssign_State.displayed = nil
-                    AngryAssign_Pages = {}
-                    AngryAssign_Categories = {}
+                    self:RemoveAllEntityRecords()
                     self:UpdateTree()
                     self:UpdateSelected()
                     self:UpdateDisplayed()

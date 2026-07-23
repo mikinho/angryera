@@ -119,11 +119,8 @@ end
 -- @tparam[opt=false] boolean suppressTreeUpdate Skip immediate tree refresh when `true`.
 -- @treturn number Imported page id.
 function AngryEra:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
-    local id = overwriteId or self:Hash("page", math.random(2000000000))
     local existing = overwriteId and AngryAssign_Pages[overwriteId]
-
-    AngryAssign_Pages[id] = {
-        Id = id,
+    local fields = {
         Updated = time(),
         UpdateId = self:Hash(data.Name, data.Contents, data.Vars),
         Name = data.Name,
@@ -132,6 +129,14 @@ function AngryEra:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
         CategoryId = (existing and existing.CategoryId) or parentId,
         Index = (existing and existing.Index) or data.Index,
     }
+    local page
+    if overwriteId then
+        page = self:ReplacePageRecord(overwriteId, fields)
+    else
+        page = self:NewLocalPageRecord(fields)
+    end
+    local id = page.Id
+    AngryAssign_Pages[id] = page
     if not suppressTreeUpdate then
         self:UpdateTree(id)
     end
@@ -210,19 +215,25 @@ end
 -- @tparam[opt=false] boolean suppressTreeUpdate Skip immediate tree refresh when `true`.
 -- @treturn number Imported category id.
 function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpdate)
-    local id = overwriteId or self:Hash("cat", math.random(2000000000))
     local existing = overwriteId and AngryAssign_Categories[overwriteId]
 
     if overwriteId then
-        self:DeleteCategoryChildren(id)
+        self:DeleteCategoryChildren(overwriteId)
     end
 
-    AngryAssign_Categories[id] = {
-        Id = id,
+    local fields = {
         Name = data.Name,
         CategoryId = (existing and existing.CategoryId) or parentId,
         Index = (existing and existing.Index) or data.Index,
     }
+    local category
+    if overwriteId then
+        category = self:ReplaceCategoryRecord(overwriteId, fields)
+    else
+        category = self:NewLocalCategoryRecord(fields)
+    end
+    local id = category.Id
+    AngryAssign_Categories[id] = category
 
     for _, child in ipairs(data.Children or {}) do
         if child.Type == "Category" then
