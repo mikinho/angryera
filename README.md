@@ -189,6 +189,54 @@ The "/aa backup" command (also available from the config menu) will store the cu
 
 The "/aa deleteall" command will delete all pages you have stored.  This could be used occasionally to clean out old assignment pages that are no longer used, for example, when beginning a new tier.  Of course, if others in the guild still have those pages, and choose to edit them and/or send them out for display, you'll get them back if you're online at the time.
 
+WeakAuras & Addon API
+--------------------
+
+AngryEra exposes the actively displayed note to WeakAuras and other addons.
+
+**Page metadata:** any variable whose name starts with `$` is page metadata.
+Metadata behaves like a normal template variable (it inherits from category to
+page, resolves `{{references}}`, and can be rendered in note text), but it is
+never auto-highlighted and is additionally published to the API with the `$`
+prefix stripped. Example page variables:
+
+```
+MT=Zessy
+$encounter=Patchwerk
+$phase=2
+```
+
+**Event:** `ANGRYERA_NOTE_UPDATE` fires whenever the displayed note
+meaningfully changes (page, revision, rendered text, or category name), and
+once when the display clears. It is delivered both as a WeakAuras custom event
+(`ScanEvents`) and as an AceEvent message, with `syncId, pageName,
+categoryName` arguments.
+
+**API:** every function returns a detached copy.
+
+* `AngryEra:GetDisplayedNote()` returns the full snapshot: `Name`, `Category`,
+  `CategorySyncId`, `Ancestors` (root-to-parent `{ SyncId, Name }`), `Raw`,
+  `Rendered`, `Vars`, `Meta`, revision identifiers, and audit fields. Returns
+  nil when nothing is displayed.
+* `AngryEra:GetDisplayedVars()` returns resolved template variables with
+  metadata excluded.
+* `AngryEra:GetDisplayedMeta()` returns `$` metadata with the prefix stripped.
+* `AngryEra.NOTE_API_VERSION` and `AngryEra.NOTE_UPDATE_EVENT` support feature
+  detection.
+
+Example WeakAuras trigger (Custom, Event: `ANGRYERA_NOTE_UPDATE`):
+
+```
+function(event, syncId, pageName, categoryName)
+    local meta = AngryEra:GetDisplayedMeta()
+    return meta and meta.encounter == "Patchwerk"
+end
+```
+
+Category names resolve when the category exists locally (your own library or
+an adopted synchronized scope); ancestor sync ids are always included even
+when their names are unknown.
+
 Developer Documentation (LDoc)
 --------------------
 

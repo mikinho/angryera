@@ -610,6 +610,9 @@ function AngryEra:UpdateDisplayed()
     if not page then
         self.display_text:Clear()
         self:UpdateBackdrop()
+        if type(self.NotifyDisplayedNoteChanged) == "function" then
+            self:NotifyDisplayedNoteChanged(nil)
+        end
         return
     end
 
@@ -651,8 +654,9 @@ function AngryEra:UpdateDisplayed()
     local hasHighlight = next(highlightSet) ~= nil
 
     -- Add Variables to Highlight Set (Generic)
+    -- Metadata ($) values are machine-facing and never auto-highlighted.
     for k, v in pairs(mergedVars) do
-        if type(v) == "string" and #v > 2 then
+        if not variableHelpers.IsMetaVariableKey(k) and type(v) == "string" and #v > 2 then
             for word in v:gmatch("[^%s%p]+") do
                 if #word > 2 then
                     local lowerWord = word:lower()
@@ -714,6 +718,14 @@ function AngryEra:UpdateDisplayed()
             end
             return word -- Return original if no match
         end)
+    end
+
+    if type(self.NotifyDisplayedNoteChanged) == "function" then
+        self:NotifyDisplayedNoteChanged({
+            Page = renderedPage,
+            RenderedText = text,
+            MergedVariables = mergedVars,
+        })
     end
 
     -- Render

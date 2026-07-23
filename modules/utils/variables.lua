@@ -319,3 +319,46 @@ function variables.MergeVariableLayers(layers, pageVariables)
     end
     return json.ResolveVariableReferences(merged)
 end
+
+variables.META_VARIABLE_PREFIX = "$"
+
+--- Reports whether a resolved variable key is reserved page metadata.
+-- Metadata keys start with the `$` prefix and never enter display highlights.
+-- @tparam any key Candidate variable key.
+-- @treturn boolean isMeta
+function variables.IsMetaVariableKey(key)
+    return type(key) == "string" and key:sub(1, 1) == variables.META_VARIABLE_PREFIX
+end
+
+--- Splits resolved variables into public template values and `$` metadata.
+-- Metadata keys are exposed with the prefix stripped; empty stripped names and
+-- non-scalar metadata values are dropped. The input table is never mutated and
+-- both returned tables are new tables whose values are copied by reference.
+-- @tparam table resolved Resolved variable map from `MergeVariableLayers`.
+-- @treturn table|nil publicVariables
+-- @treturn table|nil meta
+-- @treturn string|nil errorCode
+function variables.PartitionResolvedVariables(resolved)
+    if type(resolved) ~= "table" then
+        return nil, nil, "invalid-variables"
+    end
+
+    local publicVariables = {}
+    local meta = {}
+    for key, value in pairs(resolved) do
+        if type(key) ~= "string" then
+            return nil, nil, "invalid-variables"
+        end
+
+        if not variables.IsMetaVariableKey(key) then
+            publicVariables[key] = value
+        else
+            local metaKey = key:sub(2)
+            local valueType = type(value)
+            if metaKey ~= "" and (valueType == "string" or valueType == "number" or valueType == "boolean") then
+                meta[metaKey] = value
+            end
+        end
+    end
+    return publicVariables, meta
+end

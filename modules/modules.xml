@@ -17,6 +17,7 @@
 	<Script file="protocol_runtime.lua"/>
 	<Script file="network.lua"/>
 	<Script file="models.lua"/>
+	<Script file="api.lua"/>
 	<Include file="ui\ui.xml"/>
 	<Script file="chat_output.lua"/>
 	<Script file="init.lua"/>
