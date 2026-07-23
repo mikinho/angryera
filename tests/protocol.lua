@@ -50,6 +50,31 @@ local function DeepCopy(value, seen)
     return copy
 end
 
+local function DeepEqual(left, right, seen)
+    if type(left) ~= type(right) then
+        return false
+    end
+    if type(left) ~= "table" then
+        return left == right
+    end
+    seen = seen or {}
+    if seen[left] == right then
+        return true
+    end
+    seen[left] = right
+    for key, value in pairs(left) do
+        if not DeepEqual(value, right[key], seen) then
+            return false
+        end
+    end
+    for key in pairs(right) do
+        if left[key] == nil then
+            return false
+        end
+    end
+    return true
+end
+
 local function Repeat(character, count)
     return string.rep(character, count)
 end
@@ -152,6 +177,30 @@ local function MakeCompactCodec(overrides)
     return codec
 end
 
+local function MakeCompactPageCodec(overrides)
+    local codec = {
+        compress = function(value)
+            return value
+        end,
+        decompress = function(value, maximumOutputBytes)
+            if #value > maximumOutputBytes then
+                return nil, "output-too-large"
+            end
+            return value
+        end,
+        encode = function(value)
+            return value
+        end,
+        decode = function(value)
+            return value
+        end,
+    }
+    for name, callback in pairs(overrides or {}) do
+        codec[name] = callback
+    end
+    return codec
+end
+
 local function MakeFaithfulAddonCodec(onEncode)
     return {
         encode = function(value)
@@ -240,9 +289,48 @@ local function ReplaceByte(value, index, byte)
     return value:sub(1, index - 1) .. string.char(byte) .. value:sub(index + 1)
 end
 
+local function ReplaceBytes(value, index, replacement)
+    return value:sub(1, index - 1) .. replacement .. value:sub(index + #replacement)
+end
+
+local function EncodeUnsignedForTest(value, byteCount)
+    local bytes = {}
+    for index = 1, byteCount do
+        bytes[index] = string.char(value % 256)
+        value = math.floor(value / 256)
+    end
+    assert(value == 0, "test integer must fit requested width")
+    return table.concat(bytes)
+end
+
+local function DecodeUnsignedForTest(value, index, byteCount)
+    local decoded = 0
+    local multiplier = 1
+    for offset = 0, byteCount - 1 do
+        decoded = decoded + assert(value:byte(index + offset)) * multiplier
+        multiplier = multiplier * 256
+    end
+    return decoded
+end
+
+local function BuildCompactPageFrameForTest(raw, declaredRawBytes, format)
+    return string.char(format or protocol.COMPACT_PAGE_FORMAT)
+        .. EncodeUnsignedForTest(declaredRawBytes or #raw, 4)
+        .. raw
+end
+
+local function ReadCompactPageFrameForTest(encoded)
+    AssertEqual(encoded:byte(1), protocol.COMPACT_PAGE_FORMAT, "compact page frame format")
+    local declaredRawBytes = DecodeUnsignedForTest(encoded, 2, 4)
+    local raw = encoded:sub(6)
+    AssertEqual(#raw, declaredRawBytes, "identity-compressed page frame length")
+    return raw
+end
+
 AssertEqual(protocol.VERSION, 3, "protocol version")
 AssertEqual(protocol.PREFIX, "AngryEra3", "protocol prefix")
 AssertEqual(protocol.DISPLAY_PREFIX, "AngryEra3D", "display protocol prefix")
+AssertEqual(protocol.PAGE_PREFIX, "AngryEra3C", "compact-page protocol prefix")
 AssertEqual(protocol.ACTIVE_PAGE_PREFIX, "AngryEra3P", "active-page protocol prefix")
 AssertEqual(protocol.WIRE_LIMITS.EncodedBytes, 256 * 1024, "encoded byte limit")
 AssertEqual(protocol.WIRE_LIMITS.CompressedBytes, 256 * 1024, "compressed byte limit")
@@ -252,6 +340,10 @@ AssertEqual(protocol.COMPACT_DISPLAY_FORMAT, 1, "compact display format")
 AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes, 254, "compact display single-frame bound")
 AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.PackedBytes, 237, "compact display safe-alphabet bound")
 AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.RawBytes, 207, "compact display raw bound")
+AssertEqual(protocol.COMPACT_PAGE_FORMAT, 1, "compact page format")
+AssertEqual(protocol.COMPACT_PAGE_LIMITS.EncodedBytes, 256 * 1024, "compact page encoded bound")
+AssertEqual(protocol.COMPACT_PAGE_LIMITS.CompressedBytes, 256 * 1024 - 5, "compact page compressed bound")
+AssertEqual(protocol.COMPACT_PAGE_LIMITS.RawBytes, 186158, "compact page exact semantic bound")
 
 local installationId = "ae3i:1234abcd:11111111:22222222:33333333"
 local session, sessionError = protocol.NewSession(installationId, "session_B-2")
@@ -916,6 +1008,578 @@ encoded, encodeError = protocol.EncodeEnvelope(queryEnvelope, codec, {
     SerializedBytes = 8,
 })
 AssertError(encoded, encodeError, "invalid-limits", "invalid custom limits")
+
+local compactPageCodec = MakeCompactPageCodec()
+local compactPageSession = assert(protocol.NewSession(installationId, "compact-page"))
+local compactPageEnvelope = assert(protocol.BuildEnvelope(compactPageSession, "PAGE_UPSERT", MakePageUpsertPayload(), {
+    ReplyTo = queryEnvelope.MessageId,
+    SentAt = 1750000000100,
+}))
+local compactPageEncoded, compactPageEncodeError =
+    protocol.EncodeCompactPageEnvelope(compactPageEnvelope, compactPageCodec)
+Assert(compactPageEncoded ~= nil and compactPageEncodeError == nil, "valid compact page encodes")
+local compactPageRaw = ReadCompactPageFrameForTest(compactPageEncoded)
+AssertEqual(compactPageRaw:byte(1), 1, "compact page reply flag")
+Assert(
+    #compactPageRaw < #compactPageEnvelope.Payload.Page.Contents + 512,
+    "compact page metadata stays small for the representative payload"
+)
+
+local compactPageDecoded, compactPageDecodeError =
+    protocol.DecodeCompactPageEnvelope(compactPageEncoded, compactPageCodec)
+Assert(compactPageDecoded ~= nil and compactPageDecodeError == nil, "valid compact page decodes")
+Assert(DeepEqual(compactPageDecoded, compactPageEnvelope), "compact page canonical envelope round trip")
+AssertEqual(
+    compactPageDecoded.Payload.Page.OwnerId,
+    compactPageDecoded.Payload.Page.SyncId:match("^(.*):page:"),
+    "compact page derives owner identity"
+)
+AssertEqual(
+    compactPageDecoded.Payload.Page.ParentSyncId,
+    compactPageDecoded.Payload.AncestorVariableLayers[2].SyncId,
+    "compact page derives direct parent"
+)
+AssertEqual(#compactPageDecoded.Payload.AncestorVariableLayers, 2, "compact page retains every ancestor layer")
+AssertEqual(
+    compactPageDecoded.Payload.AncestorVariableLayers[1].Vars,
+    "role=root",
+    "compact page retains root variables"
+)
+AssertEqual(
+    compactPageDecoded.Payload.AncestorVariableLayers[2].Vars,
+    "role=parent",
+    "compact page retains parent variables"
+)
+
+local orphanPagePayload = MakePageUpsertPayload()
+orphanPagePayload.Page.ParentSyncId = nil
+orphanPagePayload.AncestorVariableLayers = {}
+local orphanPageEnvelope = assert(protocol.BuildEnvelope(compactPageSession, "PAGE_UPSERT", orphanPagePayload, {
+    SentAt = 1750000000101,
+}))
+local orphanPageEncoded = assert(protocol.EncodeCompactPageEnvelope(orphanPageEnvelope, compactPageCodec))
+local orphanPageRaw = ReadCompactPageFrameForTest(orphanPageEncoded)
+AssertEqual(orphanPageRaw:byte(1), 0, "uncorrelated compact page has no flags")
+local orphanPageDecoded = assert(protocol.DecodeCompactPageEnvelope(orphanPageEncoded, compactPageCodec))
+Assert(DeepEqual(orphanPageDecoded, orphanPageEnvelope), "orphan compact page round trip")
+Assert(orphanPageDecoded.Payload.Page.ParentSyncId == nil, "orphan compact page derives no parent")
+AssertEqual(#orphanPageDecoded.Payload.AncestorVariableLayers, 0, "orphan compact page retains empty layers")
+
+local crossOwnerPayload = MakePageUpsertPayload()
+crossOwnerPayload.AncestorVariableLayers[1].SyncId = "ae3i:a:b:c:d:category:9"
+local crossOwnerEnvelope = assert(protocol.BuildEnvelope(compactPageSession, "PAGE_UPSERT", crossOwnerPayload, {
+    SentAt = 1750000000102,
+}))
+local crossOwnerDecoded = assert(
+    protocol.DecodeCompactPageEnvelope(
+        assert(protocol.EncodeCompactPageEnvelope(crossOwnerEnvelope, compactPageCodec)),
+        compactPageCodec
+    )
+)
+Assert(
+    DeepEqual(crossOwnerDecoded.Payload.AncestorVariableLayers, crossOwnerPayload.AncestorVariableLayers),
+    "compact page preserves independently owned ancestor identities"
+)
+
+local maximumPageInstallationId = "ae3i:ffffffff:ffffffff:ffffffff:ffffffff"
+local maximumPageSessionId = Repeat("p", protocol.LIMITS.SessionIdBytes)
+local maximumPageReplySessionId = Repeat("q", protocol.LIMITS.SessionIdBytes)
+local maximumPageLayers = {}
+for index = 1, protocol.LIMITS.ActivePageAncestorCount do
+    maximumPageLayers[index] = {
+        SyncId = maximumPageInstallationId .. ":category:" .. tostring(index),
+        Vars = Repeat("v", protocol.LIMITS.ActivePageVarsBytes),
+    }
+end
+local maximumPagePayload = {
+    Page = {
+        Kind = "page",
+        SyncId = maximumPageInstallationId .. ":page:" .. tostring(protocol.LIMITS.ActivePageRevision),
+        OwnerId = maximumPageInstallationId,
+        Revision = protocol.LIMITS.ActivePageRevision,
+        RevisionId = "fcs32:ffffffff",
+        UpdatedAt = protocol.LIMITS.ActivePageTimestamp,
+        UpdatedBy = Repeat("u", protocol.LIMITS.ActivePageAuthorBytes),
+        ParentSyncId = maximumPageLayers[#maximumPageLayers].SyncId,
+        Order = protocol.LIMITS.ActivePageOrder,
+        Name = Repeat("n", protocol.LIMITS.ActivePageNameBytes),
+        Vars = Repeat("p", protocol.LIMITS.ActivePageVarsBytes),
+        Contents = Repeat("c", protocol.LIMITS.ActivePageContentsBytes),
+    },
+    AncestorVariableLayers = maximumPageLayers,
+    ContextRevisionId = "fcs32:00000000",
+}
+local maximumPageSession = assert(protocol.NewSession(maximumPageInstallationId, maximumPageSessionId))
+maximumPageSession.Sequence = protocol.LIMITS.Sequence - 1
+local maximumPageEnvelope = assert(protocol.BuildEnvelope(maximumPageSession, "PAGE_UPSERT", maximumPagePayload, {
+    ReplyTo = table.concat({
+        maximumPageInstallationId,
+        maximumPageReplySessionId,
+        tostring(protocol.LIMITS.Sequence),
+    }, ":"),
+    SentAt = protocol.LIMITS.ActivePageTimestamp,
+}))
+local maximumPageEncoded = assert(protocol.EncodeCompactPageEnvelope(maximumPageEnvelope, compactPageCodec))
+local maximumPageRaw = ReadCompactPageFrameForTest(maximumPageEncoded)
+AssertEqual(#maximumPageRaw, protocol.COMPACT_PAGE_LIMITS.RawBytes, "maximum compact page exactly fills raw budget")
+AssertEqual(
+    #maximumPageEncoded,
+    protocol.COMPACT_PAGE_LIMITS.RawBytes + 5,
+    "identity-compressed maximum compact page includes only its frame header"
+)
+local maximumPageDecoded = assert(protocol.DecodeCompactPageEnvelope(maximumPageEncoded, compactPageCodec))
+Assert(DeepEqual(maximumPageDecoded, maximumPageEnvelope), "maximum compact page round trip")
+
+local compactPageValue
+local compactPageError
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(queryEnvelope, compactPageCodec)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "compact-page-type-mismatch",
+    "compact page encoder rejects non-page envelope"
+)
+for _, missingCallback in ipairs({ "compress", "decompress", "encode", "decode" }) do
+    local invalidCompactPageCodec = MakeCompactPageCodec()
+    invalidCompactPageCodec[missingCallback] = nil
+    compactPageValue, compactPageError =
+        protocol.EncodeCompactPageEnvelope(compactPageEnvelope, invalidCompactPageCodec)
+    AssertError(
+        compactPageValue,
+        compactPageError,
+        "invalid-compact-page-codec",
+        "compact page encode requires " .. missingCallback
+    )
+end
+
+local invalidCompactPageEnvelope = DeepCopy(compactPageEnvelope)
+invalidCompactPageEnvelope.Payload.Page.SyncId = activeInstallationId .. ":page:03"
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(invalidCompactPageEnvelope, compactPageCodec)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "invalid-page-sync-id",
+    "compact page rejects noncanonical page identity"
+)
+invalidCompactPageEnvelope = DeepCopy(compactPageEnvelope)
+invalidCompactPageEnvelope.Payload.AncestorVariableLayers[1].SyncId = activePageSyncId
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(invalidCompactPageEnvelope, compactPageCodec)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "invalid-ancestor-sync-id",
+    "compact page rejects wrong ancestor identity kind"
+)
+invalidCompactPageEnvelope = DeepCopy(compactPageEnvelope)
+invalidCompactPageEnvelope.Payload.Page.RevisionId = "fcs32:ABCDEF12"
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(invalidCompactPageEnvelope, compactPageCodec)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "invalid-page-revision-id",
+    "compact page rejects noncanonical page hash"
+)
+invalidCompactPageEnvelope = DeepCopy(compactPageEnvelope)
+invalidCompactPageEnvelope.Payload.ContextRevisionId = "fcs32:1234567"
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(invalidCompactPageEnvelope, compactPageCodec)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "invalid-context-revision-id",
+    "compact page rejects malformed context hash"
+)
+invalidCompactPageEnvelope = DeepCopy(compactPageEnvelope)
+invalidCompactPageEnvelope.Payload.Page.ParentSyncId = activeRootSyncId
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(invalidCompactPageEnvelope, compactPageCodec)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "unsupported-compact-page-parent",
+    "compact page rejects a parent that cannot be derived exactly"
+)
+
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(
+    compactPageEnvelope,
+    MakeCompactPageCodec({
+        compress = function()
+            error("compress")
+        end,
+    })
+)
+AssertError(compactPageValue, compactPageError, "compact-page-compress-failed", "compact page compress exception")
+for _, invalidCompressed in ipairs({ false, "" }) do
+    compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(
+        compactPageEnvelope,
+        MakeCompactPageCodec({
+            compress = function()
+                return invalidCompressed
+            end,
+        })
+    )
+    AssertError(
+        compactPageValue,
+        compactPageError,
+        "compact-page-compress-failed",
+        "compact page rejects invalid compressed result"
+    )
+end
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(
+    compactPageEnvelope,
+    MakeCompactPageCodec({
+        compress = function()
+            return Repeat("c", protocol.COMPACT_PAGE_LIMITS.CompressedBytes + 1)
+        end,
+    })
+)
+AssertError(compactPageValue, compactPageError, "compact-page-compressed-too-large", "compact page compressed bound")
+local exactCompressedPage = assert(protocol.EncodeCompactPageEnvelope(
+    compactPageEnvelope,
+    MakeCompactPageCodec({
+        compress = function()
+            return Repeat("c", protocol.COMPACT_PAGE_LIMITS.CompressedBytes)
+        end,
+    })
+))
+AssertEqual(
+    #exactCompressedPage,
+    protocol.COMPACT_PAGE_LIMITS.EncodedBytes,
+    "compact page accepts exact compressed and encoded bound"
+)
+
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(
+    compactPageEnvelope,
+    MakeCompactPageCodec({
+        encode = function()
+            error("encode")
+        end,
+    })
+)
+AssertError(compactPageValue, compactPageError, "compact-page-encode-failed", "compact page channel encode exception")
+for _, invalidEncoded in ipairs({ false, "" }) do
+    compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(
+        compactPageEnvelope,
+        MakeCompactPageCodec({
+            encode = function()
+                return invalidEncoded
+            end,
+        })
+    )
+    AssertError(
+        compactPageValue,
+        compactPageError,
+        "compact-page-encode-failed",
+        "compact page rejects invalid channel encoding"
+    )
+end
+compactPageValue, compactPageError = protocol.EncodeCompactPageEnvelope(
+    compactPageEnvelope,
+    MakeCompactPageCodec({
+        encode = function()
+            return Repeat("e", protocol.COMPACT_PAGE_LIMITS.EncodedBytes + 1)
+        end,
+    })
+)
+AssertError(compactPageValue, compactPageError, "compact-page-encoded-too-large", "compact page encoded bound")
+
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope("", compactPageCodec)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page-encoded", "compact page empty input")
+for _, missingCallback in ipairs({ "compress", "decompress", "encode", "decode" }) do
+    local invalidCompactPageCodec = MakeCompactPageCodec()
+    invalidCompactPageCodec[missingCallback] = nil
+    compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(compactPageEncoded, invalidCompactPageCodec)
+    AssertError(
+        compactPageValue,
+        compactPageError,
+        "invalid-compact-page-codec",
+        "compact page decode requires " .. missingCallback
+    )
+end
+compactPageValue, compactPageError =
+    protocol.DecodeCompactPageEnvelope(Repeat("e", protocol.COMPACT_PAGE_LIMITS.EncodedBytes + 1), compactPageCodec)
+AssertError(compactPageValue, compactPageError, "compact-page-encoded-too-large", "compact page input bound")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    "encoded",
+    MakeCompactPageCodec({
+        decode = function()
+            error("decode")
+        end,
+    })
+)
+AssertError(compactPageValue, compactPageError, "compact-page-decode-failed", "compact page channel decode exception")
+for _, invalidFrame in ipairs({ false, "" }) do
+    compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+        "encoded",
+        MakeCompactPageCodec({
+            decode = function()
+                return invalidFrame
+            end,
+        })
+    )
+    AssertError(
+        compactPageValue,
+        compactPageError,
+        "compact-page-decode-failed",
+        "compact page rejects invalid channel decode"
+    )
+end
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    "encoded",
+    MakeCompactPageCodec({
+        decode = function()
+            return Repeat("f", protocol.COMPACT_PAGE_LIMITS.CompressedBytes + 6)
+        end,
+    })
+)
+AssertError(compactPageValue, compactPageError, "compact-page-frame-too-large", "compact page decoded frame bound")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope("short", compactPageCodec)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page-frame", "compact page short frame")
+
+local unsupportedCompactPageFrame = ReplaceByte(compactPageEncoded, 1, protocol.COMPACT_PAGE_FORMAT + 1)
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(unsupportedCompactPageFrame, compactPageCodec)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "unsupported-compact-page-format",
+    "compact page rejects unknown format"
+)
+compactPageValue, compactPageError =
+    protocol.DecodeCompactPageEnvelope(BuildCompactPageFrameForTest(compactPageRaw, 0), compactPageCodec)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "invalid-compact-page-raw-length",
+    "compact page rejects zero declared length"
+)
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(compactPageRaw, protocol.COMPACT_PAGE_LIMITS.RawBytes + 1),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "compact-page-raw-too-large", "compact page declared raw bound")
+
+local observedCompactPageBudget
+compactPageDecoded = assert(protocol.DecodeCompactPageEnvelope(
+    compactPageEncoded,
+    MakeCompactPageCodec({
+        decompress = function(value, maximumOutputBytes)
+            observedCompactPageBudget = maximumOutputBytes
+            return value
+        end,
+    })
+))
+AssertEqual(
+    observedCompactPageBudget,
+    #compactPageRaw,
+    "compact page decompressor receives exact declared output budget"
+)
+Assert(DeepEqual(compactPageDecoded, compactPageEnvelope), "custom bounded decompressor round trip")
+compactPageDecoded = assert(protocol.DecodeCompactPageEnvelope(
+    compactPageEncoded,
+    MakeCompactPageCodec({
+        decompress = function(value)
+            return value, 0
+        end,
+    })
+))
+Assert(DeepEqual(compactPageDecoded, compactPageEnvelope), "zero compressed trailing count is accepted")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    compactPageEncoded,
+    MakeCompactPageCodec({
+        decompress = function(value)
+            return value, 1
+        end,
+    })
+)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "compact-page-compressed-trailing-data",
+    "compact page rejects bytes trailing the compressed stream"
+)
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    compactPageEncoded,
+    MakeCompactPageCodec({
+        decompress = function()
+            error("decompress")
+        end,
+    })
+)
+AssertError(compactPageValue, compactPageError, "compact-page-decompress-failed", "compact page decompress exception")
+for _, invalidRaw in ipairs({ false, 3 }) do
+    compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+        compactPageEncoded,
+        MakeCompactPageCodec({
+            decompress = function()
+                return invalidRaw
+            end,
+        })
+    )
+    AssertError(
+        compactPageValue,
+        compactPageError,
+        "compact-page-decompress-failed",
+        "compact page rejects invalid decompressed result"
+    )
+end
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    compactPageEncoded,
+    MakeCompactPageCodec({
+        decompress = function()
+            return nil, "output-too-large"
+        end,
+    })
+)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "compact-page-raw-length-mismatch",
+    "compact page maps bounded decompressor overflow"
+)
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(compactPageRaw, #compactPageRaw - 1),
+    compactPageCodec
+)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "compact-page-raw-length-mismatch",
+    "compact page rejects decompressed output longer than declared"
+)
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(compactPageRaw, #compactPageRaw + 1),
+    compactPageCodec
+)
+AssertError(
+    compactPageValue,
+    compactPageError,
+    "compact-page-raw-length-mismatch",
+    "compact page rejects decompressed output shorter than declared"
+)
+
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(ReplaceByte(compactPageRaw, 1, 2)),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page-flags", "compact page unknown flag")
+compactPageValue, compactPageError =
+    protocol.DecodeCompactPageEnvelope(BuildCompactPageFrameForTest(compactPageRaw .. "\0"), compactPageCodec)
+AssertError(compactPageValue, compactPageError, "compact-page-trailing-data", "compact page trailing raw byte")
+
+for length = 1, #compactPageEncoded - 1 do
+    compactPageValue, compactPageError =
+        protocol.DecodeCompactPageEnvelope(compactPageEncoded:sub(1, length), compactPageCodec)
+    Assert(
+        compactPageValue == nil and compactPageError ~= nil,
+        "every truncated compact page must fail at byte " .. tostring(length)
+    )
+end
+
+local compactPageSessionLengthOffset = 18
+local compactPageSessionStart = compactPageSessionLengthOffset + 1
+local compactPageSequenceStart = compactPageSessionStart + #compactPageEnvelope.SenderSessionId
+local compactPageAfterIdentity = compactPageSequenceStart + 4 + 7
+local compactPageReplyBytes = 16 + 1 + #queryEnvelope.SenderSessionId + 4
+local compactPageSyncStart = compactPageAfterIdentity + compactPageReplyBytes
+local compactPageUpdatedByLength = compactPageSyncStart + 20 + 4 + 4 + 7
+local compactPageOrderStart = compactPageUpdatedByLength + 1 + #compactPageEnvelope.Payload.Page.UpdatedBy
+local compactPageNameLength = compactPageOrderStart + 2
+local compactPageVarsLength = compactPageNameLength + 1 + #compactPageEnvelope.Payload.Page.Name
+local compactPageContentsLength = compactPageVarsLength + 2 + #compactPageEnvelope.Payload.Page.Vars
+local compactPageLayerCount = compactPageContentsLength + 2 + #compactPageEnvelope.Payload.Page.Contents
+local compactPageFirstLayerStart = compactPageLayerCount + 1
+local compactPageFirstLayerVarsLength = compactPageFirstLayerStart + 20
+
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(ReplaceByte(compactPageRaw, compactPageSessionLengthOffset, 0)),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page zero session length")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(
+        ReplaceByte(compactPageRaw, compactPageSessionLengthOffset, protocol.LIMITS.SessionIdBytes + 1)
+    ),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page overlong session length")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(ReplaceByte(compactPageRaw, compactPageSessionStart, string.byte(":"))),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-session-id", "compact page invalid session identity")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(ReplaceBytes(compactPageRaw, compactPageSequenceStart, "\0\0\0\0")),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-sequence", "compact page zero sender sequence")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(ReplaceBytes(compactPageRaw, compactPageSyncStart + 16, "\0\0\0\0")),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page zero entity sequence")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(ReplaceBytes(compactPageRaw, compactPageSyncStart + 20, "\0\0\0\0")),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-page-revision", "compact page zero page revision")
+
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(
+        ReplaceByte(compactPageRaw, compactPageUpdatedByLength, protocol.LIMITS.ActivePageAuthorBytes + 1)
+    ),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page overlong author length")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(
+        ReplaceByte(compactPageRaw, compactPageNameLength, protocol.LIMITS.ActivePageNameBytes + 1)
+    ),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page overlong name length")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(
+        ReplaceBytes(
+            compactPageRaw,
+            compactPageVarsLength,
+            EncodeUnsignedForTest(protocol.LIMITS.ActivePageVarsBytes + 1, 2)
+        )
+    ),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page overlong page vars length")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(
+        ReplaceBytes(
+            compactPageRaw,
+            compactPageContentsLength,
+            EncodeUnsignedForTest(protocol.LIMITS.ActivePageContentsBytes + 1, 2)
+        )
+    ),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page overlong contents length")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(
+        ReplaceByte(compactPageRaw, compactPageLayerCount, protocol.LIMITS.ActivePageAncestorCount + 1)
+    ),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page overlong layer count")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(ReplaceBytes(compactPageRaw, compactPageFirstLayerStart + 16, "\0\0\0\0")),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page zero ancestor sequence")
+compactPageValue, compactPageError = protocol.DecodeCompactPageEnvelope(
+    BuildCompactPageFrameForTest(
+        ReplaceBytes(
+            compactPageRaw,
+            compactPageFirstLayerVarsLength,
+            EncodeUnsignedForTest(protocol.LIMITS.ActivePageVarsBytes + 1, 2)
+        )
+    ),
+    compactPageCodec
+)
+AssertError(compactPageValue, compactPageError, "invalid-compact-page", "compact page overlong ancestor vars length")
 
 local compactCodec = MakeCompactCodec()
 local compactSession = assert(protocol.NewSession(installationId, "compact-display"))

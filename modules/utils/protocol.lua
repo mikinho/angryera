@@ -20,6 +20,7 @@ local protocol = AngryEra.utils.protocol
 protocol.VERSION = 3
 protocol.PREFIX = "AngryEra3"
 protocol.DISPLAY_PREFIX = "AngryEra3D"
+protocol.PAGE_PREFIX = "AngryEra3C"
 protocol.ACTIVE_PAGE_PREFIX = "AngryEra3P"
 
 protocol.WIRE_LIMITS = {
@@ -36,6 +37,18 @@ protocol.COMPACT_DISPLAY_LIMITS = {
     EncodedBytes = 254,
     PackedBytes = 237,
     RawBytes = 207,
+}
+
+-- Compact PAGE_UPSERT keeps the binary payload below the generic serializer
+-- ceiling while leaving room for a compressor header and channel encoding.
+-- Every variable-length field also has its own semantic bound below.
+protocol.COMPACT_PAGE_FORMAT = 1
+protocol.COMPACT_PAGE_LIMITS = {
+    EncodedBytes = 256 * 1024,
+    CompressedBytes = 256 * 1024 - 5,
+    -- Exact maximum produced by the current bounded fields, including all 32
+    -- maximum-size ancestor layers and the longest correlated identity.
+    RawBytes = 186158,
 }
 
 protocol.LIMITS = {
@@ -82,6 +95,8 @@ local COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS = 4
 local COMPACT_DISPLAY_KNOWN_FLAGS = COMPACT_DISPLAY_FLAG_DISPLAYED
     + COMPACT_DISPLAY_FLAG_REPLY_TO
     + COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS
+local COMPACT_PAGE_FLAG_REPLY_TO = 1
+local COMPACT_PAGE_KNOWN_FLAGS = COMPACT_PAGE_FLAG_REPLY_TO
 local HEX_DIGITS = "0123456789abcdef"
 
 local CLIENT_FLAVORS = {
@@ -221,6 +236,14 @@ end
 
 local function ValidateCompactDisplayCodec(codec)
     return type(codec) == "table" and type(codec.encode) == "function" and type(codec.decode) == "function"
+end
+
+local function ValidateCompactPageCodec(codec)
+    return type(codec) == "table"
+        and type(codec.compress) == "function"
+        and type(codec.decompress) == "function"
+        and type(codec.encode) == "function"
+        and type(codec.decode) == "function"
 end
 
 local function CallStringTransform(callback, input, errorCode)
@@ -915,11 +938,72 @@ local function ReadCompactMessageId(raw, cursor)
     return table.concat({ installationId, sessionId, tostring(sequence) }, ":"), cursor
 end
 
+local function AppendLengthPrefixedString(parts, value, byteCount, maximum, allowEmpty)
+    if not IsBoundedString(value, maximum, allowEmpty) then
+        return false
+    end
+    if not AppendUnsigned(parts, #value, byteCount, maximum) then
+        return false
+    end
+    parts[#parts + 1] = value
+    return true
+end
+
+local function ReadLengthPrefixedString(raw, cursor, byteCount, maximum, allowEmpty)
+    local length
+    length, cursor = ReadUnsigned(raw, cursor, byteCount, maximum)
+    if length == nil or (not allowEmpty and length == 0) then
+        return nil
+    end
+    local last = cursor + length - 1
+    if last > #raw then
+        return nil
+    end
+    return raw:sub(cursor, last), last + 1
+end
+
+local function AppendCompactSyncId(parts, value, expectedKind)
+    if not IsSyncId(value, expectedKind) then
+        return false
+    end
+    local installationId, _, sequence = identity.ParseSyncId(value)
+    return AppendCompactInstallationId(parts, installationId)
+        and AppendUnsigned(parts, sequence, 4, protocol.LIMITS.ActivePageRevision)
+end
+
+local function ReadCompactSyncId(raw, cursor, kind)
+    local installationId
+    installationId, cursor = ReadCompactInstallationId(raw, cursor)
+    if not installationId then
+        return nil
+    end
+    local sequence
+    sequence, cursor = ReadUnsigned(raw, cursor, 4, protocol.LIMITS.ActivePageRevision)
+    if sequence == nil or sequence < 1 then
+        return nil
+    end
+    return table.concat({ installationId, kind, tostring(sequence) }, ":"), cursor
+end
+
 local function ParseRevisionCode(value)
     if not IsRevisionId(value) then
         return nil
     end
     return tonumber(value:sub(7), 16)
+end
+
+local function AppendCompactRevisionId(parts, value)
+    local revision = ParseRevisionCode(value)
+    return revision ~= nil and AppendUnsigned(parts, revision, 4, UINT32_MAXIMUM)
+end
+
+local function ReadCompactRevisionId(raw, cursor)
+    local revision
+    revision, cursor = ReadUnsigned(raw, cursor, 4, UINT32_MAXIMUM)
+    if revision == nil then
+        return nil
+    end
+    return "fcs32:" .. EncodeHexInteger(revision, 8), cursor
 end
 
 local function AppendCompactDisplayReference(parts, payload)
@@ -1184,6 +1268,331 @@ function protocol.DecodeCompactDisplayEnvelope(encoded, codec)
         return nil, validationError
     end
     return envelope
+end
+
+local function EncodeCompactPageRaw(envelope)
+    local page = envelope.Payload.Page
+    local layers = envelope.Payload.AncestorVariableLayers
+    local layerCount = #layers
+    local derivedParentSyncId = layerCount > 0 and layers[layerCount].SyncId or nil
+    if page.ParentSyncId ~= derivedParentSyncId then
+        return nil, "unsupported-compact-page-parent"
+    end
+
+    local flags = envelope.ReplyTo ~= nil and COMPACT_PAGE_FLAG_REPLY_TO or 0
+    local parts = {
+        string.char(flags),
+    }
+    if
+        not AppendCompactInstallationId(parts, envelope.SenderInstallationId)
+        or not AppendCompactSessionId(parts, envelope.SenderSessionId)
+        or not AppendUnsigned(parts, envelope.Sequence, 4, UINT32_MAXIMUM)
+        or not AppendUnsigned(parts, envelope.SentAt, 7, MAX_SAFE_INTEGER)
+    then
+        return nil, "unsupported-compact-page-identity"
+    end
+    if envelope.ReplyTo ~= nil and not AppendCompactMessageId(parts, envelope.ReplyTo) then
+        return nil, "unsupported-compact-page-reply-to"
+    end
+
+    if
+        not AppendCompactSyncId(parts, page.SyncId, "page")
+        or not AppendUnsigned(parts, page.Revision, 4, protocol.LIMITS.ActivePageRevision)
+        or not AppendCompactRevisionId(parts, page.RevisionId)
+        or not AppendUnsigned(parts, page.UpdatedAt, 7, protocol.LIMITS.ActivePageTimestamp)
+        or not AppendLengthPrefixedString(parts, page.UpdatedBy, 1, protocol.LIMITS.ActivePageAuthorBytes, false)
+        or not AppendUnsigned(parts, page.Order, 2, protocol.LIMITS.ActivePageOrder)
+        or not AppendLengthPrefixedString(parts, page.Name, 1, protocol.LIMITS.ActivePageNameBytes, false)
+        or not AppendLengthPrefixedString(parts, page.Vars, 2, protocol.LIMITS.ActivePageVarsBytes, true)
+        or not AppendLengthPrefixedString(parts, page.Contents, 2, protocol.LIMITS.ActivePageContentsBytes, true)
+        or not AppendUnsigned(parts, layerCount, 1, protocol.LIMITS.ActivePageAncestorCount)
+    then
+        return nil, "unsupported-compact-page-payload"
+    end
+
+    for index = 1, layerCount do
+        local layer = layers[index]
+        if
+            not AppendCompactSyncId(parts, layer.SyncId, "category")
+            or not AppendLengthPrefixedString(parts, layer.Vars, 2, protocol.LIMITS.ActivePageVarsBytes, true)
+        then
+            return nil, "unsupported-compact-page-layer"
+        end
+    end
+    if not AppendCompactRevisionId(parts, envelope.Payload.ContextRevisionId) then
+        return nil, "unsupported-compact-page-context-revision"
+    end
+    return table.concat(parts)
+end
+
+local function DecodeCompactPageRaw(raw)
+    local flags = raw:byte(1)
+    if flags == nil or flags > COMPACT_PAGE_KNOWN_FLAGS then
+        return nil, "invalid-compact-page-flags"
+    end
+    local hasReplyTo = flags % 2 == COMPACT_PAGE_FLAG_REPLY_TO
+    local cursor = 2
+
+    local senderInstallationId
+    senderInstallationId, cursor = ReadCompactInstallationId(raw, cursor)
+    if not senderInstallationId then
+        return nil, "invalid-compact-page"
+    end
+    local senderSessionId
+    senderSessionId, cursor = ReadCompactSessionId(raw, cursor)
+    if not senderSessionId then
+        return nil, "invalid-compact-page"
+    end
+    local sequence
+    sequence, cursor = ReadUnsigned(raw, cursor, 4, UINT32_MAXIMUM)
+    if sequence == nil then
+        return nil, "invalid-compact-page"
+    end
+    local sentAt
+    sentAt, cursor = ReadUnsigned(raw, cursor, 7, MAX_SAFE_INTEGER)
+    if sentAt == nil then
+        return nil, "invalid-compact-page"
+    end
+
+    local replyTo
+    if hasReplyTo then
+        replyTo, cursor = ReadCompactMessageId(raw, cursor)
+        if not replyTo then
+            return nil, "invalid-compact-page"
+        end
+    end
+
+    local pageSyncId
+    pageSyncId, cursor = ReadCompactSyncId(raw, cursor, "page")
+    if not pageSyncId then
+        return nil, "invalid-compact-page"
+    end
+    local pageOwnerId = identity.ParseSyncId(pageSyncId)
+    local pageRevision
+    pageRevision, cursor = ReadUnsigned(raw, cursor, 4, protocol.LIMITS.ActivePageRevision)
+    if pageRevision == nil then
+        return nil, "invalid-compact-page"
+    end
+    local pageRevisionId
+    pageRevisionId, cursor = ReadCompactRevisionId(raw, cursor)
+    if not pageRevisionId then
+        return nil, "invalid-compact-page"
+    end
+    local pageUpdatedAt
+    pageUpdatedAt, cursor = ReadUnsigned(raw, cursor, 7, protocol.LIMITS.ActivePageTimestamp)
+    if pageUpdatedAt == nil then
+        return nil, "invalid-compact-page"
+    end
+    local pageUpdatedBy
+    pageUpdatedBy, cursor = ReadLengthPrefixedString(raw, cursor, 1, protocol.LIMITS.ActivePageAuthorBytes, false)
+    if not pageUpdatedBy then
+        return nil, "invalid-compact-page"
+    end
+    local pageOrder
+    pageOrder, cursor = ReadUnsigned(raw, cursor, 2, protocol.LIMITS.ActivePageOrder)
+    if pageOrder == nil then
+        return nil, "invalid-compact-page"
+    end
+    local pageName
+    pageName, cursor = ReadLengthPrefixedString(raw, cursor, 1, protocol.LIMITS.ActivePageNameBytes, false)
+    if not pageName then
+        return nil, "invalid-compact-page"
+    end
+    local pageVars
+    pageVars, cursor = ReadLengthPrefixedString(raw, cursor, 2, protocol.LIMITS.ActivePageVarsBytes, true)
+    if pageVars == nil then
+        return nil, "invalid-compact-page"
+    end
+    local pageContents
+    pageContents, cursor = ReadLengthPrefixedString(raw, cursor, 2, protocol.LIMITS.ActivePageContentsBytes, true)
+    if pageContents == nil then
+        return nil, "invalid-compact-page"
+    end
+
+    local layerCount
+    layerCount, cursor = ReadUnsigned(raw, cursor, 1, protocol.LIMITS.ActivePageAncestorCount)
+    if layerCount == nil then
+        return nil, "invalid-compact-page"
+    end
+    local layers = {}
+    for index = 1, layerCount do
+        local syncId
+        syncId, cursor = ReadCompactSyncId(raw, cursor, "category")
+        if not syncId then
+            return nil, "invalid-compact-page"
+        end
+        local vars
+        vars, cursor = ReadLengthPrefixedString(raw, cursor, 2, protocol.LIMITS.ActivePageVarsBytes, true)
+        if vars == nil then
+            return nil, "invalid-compact-page"
+        end
+        layers[index] = {
+            SyncId = syncId,
+            Vars = vars,
+        }
+    end
+
+    local contextRevisionId
+    contextRevisionId, cursor = ReadCompactRevisionId(raw, cursor)
+    if not contextRevisionId then
+        return nil, "invalid-compact-page"
+    end
+    if cursor ~= #raw + 1 then
+        return nil, "compact-page-trailing-data"
+    end
+
+    local envelope = {
+        Protocol = protocol.VERSION,
+        Type = "PAGE_UPSERT",
+        MessageId = table.concat({ senderInstallationId, senderSessionId, tostring(sequence) }, ":"),
+        ReplyTo = replyTo,
+        SenderInstallationId = senderInstallationId,
+        SenderSessionId = senderSessionId,
+        Sequence = sequence,
+        SentAt = sentAt,
+        Payload = {
+            Page = {
+                Kind = "page",
+                SyncId = pageSyncId,
+                OwnerId = pageOwnerId,
+                Revision = pageRevision,
+                RevisionId = pageRevisionId,
+                UpdatedAt = pageUpdatedAt,
+                UpdatedBy = pageUpdatedBy,
+                ParentSyncId = layerCount > 0 and layers[layerCount].SyncId or nil,
+                Order = pageOrder,
+                Name = pageName,
+                Vars = pageVars,
+                Contents = pageContents,
+            },
+            AncestorVariableLayers = layers,
+            ContextRevisionId = contextRevisionId,
+        },
+    }
+    local valid, validationError = protocol.ValidateEnvelope(envelope)
+    if not valid then
+        return nil, validationError
+    end
+    return envelope
+end
+
+--- Encodes one PAGE_UPSERT envelope into the compact binary page wire format.
+-- Protocol/type/message identity, page kind/owner, and direct parent are
+-- reconstructed canonically instead of being repeated on the wire.
+-- @tparam table envelope Valid protocol-v3 PAGE_UPSERT envelope.
+-- @tparam table codec Bounded compression and channel codec callbacks.
+-- @treturn string|nil encoded
+-- @treturn string|nil errorCode
+function protocol.EncodeCompactPageEnvelope(envelope, codec)
+    local valid, validationError = protocol.ValidateEnvelope(envelope)
+    if not valid then
+        return nil, validationError
+    end
+    if envelope.Type ~= "PAGE_UPSERT" then
+        return nil, "compact-page-type-mismatch"
+    end
+    if not ValidateCompactPageCodec(codec) then
+        return nil, "invalid-compact-page-codec"
+    end
+
+    local raw, rawError = EncodeCompactPageRaw(envelope)
+    if not raw then
+        return nil, rawError
+    end
+    if #raw > protocol.COMPACT_PAGE_LIMITS.RawBytes then
+        return nil, "compact-page-raw-too-large"
+    end
+
+    local compressed, compressError = CallStringTransform(codec.compress, raw, "compact-page-compress-failed")
+    if not compressed then
+        return nil, compressError
+    end
+    if #compressed > protocol.COMPACT_PAGE_LIMITS.CompressedBytes then
+        return nil, "compact-page-compressed-too-large"
+    end
+
+    local frameParts = {
+        string.char(protocol.COMPACT_PAGE_FORMAT),
+    }
+    if not AppendUnsigned(frameParts, #raw, 4, protocol.COMPACT_PAGE_LIMITS.RawBytes) then
+        return nil, "compact-page-raw-too-large"
+    end
+    frameParts[#frameParts + 1] = compressed
+    local encoded, encodeError =
+        CallStringTransform(codec.encode, table.concat(frameParts), "compact-page-encode-failed")
+    if not encoded then
+        return nil, encodeError
+    end
+    if #encoded > protocol.COMPACT_PAGE_LIMITS.EncodedBytes then
+        return nil, "compact-page-encoded-too-large"
+    end
+    return encoded
+end
+
+--- Decodes a compact PAGE_UPSERT into the canonical named protocol envelope.
+-- The decompressor must enforce the supplied output budget before allocation
+-- and return `nil, "output-too-large"` if that budget would be exceeded.
+-- @tparam string encoded Compact channel-encoded PAGE_UPSERT.
+-- @tparam table codec Bounded compression and channel codec callbacks.
+-- @treturn table|nil envelope
+-- @treturn string|nil errorCode
+function protocol.DecodeCompactPageEnvelope(encoded, codec)
+    if type(encoded) ~= "string" or encoded == "" then
+        return nil, "invalid-compact-page-encoded"
+    end
+    if not ValidateCompactPageCodec(codec) then
+        return nil, "invalid-compact-page-codec"
+    end
+    if #encoded > protocol.COMPACT_PAGE_LIMITS.EncodedBytes then
+        return nil, "compact-page-encoded-too-large"
+    end
+
+    local frame, decodeError = CallStringTransform(codec.decode, encoded, "compact-page-decode-failed")
+    if not frame then
+        return nil, decodeError
+    end
+    if #frame > protocol.COMPACT_PAGE_LIMITS.CompressedBytes + 5 then
+        return nil, "compact-page-frame-too-large"
+    end
+    if #frame < 6 then
+        return nil, "invalid-compact-page-frame"
+    end
+    if frame:byte(1) ~= protocol.COMPACT_PAGE_FORMAT then
+        return nil, "unsupported-compact-page-format"
+    end
+
+    local declaredRawBytes = ReadUnsigned(frame, 2, 4, UINT32_MAXIMUM)
+    if declaredRawBytes == nil or declaredRawBytes < 1 then
+        return nil, "invalid-compact-page-raw-length"
+    end
+    if declaredRawBytes > protocol.COMPACT_PAGE_LIMITS.RawBytes then
+        return nil, "compact-page-raw-too-large"
+    end
+    local compressed = frame:sub(6)
+    if #compressed > protocol.COMPACT_PAGE_LIMITS.CompressedBytes then
+        return nil, "compact-page-compressed-too-large"
+    end
+
+    local ok, raw, status = pcall(codec.decompress, compressed, declaredRawBytes)
+    if not ok or type(raw) ~= "string" then
+        if ok and status == "output-too-large" then
+            return nil, "compact-page-raw-length-mismatch"
+        end
+        return nil, "compact-page-decompress-failed"
+    end
+    if status ~= nil and status ~= 0 then
+        if type(status) == "number" and status > 0 then
+            return nil, "compact-page-compressed-trailing-data"
+        end
+        return nil, "compact-page-decompress-failed"
+    end
+    if #raw ~= declaredRawBytes then
+        return nil, "compact-page-raw-length-mismatch"
+    end
+    if #raw > protocol.COMPACT_PAGE_LIMITS.RawBytes then
+        return nil, "compact-page-raw-too-large"
+    end
+    return DecodeCompactPageRaw(raw)
 end
 
 --- Returns the mutually supported version for each shared capability.
