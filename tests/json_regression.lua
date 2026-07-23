@@ -15,60 +15,54 @@ local function assert_truthy(value, message)
     end
 end
 
-local function load_app()
-    if type(_G.GetBuildInfo) ~= "function" then
-        _G.GetBuildInfo = function()
-            return "1.15.0", "build", "builddate", 11500
-        end
-    end
-
-    local app = {}
-    local chunk, loadError = loadfile("Data.lua")
+local function load_json()
+    local app = { AngryEra = { utils = {} } }
+    local chunk, loadError = loadfile("modules/utils/json.lua")
     if not chunk then
-        fail("Failed to load Data.lua: " .. tostring(loadError))
+        fail("Failed to load modules/utils/json.lua: " .. tostring(loadError))
     end
 
     local ok, runError = pcall(chunk, "AngryEra", app)
     if not ok then
-        fail("Failed to initialize Data.lua: " .. tostring(runError))
+        fail("Failed to initialize modules/utils/json.lua: " .. tostring(runError))
     end
 
-    return app
+    return app.AngryEra.utils.json
 end
 
-local app = load_app()
+local json = load_json()
 
 -- Decode should unescape newlines so imported page content renders with real line breaks.
 do
-    local decoded = app.JSON_TryDecode("{\"content\":\"# Trash\\n\\nLine2\"}")
+    local decoded = json.JSON_TryDecode("{\"content\":\"# Trash\\n\\nLine2\"}")
     assert_truthy(decoded, "Expected JSON_TryDecode to parse valid JSON object")
     assert_equal(decoded.content, "# Trash\n\nLine2", "Expected escaped newlines to decode into real newlines")
 end
 
 -- Decode should preserve null entries in arrays.
 do
-    local decoded = app.JSON_TryDecode("[1,null,2]")
+    local decoded = json.JSON_TryDecode("[1,null,2]")
     assert_truthy(decoded, "Expected JSON_TryDecode to parse array with null")
     assert_equal(#decoded, 3, "Expected array length to include null placeholder")
-    assert_equal(decoded[2], app.JSON_NULL, "Expected null array element to map to app.JSON_NULL")
+    assert_equal(decoded[2], json.JSON_NULL, "Expected null array element to map to json.JSON_NULL")
 end
 
 -- Decode should preserve null object fields.
 do
-    local decoded = app.JSON_TryDecode("{\"name\":null,\"content\":\"x\"}")
+    local decoded = json.JSON_TryDecode("{\"name\":null,\"content\":\"x\"}")
     assert_truthy(decoded, "Expected JSON_TryDecode to parse object with null value")
-    assert_equal(decoded.name, app.JSON_NULL, "Expected object null field to map to app.JSON_NULL")
+    assert_equal(decoded.name, json.JSON_NULL, "Expected object null field to map to json.JSON_NULL")
 end
 
 -- Strict parser should reject trailing garbage.
 do
-    local decoded = app.JSON_TryDecode("{\"a\":1} trailing")
+    local decoded = json.JSON_TryDecode("{\"a\":1} trailing")
     assert_equal(decoded, nil, "Expected JSON_TryDecode to reject trailing non-whitespace")
 end
 
 -- Numeric parser should accept valid JSON exponent formats.
 do
-    local decoded = app.JSON_TryDecode("{\"a\":1e+2,\"b\":-2.5E-1}")
+    local decoded = json.JSON_TryDecode("{\"a\":1e+2,\"b\":-2.5E-1}")
     assert_truthy(decoded, "Expected JSON_TryDecode to parse valid exponent numbers")
     assert_equal(decoded.a, 100, "Expected 1e+2 to decode to 100")
     assert_equal(decoded.b, -0.25, "Expected -2.5E-1 to decode to -0.25")
@@ -83,16 +77,16 @@ do
         "[1e]",
     }
     for _, sample in ipairs(invalid) do
-        local decoded = app.JSON_TryDecode(sample)
+        local decoded = json.JSON_TryDecode(sample)
         assert_equal(decoded, nil, "Expected invalid JSON number to be rejected: " .. sample)
     end
 end
 
 -- Encode should preserve JSON null semantics and escaped newlines.
 do
-    local encoded = app.JSON_Encode({
+    local encoded = json.JSON_Encode({
         content = "# Trash\n\nLine2",
-        name = app.JSON_NULL,
+        name = json.JSON_NULL,
     })
     assert_truthy(encoded:find("\"name\":null", 1, true) ~= nil, "Expected JSON_Encode to write JSON null")
     assert_truthy(
@@ -100,24 +94,22 @@ do
         "Expected JSON_Encode to escape newlines"
     )
 
-    local roundTrip = app.JSON_TryDecode(encoded)
+    local roundTrip = json.JSON_TryDecode(encoded)
     assert_truthy(roundTrip, "Expected encoded JSON to decode")
-    assert_equal(roundTrip.name, app.JSON_NULL, "Expected encoded null to round-trip as app.JSON_NULL")
+    assert_equal(roundTrip.name, json.JSON_NULL, "Expected encoded null to round-trip as json.JSON_NULL")
     assert_equal(roundTrip.content, "# Trash\n\nLine2", "Expected content newlines to survive encode/decode round-trip")
 end
 
 -- ParseVariables JSON path should preserve null + newline behavior.
 do
-    local parsed = app.ParseVariables("{\"x\":null,\"y\":\"a\\nb\"}")
-    assert_equal(parsed.x, app.JSON_NULL, "Expected ParseVariables JSON path to preserve null values")
+    local parsed = json.ParseVariables("{\"x\":null,\"y\":\"a\\nb\"}")
+    assert_equal(parsed.x, json.JSON_NULL, "Expected ParseVariables JSON path to preserve null values")
     assert_equal(parsed.y, "a\nb", "Expected ParseVariables JSON path to decode escaped newline")
 end
 
 -- Variable references should resolve recursively while preserving invalid references.
 do
-    local modularApp = { AngryEra = { utils = {} } }
-    assert(loadfile("modules/utils/json.lua"))("AngryEra", modularApp)
-    local resolved = modularApp.AngryEra.utils.json.ResolveVariableReferences({
+    local resolved = json.ResolveVariableReferences({
         LIP1 = "{{FURY12}}",
         FURY12 = "Blah",
         CHAIN1 = "{{CHAIN2}}",
@@ -141,7 +133,7 @@ end
 -- Parser should reject excessively deep nesting.
 do
     local deep = string.rep("[", 300) .. string.rep("]", 300)
-    local decoded = app.JSON_TryDecode(deep)
+    local decoded = json.JSON_TryDecode(deep)
     assert_equal(decoded, nil, "Expected excessively deep JSON to be rejected")
 end
 
@@ -149,7 +141,7 @@ end
 do
     local depth = 100
     local nested = string.rep("[", depth) .. "0" .. string.rep("]", depth)
-    local decoded = app.JSON_TryDecode(nested)
+    local decoded = json.JSON_TryDecode(nested)
     assert_truthy(decoded ~= nil, "Expected bounded deep JSON to decode successfully")
 end
 
