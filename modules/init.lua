@@ -26,6 +26,7 @@ local AngryEra_Version = AngryEra.Version
 -- -----------------
 
 local blizOptionsPanel
+local blizOptionsCategoryId
 
 -- class AngryEraState
 -- field tree table Tree view state (collapsed nodes etc)
@@ -545,7 +546,8 @@ function AngryEra:OnInitialize()
     self:RegisterChatCommand("aa", "ChatCommand")
     LibStub("AceConfig-3.0"):RegisterOptionsTable("AngryEra", options)
 
-    blizOptionsPanel = LibStub("AceConfigDialog-3.0"):AddToBlizOptions("AngryEra", AngryEra_Title)
+    blizOptionsPanel, blizOptionsCategoryId =
+        LibStub("AceConfigDialog-3.0"):AddToBlizOptions("AngryEra", AngryEra_Title)
     blizOptionsPanel.default = function()
         self:RestoreDefaults()
     end
@@ -556,7 +558,7 @@ end
 function AngryEra:ChatCommand(input)
     if not input or input:trim() == "" then
         if Settings and Settings.OpenToCategory then
-            Settings.OpenToCategory(AngryEra_Title)
+            Settings.OpenToCategory(blizOptionsCategoryId)
         else
             InterfaceOptionsFrame_OpenToCategory(blizOptionsPanel)
         end

@@ -1,4 +1,4 @@
-## Interface: 20505
+## Interface: 20506
 ## Title: Angry Era (TBC)
 ## Author: Mikinho
 ## X-Original-Author: Ermad
