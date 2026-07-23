@@ -29,6 +29,7 @@ app.libs.LSM = LibStub("LibSharedMedia-3.0")
 app.libs.DDM = LibStub("LibDropDownMenu")
 
 AngryEra._comStarted = false
+AngryEra._protocolStarted = false
 
 AngryEra.Title = GetAddOnMetadata(appName, "Title")
 AngryEra.Version = GetAddOnMetadata(appName, "Version")

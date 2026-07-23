@@ -323,4 +323,7 @@ function AngryEra:PermissionsUpdated()
     if AngryEra._comStarted then
         self:SendRequestDisplay()
     end
+    if AngryEra._protocolStarted then
+        self:SendProtocolVersionQuery()
+    end
 end

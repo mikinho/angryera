@@ -13,6 +13,7 @@ AngryEra.Templates = app.Templates
 local core = AngryEra.core
 local isClassic = core.isClassic
 local comPrefix = core.comPrefix
+local protocolPrefix = AngryEra.utils.protocol.PREFIX
 
 local colors = AngryEra.utils.colors
 local RGBToHex = colors.RGBToHex
@@ -602,6 +603,10 @@ end
 function AngryEra:OnEnable()
     self:ResetOfficerRank()
     self:CreateDisplay()
+    local protocolStarted, protocolError = self:StartProtocolSession()
+    if not protocolStarted then
+        self:Print("Unable to start synchronization session: " .. tostring(protocolError))
+    end
 
     self:ScheduleTimer("AfterEnable", 4)
 
@@ -629,7 +634,11 @@ end
 
 function AngryEra:GROUP_JOINED()
     self:ResetVersionList() -- Reset version tracking when joining a new group
+    self:ResetProtocolPeers()
     self:SendVerQuery()
+    if self._protocolStarted then
+        self:SendProtocolVersionQuery(true)
+    end
     self:UpdateDisplayedIfNewGroup()
     self:ScheduleTimer("SendRequestDisplay", 0.5)
 end
@@ -648,7 +657,9 @@ function AngryEra:GROUP_ROSTER_UPDATE()
         end
         self:ResetCurrentGroup()
         self:ResetPermissionWarning()
+        self:ResetProtocolPeers()
     else
+        self:PruneProtocolPeers()
         self:UpdateDisplayedIfNewGroup()
     end
 end
@@ -681,7 +692,9 @@ end
 --- Post-enable delayed setup hook for communication/event wiring.
 function AngryEra:AfterEnable()
     self:RegisterComm(comPrefix, "ReceiveMessage")
+    self:RegisterComm(protocolPrefix, "ReceiveProtocolMessage")
     AngryEra._comStarted = true
+    AngryEra._protocolStarted = true
 
     if not (IsInRaid() or IsInGroup()) then
         self:ClearDisplayed()
@@ -695,4 +708,5 @@ function AngryEra:AfterEnable()
     self:SendRequestDisplay()
     self:UpdateDisplayedIfNewGroup()
     self:SendVerQuery()
+    self:SendProtocolVersionQuery(true)
 end

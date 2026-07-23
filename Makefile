@@ -1,4 +1,4 @@
-.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression test-order-regression test-smart-markers test-chat-output test-model-updates test-identity-meta test-entity-identity test-network-identity test-permissions test-import-ownership test-protocol check check-strict
+.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression test-order-regression test-smart-markers test-chat-output test-model-updates test-identity-meta test-entity-identity test-network-identity test-permissions test-import-ownership test-protocol test-protocol-runtime check check-strict
 
 LDOC ?= ldoc
 LDOC_CONFIG ?= .ldoc
@@ -59,7 +59,7 @@ lint-luacheck-strict:
 	@command -v $(LUACHECK) >/dev/null 2>&1 || { echo "Error: $(LUACHECK) not found."; exit 1; }
 	@$(LUACHECK) --config $(LUACHECK_CONFIG) -- $(LUA_FILES)
 
-test: test-json-regression test-order-regression test-smart-markers test-chat-output test-model-updates test-identity-meta test-entity-identity test-network-identity test-permissions test-import-ownership test-protocol
+test: test-json-regression test-order-regression test-smart-markers test-chat-output test-model-updates test-identity-meta test-entity-identity test-network-identity test-permissions test-import-ownership test-protocol test-protocol-runtime
 
 test-json-regression:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
@@ -104,6 +104,10 @@ test-import-ownership:
 test-protocol:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
 	@$(LUA_RUN) tests/protocol.lua
+
+test-protocol-runtime:
+	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
+	@$(LUA_RUN) tests/protocol_runtime.lua
 
 check: lint test docs
 

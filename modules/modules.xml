@@ -5,6 +5,7 @@
 	<Script file="entities.lua"/>
 	<Script file="smart_markers.lua"/>
 	<Script file="permissions.lua"/>
+	<Script file="protocol_runtime.lua"/>
 	<Script file="network.lua"/>
 	<Script file="models.lua"/>
 	<Include file="ui\ui.xml"/>
