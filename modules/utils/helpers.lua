@@ -69,6 +69,25 @@ function helpers.RequestGuildRoster()
     end
 end
 
+function helpers.CompareIndexedEntries(a, b)
+    local aIndex = a.Index or a.index
+    local bIndex = b.Index or b.index
+    local aName = a.Name or a.text or ""
+    local bName = b.Name or b.text or ""
+
+    if aIndex and bIndex then
+        if aIndex == bIndex then
+            return aName < bName
+        end
+        return aIndex < bIndex
+    elseif aIndex then
+        return true
+    elseif bIndex then
+        return false
+    end
+    return aName < bName
+end
+
 function helpers.IterateGroupMembers(callback)
     if IsInRaid() then
         for i = 1, GetNumGroupMembers() do

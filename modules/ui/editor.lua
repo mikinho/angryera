@@ -1721,21 +1721,7 @@ end
 
 -- ── Tree building ───────────────────────────────────────────────────────────
 
-local function GetTree_Sort(a, b)
-    if a.index and b.index then
-        if a.index == b.index then
-            return a.text < b.text
-        else
-            return a.index < b.index
-        end
-    elseif a.index then
-        return true
-    elseif b.index then
-        return false
-    else
-        return a.text < b.text
-    end
-end
+local GetTree_Sort = helpers.CompareIndexedEntries
 
 local function GetTree_InsertPage(tree, page)
     local name = page.Name

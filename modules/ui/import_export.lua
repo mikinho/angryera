@@ -11,6 +11,7 @@ local libS = app.libs.libS
 local libD = app.libs.libD
 local json = AngryEra.utils.json
 local serialization = AngryEra.utils.serialization
+local CompareIndexedEntries = AngryEra.utils.helpers.CompareIndexedEntries
 
 -- ── Export / Import (Encoded AA) ────────────────────────────────────────────
 
@@ -725,12 +726,7 @@ function AngryEra:Export(id, type, format)
                 table.insert(pages, p)
             end
         end
-        table.sort(pages, function(a, b)
-            if a.Index and b.Index then
-                return a.Index < b.Index
-            end
-            return a.Name < b.Name
-        end)
+        table.sort(pages, CompareIndexedEntries)
 
         if format == "Encoded AA" then
             local data = self:GetCategoryExportData(id)
