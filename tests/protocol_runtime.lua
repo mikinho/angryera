@@ -85,6 +85,59 @@ function libC:Decompress(value)
 end
 
 local libD = {}
+function libD:CompressZlib(value)
+    local parts = {
+        string.char(0x78, 0x01),
+    }
+    local cursor = 1
+    repeat
+        local length = math.min(#value - cursor + 1, 65535)
+        if length < 0 then
+            length = 0
+        end
+        local final = cursor + length > #value
+        local inverseLength = 65535 - length
+        parts[#parts + 1] = string.char(
+            final and 1 or 0,
+            length % 256,
+            math.floor(length / 256),
+            inverseLength % 256,
+            math.floor(inverseLength / 256)
+        )
+        if length > 0 then
+            parts[#parts + 1] = value:sub(cursor, cursor + length - 1)
+        end
+        cursor = cursor + length
+        if final then
+            break
+        end
+    until false
+
+    local first = 1
+    local second = 0
+    local processed = 0
+    for index = 1, #value do
+        first = first + value:byte(index)
+        second = second + first
+        processed = processed + 1
+        if processed == 5552 then
+            first = first % 65521
+            second = second % 65521
+            processed = 0
+        end
+    end
+    first = first % 65521
+    second = second % 65521
+    local checksum = second * 65536 + first
+    parts[#parts + 1] = string.char(
+        math.floor(checksum / 16777216) % 256,
+        math.floor(checksum / 65536) % 256,
+        math.floor(checksum / 256) % 256,
+        checksum % 256
+    )
+    return table.concat(parts)
+end
+
 function libD:EncodeForWoWAddonChannel(value)
     local prefix = encodedLeadingControl and "\001" or "encoded:"
     return prefix .. value .. string.rep("x", encodedPadding)
@@ -92,6 +145,8 @@ end
 function libD:DecodeForWoWAddonChannel(value)
     if value:sub(1, 8) == "encoded:" then
         return value:sub(9, #value - encodedPadding)
+    elseif value:byte(1) == 1 then
+        return value:sub(2, #value - encodedPadding)
     end
 end
 
@@ -207,8 +262,44 @@ local app = {
 assert(loadfile("modules/debug.lua"))("AngryEra", app)
 assert(loadfile("modules/identity.lua"))("AngryEra", app)
 assert(loadfile("modules/utils/protocol.lua"))("AngryEra", app)
+assert(loadfile("modules/utils/bounded_deflate.lua"))("AngryEra", app)
 
 local protocol = AngryEra.utils.protocol
+local compactPageCodec = {
+    compress = function(value)
+        return libD:CompressZlib(value)
+    end,
+    decompress = function(value, maximumOutputBytes)
+        local output, trailingBytesOrError = AngryEra.utils.boundedDeflate.DecompressZlib(value, maximumOutputBytes)
+        if output == nil then
+            return nil, trailingBytesOrError
+        end
+        if trailingBytesOrError ~= 0 then
+            return nil, "trailing-compressed-data"
+        end
+        return output
+    end,
+    encode = function(value)
+        return libD:EncodeForWoWAddonChannel(value)
+    end,
+    decode = function(value)
+        return libD:DecodeForWoWAddonChannel(value)
+    end,
+}
+function compactPageCodec.EncodeUInt32(value)
+    return string.char(
+        value % 256,
+        math.floor(value / 256) % 256,
+        math.floor(value / 65536) % 256,
+        math.floor(value / 16777216) % 256
+    )
+end
+
+function compactPageCodec.DecodeUInt32(value, index)
+    local first, second, third, fourth = value:byte(index, index + 3)
+    return first + second * 256 + third * 65536 + fourth * 16777216
+end
+
 local localInstallationId = "ae3i:1:2:3:4"
 local remoteInstallationId = "ae3i:5:6:7:8"
 local localReference = {
@@ -462,6 +553,8 @@ local function DecodeSent(index)
     local decodeError
     if sent.Prefix == protocol.DISPLAY_PREFIX then
         envelope, decodeError = protocol.DecodeCompactDisplayEnvelope(sent.Data, AngryEra:GetProtocolCodec())
+    elseif sent.Prefix == protocol.PAGE_PREFIX then
+        envelope, decodeError = protocol.DecodeCompactPageEnvelope(sent.Data, compactPageCodec)
     else
         envelope, decodeError = protocol.DecodeEnvelope(sent.Data, AngryEra:GetProtocolCodec())
     end
@@ -508,6 +601,8 @@ local function BuildRemoteEnvelope(sessionId, messageType, payload, options)
     local encoded
     if messageType == "DISPLAY" then
         encoded = assert(protocol.EncodeCompactDisplayEnvelope(envelope, AngryEra:GetProtocolCodec()))
+    elseif messageType == "PAGE_UPSERT" then
+        encoded = assert(protocol.EncodeCompactPageEnvelope(envelope, compactPageCodec))
     else
         encoded = assert(protocol.EncodeEnvelope(envelope, AngryEra:GetProtocolCodec()))
     end
@@ -535,6 +630,23 @@ assert(publicationResetCount == 1, "Starting transport should clear session-boun
 local firstSession = AngryEra:GetProtocolSession()
 assert(firstSession.InstallationId == localInstallationId, "Session should use the durable installation identity")
 assert(firstSession.SessionId == "local-session-1", "Injected session identity should be retained")
+
+do
+    sentMessages = {}
+    local pageSent, pageResult = AngryEra:SendProtocolPageUpsert(localUpsert)
+    assert(pageSent, pageResult)
+    local ordinaryPageTransport, ordinaryPageEnvelope = DecodeSent()
+    assert(ordinaryPageTransport.Prefix == protocol.PAGE_PREFIX, "ordinary PAGE_UPSERT should use compact-page prefix")
+    assert(ordinaryPageTransport.Channel == "RAID", "ordinary PAGE_UPSERT should use the current group channel")
+    assert(ordinaryPageTransport.Priority == "NORMAL", "ordinary PAGE_UPSERT should retain normal priority")
+    assert(
+        ordinaryPageEnvelope.Type == "PAGE_UPSERT"
+            and ordinaryPageEnvelope.Payload.Page.SyncId == localReference.SyncId
+            and ordinaryPageEnvelope.ReplyTo == nil,
+        "ordinary PAGE_UPSERT should round-trip through the compact runtime codec"
+    )
+    sentMessages = {}
+end
 
 local queryEncoded, remoteQuery = BuildRemoteEnvelope("remote-session-1", "VERSION_QUERY", {})
 local accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, queryEncoded, "RAID", "Alpha-Realm")
@@ -582,22 +694,68 @@ accepted, result = AngryEra:ReceiveProtocolMessage("WrongPrefix", wrongChannelQu
 AssertError(accepted, result, "invalid-transport", "wrong prefix")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
 AssertError(accepted, result, "invalid-compact-display-packing", "non-display envelope over display prefix")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
+AssertError(accepted, result, "unsupported-compact-page-format", "non-page envelope over compact-page prefix")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
-AssertError(accepted, result, "invalid-transport-message-type", "non-page envelope over active-page prefix")
-local activePrefixPage = BuildRemoteEnvelope("remote-active-prefix", "PAGE_UPSERT", remoteUpsert)
-accepted, result =
-    AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, activePrefixPage, "WHISPER", "Alpha-Realm")
-AssertError(accepted, result, "invalid-transport-message-type", "active-page prefix outside the current group channel")
-displayRequiresLeader = true
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, activePrefixPage, "RAID", "Alpha-Realm")
-AssertError(accepted, result, "unauthorized", "assistant page over leader-only active-page prefix")
-members["alpha-realm"] = "leader"
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, activePrefixPage, "RAID", "Alpha-Realm")
-assert(accepted, result)
-assert(knownActivePages[remoteReference.SyncId], "active-page prefix should deliver a complete PAGE_UPSERT")
-members["alpha-realm"] = "assistant"
-displayRequiresLeader = false
-knownActivePages = {}
+AssertError(accepted, result, "unsupported-compact-page-format", "non-page envelope over active-page prefix")
+do
+    local activePrefixPage, activePrefixEnvelope =
+        BuildRemoteEnvelope("remote-active-prefix", "PAGE_UPSERT", remoteUpsert)
+    local genericEncodedPage = assert(protocol.EncodeEnvelope(activePrefixEnvelope, runtimeCodec))
+    accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, genericEncodedPage, "RAID", "Alpha-Realm")
+    AssertError(
+        accepted,
+        result,
+        "invalid-transport-message-type",
+        "generic protocol prefix must reject a decoded PAGE_UPSERT"
+    )
+
+    local activePrefixFrame = assert(libD:DecodeForWoWAddonChannel(activePrefixPage))
+    local activePrefixRawBytes = compactPageCodec.DecodeUInt32(activePrefixFrame, 2)
+    local undersizedActivePrefixFrame = activePrefixFrame:sub(1, 1)
+        .. compactPageCodec.EncodeUInt32(activePrefixRawBytes - 1)
+        .. activePrefixFrame:sub(6)
+    local undersizedActivePrefixPage = libD:EncodeForWoWAddonChannel(undersizedActivePrefixFrame)
+    accepted, result =
+        AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, undersizedActivePrefixPage, "RAID", "Alpha-Realm")
+    AssertError(
+        accepted,
+        result,
+        "compact-page-raw-length-mismatch",
+        "compact page decompression must enforce the declared output budget"
+    )
+
+    local trailingActivePrefixPage = libD:EncodeForWoWAddonChannel(activePrefixFrame .. "\0")
+    accepted, result =
+        AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, trailingActivePrefixPage, "RAID", "Alpha-Realm")
+    AssertError(
+        accepted,
+        result,
+        "compact-page-decompress-failed",
+        "compact page runtime must reject bytes trailing the zlib stream"
+    )
+
+    accepted, result =
+        AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, activePrefixPage, "WHISPER", "Alpha-Realm")
+    AssertError(
+        accepted,
+        result,
+        "invalid-transport-message-type",
+        "active-page prefix outside the current group channel"
+    )
+    displayRequiresLeader = true
+    accepted, result =
+        AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, activePrefixPage, "RAID", "Alpha-Realm")
+    AssertError(accepted, result, "unauthorized", "assistant page over leader-only active-page prefix")
+    members["alpha-realm"] = "leader"
+    accepted, result =
+        AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, activePrefixPage, "RAID", "Alpha-Realm")
+    assert(accepted, result)
+    assert(knownActivePages[remoteReference.SyncId], "active-page prefix should deliver a complete PAGE_UPSERT")
+    members["alpha-realm"] = "assistant"
+    displayRequiresLeader = false
+    knownActivePages = {}
+end
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, "malformed", "RAID", "Beta-Realm")
 AssertError(accepted, result, "decode-failed", "malformed encoded payload")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, "malformed", "RAID", "Outside-Realm")
@@ -818,7 +976,7 @@ timestampTest.DebugRemotePage = BuildRemoteEnvelope("debug-large-timestamp", "PA
     SentAt = timestampTest.DebugRemoteSentAt,
 })
 accepted, result =
-    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, timestampTest.DebugRemotePage, "PARTY", "Alpha-Realm")
+    AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, timestampTest.DebugRemotePage, "PARTY", "Alpha-Realm")
 AssertError(accepted, result, "invalid-channel", "debug large-timestamp receive")
 timestampTest.DebugReceiveTrace = printedMessages[#printedMessages]
 assert(
@@ -945,6 +1103,14 @@ do
         #throttleFrames == 1 and throttleFrames[1].Data:byte(1) == 4 and throttleFrames[1].Data:byte(2) == 1,
         "a short control-prefixed packet should use AceComm's escape frame"
     )
+    local escapedActiveEnvelope =
+        assert(protocol.DecodeCompactPageEnvelope(throttleFrames[1].Data:sub(2), compactPageCodec))
+    assert(
+        escapedActiveEnvelope.Type == "PAGE_UPSERT"
+            and escapedActiveEnvelope.Payload.Page.SyncId == debugUpsert.Page.SyncId
+            and escapedActiveEnvelope.ReplyTo == nil,
+        "escaped proactive frames should carry the compact page wire format"
+    )
     local callbackTransfer = throttleFrames[1].CallbackArg.Transfer
     preciseTime = preciseTime + 0.25
     _G.ChatThrottleLib.nTotalSent = 1108
@@ -1061,6 +1227,18 @@ do
         completions[3].Label == "third" and completions[3].Succeeded == true and completions[3].Status == "sent",
         "the latest active-page transfer should complete normally"
     )
+    local latestEncodedParts = {}
+    for index = 3, frameIndex - 1 do
+        latestEncodedParts[#latestEncodedParts + 1] = throttleFrames[index].Data:sub(2)
+    end
+    local latestActiveEnvelope =
+        assert(protocol.DecodeCompactPageEnvelope(table.concat(latestEncodedParts), compactPageCodec))
+    assert(
+        latestActiveEnvelope.Type == "PAGE_UPSERT"
+            and latestActiveEnvelope.Payload.Page.SyncId == localUpsert.Page.SyncId
+            and latestActiveEnvelope.ReplyTo == nil,
+        "multipart proactive frames should reassemble to the same compact page codec"
+    )
     encodedPadding = 0
 end
 
@@ -1087,7 +1265,7 @@ accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, pageRequestE
 assert(accepted, result)
 assert(#sentMessages == 2, "A correlated page request should receive one response")
 local pageResponseTransport, pageResponseEnvelope = DecodeSent()
-assert(pageResponseTransport.Prefix == protocol.PREFIX, "PAGE_UPSERT should remain on the data prefix")
+assert(pageResponseTransport.Prefix == protocol.PAGE_PREFIX, "PAGE_UPSERT should use the compact-page prefix")
 assert(pageResponseTransport.Priority == "NORMAL", "PAGE_UPSERT should retain normal transport priority")
 assert(pageResponseTransport.Channel == "WHISPER", "PAGE_UPSERT response should be whispered")
 assert(pageResponseEnvelope.Type == "PAGE_UPSERT", "PAGE_REQUEST should produce PAGE_UPSERT")
@@ -1211,8 +1389,8 @@ local requestedDisplayTransport, requestedDisplayEnvelope = DecodeSent(2)
 assert(requestedPageEnvelope.Type == "PAGE_UPSERT", "Display response should send its page first")
 assert(requestedPageEnvelope.ReplyTo == displayRequestEnvelope.MessageId, "Page response should correlate")
 assert(
-    sentMessages[1].Prefix == protocol.PREFIX and sentMessages[1].Priority == "NORMAL",
-    "requested page data should use the normal data lane"
+    sentMessages[1].Prefix == protocol.PAGE_PREFIX and sentMessages[1].Priority == "NORMAL",
+    "requested page data should use the compact-page data lane"
 )
 assert(
     requestedDisplayTransport.Prefix == protocol.DISPLAY_PREFIX and requestedDisplayTransport.Priority == "ALERT",
@@ -1234,10 +1412,12 @@ assert(accepted, result or "a new requester session should not inherit the prior
 assert(#sentMessages == 4, "a reloaded requester should receive a fresh page and display response")
 
 local unauthorizedUpsertEncoded = BuildRemoteEnvelope("remote-unauthorized", "PAGE_UPSERT", remoteUpsert)
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, unauthorizedUpsertEncoded, "RAID", "Beta-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, unauthorizedUpsertEncoded, "RAID", "Beta-Realm")
 AssertError(accepted, result, "unauthorized", "member page publication")
 members["beta-realm"] = "assistant"
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, unauthorizedUpsertEncoded, "RAID", "Beta-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, unauthorizedUpsertEncoded, "RAID", "Beta-Realm")
 assert(accepted, result)
 members["beta-realm"] = "member"
 local lastActiveCall = activeCalls[#activeCalls]
@@ -1275,14 +1455,15 @@ currentTime = currentTime + 21
 local wrongSessionUpsert = BuildRemoteEnvelope("remote-other-session", "PAGE_UPSERT", remoteUpsert, {
     ReplyTo = requestEnvelope.MessageId,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, wrongSessionUpsert, "WHISPER", "Alpha-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, wrongSessionUpsert, "WHISPER", "Alpha-Realm")
 AssertError(accepted, result, "uncorrelated-reply", "page response from a different session")
 
 local correlatedUpsertEncoded = BuildRemoteEnvelope("remote-active-flow", "PAGE_UPSERT", remoteUpsert, {
     ReplyTo = requestEnvelope.MessageId,
     Sequence = 11,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, correlatedUpsertEncoded, "WHISPER", "Alpha-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, correlatedUpsertEncoded, "WHISPER", "Alpha-Realm")
 assert(accepted, result)
 local correlatedPageCall = LastActiveCallNamed("page-upsert")
 assert(
@@ -1404,13 +1585,13 @@ assert(#sentMessages == 0, "deferred rapid displays should not amplify into imme
 local delayedFirstPage = BuildRemoteEnvelope("rapid-display-flow", "PAGE_UPSERT", remoteUpsert, {
     Sequence = 22,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, delayedFirstPage, "RAID", "Alpha-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, delayedFirstPage, "RAID", "Alpha-Realm")
 assert(accepted and not result.CompletedDisplay, "an older page must not complete the newer pending display")
 assert(canceledRecoveryCalls == 0, "an irrelevant older page should retain latest-display recovery")
 local latestRapidPage = BuildRemoteEnvelope("rapid-display-flow", "PAGE_UPSERT", newerRemoteUpsert, {
     Sequence = 23,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, latestRapidPage, "RAID", "Alpha-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, latestRapidPage, "RAID", "Alpha-Realm")
 assert(
     accepted and result.CompletedDisplay and result.CompletedDisplay.Displayed,
     "the latest matching page should complete the rapid display"
@@ -1430,9 +1611,10 @@ local requestedRemoteUpsert = BuildRemoteEnvelope("remote-request-response", "PA
     ReplyTo = localDisplayRequestId,
     Sequence = 1,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, requestedRemoteUpsert, "WHISPER", "Beta-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, requestedRemoteUpsert, "WHISPER", "Beta-Realm")
 AssertError(accepted, result, "uncorrelated-reply", "wrong response sender")
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, requestedRemoteUpsert, "WHISPER", "Alpha-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, requestedRemoteUpsert, "WHISPER", "Alpha-Realm")
 assert(accepted, result)
 
 local requestedRemoteDisplay = BuildRemoteEnvelope("remote-request-response", "DISPLAY", remoteDisplayPayload, {
@@ -1483,7 +1665,7 @@ local reorderedRemotePage = BuildRemoteEnvelope("remote-reordered-response", "PA
     ReplyTo = reorderedDisplayRequestId,
     Sequence = 2,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, reorderedRemotePage, "WHISPER", "Alpha-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, reorderedRemotePage, "WHISPER", "Alpha-Realm")
 assert(
     accepted and result.CompletedDisplay and result.CompletedDisplay.Displayed,
     "the later correlated page should complete a display-first response"
@@ -1493,7 +1675,8 @@ local duplicateReorderedPage = BuildRemoteEnvelope("remote-reordered-response", 
     ReplyTo = reorderedDisplayRequestId,
     Sequence = 3,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, duplicateReorderedPage, "WHISPER", "Alpha-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, duplicateReorderedPage, "WHISPER", "Alpha-Realm")
 AssertError(accepted, result, "uncorrelated-reply", "completed display-first response")
 AngryEra.DeferPendingDisplayRecovery = nil
 AngryEra.CancelPendingDisplayRecovery = nil
@@ -1600,7 +1783,7 @@ assert(
 )
 
 local nondisplayRotatedSession = BuildRemoteEnvelope("beta-nondisplay-session", "PAGE_UPSERT", remoteUpsert)
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, nondisplayRotatedSession, "RAID", "Beta-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, nondisplayRotatedSession, "RAID", "Beta-Realm")
 assert(accepted, result)
 local activeDisplaySessionContinues = BuildRemoteEnvelope("beta-display-session-2", "DISPLAY", {
     Displayed = false,

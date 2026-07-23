@@ -14,6 +14,7 @@ local core = AngryEra.core
 local isClassic = core.isClassic
 local protocolPrefix = AngryEra.utils.protocol.PREFIX
 local displayProtocolPrefix = AngryEra.utils.protocol.DISPLAY_PREFIX
+local pageProtocolPrefix = AngryEra.utils.protocol.PAGE_PREFIX
 local activePageProtocolPrefix = AngryEra.utils.protocol.ACTIVE_PAGE_PREFIX
 
 local colors = AngryEra.utils.colors
@@ -653,6 +654,7 @@ function AngryEra:OnEnable()
     else
         self:RegisterComm(protocolPrefix, "ReceiveProtocolMessage")
         self:RegisterComm(displayProtocolPrefix, "ReceiveProtocolMessage")
+        self:RegisterComm(pageProtocolPrefix, "ReceiveProtocolMessage")
         self:RegisterComm(activePageProtocolPrefix, "ReceiveProtocolMessage")
         AngryEra._protocolStarted = true
     end

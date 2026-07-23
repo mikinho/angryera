@@ -8,9 +8,14 @@
 local _, app = ...
 local AngryEra = app.AngryEra
 local protocol = AngryEra.utils.protocol
+local boundedDeflate = AngryEra.utils.boundedDeflate
 local helpers = AngryEra.utils.helpers
 local EnsureUnitFullName = helpers.EnsureUnitFullName
 local PlayerFullName = helpers.PlayerFullName
+
+if not boundedDeflate or type(boundedDeflate.DecompressZlib) ~= "function" then
+    error("AngryEra bounded DEFLATE utilities must load before protocol runtime")
+end
 
 local libS = app.libs.libS
 local libC = app.libs.libC
@@ -527,6 +532,28 @@ local protocolCodec = {
         local output = libC:Decompress(value)
         if type(output) ~= "string" or #output ~= declaredBytes then
             return nil, "invalid-compressed-payload"
+        end
+        return output
+    end,
+    encode = function(value)
+        return libD:EncodeForWoWAddonChannel(value)
+    end,
+    decode = function(value)
+        return libD:DecodeForWoWAddonChannel(value)
+    end,
+}
+
+local compactPageCodec = {
+    compress = function(value)
+        return libD:CompressZlib(value)
+    end,
+    decompress = function(value, maximumOutputBytes)
+        local output, trailingBytesOrError = boundedDeflate.DecompressZlib(value, maximumOutputBytes)
+        if output == nil then
+            return nil, trailingBytesOrError
+        end
+        if trailingBytesOrError ~= 0 then
+            return nil, "trailing-compressed-data"
         end
         return output
     end,
@@ -1169,6 +1196,8 @@ local function PrepareProtocolPacket(messageType, payload, options)
     local encodeError
     if messageType == "DISPLAY" then
         encoded, encodeError = protocol.EncodeCompactDisplayEnvelope(envelope, protocolCodec)
+    elseif messageType == "PAGE_UPSERT" then
+        encoded, encodeError = protocol.EncodeCompactPageEnvelope(envelope, compactPageCodec)
     else
         encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec)
     end
@@ -1180,7 +1209,8 @@ local function PrepareProtocolPacket(messageType, payload, options)
         Channel = channel,
         Encoded = encoded,
         Envelope = envelope,
-        Prefix = messageType == "DISPLAY" and protocol.DISPLAY_PREFIX or protocol.PREFIX,
+        Prefix = messageType == "DISPLAY" and protocol.DISPLAY_PREFIX
+            or (messageType == "PAGE_UPSERT" and protocol.PAGE_PREFIX or protocol.PREFIX),
         Priority = messageType == "DISPLAY" and "ALERT" or options.Priority or "NORMAL",
         Target = options.Target,
     }
@@ -1436,11 +1466,11 @@ QueueActivePageChunk = function(state)
         throttle.SendAddonMessage,
         throttle,
         "ALERT",
-        protocol.ACTIVE_PAGE_PREFIX,
+        state.Prefix,
         frame,
         state.Channel,
         state.Target,
-        protocol.ACTIVE_PAGE_PREFIX,
+        state.Prefix,
         ActivePageChunkSent,
         frameState
     )
@@ -1491,6 +1521,7 @@ function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
     if not packet then
         return false, packetError
     end
+    packet.Prefix = protocol.ACTIVE_PAGE_PREFIX
 
     CancelActivePageTransfer("superseded")
     local encodedBytes = #packet.Encoded
@@ -1508,6 +1539,7 @@ function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
         Index = 1,
         MessageId = packet.Envelope.MessageId,
         Multipart = multipart,
+        Prefix = packet.Prefix,
         QueuedAt = debugEnabled and PreciseNowMilliseconds() or 0,
         Self = self,
         SentChunks = 0,
@@ -2058,8 +2090,12 @@ end
 --- Receives, authenticates, correlates, deduplicates, and dispatches protocol v3.
 function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     if
-        (prefix ~= protocol.PREFIX and prefix ~= protocol.DISPLAY_PREFIX and prefix ~= protocol.ACTIVE_PAGE_PREFIX)
-        or type(sender) ~= "string"
+        (
+            prefix ~= protocol.PREFIX
+            and prefix ~= protocol.DISPLAY_PREFIX
+            and prefix ~= protocol.PAGE_PREFIX
+            and prefix ~= protocol.ACTIVE_PAGE_PREFIX
+        ) or type(sender) ~= "string"
     then
         return false, "invalid-transport"
     end
@@ -2085,6 +2121,8 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     local decodeError
     if prefix == protocol.DISPLAY_PREFIX then
         envelope, decodeError = protocol.DecodeCompactDisplayEnvelope(data, protocolCodec)
+    elseif prefix == protocol.PAGE_PREFIX or prefix == protocol.ACTIVE_PAGE_PREFIX then
+        envelope, decodeError = protocol.DecodeCompactPageEnvelope(data, compactPageCodec)
     else
         envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec)
     end
@@ -2106,11 +2144,8 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     end
     if
         (envelope.Type == "DISPLAY" and prefix ~= protocol.DISPLAY_PREFIX)
-        or (
-            envelope.Type ~= "DISPLAY"
-            and prefix ~= protocol.PREFIX
-            and not (envelope.Type == "PAGE_UPSERT" and prefix == protocol.ACTIVE_PAGE_PREFIX)
-        )
+        or (envelope.Type == "PAGE_UPSERT" and prefix ~= protocol.PAGE_PREFIX and prefix ~= protocol.ACTIVE_PAGE_PREFIX)
+        or (envelope.Type ~= "DISPLAY" and envelope.Type ~= "PAGE_UPSERT" and prefix ~= protocol.PREFIX)
     then
         return false, "invalid-transport-message-type"
     end

@@ -17,6 +17,7 @@ local AngryEra = {
         protocol = {
             PREFIX = "AngryEra3",
             DISPLAY_PREFIX = "AngryEra3D",
+            PAGE_PREFIX = "AngryEra3C",
             ACTIVE_PAGE_PREFIX = "AngryEra3P",
         },
         colors = {
@@ -180,14 +181,16 @@ assert(
 )
 assert(registeredPrefixes.AngryEra3 == "ReceiveProtocolMessage", "startup should register the data prefix")
 assert(registeredPrefixes.AngryEra3D == "ReceiveProtocolMessage", "startup should register the display prefix")
+assert(registeredPrefixes.AngryEra3C == "ReceiveProtocolMessage", "startup should register the compact-page prefix")
 assert(registeredPrefixes.AngryEra3P == "ReceiveProtocolMessage", "startup should register the active-page prefix")
-assert(#registrationOrder == 3, "startup should register exactly three protocol prefixes")
+assert(#registrationOrder == 4, "startup should register exactly four protocol prefixes")
 assert(
     sessionIndex < registrationOrder[1].Index
         and registrationOrder[1].Prefix == "AngryEra3"
         and registrationOrder[2].Prefix == "AngryEra3D"
-        and registrationOrder[3].Prefix == "AngryEra3P",
-    "the protocol session must start before ordered data, display, and active-page registration"
+        and registrationOrder[3].Prefix == "AngryEra3C"
+        and registrationOrder[4].Prefix == "AngryEra3P",
+    "the protocol session must start before ordered data, display, compact-page, and active-page registration"
 )
 
 local clearCountBeforeJoin = 0
