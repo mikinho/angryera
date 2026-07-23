@@ -14,6 +14,7 @@ local serialization = AngryEra.utils.serialization
 local libS = app.libs.libS
 local libD = app.libs.libD
 local core = AngryEra.core
+local boundedDeflate = AngryEra.utils.boundedDeflate
 
 local function ValidateEncodedPagePayload(data, path)
     if type(data) ~= "table" then
@@ -138,12 +139,15 @@ function serialization.ParseImportString(str)
     if #compressed > core.MAX_IMPORT_DECODED_BYTES then
         return false, "Decoded import payload is too large"
     end
-    local serialized, err = libD:DecompressDeflate(compressed)
+    local serialized, trailingOrError = boundedDeflate.DecompressDeflate(compressed, core.MAX_IMPORT_SERIALIZED_BYTES)
     if not serialized then
-        return false, "Decompress failed: " .. (err or "?")
+        if trailingOrError == "output-too-large" then
+            return false, "Decompressed import payload is too large"
+        end
+        return false, "Decompress failed: " .. (trailingOrError or "?")
     end
-    if #serialized > core.MAX_IMPORT_SERIALIZED_BYTES then
-        return false, "Decompressed import payload is too large"
+    if trailingOrError ~= 0 then
+        return false, "Decompress failed: trailing data"
     end
     local ok, data = libS:Deserialize(serialized)
     if not ok then
