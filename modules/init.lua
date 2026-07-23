@@ -679,6 +679,9 @@ function AngryEra:OnEnable()
 end
 
 function AngryEra:PARTY_LEADER_CHANGED()
+    if type(self.ResetProtocolAncestorAnnouncements) == "function" then
+        self:ResetProtocolAncestorAnnouncements()
+    end
     if type(self.ResetDisplayPublicationState) == "function" then
         self:ResetDisplayPublicationState()
     end

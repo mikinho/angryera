@@ -115,6 +115,10 @@ function AngryEra:ResetDisplayPublicationState()
     Record("reset-display-publication")
 end
 
+function AngryEra:ResetProtocolAncestorAnnouncements()
+    Record("reset-protocol-ancestor-announcements")
+end
+
 function AngryEra:PruneProtocolPeers()
     Record("prune-protocol-peers")
 end
@@ -240,11 +244,13 @@ assert(markerRetryCount == 1, "a roster update should retry unresolved displayed
 calls = {}
 AngryEra:PARTY_LEADER_CHANGED()
 assert(
-    calls[1].Name == "reset-display-publication" and calls[2].Name == "permissions-updated",
-    "leader changes must reset queued publication state before reevaluating permissions"
+    calls[1].Name == "reset-protocol-ancestor-announcements"
+        and calls[2].Name == "reset-display-publication"
+        and calls[3].Name == "permissions-updated",
+    "leader changes must reset ancestor announcements and queued publication state before reevaluating permissions"
 )
-assert(calls[3].Name == "version-query", "leader changes should explicitly rediscover protocol peers")
-assert(calls[4].Name == "request-display", "leader changes should explicitly request the new leader's display")
+assert(calls[4].Name == "version-query", "leader changes should explicitly rediscover protocol peers")
+assert(calls[5].Name == "request-display", "leader changes should explicitly request the new leader's display")
 
 calls = {}
 AngryEra:PARTY_CONVERTED_TO_RAID()

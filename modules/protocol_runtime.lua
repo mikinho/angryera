@@ -10,23 +10,35 @@ local AngryEra = app.AngryEra
 local protocol = AngryEra.utils.protocol
 local boundedDeflate = AngryEra.utils.boundedDeflate
 local helpers = AngryEra.utils.helpers
+local revisions = AngryEra.sync and AngryEra.sync.revisions
 local EnsureUnitFullName = helpers.EnsureUnitFullName
 local PlayerFullName = helpers.PlayerFullName
 
 if not boundedDeflate or type(boundedDeflate.DecompressZlib) ~= "function" then
     error("AngryEra bounded DEFLATE utilities must load before protocol runtime")
 end
+if not revisions or type(revisions.CreateFCS32Callback) ~= "function" then
+    error("AngryEra synchronization revisions must load before protocol runtime")
+end
 
 local libS = app.libs.libS
 local libC = app.libs.libC
 local libD = app.libs.libD
 local core = AngryEra.core
+local compactPageHash = revisions.CreateFCS32Callback(libC)
+
+if type(compactPageHash) ~= "function" then
+    error("AngryEra compact-page hashing is unavailable")
+end
 
 local QUERY_TTL_SECONDS = 20
 local INTERACTION_TTL_SECONDS = 20
 local ACTIVE_PAGE_CORRELATION_TTL_SECONDS = 15 * 60
 local QUERY_THROTTLE_SECONDS = core.updateFrequency or 2
 local REPLY_THROTTLE_SECONDS = core.updateFrequency or 2
+-- Keep the exact display tuple available beyond the normal 30-second
+-- promised-page watchdog so a late omitted context can recover immediately.
+local PENDING_DISPLAY_CONTEXT_TTL_SECONDS = math.max((core.updateFrequency or 2) * 20, 60)
 local MAX_PENDING_QUERIES = 32
 local MAX_PENDING_INTERACTIONS = 64
 local MAX_PENDING_PER_PLAYER = 8
@@ -65,6 +77,32 @@ local lastDisplaySentAt
 local activePageTransfer
 local activePageTransferGeneration = 0
 local activePageOutstandingFrame
+local ancestorContexts = {
+    Inbound = {},
+    InboundAmbiguous = {},
+    InboundBytes = 0,
+    InboundCount = 0,
+    InboundOrdinal = 0,
+    InboundSessions = {},
+    MaxGlobalBytes = 1024 * 1024,
+    MaxGlobalEntries = 64,
+    MaxSessionBytes = 256 * 1024,
+    MaxSessionEntries = 16,
+    MaxMissHints = 32,
+    MaxOutboundBytes = 512 * 1024,
+    MaxOutboundEntries = 32,
+    MissHints = {},
+    MissHintCount = 0,
+    MissHintOrdinal = 0,
+    MissHintTtl = INTERACTION_TTL_SECONDS,
+    Outbound = {},
+    OutboundAmbiguous = {},
+    OutboundBytes = 0,
+    OutboundCount = 0,
+    OutboundEpoch = 0,
+    OutboundOrdinal = 0,
+    PendingDisplayTtl = PENDING_DISPLAY_CONTEXT_TTL_SECONDS,
+}
 
 local HANDLERS
 local CancelActivePageTransfer
@@ -337,6 +375,614 @@ local function NormalizePlayerKey(player)
     return fullName and fullName:lower()
 end
 
+function ancestorContexts:CopyLayers(layers)
+    if not IsPlainTable(layers) then
+        return nil
+    end
+    local copy = {}
+    for index = 1, #layers do
+        local layer = layers[index]
+        if not IsPlainTable(layer) or type(layer.SyncId) ~= "string" or type(layer.Vars) ~= "string" then
+            return nil
+        end
+        copy[index] = {
+            SyncId = layer.SyncId,
+            Vars = layer.Vars,
+        }
+    end
+    return copy
+end
+
+function ancestorContexts:LayersEqual(left, right)
+    if not IsPlainTable(left) or not IsPlainTable(right) or #left ~= #right then
+        return false
+    end
+    for index = 1, #left do
+        local leftLayer = left[index]
+        local rightLayer = right[index]
+        if
+            not IsPlainTable(leftLayer)
+            or not IsPlainTable(rightLayer)
+            or leftLayer.SyncId ~= rightLayer.SyncId
+            or leftLayer.Vars ~= rightLayer.Vars
+        then
+            return false
+        end
+    end
+    return true
+end
+
+function ancestorContexts:LayerCost(layers)
+    local bytes = 64
+    for index = 1, #layers do
+        local layer = layers[index]
+        bytes = bytes + 64 + #layer.SyncId + #layer.Vars
+    end
+    return bytes
+end
+
+function ancestorContexts:CopyReference(reference)
+    if not IsPlainTable(reference) then
+        return nil
+    end
+    return {
+        SyncId = reference.SyncId,
+        RevisionId = reference.RevisionId,
+        ContextRevisionId = reference.ContextRevisionId,
+    }
+end
+
+function ancestorContexts:Identity(sender, installationId, sessionId, contextId)
+    local senderKey = NormalizePlayerKey(sender)
+    if
+        type(senderKey) ~= "string"
+        or type(installationId) ~= "string"
+        or type(sessionId) ~= "string"
+        or type(contextId) ~= "string"
+    then
+        return nil
+    end
+    local sessionKey = table.concat({
+        tostring(#senderKey),
+        ":",
+        senderKey,
+        tostring(#installationId),
+        ":",
+        installationId,
+        tostring(#sessionId),
+        ":",
+        sessionId,
+    })
+    return senderKey, sessionKey, sessionKey .. tostring(#contextId) .. ":" .. contextId
+end
+
+function ancestorContexts:NextInboundOrdinal()
+    self.InboundOrdinal = self.InboundOrdinal + 1
+    return self.InboundOrdinal
+end
+
+function ancestorContexts:RemoveInbound(key)
+    local entry = self.Inbound[key]
+    if not entry then
+        return false
+    end
+    self.Inbound[key] = nil
+    self.InboundCount = self.InboundCount - 1
+    self.InboundBytes = self.InboundBytes - entry.Cost
+    local session = self.InboundSessions[entry.SessionKey]
+    if session then
+        session.Count = session.Count - 1
+        session.Bytes = session.Bytes - entry.Cost
+        if session.Count <= 0 then
+            self.InboundSessions[entry.SessionKey] = nil
+        end
+    end
+    return true
+end
+
+function ancestorContexts:OldestInbound(sessionKey)
+    local oldestKey
+    local oldestEntry
+    for key, entry in pairs(self.Inbound) do
+        if
+            (sessionKey == nil or entry.SessionKey == sessionKey)
+            and (
+                oldestEntry == nil
+                or entry.LastUsedOrdinal < oldestEntry.LastUsedOrdinal
+                or (entry.LastUsedOrdinal == oldestEntry.LastUsedOrdinal and key < oldestKey)
+            )
+        then
+            oldestKey = key
+            oldestEntry = entry
+        end
+    end
+    return oldestKey
+end
+
+function ancestorContexts:TrimAmbiguous(records, maximum)
+    local count = 0
+    for _ in pairs(records) do
+        count = count + 1
+    end
+    while count > (maximum or self.MaxGlobalEntries) do
+        local oldestKey
+        local oldest
+        for key, record in pairs(records) do
+            if
+                oldest == nil
+                or record.Ordinal < oldest.Ordinal
+                or (record.Ordinal == oldest.Ordinal and key < oldestKey)
+            then
+                oldestKey = key
+                oldest = record
+            end
+        end
+        if not oldestKey then
+            break
+        end
+        records[oldestKey] = nil
+        count = count - 1
+    end
+end
+
+function ancestorContexts:MarkInboundAmbiguous(key, senderKey)
+    self:RemoveInbound(key)
+    self.InboundAmbiguous[key] = {
+        Ordinal = self:NextInboundOrdinal(),
+        SenderKey = senderKey,
+    }
+    self:TrimAmbiguous(self.InboundAmbiguous)
+end
+
+function ancestorContexts:StoreInbound(sender, installationId, sessionId, contextId, layers)
+    local senderKey, sessionKey, key = self:Identity(sender, installationId, sessionId, contextId)
+    local safeLayers = self:CopyLayers(layers)
+    if not key or not safeLayers or self.InboundAmbiguous[key] then
+        return false
+    end
+
+    local existing = self.Inbound[key]
+    if existing then
+        if not self:LayersEqual(existing.Layers, safeLayers) then
+            self:MarkInboundAmbiguous(key, senderKey)
+            return false
+        end
+        existing.LastUsedOrdinal = self:NextInboundOrdinal()
+        return true
+    end
+
+    local cost = self:LayerCost(safeLayers)
+    if cost > self.MaxSessionBytes or cost > self.MaxGlobalBytes then
+        return false
+    end
+    local session = self.InboundSessions[sessionKey]
+    if not session then
+        session = {
+            Bytes = 0,
+            Count = 0,
+        }
+        self.InboundSessions[sessionKey] = session
+    end
+    while session.Count >= self.MaxSessionEntries or session.Bytes + cost > self.MaxSessionBytes do
+        local oldestKey = self:OldestInbound(sessionKey)
+        if not oldestKey then
+            return false
+        end
+        self:RemoveInbound(oldestKey)
+        session = self.InboundSessions[sessionKey] or {
+            Bytes = 0,
+            Count = 0,
+        }
+        self.InboundSessions[sessionKey] = session
+    end
+    while self.InboundCount >= self.MaxGlobalEntries or self.InboundBytes + cost > self.MaxGlobalBytes do
+        local oldestKey = self:OldestInbound()
+        if not oldestKey then
+            return false
+        end
+        self:RemoveInbound(oldestKey)
+    end
+
+    local ordinal = self:NextInboundOrdinal()
+    self.Inbound[key] = {
+        ContextId = contextId,
+        Cost = cost,
+        InstallationId = installationId,
+        LastUsedOrdinal = ordinal,
+        Layers = safeLayers,
+        Sender = EnsureUnitFullName(sender),
+        SenderKey = senderKey,
+        SessionId = sessionId,
+        SessionKey = sessionKey,
+    }
+    session = self.InboundSessions[sessionKey] or {
+        Bytes = 0,
+        Count = 0,
+    }
+    self.InboundSessions[sessionKey] = session
+    session.Count = session.Count + 1
+    session.Bytes = session.Bytes + cost
+    self.InboundCount = self.InboundCount + 1
+    self.InboundBytes = self.InboundBytes + cost
+    return true
+end
+
+function ancestorContexts:ResolveInbound(sender, installationId, sessionId, contextId)
+    local _, _, key = self:Identity(sender, installationId, sessionId, contextId)
+    if not key or self.InboundAmbiguous[key] then
+        return nil
+    end
+    local entry = self.Inbound[key]
+    return entry and self:CopyLayers(entry.Layers) or nil
+end
+
+function ancestorContexts:TouchInbound(sender, installationId, sessionId, contextId)
+    local _, _, key = self:Identity(sender, installationId, sessionId, contextId)
+    local entry = key and self.Inbound[key] or nil
+    if not entry or self.InboundAmbiguous[key] then
+        return false
+    end
+    entry.LastUsedOrdinal = self:NextInboundOrdinal()
+    return true
+end
+
+function ancestorContexts:ResetInbound()
+    self.Inbound = {}
+    self.InboundAmbiguous = {}
+    self.InboundBytes = 0
+    self.InboundCount = 0
+    self.InboundOrdinal = 0
+    self.InboundSessions = {}
+end
+
+function ancestorContexts:NextOutboundOrdinal()
+    self.OutboundOrdinal = self.OutboundOrdinal + 1
+    return self.OutboundOrdinal
+end
+
+function ancestorContexts:RemoveOutbound(contextId)
+    local entry = self.Outbound[contextId]
+    if not entry then
+        return false
+    end
+    self.Outbound[contextId] = nil
+    self.OutboundCount = self.OutboundCount - 1
+    self.OutboundBytes = self.OutboundBytes - entry.Cost
+    return true
+end
+
+function ancestorContexts:OldestOutbound()
+    local oldestId
+    local oldest
+    for contextId, entry in pairs(self.Outbound) do
+        if
+            oldest == nil
+            or entry.LastUsedOrdinal < oldest.LastUsedOrdinal
+            or (entry.LastUsedOrdinal == oldest.LastUsedOrdinal and contextId < oldestId)
+        then
+            oldestId = contextId
+            oldest = entry
+        end
+    end
+    return oldestId
+end
+
+function ancestorContexts:IsOutboundAnnounced(contextId, layers)
+    if self.OutboundAmbiguous[contextId] then
+        return false
+    end
+    local entry = self.Outbound[contextId]
+    if not entry then
+        return false
+    end
+    if not self:LayersEqual(entry.Layers, layers) then
+        self:RemoveOutbound(contextId)
+        self.OutboundAmbiguous[contextId] = {
+            Ordinal = self:NextOutboundOrdinal(),
+        }
+        self:TrimAmbiguous(self.OutboundAmbiguous, self.MaxOutboundEntries)
+        return false
+    end
+    return true
+end
+
+function ancestorContexts:RememberOutbound(contextId, layers)
+    if self.OutboundAmbiguous[contextId] then
+        return false
+    end
+    local safeLayers = self:CopyLayers(layers)
+    if not safeLayers or #safeLayers == 0 then
+        return false
+    end
+    local existing = self.Outbound[contextId]
+    if existing then
+        if not self:LayersEqual(existing.Layers, safeLayers) then
+            self:RemoveOutbound(contextId)
+            self.OutboundAmbiguous[contextId] = {
+                Ordinal = self:NextOutboundOrdinal(),
+            }
+            self:TrimAmbiguous(self.OutboundAmbiguous, self.MaxOutboundEntries)
+            return false
+        end
+        existing.LastUsedOrdinal = self:NextOutboundOrdinal()
+        return true
+    end
+
+    local cost = self:LayerCost(safeLayers)
+    if cost > self.MaxOutboundBytes then
+        return false
+    end
+    while self.OutboundCount >= self.MaxOutboundEntries or self.OutboundBytes + cost > self.MaxOutboundBytes do
+        local oldestId = self:OldestOutbound()
+        if not oldestId then
+            return false
+        end
+        self:RemoveOutbound(oldestId)
+    end
+    self.Outbound[contextId] = {
+        Cost = cost,
+        LastUsedOrdinal = self:NextOutboundOrdinal(),
+        Layers = safeLayers,
+    }
+    self.OutboundCount = self.OutboundCount + 1
+    self.OutboundBytes = self.OutboundBytes + cost
+    return true
+end
+
+function ancestorContexts:TouchOutbound(contextId, layers)
+    if not self:IsOutboundAnnounced(contextId, layers) then
+        return false
+    end
+    self.Outbound[contextId].LastUsedOrdinal = self:NextOutboundOrdinal()
+    return true
+end
+
+function ancestorContexts:ResetOutbound()
+    self.Outbound = {}
+    self.OutboundAmbiguous = {}
+    self.OutboundBytes = 0
+    self.OutboundCount = 0
+    self.OutboundEpoch = self.OutboundEpoch + 1
+    self.OutboundOrdinal = 0
+end
+
+function ancestorContexts:ResetMissState()
+    self.MissHints = {}
+    self.MissHintCount = 0
+    self.MissHintOrdinal = 0
+    self.PendingDisplay = nil
+end
+
+function ancestorContexts:ResetAll()
+    self:ResetInbound()
+    self:ResetOutbound()
+    self:ResetMissState()
+end
+
+function ancestorContexts:PruneInbound(selfAddon)
+    for key, entry in pairs(self.Inbound) do
+        if selfAddon:GetGroupRole(entry.Sender) == "absent" then
+            self:RemoveInbound(key)
+        end
+    end
+    for key, record in pairs(self.InboundAmbiguous) do
+        if selfAddon:GetGroupRole(record.SenderKey) == "absent" then
+            self.InboundAmbiguous[key] = nil
+        end
+    end
+end
+
+function ancestorContexts:ReferenceIdentity(sender, installationId, sessionId, reference, contextId)
+    if
+        not IsPlainTable(reference)
+        or type(reference.SyncId) ~= "string"
+        or type(reference.RevisionId) ~= "string"
+        or type(reference.ContextRevisionId) ~= "string"
+    then
+        return nil
+    end
+    local senderKey, sessionKey = self:Identity(sender, installationId, sessionId, contextId or "")
+    if not sessionKey then
+        return nil
+    end
+    local tupleKey = table.concat({
+        sessionKey,
+        tostring(#reference.SyncId),
+        ":",
+        reference.SyncId,
+        tostring(#reference.RevisionId),
+        ":",
+        reference.RevisionId,
+        tostring(#reference.ContextRevisionId),
+        ":",
+        reference.ContextRevisionId,
+    })
+    local hintKey = contextId and (tupleKey .. tostring(#contextId) .. ":" .. contextId) or nil
+    return senderKey, tupleKey, hintKey
+end
+
+function ancestorContexts:CleanupMissHints(now)
+    for key, record in pairs(self.MissHints) do
+        if record.ExpiresAt <= now then
+            self.MissHints[key] = nil
+            self.MissHintCount = self.MissHintCount - 1
+        end
+    end
+    local pending = self.PendingDisplay
+    if pending and pending.ExpiresAt <= now then
+        self.PendingDisplay = nil
+    end
+end
+
+function ancestorContexts:OldestMissHint()
+    local oldestKey
+    local oldest
+    for key, record in pairs(self.MissHints) do
+        if
+            oldest == nil
+            or record.Ordinal < oldest.Ordinal
+            or (record.Ordinal == oldest.Ordinal and key < oldestKey)
+        then
+            oldestKey = key
+            oldest = record
+        end
+    end
+    return oldestKey
+end
+
+function ancestorContexts:ValidateMissMetadata(sender, metadata)
+    if
+        not IsPlainTable(metadata)
+        or metadata.AncestorContextIncluded ~= false
+        or type(metadata.AncestorContextId) ~= "string"
+        or metadata.AncestorContextId == ""
+        or type(metadata.SenderInstallationId) ~= "string"
+        or type(metadata.SenderSessionId) ~= "string"
+        or type(metadata.MessageId) ~= "string"
+        or metadata.ReplyTo ~= nil
+        or not IsPlainTable(metadata.Reference)
+    then
+        return nil
+    end
+    local validReference = protocol.ValidatePayload("PAGE_REQUEST", metadata.Reference)
+    if not validReference then
+        return nil
+    end
+    local senderKey, tupleKey, hintKey = self:ReferenceIdentity(
+        sender,
+        metadata.SenderInstallationId,
+        metadata.SenderSessionId,
+        metadata.Reference,
+        metadata.AncestorContextId
+    )
+    if not hintKey then
+        return nil
+    end
+    return {
+        AncestorContextId = metadata.AncestorContextId,
+        HintKey = hintKey,
+        InstallationId = metadata.SenderInstallationId,
+        MessageId = metadata.MessageId,
+        Reference = self:CopyReference(metadata.Reference),
+        Sender = EnsureUnitFullName(sender),
+        SenderKey = senderKey,
+        SessionId = metadata.SenderSessionId,
+        TupleKey = tupleKey,
+    }
+end
+
+function ancestorContexts:RememberMissHint(sender, metadata, now)
+    self:CleanupMissHints(now)
+    local record = self:ValidateMissMetadata(sender, metadata)
+    if not record then
+        return false
+    end
+    self.MissHintOrdinal = self.MissHintOrdinal + 1
+    record.ExpiresAt = now + self.MissHintTtl
+    record.Ordinal = self.MissHintOrdinal
+    if self.MissHints[record.HintKey] then
+        self.MissHints[record.HintKey] = record
+        return true
+    end
+    while self.MissHintCount >= self.MaxMissHints do
+        local oldestKey = self:OldestMissHint()
+        if not oldestKey then
+            return false
+        end
+        self.MissHints[oldestKey] = nil
+        self.MissHintCount = self.MissHintCount - 1
+    end
+    self.MissHints[record.HintKey] = record
+    self.MissHintCount = self.MissHintCount + 1
+    return true
+end
+
+function ancestorContexts:ConsumeMissHints(sender, installationId, sessionId, reference, now)
+    self:CleanupMissHints(now)
+    local _, tupleKey = self:ReferenceIdentity(sender, installationId, sessionId, reference)
+    if not tupleKey then
+        return false
+    end
+    local found = false
+    for key, record in pairs(self.MissHints) do
+        if record.TupleKey == tupleKey then
+            self.MissHints[key] = nil
+            self.MissHintCount = self.MissHintCount - 1
+            found = true
+        end
+    end
+    return found
+end
+
+function ancestorContexts:SetPendingDisplay(auth, envelope, reference, now)
+    local senderKey, tupleKey =
+        self:ReferenceIdentity(auth.Sender, auth.SenderInstallationId, auth.SenderSessionId, reference)
+    if not tupleKey then
+        self.PendingDisplay = nil
+        return nil
+    end
+    local record = {
+        Auth = {
+            Sender = EnsureUnitFullName(auth.Sender),
+            SenderInstallationId = auth.SenderInstallationId,
+            SenderSessionId = auth.SenderSessionId,
+        },
+        Envelope = envelope,
+        ExpiresAt = now + self.PendingDisplayTtl,
+        Reference = self:CopyReference(reference),
+        RequestAttempted = false,
+        SenderKey = senderKey,
+        TupleKey = tupleKey,
+    }
+    self.PendingDisplay = record
+    return record
+end
+
+function ancestorContexts:PendingMatchesMetadata(sender, metadata, now)
+    self:CleanupMissHints(now)
+    local safeMetadata = self:ValidateMissMetadata(sender, metadata)
+    local pending = self.PendingDisplay
+    return safeMetadata and pending and safeMetadata.TupleKey == pending.TupleKey and pending or nil
+end
+
+function ancestorContexts:ClearPendingForPage(auth, reference)
+    local _, tupleKey = self:ReferenceIdentity(auth.Sender, auth.SenderInstallationId, auth.SenderSessionId, reference)
+    if self.PendingDisplay and tupleKey == self.PendingDisplay.TupleKey then
+        self.PendingDisplay = nil
+    end
+    self:ConsumeMissHints(auth.Sender, auth.SenderInstallationId, auth.SenderSessionId, reference, Now())
+end
+
+function ancestorContexts:PruneMissState(selfAddon)
+    for key, record in pairs(self.MissHints) do
+        if selfAddon:GetGroupRole(record.Sender) == "absent" then
+            self.MissHints[key] = nil
+            self.MissHintCount = self.MissHintCount - 1
+        end
+    end
+    local pending = self.PendingDisplay
+    if pending and selfAddon:GetGroupRole(pending.Auth.Sender) == "absent" then
+        self.PendingDisplay = nil
+    end
+end
+
+function ancestorContexts:DebugMetadata(metadata, inbound)
+    if not IsPlainTable(metadata) then
+        return "-", "-", "-", "-"
+    end
+    local included = metadata.AncestorContextIncluded
+    local source = "-"
+    if included == true then
+        source = "inline"
+    elseif included == false then
+        source = inbound and "cache" or "announced"
+    end
+    return metadata.AncestorContextId or "-",
+        source,
+        included == nil and "-" or tostring(included),
+        metadata.AncestorContextBytes == nil and "-" or tostring(metadata.AncestorContextBytes)
+end
+
 local function CopyMap(source)
     local copy = {}
     for key, value in pairs(source or {}) do
@@ -563,6 +1209,7 @@ local compactPageCodec = {
     decode = function(value)
         return libD:DecodeForWoWAddonChannel(value)
     end,
+    hash = compactPageHash,
 }
 
 local function GroupChannel()
@@ -674,6 +1321,7 @@ local function ResetTransportTables()
     lastVersionReplyCount = 0
     lastQueryAt = nil
     transportOrdinal = 0
+    ancestorContexts:ResetAll()
 end
 
 local function BuildAuth(sender, envelope, receivedAt)
@@ -1155,7 +1803,7 @@ function AngryEra:GetProtocolSession()
     return protocolSession
 end
 
-local function PrepareProtocolPacket(messageType, payload, options)
+local function PrepareProtocolPacket(messageType, payload, options, compactPageOptions)
     if not protocolSession then
         return nil, "session-not-started"
     end
@@ -1194,10 +1842,14 @@ local function PrepareProtocolPacket(messageType, payload, options)
 
     local encoded
     local encodeError
+    local compactPageMetadata
     if messageType == "DISPLAY" then
         encoded, encodeError = protocol.EncodeCompactDisplayEnvelope(envelope, protocolCodec)
     elseif messageType == "PAGE_UPSERT" then
-        encoded, encodeError = protocol.EncodeCompactPageEnvelope(envelope, compactPageCodec)
+        encoded, encodeError, compactPageMetadata =
+            protocol.EncodeCompactPageEnvelope(envelope, compactPageCodec, compactPageOptions or {
+                IncludeAncestorContext = true,
+            })
     else
         encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec)
     end
@@ -1209,6 +1861,7 @@ local function PrepareProtocolPacket(messageType, payload, options)
         Channel = channel,
         Encoded = encoded,
         Envelope = envelope,
+        CompactPageMetadata = compactPageMetadata,
         Prefix = messageType == "DISPLAY" and protocol.DISPLAY_PREFIX
             or (messageType == "PAGE_UPSERT" and protocol.PAGE_PREFIX or protocol.PREFIX),
         Priority = messageType == "DISPLAY" and "ALERT" or options.Priority or "NORMAL",
@@ -1268,10 +1921,12 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
     if IsActivePageMessage(messageType) and IsDebugEnabled(self) then
         local encodedBytes = #packet.Encoded
         local syncId, revisionId, contextRevisionId = DebugReference(messageType, payload)
+        local ancestorId, ancestorSource, ancestorIncluded, ancestorBytes =
+            ancestorContexts:DebugMetadata(packet.CompactPageMetadata, false)
         Trace(
             self,
             "tx-submit",
-            "type=%s id=%s seq=%d sentAt=%s sync=%s rev=%s ctx=%s prefix=%s channel=%s target=%s replyTo=%s bytes=%d chunks=%d",
+            "type=%s id=%s seq=%d sentAt=%s sync=%s rev=%s ctx=%s prefix=%s channel=%s target=%s replyTo=%s bytes=%d chunks=%d ancestorId=%s ancestorSource=%s ancestorIncluded=%s ancestorBytes=%s",
             messageType,
             packet.Envelope.MessageId,
             packet.Envelope.Sequence,
@@ -1284,7 +1939,11 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
             packet.Target or "-",
             packet.Envelope.ReplyTo or "-",
             encodedBytes,
-            EncodedChunkCount(encodedBytes)
+            EncodedChunkCount(encodedBytes),
+            ancestorId,
+            ancestorSource,
+            ancestorIncluded,
+            ancestorBytes
         )
         debugState = {
             Bytes = encodedBytes,
@@ -1325,6 +1984,18 @@ local function FinishActivePageTransfer(state, succeeded, status)
     state.Status = status
     if activePageTransfer == state then
         activePageTransfer = nil
+    end
+    if
+        succeeded
+        and state.AncestorContextId
+        and state.AncestorContextLayers
+        and state.AncestorContextEpoch == ancestorContexts.OutboundEpoch
+    then
+        if state.AncestorContextIncluded then
+            ancestorContexts:RememberOutbound(state.AncestorContextId, state.AncestorContextLayers)
+        else
+            ancestorContexts:TouchOutbound(state.AncestorContextId, state.AncestorContextLayers)
+        end
     end
 
     if state.Debug then
@@ -1497,6 +2168,16 @@ function AngryEra:CancelProtocolActivePageTransfer(reason)
     return CancelActivePageTransfer(reason)
 end
 
+--- Clears proactive ancestor announcements after a group-authority transition.
+-- The active transfer is canceled so an inline context from the former
+-- publication epoch cannot complete after the reset.
+function AngryEra:ResetProtocolAncestorAnnouncements()
+    CancelActivePageTransfer("ancestor-context-reset")
+    ancestorContexts:ResetOutbound()
+    ancestorContexts:ResetMissState()
+    return true
+end
+
 --- Broadcasts a proactive PAGE_UPSERT through the replaceable active-page lane.
 -- Standard AceComm multipart frames are produced one at a time, allowing a
 -- newer display to stop obsolete chunks before they enter ChatThrottleLib.
@@ -1517,17 +2198,37 @@ function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
     if not safeOptions then
         return false, optionsError
     end
-    local packet, packetError = PrepareProtocolPacket("PAGE_UPSERT", payload, safeOptions)
+    local layers = IsPlainTable(payload) and payload.AncestorVariableLayers or nil
+    local ancestorContextId, contextError = protocol.BuildCompactPageAncestorContextId(layers, compactPageCodec)
+    if not ancestorContextId then
+        return false, contextError
+    end
+    local includeAncestorContext = true
+    if #layers > 0 and ancestorContexts:IsOutboundAnnounced(ancestorContextId, layers) then
+        includeAncestorContext = false
+    end
+    local packet, packetError = PrepareProtocolPacket("PAGE_UPSERT", payload, safeOptions, {
+        IncludeAncestorContext = includeAncestorContext,
+    })
     if not packet then
         return false, packetError
     end
     packet.Prefix = protocol.ACTIVE_PAGE_PREFIX
 
+    local expectedGeneration = activePageTransferGeneration + 1
     CancelActivePageTransfer("superseded")
+    if activePageTransferGeneration ~= expectedGeneration then
+        return false, "superseded"
+    end
     local encodedBytes = #packet.Encoded
     local totalChunks, multipart, escapeSingle = ActivePageFramePlan(packet.Encoded)
     local debugEnabled = IsDebugEnabled(self)
+    local compactPageMetadata = packet.CompactPageMetadata
     local state = {
+        AncestorContextId = #layers > 0 and compactPageMetadata.AncestorContextId or nil,
+        AncestorContextIncluded = compactPageMetadata.AncestorContextIncluded,
+        AncestorContextLayers = #layers > 0 and ancestorContexts:CopyLayers(layers) or nil,
+        AncestorContextEpoch = ancestorContexts.OutboundEpoch,
         Bytes = encodedBytes,
         Callback = callback,
         CallbackArg = callbackArg,
@@ -1551,11 +2252,13 @@ function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
         local syncId, revisionId, contextRevisionId = DebugReference("PAGE_UPSERT", payload)
         local throttle = ChatThrottleDebugSnapshot()
         local contentsBytes, pageVarsBytes, ancestorVarsBytes, layerCount = ActivePagePayloadDebugAnatomy(payload)
+        local ancestorId, ancestorSource, ancestorIncluded, ancestorBytes =
+            ancestorContexts:DebugMetadata(compactPageMetadata, false)
         state.ThrottleAtSubmit = throttle
         Trace(
             self,
             "page-stream-submit",
-            "id=%s seq=%d sentAt=%s generation=%d sync=%s rev=%s ctx=%s channel=%s bytes=%d chunks=%d contentsBytes=%d pageVarsBytes=%d ancestorVarsBytes=%d layers=%d fps=%s ctlAvail=%s ctlAlertAvail=%s ctlAlertPipes=%s ctlChoking=%s ctlQueues=%s",
+            "id=%s seq=%d sentAt=%s generation=%d sync=%s rev=%s ctx=%s channel=%s bytes=%d chunks=%d contentsBytes=%d pageVarsBytes=%d ancestorVarsBytes=%d layers=%d ancestorId=%s ancestorSource=%s ancestorIncluded=%s ancestorBytes=%s fps=%s ctlAvail=%s ctlAlertAvail=%s ctlAlertPipes=%s ctlChoking=%s ctlQueues=%s",
             state.MessageId,
             packet.Envelope.Sequence,
             tostring(packet.Envelope.SentAt),
@@ -1570,6 +2273,10 @@ function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
             pageVarsBytes,
             ancestorVarsBytes,
             layerCount,
+            ancestorId,
+            ancestorSource,
+            ancestorIncluded,
+            ancestorBytes,
             throttle.FrameRate,
             throttle.Available,
             throttle.AlertAvailable,
@@ -1698,6 +2405,72 @@ function AngryEra:SendProtocolPageRequest(target, displayEnvelope, reference)
     end
     pendingPageRequests[messageId].ExpiresAt = now + ACTIVE_PAGE_CORRELATION_TTL_SECONDS
     return true, messageId
+end
+
+function ancestorContexts:AttemptPendingDisplayRequest(selfAddon, pending)
+    local now = Now()
+    self:CleanupMissHints(now)
+    if not pending or self.PendingDisplay ~= pending or pending.RequestAttempted then
+        return false, "already-requested"
+    end
+    pending.RequestAttempted = true
+
+    local auth = pending.Auth
+    local roleOk, role = pcall(selfAddon.GetGroupRole, selfAddon, auth.Sender)
+    if
+        not roleOk
+        or role == "absent"
+        or not SafeCanReceive(selfAddon, auth.Sender, "display")
+        or not SafeCanReceive(selfAddon, auth.Sender, "pageUpsert")
+    then
+        return false, "unauthorized"
+    end
+
+    local requested, requestError = selfAddon:SendProtocolPageRequest(auth.Sender, pending.Envelope, pending.Reference)
+    pending.RequestSent = requested == true
+    local recoveryScheduled = false
+    local recoveryStatus
+    if type(selfAddon.DeferPendingDisplayRecovery) == "function" then
+        local called, scheduled, status = pcall(
+            selfAddon.DeferPendingDisplayRecovery,
+            selfAddon,
+            auth,
+            pending.Envelope,
+            pending.Reference,
+            requested and 1 or 0,
+            true
+        )
+        if called and scheduled then
+            recoveryScheduled = status == "scheduled"
+            recoveryStatus = status
+        elseif called then
+            recoveryStatus = status
+        else
+            recoveryStatus = "recovery-failed"
+        end
+    end
+    return requested == true, requestError, recoveryScheduled, recoveryStatus
+end
+
+function ancestorContexts:HandleDecodeMiss(selfAddon, prefix, channel, sender, metadata)
+    if
+        prefix ~= protocol.ACTIVE_PAGE_PREFIX
+        or not IsCurrentGroupChannel(channel)
+        or not SafeCanReceive(selfAddon, sender, "display")
+        or not SafeCanReceive(selfAddon, sender, "pageUpsert")
+    then
+        return false, "unsafe-context-miss"
+    end
+    local now = Now()
+    local safeMetadata = self:ValidateMissMetadata(sender, metadata)
+    if not safeMetadata then
+        return false, "invalid-context-miss"
+    end
+    local pending = self:PendingMatchesMetadata(sender, metadata, now)
+    if pending then
+        return self:AttemptPendingDisplayRequest(selfAddon, pending)
+    end
+    return self:RememberMissHint(sender, metadata, now), "hinted"
 end
 
 --- Sends a canonical PAGE_UPSERT as a group publication or correlated whisper.
@@ -1888,9 +2661,21 @@ function AngryEra:HandleProtocolDisplay(auth, _, envelope)
 
     local requestError
     if result.RequestNeeded then
+        local pendingContext = ancestorContexts:SetPendingDisplay(auth, envelope, result.RequestPayload, Now())
+        local missedBeforeDisplay = ancestorContexts:ConsumeMissHints(
+            auth.Sender,
+            auth.SenderInstallationId,
+            auth.SenderSessionId,
+            result.RequestPayload,
+            Now()
+        )
         local deferred
         local recoveryStatus
-        if type(self.DeferPendingDisplayRecovery) == "function" and envelope.Payload.PageFollows == true then
+        if
+            not missedBeforeDisplay
+            and type(self.DeferPendingDisplayRecovery) == "function"
+            and envelope.Payload.PageFollows == true
+        then
             local called, scheduled, status = pcall(
                 self.DeferPendingDisplayRecovery,
                 self,
@@ -1909,23 +2694,11 @@ function AngryEra:HandleProtocolDisplay(auth, _, envelope)
         end
         if not deferred then
             local requested
-            requested, requestError = self:SendProtocolPageRequest(auth.Sender, envelope, result.RequestPayload)
+            local recoveryScheduled
+            requested, requestError, recoveryScheduled, recoveryStatus =
+                ancestorContexts:AttemptPendingDisplayRequest(self, pendingContext)
             result.RequestSent = requested == true
-            if type(self.DeferPendingDisplayRecovery) == "function" then
-                local called, scheduled, status = pcall(
-                    self.DeferPendingDisplayRecovery,
-                    self,
-                    auth,
-                    envelope,
-                    result.RequestPayload,
-                    requested and 1 or 0,
-                    true
-                )
-                if called and scheduled then
-                    result.RecoveryScheduled = status == "scheduled"
-                    recoveryStatus = status
-                end
-            end
+            result.RecoveryScheduled = recoveryScheduled == true
         end
         result.RequestError = requestError
         result.RecoveryStatus = recoveryStatus
@@ -1944,8 +2717,11 @@ function AngryEra:HandleProtocolDisplay(auth, _, envelope)
                 tostring(result.RecoveryStatus)
             )
         end
-    elseif type(self.CancelPendingDisplayRecovery) == "function" then
-        pcall(self.CancelPendingDisplayRecovery, self)
+    else
+        ancestorContexts:ResetMissState()
+        if type(self.CancelPendingDisplayRecovery) == "function" then
+            pcall(self.CancelPendingDisplayRecovery, self)
+        end
     end
     if envelope.ReplyTo ~= nil then
         local pending = pendingDisplayRequests[envelope.ReplyTo]
@@ -2024,6 +2800,7 @@ function AngryEra:HandleProtocolPageUpsert(auth, channel, envelope)
     end
 
     local reference = ReferenceFromPayload("PAGE_UPSERT", envelope.Payload)
+    ancestorContexts:ClearPendingForPage(auth, reference)
     if envelope.ReplyTo ~= nil then
         local displayPending = pendingDisplayRequests[envelope.ReplyTo]
         if displayPending then
@@ -2119,25 +2896,50 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
 
     local envelope
     local decodeError
+    local compactPageMetadata
     if prefix == protocol.DISPLAY_PREFIX then
         envelope, decodeError = protocol.DecodeCompactDisplayEnvelope(data, protocolCodec)
     elseif prefix == protocol.PAGE_PREFIX or prefix == protocol.ACTIVE_PAGE_PREFIX then
-        envelope, decodeError = protocol.DecodeCompactPageEnvelope(data, compactPageCodec)
+        local decodeOptions
+        if prefix == protocol.ACTIVE_PAGE_PREFIX then
+            decodeOptions = {
+                ResolveAncestorContext = function(installationId, sessionId, contextId)
+                    return ancestorContexts:ResolveInbound(sender, installationId, sessionId, contextId)
+                end,
+            }
+        end
+        envelope, decodeError, compactPageMetadata =
+            protocol.DecodeCompactPageEnvelope(data, compactPageCodec, decodeOptions)
+        if prefix == protocol.PAGE_PREFIX and decodeError == "compact-page-ancestor-context-missing" then
+            decodeError = "invalid-transport-message-type"
+        end
     else
         envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec)
     end
     if not envelope then
+        if decodeError == "compact-page-ancestor-context-missing" then
+            ancestorContexts:HandleDecodeMiss(self, prefix, channel, sender, compactPageMetadata)
+        end
         if debugEnabled then
+            local ancestorId, ancestorSource, ancestorIncluded, ancestorBytes =
+                ancestorContexts:DebugMetadata(compactPageMetadata, true)
+            if decodeError == "compact-page-ancestor-context-missing" then
+                ancestorSource = "missing"
+            end
             Trace(
                 self,
                 "rx-drop",
-                "prefix=%s sender=%s channel=%s bytes=%d decode=%dms reason=%s",
+                "prefix=%s sender=%s channel=%s bytes=%d decode=%dms reason=%s ancestorId=%s ancestorSource=%s ancestorIncluded=%s ancestorBytes=%s",
                 prefix,
                 sender,
                 tostring(channel),
                 type(data) == "string" and #data or 0,
                 math.max(PreciseNowMilliseconds() - decodeStarted, 0),
-                tostring(decodeError)
+                tostring(decodeError),
+                ancestorId,
+                ancestorSource,
+                ancestorIncluded,
+                ancestorBytes
             )
         end
         return false, decodeError
@@ -2149,14 +2951,24 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     then
         return false, "invalid-transport-message-type"
     end
+    if
+        envelope.Type == "PAGE_UPSERT"
+        and compactPageMetadata
+        and compactPageMetadata.AncestorContextIncluded == false
+        and (prefix ~= protocol.ACTIVE_PAGE_PREFIX or not IsCurrentGroupChannel(channel) or envelope.ReplyTo ~= nil)
+    then
+        return false, "invalid-transport-message-type"
+    end
     if debugEnabled and IsActivePageMessage(envelope.Type) then
         local syncId, revisionId, contextRevisionId = DebugReference(envelope.Type, envelope.Payload)
         local receivedAt = CurrentEpochMilliseconds()
         local approximateAge = receivedAt and (receivedAt - envelope.SentAt) or 0
+        local ancestorId, ancestorSource, ancestorIncluded, ancestorBytes =
+            ancestorContexts:DebugMetadata(compactPageMetadata, true)
         Trace(
             self,
             "rx-decoded",
-            "type=%s id=%s seq=%d sentAt=%s age~=%sms sync=%s rev=%s ctx=%s sender=%s prefix=%s channel=%s replyTo=%s bytes=%d decode=%dms",
+            "type=%s id=%s seq=%d sentAt=%s age~=%sms sync=%s rev=%s ctx=%s sender=%s prefix=%s channel=%s replyTo=%s bytes=%d decode=%dms ancestorId=%s ancestorSource=%s ancestorIncluded=%s ancestorBytes=%s",
             envelope.Type,
             envelope.MessageId,
             envelope.Sequence,
@@ -2170,7 +2982,11 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
             tostring(channel),
             envelope.ReplyTo or "-",
             type(data) == "string" and #data or 0,
-            math.max(PreciseNowMilliseconds() - decodeStarted, 0)
+            math.max(PreciseNowMilliseconds() - decodeStarted, 0),
+            ancestorId,
+            ancestorSource,
+            ancestorIncluded,
+            ancestorBytes
         )
     end
 
@@ -2231,6 +3047,24 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     local traceActivePage = debugEnabled and IsActivePageMessage(envelope.Type)
     local dispatchStarted = traceActivePage and PreciseNowMilliseconds() or 0
     local accepted, result, warning = self:DispatchProtocolMessage(auth, channel, envelope)
+    if accepted and envelope.Type == "PAGE_UPSERT" and compactPageMetadata then
+        if compactPageMetadata.AncestorContextIncluded == true and #envelope.Payload.AncestorVariableLayers > 0 then
+            ancestorContexts:StoreInbound(
+                sender,
+                envelope.SenderInstallationId,
+                envelope.SenderSessionId,
+                compactPageMetadata.AncestorContextId,
+                envelope.Payload.AncestorVariableLayers
+            )
+        elseif compactPageMetadata.AncestorContextIncluded == false then
+            ancestorContexts:TouchInbound(
+                sender,
+                envelope.SenderInstallationId,
+                envelope.SenderSessionId,
+                compactPageMetadata.AncestorContextId
+            )
+        end
+    end
     if accepted and envelope.Type == "DISPLAY" then
         CommitDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence, envelope.SentAt)
     end
@@ -2302,4 +3136,7 @@ function AngryEra:PruneProtocolPeers()
     for _ in pairs(replayPlayers) do
         replayPlayerCount = replayPlayerCount + 1
     end
+    ancestorContexts:PruneInbound(self)
+    ancestorContexts:PruneMissState(self)
+    ancestorContexts:ResetOutbound()
 end

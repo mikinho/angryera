@@ -84,6 +84,24 @@ function libC:Decompress(value)
     return compressedValues[value], "unknown compressed value"
 end
 
+local function TestHash(value)
+    local first = 1
+    local second = 0
+    for index = 1, #value do
+        first = (first + value:byte(index)) % 65521
+        second = (second + first) % 65521
+    end
+    local code = second * 65536 + first
+    local digits = "0123456789abcdef"
+    local result = {}
+    for index = 8, 1, -1 do
+        local digit = code % 16
+        result[index] = digits:sub(digit + 1, digit + 1)
+        code = math.floor(code / 16)
+    end
+    return table.concat(result)
+end
+
 local libD = {}
 function libD:CompressZlib(value)
     local parts = {
@@ -171,6 +189,14 @@ local AngryEra = {
         isClassicVanilla = true,
         isClassicTBC = false,
         isClassicWrath = false,
+    },
+    sync = {
+        revisions = {
+            CreateFCS32Callback = function(source)
+                assert(source == libC, "runtime hashing should bind the loaded LibCompress instance")
+                return TestHash
+            end,
+        },
     },
     utils = {
         helpers = helpers,
@@ -285,6 +311,7 @@ local compactPageCodec = {
     decode = function(value)
         return libD:DecodeForWoWAddonChannel(value)
     end,
+    hash = TestHash,
 }
 function compactPageCodec.EncodeUInt32(value)
     return string.char(
@@ -551,15 +578,16 @@ local function DecodeSent(index)
     assert(sent, "Expected a sent protocol message")
     local envelope
     local decodeError
+    local metadata
     if sent.Prefix == protocol.DISPLAY_PREFIX then
         envelope, decodeError = protocol.DecodeCompactDisplayEnvelope(sent.Data, AngryEra:GetProtocolCodec())
     elseif sent.Prefix == protocol.PAGE_PREFIX then
-        envelope, decodeError = protocol.DecodeCompactPageEnvelope(sent.Data, compactPageCodec)
+        envelope, decodeError, metadata = protocol.DecodeCompactPageEnvelope(sent.Data, compactPageCodec)
     else
         envelope, decodeError = protocol.DecodeEnvelope(sent.Data, AngryEra:GetProtocolCodec())
     end
     assert(envelope, decodeError)
-    return sent, envelope
+    return sent, envelope, metadata
 end
 
 local function LastActiveCallNamed(name)
@@ -599,14 +627,19 @@ local function BuildRemoteEnvelope(sessionId, messageType, payload, options)
         SentAt = options.SentAt or timestampTest.NextRemoteSentAt(),
     }))
     local encoded
+    local metadata
     if messageType == "DISPLAY" then
         encoded = assert(protocol.EncodeCompactDisplayEnvelope(envelope, AngryEra:GetProtocolCodec()))
     elseif messageType == "PAGE_UPSERT" then
-        encoded = assert(protocol.EncodeCompactPageEnvelope(envelope, compactPageCodec))
+        local encodeError
+        encoded, encodeError, metadata = protocol.EncodeCompactPageEnvelope(envelope, compactPageCodec, {
+            IncludeAncestorContext = options.IncludeAncestorContext ~= false,
+        })
+        assert(encoded, encodeError)
     else
         encoded = assert(protocol.EncodeEnvelope(envelope, AngryEra:GetProtocolCodec()))
     end
-    return encoded, envelope
+    return encoded, envelope, metadata
 end
 
 local function VersionPayload(capabilities, overrides)
@@ -1239,7 +1272,181 @@ do
             and latestActiveEnvelope.ReplyTo == nil,
         "multipart proactive frames should reassemble to the same compact page codec"
     )
+
+    throttleFrames = {}
+    local reentrantCompletions = {}
+    local nestedStarted
+    local function RecordReentrant(label, succeeded, status)
+        reentrantCompletions[#reentrantCompletions + 1] = {
+            Label = label,
+            Status = status,
+            Succeeded = succeeded,
+        }
+    end
+    local function StartNestedOnCancel(_, succeeded, status)
+        RecordReentrant("first", succeeded, status)
+        if not succeeded and status == "superseded" then
+            local nestedResult
+            nestedStarted, nestedResult = AngryEra:SendProtocolActivePageUpsert(localUpsert, RecordReentrant, "nested")
+            assert(nestedStarted, nestedResult)
+        end
+    end
+
+    sent, result = AngryEra:SendProtocolActivePageUpsert(localUpsert, StartNestedOnCancel)
+    assert(sent, result)
+    local staleFrame = throttleFrames[1]
+    sent, result = AngryEra:SendProtocolActivePageUpsert(localUpsert, RecordReentrant, "middle")
+    AssertError(sent, result, "superseded", "a transfer superseded reentrantly by its canceled predecessor")
+    assert(
+        nestedStarted
+            and #reentrantCompletions == 1
+            and reentrantCompletions[1].Label == "first"
+            and reentrantCompletions[1].Succeeded == false,
+        "the cancellation callback should install the nested latest transfer without orphaning it"
+    )
+    staleFrame.Callback(staleFrame.CallbackArg, true, 0)
+    local reentrantFrameIndex = 2
+    while #reentrantCompletions < 2 do
+        local frame = assert(throttleFrames[reentrantFrameIndex], "the reentrant latest transfer should keep draining")
+        frame.Callback(frame.CallbackArg, true, 0)
+        reentrantFrameIndex = reentrantFrameIndex + 1
+    end
+    assert(
+        #reentrantCompletions == 2
+            and reentrantCompletions[2].Label == "nested"
+            and reentrantCompletions[2].Succeeded == true
+            and reentrantCompletions[2].Status == "sent",
+        "the transfer started by a synchronous cancellation callback must remain the latest and complete"
+    )
     encodedPadding = 0
+end
+
+do
+    local reusePayload = PageUpsert(localReference, localInstallationId, currentPlayer)
+    reusePayload.Page.ParentSyncId = localInstallationId .. ":category:7"
+    reusePayload.AncestorVariableLayers = {
+        {
+            SyncId = reusePayload.Page.ParentSyncId,
+            Vars = string.rep("$RAID=Alpha Beta Gamma;", 16),
+        },
+    }
+    local completions = {}
+    local sentMessageCountBeforeReuse = #sentMessages
+    local function Completed(label, succeeded, status)
+        completions[#completions + 1] = {
+            Label = label,
+            Status = status,
+            Succeeded = succeeded,
+        }
+    end
+    local function DrainTransfer(firstFrame)
+        local transfer = assert(throttleFrames[firstFrame].CallbackArg.Transfer)
+        local frameIndex = firstFrame
+        while not transfer.Finished do
+            local frame = assert(throttleFrames[frameIndex], "active transfer should produce its next frame")
+            frame.Callback(frame.CallbackArg, true, 0)
+            frameIndex = frameIndex + 1
+        end
+        return transfer
+    end
+
+    AngryEra:ResetProtocolAncestorAnnouncements()
+    throttleFrames = {}
+    sent, result = AngryEra:SendProtocolActivePageUpsert(reusePayload, Completed, "unconfirmed")
+    assert(sent, result)
+    local unconfirmedState = throttleFrames[1].CallbackArg.Transfer
+    assert(
+        unconfirmedState.AncestorContextIncluded == true,
+        "the first proactive transfer must carry its complete ancestor context"
+    )
+
+    sent, result = AngryEra:SendProtocolActivePageUpsert(reusePayload, Completed, "full")
+    assert(sent, result)
+    assert(
+        #completions == 1
+            and completions[1].Label == "unconfirmed"
+            and completions[1].Succeeded == false
+            and completions[1].Status == "superseded",
+        "a superseded inline transfer must not announce its ancestor context"
+    )
+    assert(#throttleFrames == 1, "the replacement should wait for the outstanding superseded frame")
+    throttleFrames[1].Callback(throttleFrames[1].CallbackArg, true, 0)
+    local fullState = DrainTransfer(2)
+    assert(
+        fullState.AncestorContextIncluded == true,
+        "a replacement prepared before final send confirmation must still carry the full context"
+    )
+    local _, fullDecodeError, fullMetadata = protocol.DecodeCompactPageEnvelope(fullState.Encoded, compactPageCodec)
+    assert(
+        not fullDecodeError and fullMetadata.AncestorContextIncluded == true,
+        "the confirmed baseline should decode inline"
+    )
+
+    local omittedStart = #throttleFrames + 1
+    sent, result = AngryEra:SendProtocolActivePageUpsert(reusePayload, Completed, "omitted")
+    assert(sent, result)
+    local omittedState = throttleFrames[omittedStart].CallbackArg.Transfer
+    assert(
+        omittedState.AncestorContextIncluded == false and omittedState.Bytes < fullState.Bytes,
+        string.format(
+            "a later proactive transfer should omit an announced ancestor context and be smaller (included=%s full=%d omitted=%d)",
+            tostring(omittedState.AncestorContextIncluded),
+            fullState.Bytes,
+            omittedState.Bytes
+        )
+    )
+    local missingEnvelope, missingError, missingMetadata =
+        protocol.DecodeCompactPageEnvelope(omittedState.Encoded, compactPageCodec)
+    assert(
+        missingEnvelope == nil
+            and missingError == "compact-page-ancestor-context-missing"
+            and missingMetadata.AncestorContextId == fullMetadata.AncestorContextId,
+        "an omitted context should fail closed without the exact announced context"
+    )
+    local reusedEnvelope, reusedError, reusedMetadata =
+        protocol.DecodeCompactPageEnvelope(omittedState.Encoded, compactPageCodec, {
+            ResolveAncestorContext = function(installationId, sessionId, contextId)
+                assert(installationId == localInstallationId, "reuse should preserve the embedded installation")
+                assert(sessionId == "local-session-1", "reuse should preserve the embedded session")
+                assert(contextId == fullMetadata.AncestorContextId, "reuse should request the exact context id")
+                return reusePayload.AncestorVariableLayers
+            end,
+        })
+    assert(
+        reusedEnvelope
+            and not reusedError
+            and reusedMetadata.AncestorContextIncluded == false
+            and reusedEnvelope.Payload.AncestorVariableLayers[1].Vars == reusePayload.AncestorVariableLayers[1].Vars,
+        "an exact cache resolver should restore omitted ancestor layers"
+    )
+    DrainTransfer(omittedStart)
+
+    AngryEra:ResetProtocolAncestorAnnouncements()
+    local resetStart = #throttleFrames + 1
+    sent, result = AngryEra:SendProtocolActivePageUpsert(reusePayload, Completed, "reset")
+    assert(sent, result)
+    local resetState = DrainTransfer(resetStart)
+    assert(resetState.AncestorContextIncluded == true, "an announcement reset should force the next transfer full")
+
+    sent, result = AngryEra:SendProtocolPageUpsert(reusePayload)
+    assert(sent, result)
+    local _, _, ordinaryMetadata = DecodeSent()
+    assert(ordinaryMetadata.AncestorContextIncluded == true, "ordinary group PAGE_UPSERT must always stay inline")
+    sent, result = AngryEra:SendProtocolPageUpsert(reusePayload, {
+        Channel = "WHISPER",
+        Target = "Alpha-Realm",
+        ReplyTo = displayMessageId,
+    })
+    assert(sent, result)
+    local _, correlatedEnvelope, correlatedMetadata = DecodeSent()
+    assert(
+        correlatedEnvelope.ReplyTo == displayMessageId and correlatedMetadata.AncestorContextIncluded == true,
+        "correlated PAGE_UPSERT whispers must always stay inline"
+    )
+    while #sentMessages > sentMessageCountBeforeReuse do
+        sentMessages[#sentMessages] = nil
+    end
+    throttleFrames = {}
 end
 
 timestampTest.TimeBeforeRollback = currentTime
@@ -2023,5 +2230,305 @@ local inflated, inflationError = codec.decompress("\001" .. string.rep("x", 9), 
 assert(inflated == nil and inflationError == "output-too-large", "Runtime decompression must enforce its budget")
 local badDecoded, badDecodeError = protocol.DecodeEnvelope("encoded:\001unknown", codec)
 AssertError(badDecoded, badDecodeError, "deserialize-failed", "AceSerializer failure unwrapping")
+
+local function RunAncestorContextTests()
+    do
+        AngryEra:ResetProtocolPeers()
+        members["alpha-realm"] = "assistant"
+        members["beta-realm"] = "assistant"
+        local cacheReference = {
+            SyncId = remoteInstallationId .. ":page:77",
+            RevisionId = "fcs32:77777777",
+            ContextRevisionId = "fcs32:88888888",
+        }
+        local cachePayload = PageUpsert(cacheReference, remoteInstallationId, "Alpha-Realm")
+        cachePayload.Page.ParentSyncId = remoteInstallationId .. ":category:9"
+        cachePayload.AncestorVariableLayers = {
+            {
+                SyncId = cachePayload.Page.ParentSyncId,
+                Vars = "$MT=Alpha-Realm\n$HEAL=Beta-Realm",
+            },
+        }
+
+        local inlinePacket = BuildRemoteEnvelope("ancestor-inbound-session", "PAGE_UPSERT", cachePayload, {
+            Sequence = 1,
+        })
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, inlinePacket, "RAID", "Alpha-Realm")
+        assert(accepted, result or "an accepted inline active page should seed its sender-session context")
+
+        local omittedPacket = BuildRemoteEnvelope("ancestor-inbound-session", "PAGE_UPSERT", cachePayload, {
+            IncludeAncestorContext = false,
+            Sequence = 2,
+        })
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, omittedPacket, "RAID", "Alpha-Realm")
+        assert(accepted, result or "the same actual sender and embedded session should reuse its accepted context")
+
+        accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PAGE_PREFIX, omittedPacket, "RAID", "Alpha-Realm")
+        AssertError(
+            accepted,
+            result,
+            "invalid-transport-message-type",
+            "an ordinary PAGE prefix carrying an omitted context"
+        )
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, omittedPacket, "RAID", "Beta-Realm")
+        AssertError(
+            accepted,
+            result,
+            "compact-page-ancestor-context-missing",
+            "the same embedded identity from a different actual sender"
+        )
+        local otherSessionPacket = BuildRemoteEnvelope("ancestor-inbound-other-session", "PAGE_UPSERT", cachePayload, {
+            IncludeAncestorContext = false,
+            Sequence = 1,
+        })
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, otherSessionPacket, "RAID", "Alpha-Realm")
+        AssertError(
+            accepted,
+            result,
+            "compact-page-ancestor-context-missing",
+            "an omitted context from a different embedded session"
+        )
+        AngryEra:ResetProtocolAncestorAnnouncements()
+
+        local rejectedReference = {
+            SyncId = remoteInstallationId .. ":page:78",
+            RevisionId = "fcs32:99999999",
+            ContextRevisionId = "fcs32:aaaaaaaa",
+        }
+        local rejectedPayload = PageUpsert(rejectedReference, remoteInstallationId, "Beta-Realm")
+        rejectedPayload.Page.ParentSyncId = remoteInstallationId .. ":category:10"
+        rejectedPayload.AncestorVariableLayers = {
+            {
+                SyncId = rejectedPayload.Page.ParentSyncId,
+                Vars = "$RANGED=Beta-Realm",
+            },
+        }
+        members["beta-realm"] = "member"
+        local rejectedInline = BuildRemoteEnvelope("ancestor-rejected-session", "PAGE_UPSERT", rejectedPayload, {
+            Sequence = 1,
+        })
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, rejectedInline, "RAID", "Beta-Realm")
+        AssertError(accepted, result, "unauthorized", "an inline context from an unauthorized sender")
+        members["beta-realm"] = "assistant"
+        local rejectedOmitted = BuildRemoteEnvelope("ancestor-rejected-session", "PAGE_UPSERT", rejectedPayload, {
+            IncludeAncestorContext = false,
+            Sequence = 2,
+        })
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, rejectedOmitted, "RAID", "Beta-Realm")
+        AssertError(
+            accepted,
+            result,
+            "compact-page-ancestor-context-missing",
+            "a rejected inline page must not populate the context cache"
+        )
+
+        AngryEra:ResetProtocolPeers()
+        local afterResetOmitted = BuildRemoteEnvelope("ancestor-inbound-session", "PAGE_UPSERT", cachePayload, {
+            IncludeAncestorContext = false,
+            Sequence = 3,
+        })
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, afterResetOmitted, "RAID", "Alpha-Realm")
+        AssertError(
+            accepted,
+            result,
+            "compact-page-ancestor-context-missing",
+            "a transport reset should clear accepted ancestor contexts"
+        )
+        members["beta-realm"] = "member"
+    end
+
+    do
+        AngryEra:ResetProtocolPeers()
+        local sentCountBeforeRecovery = #sentMessages
+        local deferred = {}
+        function AngryEra:DeferPendingDisplayRecovery(auth, envelope, reference, completedAttempts, expedited)
+            deferred[#deferred + 1] = {
+                Attempts = completedAttempts,
+                Expedited = expedited,
+                MessageId = envelope.MessageId,
+                Sender = auth.Sender,
+                SyncId = reference.SyncId,
+            }
+            return true, "scheduled"
+        end
+
+        local displayFirstReference = {
+            SyncId = remoteInstallationId .. ":page:81",
+            RevisionId = "fcs32:bbbbbbbb",
+            ContextRevisionId = "fcs32:cccccccc",
+        }
+        local displayFirstPayload = PageUpsert(displayFirstReference, remoteInstallationId, "Alpha-Realm")
+        displayFirstPayload.Page.ParentSyncId = remoteInstallationId .. ":category:11"
+        displayFirstPayload.AncestorVariableLayers = {
+            {
+                SyncId = displayFirstPayload.Page.ParentSyncId,
+                Vars = "$MELEE=Alpha-Realm",
+            },
+        }
+        local displayFirst = BuildRemoteEnvelope("ancestor-display-first", "DISPLAY", {
+            Displayed = true,
+            SyncId = displayFirstReference.SyncId,
+            RevisionId = displayFirstReference.RevisionId,
+            ContextRevisionId = displayFirstReference.ContextRevisionId,
+            PageFollows = true,
+        }, {
+            Sequence = 1,
+        })
+        accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, displayFirst, "RAID", "Alpha-Realm")
+        assert(accepted and result.RequestDeferred, "a promised display should initially defer exact recovery")
+        currentTime = currentTime + 21
+
+        local displayFirstOmitted = BuildRemoteEnvelope("ancestor-display-first", "PAGE_UPSERT", displayFirstPayload, {
+            IncludeAncestorContext = false,
+            Sequence = 2,
+        })
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, displayFirstOmitted, "RAID", "Alpha-Realm")
+        AssertError(
+            accepted,
+            result,
+            "compact-page-ancestor-context-missing",
+            "a promised page whose ancestor context was missed"
+        )
+        assert(
+            #sentMessages == sentCountBeforeRecovery + 1
+                and #deferred == 2
+                and deferred[2].Attempts == 1
+                and deferred[2].Expedited == true,
+            "a display-first context miss should immediately request the exact page and expedite its watchdog"
+        )
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, displayFirstOmitted, "RAID", "Alpha-Realm")
+        AssertError(accepted, result, "compact-page-ancestor-context-missing", "a duplicate display-first context miss")
+        assert(
+            #sentMessages == sentCountBeforeRecovery + 1 and #deferred == 2,
+            "duplicate omitted packets must not amplify exact recovery"
+        )
+
+        AngryEra:ResetProtocolPeers()
+        deferred = {}
+        while #sentMessages > sentCountBeforeRecovery do
+            sentMessages[#sentMessages] = nil
+        end
+        local pageFirstReference = {
+            SyncId = remoteInstallationId .. ":page:82",
+            RevisionId = "fcs32:dddddddd",
+            ContextRevisionId = "fcs32:eeeeeeee",
+        }
+        local pageFirstPayload = PageUpsert(pageFirstReference, remoteInstallationId, "Alpha-Realm")
+        pageFirstPayload.Page.ParentSyncId = remoteInstallationId .. ":category:12"
+        pageFirstPayload.AncestorVariableLayers = {
+            {
+                SyncId = pageFirstPayload.Page.ParentSyncId,
+                Vars = "$TANK=Alpha-Realm",
+            },
+        }
+        local pageFirstOmitted = BuildRemoteEnvelope("ancestor-page-first", "PAGE_UPSERT", pageFirstPayload, {
+            IncludeAncestorContext = false,
+            Sequence = 2,
+        })
+        for _ = 1, 2 do
+            accepted, result =
+                AngryEra:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, pageFirstOmitted, "RAID", "Alpha-Realm")
+            AssertError(accepted, result, "compact-page-ancestor-context-missing", "a page-before-display context miss")
+        end
+        assert(#sentMessages == sentCountBeforeRecovery, "a page-before-display miss should wait for an exact display")
+
+        local pageFirstDisplay = BuildRemoteEnvelope("ancestor-page-first", "DISPLAY", {
+            Displayed = true,
+            SyncId = pageFirstReference.SyncId,
+            RevisionId = pageFirstReference.RevisionId,
+            ContextRevisionId = pageFirstReference.ContextRevisionId,
+            PageFollows = true,
+        }, {
+            Sequence = 1,
+        })
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, pageFirstDisplay, "RAID", "Alpha-Realm")
+        assert(
+            accepted
+                and result.RequestNeeded
+                and result.RequestSent
+                and not result.RequestDeferred
+                and result.RecoveryScheduled,
+            "an exact page-before-display hint should bypass the normal promise delay"
+        )
+        assert(
+            #sentMessages == sentCountBeforeRecovery + 1
+                and #deferred == 1
+                and deferred[1].Attempts == 1
+                and deferred[1].Expedited == true,
+            "deduplicated page-before-display hints should produce one exact request and one watchdog"
+        )
+        AngryEra.DeferPendingDisplayRecovery = nil
+        AngryEra:ResetProtocolPeers()
+        while #sentMessages > sentCountBeforeRecovery do
+            sentMessages[#sentMessages] = nil
+        end
+    end
+
+    do
+        local rosterPayload = PageUpsert(localReference, localInstallationId, currentPlayer)
+        rosterPayload.Page.ParentSyncId = localInstallationId .. ":category:13"
+        rosterPayload.AncestorVariableLayers = {
+            {
+                SyncId = rosterPayload.Page.ParentSyncId,
+                Vars = "$ROSTER=Alpha-Realm",
+            },
+        }
+        AngryEra:ResetProtocolAncestorAnnouncements()
+        throttleFrames = {}
+        throttleAutoDrain = true
+        sent, result = AngryEra:SendProtocolActivePageUpsert(rosterPayload)
+        assert(sent, result)
+        local baselineState = throttleFrames[1].CallbackArg.Transfer
+        assert(baselineState.AncestorContextIncluded == true, "roster coverage should begin with an inline context")
+        throttleAutoDrain = false
+        local omittedStart = #throttleFrames + 1
+        sent, result = AngryEra:SendProtocolActivePageUpsert(rosterPayload)
+        assert(sent, result)
+        local omittedState = throttleFrames[omittedStart].CallbackArg.Transfer
+        assert(
+            omittedState.AncestorContextIncluded == false and not omittedState.Finished,
+            "a confirmed roster baseline should permit omission"
+        )
+        AngryEra:PruneProtocolPeers()
+        assert(not omittedState.Finished, "roster pruning must not cancel the page already in flight")
+        local omittedFrameIndex = omittedStart
+        while not omittedState.Finished do
+            local frame =
+                assert(throttleFrames[omittedFrameIndex], "the in-flight page should finish after roster pruning")
+            frame.Callback(frame.CallbackArg, true, 0)
+            omittedFrameIndex = omittedFrameIndex + 1
+        end
+        local fullAfterRosterStart = #throttleFrames + 1
+        sent, result = AngryEra:SendProtocolActivePageUpsert(rosterPayload)
+        assert(sent, result)
+        assert(
+            throttleFrames[fullAfterRosterStart].CallbackArg.Transfer.AncestorContextIncluded == true,
+            "roster pruning should force a full context for newly joined members"
+        )
+        local fullAfterRosterState = throttleFrames[fullAfterRosterStart].CallbackArg.Transfer
+        local fullAfterRosterFrame = fullAfterRosterStart
+        while not fullAfterRosterState.Finished do
+            local frame = assert(
+                throttleFrames[fullAfterRosterFrame],
+                "the full post-roster page should finish without stale transfer state"
+            )
+            frame.Callback(frame.CallbackArg, true, 0)
+            fullAfterRosterFrame = fullAfterRosterFrame + 1
+        end
+        throttleFrames = {}
+    end
+end
+
+RunAncestorContextTests()
 
 print("Protocol runtime tests passed.")
