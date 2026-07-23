@@ -82,6 +82,7 @@ end
 
 local currentMarkers = {}
 local assignments = {}
+local markerWritesEnabled = true
 local function FullRosterName(name, realm)
     if type(realm) == "string" and realm ~= "" then
         return name .. "-" .. realm
@@ -113,6 +114,9 @@ _G.GetRaidTargetIndex = function(unit)
 end
 _G.SetRaidTarget = function(unit, index)
     assignments[#assignments + 1] = { unit = unit, index = index }
+    if not markerWritesEnabled then
+        return
+    end
     local identity = UnitIdentity(unit)
     if index == 0 then
         currentMarkers[identity] = nil
@@ -140,6 +144,7 @@ assert(loadfile("modules/utils/helpers.lua"))("AngryEra", app)
 assert(loadfile("modules/smart_markers.lua"))("AngryEra", app)
 
 local function Reset()
+    markerWritesEnabled = true
     isLeader = true
     isAssistant = false
     inRaid = true
@@ -254,12 +259,19 @@ assert(FindAssignment(7) == "raid2", "the first key in canonical order should wi
 
 -- Reapplication is idempotent through the same-index guard.
 Reset()
-applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" }, nil, "page:one")
 assert(applied == 1, "the initial marker assignment should be counted")
 local callsAfterFirst = #assignments
-applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
+applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" }, nil, "page:one")
 assert(applied == 0, "an unchanged marker should not be counted as applied")
 assert(#assignments == callsAfterFirst, "an unchanged marker should not call SetRaidTarget again")
+
+-- A different page starts a new lifecycle even when it inherits the same plan.
+currentMarkers["Zessy-Pagle"] = 1
+assignments = {}
+applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" }, nil, "page:two")
+assert(applied == 1, "a new page should reapply its inherited marker plan")
+assert(FindAssignment(6) == "raid1", "the new page should restore its requested square")
 
 -- A new note reconciles addon-owned markers that it no longer requests.
 Reset()
@@ -339,6 +351,44 @@ applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" })
 assert(applied == 1, "raid assistants may mark")
 isLeader = true
 isAssistant = false
+
+-- Cleanup is deferred while authority is absent and resumes when it returns.
+Reset()
+AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" }, nil, "page:owned")
+assignments = {}
+isLeader = false
+AngryEra_ApplyAutoMarkers(nil, nil, nil)
+assert(#assignments == 0, "losing authority must defer stale marker cleanup")
+assert(currentMarkers["Zessy-Pagle"] == 6, "the owned marker remains until cleanup is authorized")
+isAssistant = true
+applied = AngryEra:RetryDisplayedNoteMarkers()
+assert(applied == 0, "deferred cleanup is not counted as a marker application")
+assert(currentMarkers["Zessy-Pagle"] == nil, "restored authority should clear the stale owned marker")
+assert(#assignments == 1 and assignments[1].index == 0, "restored authority should perform exactly one deferred clear")
+isLeader = true
+isAssistant = false
+
+-- Failed marker writes remain pending instead of being treated as resolved.
+Reset()
+markerWritesEnabled = false
+applied = AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" }, nil, "page:write-retry")
+assert(applied == 0 and #assignments == 1, "a failed assignment should not count as applied")
+markerWritesEnabled = true
+assignments = {}
+applied = AngryEra:RetryDisplayedNoteMarkers()
+assert(applied == 1 and FindAssignment(6) == "raid1", "a failed assignment should retry after the API recovers")
+
+-- Failed clears retain ownership and retry rather than leaking a stale marker.
+markerWritesEnabled = false
+assignments = {}
+AngryEra_ApplyAutoMarkers(nil, nil, nil)
+assert(currentMarkers["Zessy-Pagle"] == 6, "a failed clear should leave the marker in place")
+markerWritesEnabled = true
+assignments = {}
+applied = AngryEra:RetryDisplayedNoteMarkers()
+assert(applied == 0, "a retried clear should not count as an application")
+assert(currentMarkers["Zessy-Pagle"] == nil, "a failed clear should be retried once writes recover")
+assert(#assignments == 1 and assignments[1].index == 0, "the retained cleanup should issue one clear")
 
 -- Anyone may mark in a party.
 Reset()

@@ -200,19 +200,23 @@ end
 
 local function ClearOwnedMarker(markerIndex, state)
     if type(state) ~= "table" then
-        return false
+        return false, true
     end
     local identity = state.OwnedIdentity
-    state.OwnedIdentity = nil
     if not identity then
-        return false
+        return false, true
     end
 
     local unitToken = FindRosterUnit(identity)
-    if unitToken and GetRaidTargetIndex(unitToken) == markerIndex then
-        return AngryEra_SetRaidTarget(unitToken, 0)
+    if not unitToken or GetRaidTargetIndex(unitToken) ~= markerIndex then
+        state.OwnedIdentity = nil
+        return false, true
     end
-    return false
+    if AngryEra_SetRaidTarget(unitToken, 0) then
+        state.OwnedIdentity = nil
+        return true, true
+    end
+    return false, false
 end
 
 local function ForgetReplacedOwnedMarkers(markerIndex, identity)
@@ -227,13 +231,21 @@ local function TryMarkerPlan(markerIndex, state)
     for _, choice in ipairs(state.Plan) do
         local unitToken, identity = FindRosterUnit(choice.Candidate)
         if unitToken then
-            state.Pending = false
             state.ResolvedIdentity = identity
+            if (GetRaidTargetIndex(unitToken) or 0) == markerIndex then
+                state.Pending = false
+                if state.OwnedIdentity ~= identity then
+                    state.OwnedIdentity = nil
+                end
+                return 0
+            end
             if AngryEra_SetRaidTarget(unitToken, markerIndex) then
+                state.Pending = false
                 ForgetReplacedOwnedMarkers(markerIndex, identity)
                 state.OwnedIdentity = identity
                 return 1
             end
+            state.Pending = true
             state.OwnedIdentity = nil
             return 0
         end
@@ -241,8 +253,24 @@ local function TryMarkerPlan(markerIndex, state)
 
     state.Pending = true
     state.ResolvedIdentity = nil
-    state.OwnedIdentity = nil
     return 0
+end
+
+local function ReconcileMarkerState(markerIndex, state)
+    if state.NeedsOwnedCleanup then
+        local _, settled = ClearOwnedMarker(markerIndex, state)
+        if not settled then
+            state.Pending = true
+            return 0, false
+        end
+        state.NeedsOwnedCleanup = nil
+    end
+
+    if not state.Plan then
+        state.Pending = false
+        return 0, true
+    end
+    return TryMarkerPlan(markerIndex, state), false
 end
 
 local function RetryPendingMarkers()
@@ -254,7 +282,11 @@ local function RetryPendingMarkers()
     for markerIndex = 1, 8 do
         local state = autoMarkerStates[markerIndex]
         if state and state.Pending then
-            applied = applied + TryMarkerPlan(markerIndex, state)
+            local added, remove = ReconcileMarkerState(markerIndex, state)
+            applied = applied + added
+            if remove then
+                autoMarkerStates[markerIndex] = nil
+            end
         end
     end
     return applied
@@ -269,59 +301,78 @@ end
 -- match, and ambiguous short names are skipped rather than guessed.
 -- @tparam table meta Displayed-note metadata with `$` prefixes stripped.
 -- @tparam[opt] table vars Resolved public template variables.
+-- @tparam[opt] string displayIdentity Stable identity of the displayed page.
 -- @treturn number applied Count of markers assigned.
-function AngryEra_ApplyAutoMarkers(meta, vars)
+function AngryEra_ApplyAutoMarkers(meta, vars, displayIdentity)
     local plans = BuildMarkerPlans(meta, vars)
     local applied = 0
-    if not CanAssignRaidMarkers() then
-        for markerIndex = 1, 8 do
-            autoMarkerStates[markerIndex] = nil
-            local plan = plans[markerIndex]
-            if plan then
-                autoMarkerStates[markerIndex] = {
-                    Plan = plan,
-                    Pending = true,
-                }
-            end
-        end
-        return 0
-    end
+    local canAssign = CanAssignRaidMarkers()
 
     for markerIndex = 1, 8 do
-        local oldState = autoMarkerStates[markerIndex]
+        local state = autoMarkerStates[markerIndex]
         local plan = plans[markerIndex]
-        if not plan then
-            if oldState then
-                ClearOwnedMarker(markerIndex, oldState)
+        local samePlan = state
+            and (
+                (state.Plan == nil and plan == nil)
+                or (state.Plan ~= nil and plan ~= nil and MarkerPlansEqual(state.Plan, plan))
+            )
+        local sameDisplay = state and state.DisplayIdentity == displayIdentity
+
+        if not state then
+            if plan then
+                state = {
+                    Plan = plan,
+                    Pending = true,
+                    DisplayIdentity = displayIdentity,
+                }
+                autoMarkerStates[markerIndex] = state
+            end
+        elseif not samePlan or not sameDisplay then
+            if not samePlan then
+                state.NeedsOwnedCleanup = state.OwnedIdentity ~= nil or nil
+            end
+            state.Plan = plan
+            state.Pending = true
+            state.ResolvedIdentity = nil
+            state.DisplayIdentity = displayIdentity
+        end
+
+        if state and state.Pending and canAssign then
+            local added, remove = ReconcileMarkerState(markerIndex, state)
+            applied = applied + added
+            if remove then
                 autoMarkerStates[markerIndex] = nil
             end
-        elseif oldState and MarkerPlansEqual(oldState.Plan, plan) then
-            if oldState.Pending then
-                applied = applied + TryMarkerPlan(markerIndex, oldState)
-            end
-        else
-            if oldState then
-                ClearOwnedMarker(markerIndex, oldState)
-            end
-            local state = {
-                Plan = plan,
-                Pending = true,
-            }
-            autoMarkerStates[markerIndex] = state
-            applied = applied + TryMarkerPlan(markerIndex, state)
         end
     end
     return applied
 end
 
 if AngryEra then
+    local function DisplayedPageIdentity(self)
+        if type(self.GetDisplayedNote) ~= "function" then
+            return nil
+        end
+        local note = self:GetDisplayedNote()
+        if type(note) ~= "table" then
+            return nil
+        end
+        if type(note.SyncId) == "string" then
+            return "sync:" .. note.SyncId
+        end
+        if type(note.LocalId) == "number" then
+            return "local:" .. tostring(note.LocalId)
+        end
+        return nil
+    end
+
     --- Applies auto-markers from the currently displayed note.
     -- Registered against ANGRYERA_NOTE_UPDATE so markers follow the display.
     -- @treturn number applied
     function AngryEra:ApplyDisplayedNoteMarkers()
         local meta = type(self.GetDisplayedMeta) == "function" and self:GetDisplayedMeta() or nil
         local vars = type(self.GetDisplayedVars) == "function" and self:GetDisplayedVars() or nil
-        return AngryEra_ApplyAutoMarkers(meta, vars)
+        return AngryEra_ApplyAutoMarkers(meta, vars, DisplayedPageIdentity(self))
     end
 
     --- Retries only displayed-note marker targets that have never resolved.
