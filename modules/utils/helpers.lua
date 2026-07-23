@@ -42,6 +42,33 @@ function helpers.PlayerFullName()
     return UnitName("player") .. "-" .. _player_realm
 end
 
+function helpers.GetSpellLink(spellId)
+    if GetSpellLink then
+        return GetSpellLink(spellId)
+    end
+    if C_Spell and C_Spell.GetSpellLink then
+        return C_Spell.GetSpellLink(spellId)
+    end
+end
+
+function helpers.GetSpellTexture(spellId)
+    if GetSpellInfo then
+        return select(3, GetSpellInfo(spellId))
+    end
+    if C_Spell and C_Spell.GetSpellInfo then
+        local spellInfo = C_Spell.GetSpellInfo(spellId)
+        return spellInfo and spellInfo.iconID
+    end
+end
+
+function helpers.RequestGuildRoster()
+    if C_GuildInfo and C_GuildInfo.GuildRoster then
+        C_GuildInfo.GuildRoster()
+    elseif GuildRoster then
+        GuildRoster()
+    end
+end
+
 function helpers.IterateGroupMembers(callback)
     if IsInRaid() then
         for i = 1, GetNumGroupMembers() do

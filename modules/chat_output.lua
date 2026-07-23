@@ -8,6 +8,7 @@ local _, app = ...
 local AngryEra = app.AngryEra
 local tags = AngryEra.utils.tags
 local colors = AngryEra.utils.colors
+local helpers = AngryEra.utils.helpers
 
 local ChatOutputClassMap = tags.ChatOutputClassMap
 local UtilityChatData = tags.UtilityChatData
@@ -47,12 +48,18 @@ local function ResolveChatOutputTag(self, tagContent)
         local numericId = tonumber(tagId)
         tagType = tagType:lower()
         if tagType == "spell" then
-            return GetSpellLink(numericId)
+            return helpers.GetSpellLink(numericId)
         end
-        if tagType == "boss" and not isClassicTBC and not isClassicWrath then
+        if tagType == "boss" and not isClassicTBC and not isClassicWrath and EJ_GetEncounterInfo then
             return select(5, EJ_GetEncounterInfo(numericId))
         end
-        if tagType == "journal" and not isClassicTBC and not isClassicWrath then
+        if
+            tagType == "journal"
+            and not isClassicTBC
+            and not isClassicWrath
+            and C_EncounterJournal
+            and C_EncounterJournal.GetSectionInfo
+        then
             local section = C_EncounterJournal.GetSectionInfo(numericId)
             return section and section.link
         end

@@ -1605,7 +1605,7 @@ local function AngryEra_IconPicker_TextChanged(widget, event, value)
     local itemID = strmatch(value, "|Hitem:(%d+):")
 
     if spellID then
-        local path = select(3, GetSpellInfo(tonumber(spellID)))
+        local path = helpers.GetSpellTexture(tonumber(spellID))
         tinsert(names, path)
     elseif itemID then
         local path = select(10, GetItemInfo(tonumber(itemID)))

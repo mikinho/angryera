@@ -6,6 +6,7 @@
 
 local _, app = ...
 local AngryEra = app.AngryEra
+local helpers = AngryEra.utils.helpers
 
 AngryEra.utils = AngryEra.utils or {}
 AngryEra.utils.tags = {}
@@ -438,9 +439,9 @@ function tags.ProcessTag(tag)
     local type, id = lowerTag:match("{(%a+)%s+(%d+)}")
     if type then
         if type == "spell" then
-            return GetSpellLink(tonumber(id)) or tag
+            return helpers.GetSpellLink(tonumber(id)) or tag
         elseif type == "icon" then
-            return format("|T%s:0|t", select(3, GetSpellInfo(tonumber(id))) or "")
+            return format("|T%s:0|t", helpers.GetSpellTexture(tonumber(id)) or "")
         elseif type == "boss" and EJ_GetEncounterInfo then
             return select(5, EJ_GetEncounterInfo(tonumber(id))) or tag
         elseif type == "journal" and C_EncounterJournal and C_EncounterJournal.GetSectionInfo then

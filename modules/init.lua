@@ -17,6 +17,7 @@ local comPrefix = core.comPrefix
 local colors = AngryEra.utils.colors
 local RGBToHex = colors.RGBToHex
 local HexToRGB = colors.HexToRGB
+local RequestGuildRoster = AngryEra.utils.helpers.RequestGuildRoster
 
 local AngryEra_Title = AngryEra.Title
 local AngryEra_Version = AngryEra.Version
@@ -585,7 +586,7 @@ function AngryEra:OnEnable()
     self:RegisterEvent("GUILD_ROSTER_UPDATE")
 
     if isClassic then
-        GuildRoster()
+        RequestGuildRoster()
     end
 
     LSM.RegisterCallback(self, "LibSharedMedia_Registered", "UpdateMedia")
@@ -651,7 +652,7 @@ function AngryEra:GUILD_ROSTER_UPDATE(...)
     end
 
     if canRequestRosterUpdate and isClassic then
-        GuildRoster()
+        RequestGuildRoster()
     end
 end
 
