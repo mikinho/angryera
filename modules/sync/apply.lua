@@ -331,6 +331,13 @@ local function IndexCurrentRecords(currentState)
             end
 
             usedIds[source.Kind][localId] = true
+            local categoryId = rawget(record, "CategoryId")
+            if IsPositiveLocalId(categoryId) then
+                -- Preserve dangling local placement overlays. Allocating a new
+                -- category into a referenced-but-empty numeric slot would
+                -- silently reparent unrelated local records.
+                usedIds.category[categoryId] = true
+            end
             bySyncId[record.SyncId] = {
                 Kind = source.Kind,
                 Id = localId,
@@ -495,11 +502,15 @@ local function CopyPageLocalFields(existing, incoming, localFields, staged)
         if not IsPlainTable(history) then
             return false, "invalid-local-history"
         end
-        history = Clone(history)
-        for index = HISTORY_LIMIT + 1, #history do
-            history[index] = nil
+        local boundedHistory = {}
+        for index = 1, HISTORY_LIMIT do
+            local entry = rawget(history, index)
+            if entry == nil then
+                break
+            end
+            boundedHistory[index] = Clone(entry)
         end
-        localFields.History = history
+        localFields.History = boundedHistory
     end
 
     if existing.Contents == incoming.Contents or type(existing.Contents) ~= "string" or existing.Contents == "" then

@@ -286,6 +286,11 @@ for index = 1, 10 do
         author = "Old-Realm",
     }
 end
+nextInput.Pages[200].History[20] = {
+    timestamp = 1,
+    content = "hidden sparse history",
+    author = "Old-Realm",
+}
 nextInput.EntityLocal[SyncId("page", 3)].Pinned = true
 nextInput.Pages[202] = nil
 nextInput.EntityLocal[SyncId("page", 5)] = nil
@@ -328,6 +333,7 @@ AssertEqual(#updated.Pages[200].History, 10, "automatic history stays bounded")
 AssertEqual(updated.Pages[200].History[1].content, "Tank: Player", "previous stored content enters history")
 AssertEqual(updated.Pages[200].History[1].author, "Leader-Realm", "history uses staged sender")
 AssertEqual(updated.Pages[200].History[1].timestamp, 1400, "history uses staged receive time")
+AssertEqual(updated.Pages[200].History[20], nil, "sparse history outside the bound is discarded")
 Assert(updated.Pages[200].History ~= nextInput.Pages[200].History, "updated page history cannot alias current state")
 Assert(updated.EntityLocal[SyncId("page", 3)].Pinned, "existing local pin is preserved")
 Assert(updated.Pages[201] ~= nil, "present stale candidate is retained without deletion")
@@ -401,6 +407,17 @@ AssertEqual(fallbackSummary.RootLocalId, 1, "fallback allocation uses lowest fre
 AssertEqual(fallbackApplied.Categories[2].CategoryId, 1, "fallback reserves each category allocation")
 AssertEqual(fallbackApplied.Pages[1].CategoryId, 2, "page ids use an independent local namespace")
 Assert(fallbackApplied.Pages[2] ~= nil and fallbackApplied.Pages[3] ~= nil, "fallback reserves each page allocation")
+
+local danglingReferenceState = MakeInitialState(initialManifest)
+danglingReferenceState.Pages[901].CategoryId = 1
+local danglingReferenceStage = assert(
+    snapshot.Stage(initialManifest, ManifestHash(initialManifest), danglingReferenceState, Context(1200), TestHash)
+)
+local danglingApplied, danglingSummary, danglingError =
+    apply.BuildNextState(danglingReferenceState, danglingReferenceStage, nil, TestHash)
+Assert(danglingApplied ~= nil and danglingSummary ~= nil and danglingError == nil, "dangling placement should apply")
+AssertEqual(danglingSummary.RootLocalId, 2, "fallback category allocation reserves dangling parent references")
+AssertEqual(danglingApplied.Pages[901].CategoryId, 1, "unrelated dangling placement remains unchanged")
 
 local tamperedStage = DeepCopy(fallbackStage)
 tamperedStage.EntityIds[1] = tamperedStage.EntityIds[2]
