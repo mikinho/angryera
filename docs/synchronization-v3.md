@@ -147,6 +147,11 @@ variables.
 
 - The Output keybinding renders the actively displayed page.
 - The editor Output button renders the page selected in the editor.
+- The on-screen display prefers the exact active snapshot. When that snapshot
+  is unavailable and the displayed page is locally authoritative, the display
+  falls back to local hierarchy data instead of rendering nothing. Chat output
+  through the active display context never falls back; a missing exact tuple
+  produces no chat message.
 - `{page}` resolves from the page passed to the renderer, never from global
   display state.
 - Group chat continues to auto-select instance, raid, or party channels unless

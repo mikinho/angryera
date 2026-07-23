@@ -35,9 +35,16 @@ local displaySendResult
 local displayActivatedLocally = true
 local showDisplayCalls = 0
 local displayNotificationCalls = 0
+local printedMessages = {}
+
+_G.RED_FONT_COLOR_CODE = "<red>"
 
 function AngryEra:UpdateTree()
     updateTreeCalls = updateTreeCalls + 1
+end
+
+function AngryEra:Print(message)
+    printedMessages[#printedMessages + 1] = message
 end
 
 function AngryEra:UpdateDisplayed()
@@ -139,6 +146,8 @@ local displayed, displayError = AngryEra:DisplayPage(42)
 assert(not displayed and displayError == "preparation-failed", "display preparation errors should be returned")
 assert(AngryAssign_State.displayed == nil, "failed activation must not commit the displayed page id")
 assert(updateDisplayCalls == displayUpdatesBeforeFailure, "failed activation must not render a local fallback")
+assert(#printedMessages == 1, "a failed display activation should be reported to the user")
+assert(printedMessages[1]:find("preparation-failed", 1, true), "the report should carry the failure code")
 
 displaySendResult = "transport-failed"
 displayActivatedLocally = true
@@ -149,6 +158,7 @@ assert(
     showDisplayCalls == 1 and displayNotificationCalls == 1,
     "successful local activation should refresh the display"
 )
+assert(#printedMessages == 1, "a transport-only failure after activation should not be reported as an error")
 displaySendOk = true
 displaySendResult = nil
 

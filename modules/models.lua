@@ -21,6 +21,13 @@ local function PublishPageRevision(self, id)
     return self:SendPage(id, true)
 end
 
+local function ReportFailedDisplayPublish(self, id, published, publishResult, activatedLocally)
+    if AngryAssign_State.displayed ~= id or published == true or activatedLocally == true then
+        return
+    end
+    self:Print(RED_FONT_COLOR_CODE .. "Unable to publish the displayed page: " .. tostring(publishResult) .. "|r")
+end
+
 --- Republishes the displayed page after a hierarchy mutation may have changed
 -- its canonical mixed-sibling order, parent, or inherited variable layers.
 -- Private organization changes by unauthorized viewers leave the exact shared
@@ -63,6 +70,7 @@ function AngryEra:DisplayPage(id)
 
     local _, displayResult, activatedLocally = self:SendDisplay(id, true)
     if activatedLocally ~= true then
+        self:Print(RED_FONT_COLOR_CODE .. "Unable to display the page: " .. tostring(displayResult) .. "|r")
         return nil, displayResult
     end
 
@@ -89,7 +97,7 @@ function AngryEra:PageUpdated(id)
     if page then
         page.Updated = time()
         page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
-        PublishPageRevision(self, id)
+        ReportFailedDisplayPublish(self, id, PublishPageRevision(self, id))
     end
 end
 
@@ -695,7 +703,7 @@ function AngryEra:UpdateContents(id, value)
     page.Updated = time()
     page.UpdateId = self:Hash(page.Name, page.Contents, page.Vars)
 
-    PublishPageRevision(self, id)
+    ReportFailedDisplayPublish(self, id, PublishPageRevision(self, id))
     self:UpdateSelected(true)
     if AngryAssign_State.displayed == id then
         self:UpdateDisplayed()

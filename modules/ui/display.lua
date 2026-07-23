@@ -574,6 +574,42 @@ function AngryEra:RenderPageContent(page, ctx, options)
     return text, mergedVars, variableError, renderedPage
 end
 
+local ACTIVE_CONTEXT_UNAVAILABLE = {
+    ["active-display-runtime-unavailable"] = true,
+    ["missing-active-display-reference"] = true,
+    ["active-display-reference-mismatch"] = true,
+    ["missing-active-display-context"] = true,
+}
+
+local function CanRenderPageLocally(self, page)
+    if type(page.OwnerId) ~= "string" then
+        return true
+    end
+    if type(self.HasAuthoritativePageContext) ~= "function" then
+        return true
+    end
+    local ok, authoritative = pcall(self.HasAuthoritativePageContext, self, page)
+    return ok and authoritative == true
+end
+
+--- Renders a page preferring the exact active display snapshot.
+-- When the snapshot is unavailable and the page is locally authoritative,
+-- rendering falls back to local hierarchy data instead of an empty result.
+-- @tparam table page Page table.
+-- @tparam table ctx Template context table.
+-- @treturn string text Rendered text.
+-- @treturn table mergedVars Merged variable map used for rendering.
+-- @treturn string|nil variableError
+-- @treturn table renderedPage Exact page record used for rendering.
+function AngryEra:RenderPageWithActiveFallback(page, ctx)
+    local renderedText, mergedVars, variableError, renderedPage =
+        self:RenderPageContent(page, ctx, { UseActiveDisplayContext = true })
+    if ACTIVE_CONTEXT_UNAVAILABLE[variableError] and CanRenderPageLocally(self, page) then
+        return self:RenderPageContent(page, ctx)
+    end
+    return renderedText, mergedVars, variableError, renderedPage
+end
+
 --- Applies lightweight markdown transformations used by the display layer.
 -- @tparam string text Source text.
 -- @treturn string formattedText
@@ -611,7 +647,7 @@ function AngryEra:UpdateDisplayed()
         self.display_text:Clear()
         self:UpdateBackdrop()
         if type(self.NotifyDisplayedNoteChanged) == "function" then
-            self:NotifyDisplayedNoteChanged(nil)
+            pcall(self.NotifyDisplayedNoteChanged, self, nil)
         end
         return
     end
@@ -647,8 +683,7 @@ function AngryEra:UpdateDisplayed()
     local highlightHex = self:GetConfig("highlightColor")
 
     -- Mustache Templating & Merging
-    local renderedText, mergedVars, _, renderedPage =
-        self:RenderPageContent(page, ctx, { UseActiveDisplayContext = true })
+    local renderedText, mergedVars, _, renderedPage = self:RenderPageWithActiveFallback(page, ctx)
     local text = renderedText or page.Contents or ""
 
     local hasHighlight = next(highlightSet) ~= nil
@@ -721,7 +756,7 @@ function AngryEra:UpdateDisplayed()
     end
 
     if type(self.NotifyDisplayedNoteChanged) == "function" then
-        self:NotifyDisplayedNoteChanged({
+        pcall(self.NotifyDisplayedNoteChanged, self, {
             Page = renderedPage,
             RenderedText = text,
             MergedVariables = mergedVars,
