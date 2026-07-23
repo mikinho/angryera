@@ -11,7 +11,6 @@ AngryEra.identity = AngryEra.identity or {}
 local identity = AngryEra.identity
 
 local CURRENT_SCHEMA_VERSION = 1
-local INSTALLATION_ID_PATTERN = "^ae3i:%x+:%x+:%x+:%x+$"
 local MAX_SYNC_ID_BYTES = 160
 
 local function NormalizeInteger(value)
@@ -25,7 +24,21 @@ end
 -- @tparam any value Candidate identifier.
 -- @treturn boolean valid
 function identity.ValidateInstallationId(value)
-    return type(value) == "string" and #value <= 96 and value:match(INSTALLATION_ID_PATTERN) ~= nil
+    if type(value) ~= "string" or #value > 96 then
+        return false
+    end
+
+    local first, second, third, fourth = value:match("^ae3i:([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):([0-9a-f]+)$")
+    if not first then
+        return false
+    end
+
+    for _, segment in ipairs({ first, second, third, fourth }) do
+        if #segment > 1 and segment:sub(1, 1) == "0" then
+            return false
+        end
+    end
+    return true
 end
 
 --- Parses a protocol-3 entity synchronization identifier.

@@ -3,6 +3,7 @@
 	<Script file="identity.lua"/>
 	<Script file="utils\protocol.lua"/>
 	<Script file="utils\variables.lua"/>
+	<Script file="sync\schema.lua"/>
 	<Script file="entities.lua"/>
 	<Script file="smart_markers.lua"/>
 	<Script file="permissions.lua"/>
