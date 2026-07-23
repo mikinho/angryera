@@ -212,7 +212,10 @@ once when the display clears. It is delivered both as a WeakAuras custom event
 (`ScanEvents`) and as an AceEvent message, with `syncId, pageName,
 categoryName` arguments.
 
-**API:** every function returns a detached copy.
+**API:** the stable public entry point is the global `AngryEra` object
+(`_G.AngryEra`). It references the same addon object used internally. AngryEra
+will not overwrite an existing global with that name during startup. Every
+getter returns a detached copy.
 
 * `AngryEra:GetDisplayedNote()` returns the full snapshot: `Name`, `Category`,
   `CategorySyncId`, `Ancestors` (root-to-parent `{ SyncId, Name }`), `Raw`,
@@ -223,6 +226,16 @@ categoryName` arguments.
 * `AngryEra:GetDisplayedMeta()` returns `$` metadata with the prefix stripped.
 * `AngryEra.NOTE_API_VERSION` and `AngryEra.NOTE_UPDATE_EVENT` support feature
   detection.
+
+Other addons should declare AngryEra as an optional dependency before reading
+the API. WeakAuras can feature-detect it directly:
+
+```
+local available = type(AngryEra) == "table"
+    and type(AngryEra.NOTE_API_VERSION) == "number"
+    and AngryEra.NOTE_API_VERSION >= 1
+    and type(AngryEra.GetDisplayedNote) == "function"
+```
 
 Example WeakAuras trigger (Custom, Event: `ANGRYERA_NOTE_UPDATE`):
 

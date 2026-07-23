@@ -7,8 +7,13 @@
 local _G = _G
 
 local appName, app = ...
+local PUBLIC_API_NAME = "AngryEra"
 
 local GetAddOnMetadata = GetAddOnMetadata or C_AddOns.GetAddOnMetadata
+
+if rawget(_G, PUBLIC_API_NAME) ~= nil then
+    error(PUBLIC_API_NAME .. " cannot load because _G." .. PUBLIC_API_NAME .. " is already defined")
+end
 
 -- class AngryEra
 -- field window? AceGUIFrame The main configuration window
@@ -44,3 +49,7 @@ _G["BINDING_NAME_" .. appName .. "_OUTPUT"] = "Output Assignment to Chat"
 _G["BINDING_NAME_" .. appName .. "_PREV_PAGE"] = "Previous Page"
 _G["BINDING_NAME_" .. appName .. "_NEXT_PAGE"] = "Next Page"
 _G["BINDING_NAME_" .. appName .. "_FIRST_PAGE"] = "First Page"
+
+-- Stable entry point for WeakAuras and other addons. Keep this identical to the
+-- private addon-namespace object so internal and external callers share state.
+_G[PUBLIC_API_NAME] = AngryEra
