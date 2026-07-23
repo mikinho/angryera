@@ -14,11 +14,23 @@ local PlayerFullName = helpers.PlayerFullName
 local IterateGroupMembers = helpers.IterateGroupMembers
 
 local updateFrequency = AngryEra.core.updateFrequency
+local displayPageDebounce = 0.5
+-- Avoid a raid-wide recovery burst while a proactive multipart page is still
+-- draining, including ChatThrottleLib's reduced-throughput low-FPS mode.
+local pendingDisplayRecoveryDelay = math.max(updateFrequency * 15, 30)
+local maximumDisplayRecoveryAttempts = 3
 
 local pageLastUpdate = {}
 local pageTimerId = {}
 local displayLastUpdate
 local displayTimerId
+local publishedPageTuples = {}
+local pendingDisplayRecoveryTimer
+local pendingDisplayRecovery
+local pendingDisplayRecoveryGeneration = 0
+local pendingDisplayPage
+local pendingDisplayPageTimer
+local displayPageGeneration = 0
 
 local function IsGrouped()
     return IsInRaid() or IsInGroup()
@@ -28,6 +40,87 @@ local function CancelTimer(self, timerId)
     if timerId then
         self:CancelTimer(timerId)
     end
+end
+
+local function PageTuple(payload)
+    local page = type(payload) == "table" and payload.Page or nil
+    if
+        type(page) ~= "table"
+        or type(page.SyncId) ~= "string"
+        or type(page.RevisionId) ~= "string"
+        or type(payload.ContextRevisionId) ~= "string"
+    then
+        return nil
+    end
+    return {
+        SyncId = page.SyncId,
+        RevisionId = page.RevisionId,
+        ContextRevisionId = payload.ContextRevisionId,
+    }
+end
+
+local function PageTuplePublished(payload)
+    local tuple = PageTuple(payload)
+    local published = tuple and publishedPageTuples[tuple.SyncId] or nil
+    return published ~= nil
+        and published.RevisionId == tuple.RevisionId
+        and published.ContextRevisionId == tuple.ContextRevisionId
+end
+
+local function RememberPublishedPage(payload)
+    local tuple = PageTuple(payload)
+    if tuple then
+        publishedPageTuples[tuple.SyncId] = tuple
+    end
+end
+
+local function SamePageTuple(left, right)
+    local leftTuple = PageTuple(left)
+    local rightTuple = PageTuple(right)
+    return leftTuple ~= nil
+        and rightTuple ~= nil
+        and leftTuple.SyncId == rightTuple.SyncId
+        and leftTuple.RevisionId == rightTuple.RevisionId
+        and leftTuple.ContextRevisionId == rightTuple.ContextRevisionId
+end
+
+local function ActiveDisplayMatches(self, payload)
+    if type(self.GetActiveDisplayReference) ~= "function" then
+        return false
+    end
+    local queried, reference = pcall(self.GetActiveDisplayReference, self)
+    if not queried or type(reference) ~= "table" then
+        return false
+    end
+    return SamePageTuple(payload, {
+        Page = {
+            SyncId = reference.SyncId,
+            RevisionId = reference.RevisionId,
+        },
+        ContextRevisionId = reference.ContextRevisionId,
+    })
+end
+
+local function CancelPendingDisplayPage(self)
+    displayPageGeneration = displayPageGeneration + 1
+    CancelTimer(self, pendingDisplayPageTimer)
+    pendingDisplayPageTimer = nil
+    pendingDisplayPage = nil
+end
+
+local function QueueDisplayPage(self, id, payload)
+    CancelPendingDisplayPage(self)
+    pendingDisplayPage = {
+        Generation = displayPageGeneration,
+        Id = id,
+        Payload = payload,
+    }
+    pendingDisplayPageTimer = self:ScheduleTimer("SendDisplayPageMessage", displayPageDebounce, displayPageGeneration)
+    if not pendingDisplayPageTimer then
+        pendingDisplayPage = nil
+        return false, "page-publication-schedule-failed"
+    end
+    return true, "scheduled"
 end
 
 local function PreparePage(self, id)
@@ -55,8 +148,244 @@ local function SendPreparedPage(self, id)
     if not sent then
         return false, result
     end
+    RememberPublishedPage(payload)
     pageLastUpdate[id] = time()
     return true, payload
+end
+
+local function CopyDisplayEnvelope(envelope)
+    if type(envelope) ~= "table" or type(envelope.Payload) ~= "table" then
+        return nil
+    end
+    local copy = {}
+    for key, value in pairs(envelope) do
+        copy[key] = value
+    end
+    copy.Payload = {}
+    for key, value in pairs(envelope.Payload) do
+        copy.Payload[key] = value
+    end
+    return copy
+end
+
+local function PendingRecoveryMatches(record, pending)
+    local payload = type(pending) == "table" and pending.Payload or nil
+    local reference = record and record.Reference or nil
+    return type(payload) == "table"
+        and type(reference) == "table"
+        and pending.Sender == record.Sender
+        and pending.SenderInstallationId == record.SenderInstallationId
+        and pending.SenderSessionId == record.SenderSessionId
+        and payload.SyncId == reference.SyncId
+        and payload.RevisionId == reference.RevisionId
+        and payload.ContextRevisionId == reference.ContextRevisionId
+end
+
+local function SameRecoveryReference(record, reference)
+    local current = record and record.Reference or nil
+    return type(current) == "table"
+        and type(reference) == "table"
+        and current.SyncId == reference.SyncId
+        and current.RevisionId == reference.RevisionId
+        and current.ContextRevisionId == reference.ContextRevisionId
+end
+
+local function SamePlayer(left, right)
+    return type(left) == "string" and type(right) == "string" and left:lower() == right:lower()
+end
+
+local function SchedulePendingDisplayRecovery(self, record)
+    pendingDisplayRecoveryTimer =
+        self:ScheduleTimer("RecoverPendingDisplay", pendingDisplayRecoveryDelay, record.Generation)
+    if not pendingDisplayRecoveryTimer then
+        pendingDisplayRecovery = nil
+        return false, "recovery-schedule-failed"
+    end
+    return true, "scheduled"
+end
+
+--- Cancels a deferred missing-display recovery request.
+-- @treturn boolean canceled Whether a recovery timer was pending.
+function AngryEra:CancelPendingDisplayRecovery()
+    local timer = pendingDisplayRecoveryTimer
+    local recovery = pendingDisplayRecovery
+    pendingDisplayRecoveryGeneration = pendingDisplayRecoveryGeneration + 1
+    pendingDisplayRecoveryTimer = nil
+    pendingDisplayRecovery = nil
+    CancelTimer(self, timer)
+    return timer ~= nil or recovery ~= nil
+end
+
+--- Clears group/session-bound page publication knowledge and recovery state.
+-- Callers must reset this state whenever the protocol session or group changes.
+function AngryEra:ResetDisplayPublicationState()
+    self:CancelPendingDisplayRecovery()
+    CancelPendingDisplayPage(self)
+    CancelTimer(self, displayTimerId)
+    displayTimerId = nil
+    displayLastUpdate = nil
+    for _, timerId in pairs(pageTimerId) do
+        CancelTimer(self, timerId)
+    end
+    pageTimerId = {}
+    pageLastUpdate = {}
+    publishedPageTuples = {}
+end
+
+--- Defers recovery for an accepted DISPLAY whose exact page tuple is missing.
+-- The timer is trailing-edge: a newer pending display replaces the older wait.
+-- @tparam table auth Authenticated sender identity.
+-- @tparam table displayEnvelope Validated DISPLAY envelope.
+-- @tparam table reference Exact missing page/context tuple.
+-- @treturn boolean scheduled
+-- @treturn string|nil statusOrError
+function AngryEra:DeferPendingDisplayRecovery(auth, displayEnvelope, reference)
+    local previousRecovery = pendingDisplayRecovery
+    local inheritedAttempts = SameRecoveryReference(previousRecovery, reference) and previousRecovery.Attempts or 0
+    self:CancelPendingDisplayRecovery()
+    local envelopeCopy = CopyDisplayEnvelope(displayEnvelope)
+    if
+        type(auth) ~= "table"
+        or type(auth.Sender) ~= "string"
+        or type(auth.SenderInstallationId) ~= "string"
+        or type(auth.SenderSessionId) ~= "string"
+        or not envelopeCopy
+        or type(reference) ~= "table"
+    then
+        return false, "invalid-recovery-context"
+    end
+    if type(self.GetPendingActiveDisplayRequest) ~= "function" then
+        return false, "active-page-runtime-unavailable"
+    end
+    local queried, pending = pcall(self.GetPendingActiveDisplayRequest, self)
+    if not queried then
+        return false, "pending-display-query-failed"
+    end
+    if pending == nil then
+        return true, "not-needed"
+    end
+    pendingDisplayRecovery = {
+        Generation = pendingDisplayRecoveryGeneration,
+        Attempts = inheritedAttempts,
+        Sender = auth.Sender,
+        SenderInstallationId = auth.SenderInstallationId,
+        SenderSessionId = auth.SenderSessionId,
+        DisplayEnvelope = envelopeCopy,
+        Reference = {
+            SyncId = reference.SyncId,
+            RevisionId = reference.RevisionId,
+            ContextRevisionId = reference.ContextRevisionId,
+        },
+    }
+    if not PendingRecoveryMatches(pendingDisplayRecovery, pending) then
+        pendingDisplayRecovery = nil
+        return false, "stale-recovery-context"
+    end
+    if pendingDisplayRecovery.Attempts >= maximumDisplayRecoveryAttempts then
+        pendingDisplayRecovery.Exhausted = true
+        return true, "exhausted"
+    end
+    return SchedulePendingDisplayRecovery(self, pendingDisplayRecovery)
+end
+
+--- Recovers a still-missing exact tuple without amplifying normal page transit.
+-- The first attempt asks the authenticated publisher for only the referenced
+-- tuple. Later bounded attempts ask the current leader, which also handles a
+-- leadership change while recovery was pending.
+-- @tparam number generation Recovery generation captured by AceTimer.
+-- @treturn boolean sentOrNotNeeded
+-- @treturn string|nil messageIdOrStatus
+function AngryEra:RecoverPendingDisplay(generation)
+    local recovery = pendingDisplayRecovery
+    if not recovery or recovery.Generation ~= generation then
+        return true, "superseded"
+    end
+    if recovery.Exhausted then
+        return true, "exhausted"
+    end
+    pendingDisplayRecoveryTimer = nil
+    if type(self.GetPendingActiveDisplayRequest) ~= "function" then
+        pendingDisplayRecovery = nil
+        return false, "active-page-runtime-unavailable"
+    end
+    local queried, pending = pcall(self.GetPendingActiveDisplayRequest, self)
+    if not queried then
+        pendingDisplayRecovery = nil
+        return false, "pending-display-query-failed"
+    end
+    if pending == nil then
+        pendingDisplayRecovery = nil
+        return true, "not-needed"
+    end
+    if not PendingRecoveryMatches(recovery, pending) then
+        pendingDisplayRecovery = nil
+        return true, "superseded"
+    end
+
+    recovery.Attempts = recovery.Attempts + 1
+    local sent
+    local result
+    if recovery.Attempts == 1 then
+        local leader
+        if type(self.GetRaidLeader) == "function" then
+            local leaderOk, currentLeader = pcall(self.GetRaidLeader, self, true)
+            if leaderOk then
+                leader = currentLeader
+            end
+        end
+        if SamePlayer(leader, recovery.Sender) then
+            sent, result = self:SendProtocolPageRequest(recovery.Sender, recovery.DisplayEnvelope, recovery.Reference)
+        end
+        if not sent then
+            recovery.Attempts = recovery.Attempts + 1
+            sent, result = self:SendRequestDisplay()
+        end
+    else
+        sent, result = self:SendRequestDisplay()
+    end
+
+    if recovery.Attempts < maximumDisplayRecoveryAttempts then
+        local scheduled, scheduleError = SchedulePendingDisplayRecovery(self, recovery)
+        if not scheduled then
+            return false, scheduleError
+        end
+    else
+        recovery.Exhausted = true
+    end
+    return sent, result
+end
+
+--- Sends the newest debounced page snapshot associated with DISPLAY control.
+-- Older unsent snapshots are discarded before they enter AceComm's
+-- non-cancelable multipart queue.
+-- @tparam number generation Publication generation captured by AceTimer.
+-- @treturn boolean sentOrSuperseded
+-- @treturn string|nil messageIdOrStatus
+function AngryEra:SendDisplayPageMessage(generation)
+    local pending = pendingDisplayPage
+    if not pending or pending.Generation ~= generation then
+        return true, "superseded"
+    end
+    pendingDisplayPage = nil
+    pendingDisplayPageTimer = nil
+
+    if PageTuplePublished(pending.Payload) then
+        return true, "already-published"
+    end
+    if not self:CanLocalPlayerPublish("display") or not self:CanLocalPlayerPublish("pageUpsert") then
+        return false, "unauthorized"
+    end
+    if not ActiveDisplayMatches(self, pending.Payload) then
+        return true, "superseded"
+    end
+
+    local sent, result = self:SendProtocolPageUpsert(pending.Payload)
+    if not sent then
+        return false, result
+    end
+    RememberPublishedPage(pending.Payload)
+    pageLastUpdate[pending.Id] = time()
+    return true, result
 end
 
 --- Sends a canonical PAGE_UPSERT with per-page throttling.
@@ -100,7 +429,9 @@ function AngryEra:SendPageMessage(id)
 end
 
 --- Publishes an active display selection with throttling.
--- A non-empty selection always sends its exact PAGE_UPSERT first.
+-- A non-empty selection sends its exact PAGE_UPSERT once per group/session;
+-- peers that missed that publication recover through bounded exact-page and
+-- current-display requests.
 -- @tparam[opt] number id Local page id, or nil to clear the shared display.
 -- @tparam[opt=false] boolean force Bypass the publication delay.
 -- @treturn boolean sentOrScheduled
@@ -123,7 +454,9 @@ function AngryEra:SendDisplay(id, force)
     return self:SendDisplayMessage(id)
 end
 
---- Immediately sends DISPLAY and, for a selected page, its exact PAGE_UPSERT.
+--- Immediately sends DISPLAY control and queues its exact PAGE_UPSERT.
+-- A short trailing debounce prevents rapid page A -> B navigation from placing
+-- stale page A into AceComm's non-cancelable multipart queue.
 -- @tparam[opt] number id Local page id, or nil to clear the shared display.
 -- @treturn boolean sent
 -- @treturn string|nil messageIdOrError
@@ -168,19 +501,22 @@ function AngryEra:SendDisplayMessage(id)
         return false, activationError or "active-display-activation-failed", false
     end
 
-    if pagePayload then
+    if pagePayload and not PageTuplePublished(pagePayload) then
         CancelTimer(self, pageTimerId[id])
         pageTimerId[id] = nil
-        local pageSent, pageResult = self:SendProtocolPageUpsert(pagePayload)
-        if not pageSent then
-            return false, pageResult, true
+        local queued, queueResult = QueueDisplayPage(self, id, pagePayload)
+        if not queued then
+            return false, queueResult, true
         end
-        pageLastUpdate[id] = time()
+    else
+        CancelPendingDisplayPage(self)
     end
 
     local sent, result = self:SendProtocolDisplay(displayPayload)
     if sent then
         displayLastUpdate = time()
+    else
+        CancelPendingDisplayPage(self)
     end
     return sent, result, true
 end

@@ -649,8 +649,13 @@ accepted, result = AngryEra:AcceptActiveDisplay(
     }),
     displayPayload
 )
-Assert(accepted and result.RequestNeeded, "different envelope session cannot consume another session's context")
-AssertEqual(AngryAssign_State.displayed, 4, "session mismatch does not change current selection")
+Assert(accepted and result.Applied and result.ContextRebound, "current leader rebinds an exact prior-session context")
+AssertEqual(AngryAssign_State.displayed, 4, "exact session rebind retains the current selection")
+AssertEqual(
+    AngryEra:GetActiveDisplayReference().SenderSessionId,
+    "other_session",
+    "rebound display context is bound to the current leader session"
+)
 
 authorization.display = false
 local stateBeforeUnauthorizedDisplay = AngryAssign_State
@@ -836,8 +841,11 @@ AssertEqual(
     "unchanged variables and hierarchy retain authoritative context identity"
 )
 
-accepted, result = AngryEra:AcceptActiveDisplay(Auth(), proactiveDisplay)
-Assert(accepted and result.RequestNeeded, "remote sender cannot consume locally prepared context without its own tuple")
+local rollbackAuth = Auth({
+    Sender = "Assistant",
+})
+accepted, result = AngryEra:AcceptActiveDisplay(rollbackAuth, proactiveDisplay)
+Assert(accepted and result.RequestNeeded, "assistant cannot consume locally prepared context without its own tuple")
 local pendingForRollback = result.RequestPayload
 local pagesBeforeContextOnly = AngryAssign_Pages
 local pageBeforeContextOnly = AngryAssign_Pages[4]
@@ -848,26 +856,27 @@ local stateBeforeContextOnly = AngryAssign_State
 local treeCallsBeforeContextOnly = uiCalls.Tree
 local selectedCallsBeforeContextOnly = uiCalls.Selected
 
-accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), proactiveUpsert)
+accepted, result = AngryEra:AcceptActivePageUpsert(rollbackAuth, proactiveUpsert)
 AssertError(accepted, result, "page-revision-rollback", "uncorrelated prior revision")
-accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), proactiveUpsert, {})
+accepted, result = AngryEra:AcceptActivePageUpsert(rollbackAuth, proactiveUpsert, {})
 AssertError(
     accepted,
     result,
     "active-page-accept-options-missing-CorrelatedReply",
     "correlated option requires its sole field"
 )
-accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), proactiveUpsert, {
+accepted, result = AngryEra:AcceptActivePageUpsert(rollbackAuth, proactiveUpsert, {
     CorrelatedReply = false,
 })
 AssertError(accepted, result, "invalid-active-page-correlated-reply", "correlated option must be true")
-accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), proactiveUpsert, {
+accepted, result = AngryEra:AcceptActivePageUpsert(rollbackAuth, proactiveUpsert, {
     CorrelatedReply = true,
     Extra = true,
 })
 AssertError(accepted, result, "active-page-accept-options-unknown-field", "correlated option rejects extras")
 accepted, result = AngryEra:AcceptActivePageUpsert(
     Auth({
+        Sender = "Assistant",
         SenderSessionId = "wrong_pending_session",
     }),
     proactiveUpsert,
@@ -878,7 +887,7 @@ accepted, result = AngryEra:AcceptActivePageUpsert(
 AssertError(accepted, result, "page-revision-rollback", "correlated rollback must match pending source session")
 
 local contextsBeforeContextOnly = AngryEra._activePageContexts
-accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), proactiveUpsert, {
+accepted, result = AngryEra:AcceptActivePageUpsert(rollbackAuth, proactiveUpsert, {
     CorrelatedReply = true,
 })
 Assert(accepted and result.ContextOnly, "correlated prior revision commits context only")
@@ -897,7 +906,7 @@ Assert(AngryEra._activePageContexts ~= contextsBeforeContextOnly, "context-only 
 AssertEqual(uiCalls.Tree, treeCallsBeforeContextOnly, "context-only commit does not refresh tree")
 AssertEqual(uiCalls.Selected, selectedCallsBeforeContextOnly, "context-only commit does not refresh editor")
 
-accepted, result = AngryEra:AcceptActiveDisplay(Auth(), result.PendingDisplayPayload)
+accepted, result = AngryEra:AcceptActiveDisplay(rollbackAuth, result.PendingDisplayPayload)
 Assert(accepted and result.Applied, "newly cached prior tuple completes pending display")
 
 local mismatchedPreparedDisplay = DeepCopy(secondProactiveDisplay)
@@ -935,6 +944,7 @@ AssertEqual(
 
 accepted, result = AngryEra:AcceptActiveDisplay(
     Auth({
+        Sender = "Assistant",
         SenderSessionId = "pending_clear_session",
     }),
     secondProactiveDisplay
@@ -1165,6 +1175,196 @@ AssertEqual(
     remoteRevisionIdBeforeReset,
     "missing remote context preserves revision identity"
 )
+
+-- A current leader can select an exact tuple already cached under the former
+-- publisher without waiting for a redundant PAGE_UPSERT. Assistants, changed
+-- tuples, unknown pages, and invalid cached payloads must retain the pending
+-- request behavior.
+do
+    ResetStorage()
+    local exactPayload = MakePayload(1, "Handoff exact", "raid=handoff")
+    local formerPublisherAuth = Auth({
+        Sender = "FormerLeader",
+        SenderInstallationId = remoteInstallationId,
+        SenderSessionId = "former_leader_session",
+    })
+    accepted, result = AngryEra:AcceptActivePageUpsert(formerPublisherAuth, exactPayload)
+    Assert(accepted and result.Applied and result.Created, result)
+
+    local exactDisplay = {
+        Displayed = true,
+        SyncId = exactPayload.Page.SyncId,
+        RevisionId = exactPayload.Page.RevisionId,
+        ContextRevisionId = exactPayload.ContextRevisionId,
+    }
+    local newLeaderAuth = Auth({
+        Sender = "Leader",
+        SenderInstallationId = otherInstallationId,
+        SenderSessionId = "new_leader_session",
+    })
+    local assistantAuth = Auth({
+        Sender = "Assistant",
+        SenderInstallationId = otherInstallationId,
+        SenderSessionId = "assistant_session",
+    })
+    local pagesBeforeRebind = AngryAssign_Pages
+    local categoriesBeforeRebind = AngryAssign_Categories
+    local metaBeforeRebind = AngryAssign_Meta
+    local stateBeforeRebind = AngryAssign_State
+    local contextsBeforeRebind = AngryEra._activePageContexts
+    local pageBeforeRebind = AngryAssign_Pages[result.LocalId]
+    local indexesBeforeRebind = AngryEra.entitySyncIndexes
+
+    accepted, result = AngryEra:AcceptActiveDisplay(assistantAuth, exactDisplay)
+    Assert(accepted and result.RequestNeeded and not result.Applied, result)
+    Assert(AngryAssign_State == stateBeforeRebind, "assistant display cannot replace persisted display state")
+    Assert(AngryEra._activePageContexts == contextsBeforeRebind, "assistant display cannot rebind an exact context")
+    AssertEqual(
+        AngryEra:GetPendingActiveDisplayRequest().Sender,
+        "Assistant-Realm",
+        "assistant exact tuple remains pending"
+    )
+
+    local pendingBeforeRoleChange = AngryEra._activePendingDisplay
+    local defaultGetGroupRole = AngryEra.GetGroupRole
+    local leaderRoleChecks = 0
+    function AngryEra:GetGroupRole(sender)
+        if sender == "Leader-Realm" then
+            leaderRoleChecks = leaderRoleChecks + 1
+            return leaderRoleChecks == 1 and "leader" or "assistant"
+        end
+        return defaultGetGroupRole(self, sender)
+    end
+    accepted, result = AngryEra:AcceptActiveDisplay(newLeaderAuth, exactDisplay)
+    AssertError(accepted, result, "display-authorization-changed", "leader role revoked before context rebind commit")
+    AssertEqual(leaderRoleChecks, 2, "context rebind rechecks current leadership before commit")
+    Assert(AngryAssign_State == stateBeforeRebind, "revoked rebind preserves persisted display state")
+    Assert(AngryEra._activePageContexts == contextsBeforeRebind, "revoked rebind preserves cached contexts")
+    Assert(
+        AngryEra._activePendingDisplay == pendingBeforeRoleChange,
+        "revoked rebind preserves the prior pending display"
+    )
+    AngryEra.GetGroupRole = defaultGetGroupRole
+
+    accepted, result = AngryEra:AcceptActiveDisplay(newLeaderAuth, exactDisplay)
+    Assert(accepted and result.Applied and result.ContextRebound and not result.RequestNeeded, result)
+    AssertEqual(AngryAssign_State.displayed, pageBeforeRebind.Id, "current leader exact rebind selects the cached page")
+    Assert(AngryAssign_Pages == pagesBeforeRebind, "context rebind does not replace persisted pages")
+    Assert(AngryAssign_Categories == categoriesBeforeRebind, "context rebind does not replace persisted categories")
+    Assert(AngryAssign_Meta == metaBeforeRebind, "context rebind does not replace persisted metadata")
+    Assert(AngryAssign_Pages[pageBeforeRebind.Id] == pageBeforeRebind, "context rebind preserves the source page")
+    Assert(AngryEra.entitySyncIndexes == indexesBeforeRebind, "context rebind does not install new identity indexes")
+    Assert(AngryEra._activePageContexts ~= contextsBeforeRebind, "context rebind atomically installs a new cache")
+    Assert(AngryEra:GetPendingActiveDisplayRequest() == nil, "successful context rebind clears stale pending display")
+    local reboundReference = AngryEra:GetActiveDisplayReference()
+    AssertEqual(reboundReference.Sender, "Leader-Realm", "rebound display is bound to the current leader")
+    AssertEqual(
+        reboundReference.SenderInstallationId,
+        otherInstallationId,
+        "rebound display is bound to the current leader installation"
+    )
+    AssertEqual(
+        reboundReference.SenderSessionId,
+        "new_leader_session",
+        "rebound display is bound to the current leader session"
+    )
+    local reboundContext = AngryEra:GetActivePageRenderContext(
+        exactPayload.Page.SyncId,
+        exactPayload.Page.RevisionId,
+        exactPayload.ContextRevisionId
+    )
+    AssertEqual(reboundContext.Page.Contents, "Handoff exact", "rebound context retains the validated page snapshot")
+    AssertEqual(
+        reboundContext.AncestorVariableLayers[1].Vars,
+        "raid=handoff",
+        "rebound context retains inherited variables"
+    )
+
+    local changedPayload = MakePayload(2, "Handoff changed", "raid=changed")
+    local changedDisplay = {
+        Displayed = true,
+        SyncId = changedPayload.Page.SyncId,
+        RevisionId = changedPayload.Page.RevisionId,
+        ContextRevisionId = changedPayload.ContextRevisionId,
+    }
+    local stateBeforeChangedDisplay = AngryAssign_State
+    local contextsBeforeChangedDisplay = AngryEra._activePageContexts
+    local activeBeforeChangedDisplay = AngryEra._activeDisplayReference
+    accepted, result = AngryEra:AcceptActiveDisplay(newLeaderAuth, changedDisplay)
+    Assert(accepted and result.RequestNeeded and not result.Applied, result)
+    Assert(AngryAssign_State == stateBeforeChangedDisplay, "changed tuple does not change persisted display state")
+    Assert(AngryEra._activePageContexts == contextsBeforeChangedDisplay, "changed tuple is not rebound")
+    Assert(
+        AngryEra._activeDisplayReference == activeBeforeChangedDisplay,
+        "changed tuple preserves the active reference"
+    )
+    AssertEqual(
+        AngryAssign_Pages[pageBeforeRebind.Id].Contents,
+        "Handoff exact",
+        "changed tuple does not mutate source"
+    )
+
+    local unknownDisplay = {
+        Displayed = true,
+        SyncId = otherInstallationId .. ":page:99",
+        RevisionId = "fcs32:12345678",
+        ContextRevisionId = "fcs32:87654321",
+    }
+    local stateBeforeUnknownDisplay = AngryAssign_State
+    local contextsBeforeUnknownDisplay = AngryEra._activePageContexts
+    accepted, result = AngryEra:AcceptActiveDisplay(newLeaderAuth, unknownDisplay)
+    Assert(accepted and result.RequestNeeded and not result.Applied, result)
+    Assert(AngryAssign_State == stateBeforeUnknownDisplay, "unknown tuple does not change persisted display state")
+    Assert(AngryEra._activePageContexts == contextsBeforeUnknownDisplay, "unknown tuple is not rebound")
+end
+
+do
+    ResetStorage()
+    local exactPayload = MakePayload(1, "Validated cache", "raid=validated")
+    accepted, result = AngryEra:AcceptActivePageUpsert(
+        Auth({
+            Sender = "FormerLeader",
+            SenderSessionId = "former_invalid_cache_session",
+        }),
+        exactPayload
+    )
+    Assert(accepted and result.Applied, result)
+    local sourcePageId = result.LocalId
+
+    local cachedEntry
+    for _, entry in pairs(AngryEra._activePageContexts) do
+        if entry.SyncId == exactPayload.Page.SyncId then
+            cachedEntry = entry
+            break
+        end
+    end
+    Assert(cachedEntry ~= nil, "invalid-cache test locates the exact cached tuple")
+    cachedEntry.Page.Contents = "tampered volatile cache"
+
+    local pagesBeforeInvalidCache = AngryAssign_Pages
+    local metaBeforeInvalidCache = AngryAssign_Meta
+    local stateBeforeInvalidCache = AngryAssign_State
+    local contextsBeforeInvalidCache = AngryEra._activePageContexts
+    accepted, result = AngryEra:AcceptActiveDisplay(
+        Auth({
+            Sender = "Leader",
+            SenderInstallationId = otherInstallationId,
+            SenderSessionId = "new_invalid_cache_session",
+        }),
+        {
+            Displayed = true,
+            SyncId = exactPayload.Page.SyncId,
+            RevisionId = exactPayload.Page.RevisionId,
+            ContextRevisionId = exactPayload.ContextRevisionId,
+        }
+    )
+    Assert(accepted and result.RequestNeeded and not result.Applied, result)
+    Assert(AngryAssign_Pages == pagesBeforeInvalidCache, "invalid cached payload does not replace source pages")
+    Assert(AngryAssign_Meta == metaBeforeInvalidCache, "invalid cached payload does not replace metadata")
+    Assert(AngryAssign_State == stateBeforeInvalidCache, "invalid cached payload does not select a page")
+    Assert(AngryEra._activePageContexts == contextsBeforeInvalidCache, "invalid cached payload is not rebound")
+    AssertEqual(AngryAssign_Pages[sourcePageId].Contents, "Validated cache", "invalid cache leaves source intact")
+end
 
 -- A new display authority may relay an unchanged page back to its owning
 -- installation. The relay only supplies the sender-bound volatile context

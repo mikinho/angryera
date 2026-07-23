@@ -58,12 +58,33 @@ function libS:Deserialize(value)
     return false, "unknown serialization"
 end
 
+local compressedValues = {}
+local decompressCalls = 0
+local libC = {}
+function libC:CompressHuffman(value)
+    local size = #value
+    local compressed = string.char(3, 0, size % 256, math.floor(size / 256) % 256, math.floor(size / 65536) % 256)
+        .. "compressed:"
+        .. value
+    compressedValues[compressed] = value
+    return compressed
+end
+function libC:Decompress(value)
+    decompressCalls = decompressCalls + 1
+    if value:byte(1) == 1 then
+        return value:sub(2)
+    end
+    return compressedValues[value], "unknown compressed value"
+end
+
 local libD = {}
 function libD:EncodeForWoWAddonChannel(value)
     return "encoded:" .. value
 end
 function libD:DecodeForWoWAddonChannel(value)
-    return value:match("^encoded:(.+)$")
+    if value:sub(1, 8) == "encoded:" then
+        return value:sub(9)
+    end
 end
 
 local helpers = {
@@ -149,6 +170,7 @@ local app = {
     AngryEra = AngryEra,
     libs = {
         libS = libS,
+        libC = libC,
         libD = libD,
     },
 }
@@ -196,11 +218,16 @@ local activeCalls = {}
 local knownActivePages = {}
 local pendingActiveDisplay
 local activeResetCount = 0
+local publicationResetCount = 0
 
 function AngryEra:ResetActivePageTransientState()
     activeResetCount = activeResetCount + 1
     knownActivePages = {}
     pendingActiveDisplay = nil
+end
+
+function AngryEra:ResetDisplayPublicationState()
+    publicationResetCount = publicationResetCount + 1
 end
 
 function AngryEra:GetActivePageRenderContext()
@@ -373,6 +400,31 @@ local function AssertError(value, errorCode, expectedError, message)
     assert(errorCode == expectedError, string.format("%s: expected %s, got %s", message, expectedError, errorCode))
 end
 
+local runtimeCodec = AngryEra:GetProtocolCodec()
+local storedOutput, storedError = runtimeCodec.decompress("\001stored", 6)
+assert(storedOutput == "stored" and storedError == nil, "stored Huffman packets should decode within the output bound")
+local callsBeforeOversizedDecode = decompressCalls
+local oversizedOutput, oversizedError = runtimeCodec.decompress("\001oversized", 8)
+assert(
+    oversizedOutput == nil and oversizedError == "output-too-large",
+    "stored Huffman packets should be rejected from their declared size"
+)
+assert(decompressCalls == callsBeforeOversizedDecode, "oversized stored packets must be rejected before decompression")
+oversizedOutput, oversizedError = runtimeCodec.decompress(string.char(3, 0, 0, 4, 0) .. "body", 1023)
+assert(
+    oversizedOutput == nil and oversizedError == "output-too-large",
+    "compressed Huffman packets should be rejected from their declared size"
+)
+assert(
+    decompressCalls == callsBeforeOversizedDecode,
+    "oversized compressed packets must be rejected before decompression"
+)
+local malformedOutput, malformedError = runtimeCodec.decompress(string.char(3, 0, 1), 1024)
+assert(
+    malformedOutput == nil and malformedError == "invalid-compression-header",
+    "truncated Huffman headers should be rejected"
+)
+
 local function DecodeSent(index)
     local sent = sentMessages[index or #sentMessages]
     assert(sent, "Expected a sent protocol message")
@@ -421,6 +473,7 @@ AssertError(sent, sendError, "session-not-started", "send before session")
 local started, startError = AngryEra:StartProtocolSession("local-session-1")
 assert(started and not startError, "A valid protocol session should start")
 assert(activeResetCount == 1, "Starting transport should clear session-bound active-page state")
+assert(publicationResetCount == 1, "Starting transport should clear session-bound publication state")
 local firstSession = AngryEra:GetProtocolSession()
 assert(firstSession.InstallationId == localInstallationId, "Session should use the durable installation identity")
 assert(firstSession.SessionId == "local-session-1", "Injected session identity should be retained")
@@ -432,6 +485,7 @@ assert(#sentMessages == 1, "A valid group query should receive one reply")
 
 local replyTransport, replyEnvelope = DecodeSent()
 assert(replyTransport.Prefix == protocol.PREFIX, "V3 messages should use the v3 prefix")
+assert(replyTransport.Priority == "NORMAL", "data messages should use normal transport priority")
 assert(replyTransport.Channel == "WHISPER", "Version replies should be whispered")
 assert(replyTransport.Target == "Alpha-Realm", "Version replies should target the authenticated sender")
 assert(replyEnvelope.Type == "VERSION", "A query should produce a VERSION envelope")
@@ -468,6 +522,8 @@ assert(#sentMessages == 3, "A wrong-channel packet must not poison deduplication
 
 accepted, result = AngryEra:ReceiveProtocolMessage("WrongPrefix", wrongChannelQuery, "RAID", "Beta-Realm")
 AssertError(accepted, result, "invalid-transport", "wrong prefix")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
+AssertError(accepted, result, "invalid-transport-message-type", "non-display envelope over display prefix")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, "malformed", "RAID", "Beta-Realm")
 AssertError(accepted, result, "decode-failed", "malformed encoded payload")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, "malformed", "RAID", "Outside-Realm")
@@ -651,9 +707,12 @@ sent, result = AngryEra:SendProtocolDisplay({
 assert(sent, result)
 local displayMessageId = result
 local displayTransport, displayEnvelope = DecodeSent()
+assert(displayTransport.Prefix == protocol.DISPLAY_PREFIX, "DISPLAY should use the isolated control prefix")
+assert(displayTransport.Priority == "ALERT", "DISPLAY should use alert priority on its isolated prefix")
 assert(displayTransport.Channel == "RAID", "Uncorrelated DISPLAY should use the current group channel")
 assert(displayEnvelope.ReplyTo == nil, "Group DISPLAY must not carry correlation")
 
+currentTime = currentTime + 21
 local pageRequestEncoded, pageRequestEnvelope =
     BuildRemoteEnvelope("remote-page-request", "PAGE_REQUEST", localReference, {
         ReplyTo = displayMessageId,
@@ -662,6 +721,8 @@ accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, pageRequestE
 assert(accepted, result)
 assert(#sentMessages == 2, "A correlated page request should receive one response")
 local pageResponseTransport, pageResponseEnvelope = DecodeSent()
+assert(pageResponseTransport.Prefix == protocol.PREFIX, "PAGE_UPSERT should remain on the data prefix")
+assert(pageResponseTransport.Priority == "NORMAL", "PAGE_UPSERT should retain normal transport priority")
 assert(pageResponseTransport.Channel == "WHISPER", "PAGE_UPSERT response should be whispered")
 assert(pageResponseEnvelope.Type == "PAGE_UPSERT", "PAGE_REQUEST should produce PAGE_UPSERT")
 assert(pageResponseEnvelope.ReplyTo == pageRequestEnvelope.MessageId, "Page response should correlate to request")
@@ -717,8 +778,12 @@ AngryEra.BuildActivePageRequestResponse = savedBuildPageResponse
 sentMessages = {}
 local savedBuildDisplayResponse = AngryEra.BuildActiveDisplayRequestResponse
 local displayResponseBuildCalls = 0
+local displayResponseError
 function AngryEra:BuildActiveDisplayRequestResponse(auth, payload)
     displayResponseBuildCalls = displayResponseBuildCalls + 1
+    if displayResponseError then
+        return nil, displayResponseError
+    end
     return savedBuildDisplayResponse(self, auth, payload)
 end
 
@@ -747,6 +812,24 @@ accepted, result =
 AssertError(accepted, result, "throttled", "successful recovered display response")
 assert(displayResponseBuildCalls == 1, "A successful plan should retain the existing response throttle")
 assert(#sentMessages == 2, "The successful-plan throttle must prevent response amplification")
+
+displayResponseError = "display-plan-unavailable"
+local failedDisplayRequest = BuildRemoteEnvelope("failed-display-request", "DISPLAY_REQUEST", {})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, failedDisplayRequest, "WHISPER", "Alpha-Realm")
+AssertError(accepted, result, "display-plan-unavailable", "failed display response plan")
+local repeatedFailedDisplayRequest = BuildRemoteEnvelope("failed-display-request", "DISPLAY_REQUEST", {}, {
+    Sequence = 2,
+})
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, repeatedFailedDisplayRequest, "WHISPER", "Alpha-Realm")
+AssertError(accepted, result, "throttled", "immediate failed display response retry")
+currentTime = currentTime + 2
+local laterFailedDisplayRequest = BuildRemoteEnvelope("failed-display-request", "DISPLAY_REQUEST", {}, {
+    Sequence = 3,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, laterFailedDisplayRequest, "WHISPER", "Alpha-Realm")
+AssertError(accepted, result, "display-plan-unavailable", "failed display response after short retry throttle")
+displayResponseError = nil
 AngryEra.BuildActiveDisplayRequestResponse = savedBuildDisplayResponse
 
 sentMessages = {}
@@ -761,6 +844,14 @@ local _, requestedPageEnvelope = DecodeSent(1)
 local requestedDisplayTransport, requestedDisplayEnvelope = DecodeSent(2)
 assert(requestedPageEnvelope.Type == "PAGE_UPSERT", "Display response should send its page first")
 assert(requestedPageEnvelope.ReplyTo == displayRequestEnvelope.MessageId, "Page response should correlate")
+assert(
+    sentMessages[1].Prefix == protocol.PREFIX and sentMessages[1].Priority == "NORMAL",
+    "requested page data should use the normal data lane"
+)
+assert(
+    requestedDisplayTransport.Prefix == protocol.DISPLAY_PREFIX and requestedDisplayTransport.Priority == "ALERT",
+    "requested display control should use the isolated alert lane"
+)
 assert(requestedDisplayTransport.Channel == "WHISPER", "Requested display should be whispered")
 assert(requestedDisplayEnvelope.Type == "DISPLAY", "Display response should end with DISPLAY")
 assert(requestedDisplayEnvelope.ReplyTo == displayRequestEnvelope.MessageId, "Display response should correlate")
@@ -770,6 +861,10 @@ local repeatedDisplayRequest = BuildRemoteEnvelope("remote-display-request", "DI
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, repeatedDisplayRequest, "WHISPER", "Alpha-Realm")
 AssertError(accepted, result, "throttled", "unique display requests for the same sender and display tuple")
 assert(#sentMessages == 2, "A throttled display request must not amplify into another page response")
+local reloadedDisplayRequest = BuildRemoteEnvelope("remote-display-request-reloaded", "DISPLAY_REQUEST", {})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, reloadedDisplayRequest, "WHISPER", "Alpha-Realm")
+assert(accepted, result or "a new requester session should not inherit the prior session's throttle")
+assert(#sentMessages == 4, "a reloaded requester should receive a fresh page and display response")
 
 local unauthorizedUpsertEncoded = BuildRemoteEnvelope("remote-unauthorized", "PAGE_UPSERT", remoteUpsert)
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, unauthorizedUpsertEncoded, "RAID", "Beta-Realm")
@@ -799,6 +894,8 @@ local remoteDisplayEncoded, remoteDisplayEnvelope =
         SentAt = 1,
     })
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, remoteDisplayEncoded, "RAID", "Alpha-Realm")
+AssertError(accepted, result, "invalid-transport-message-type", "display envelope over data prefix")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, remoteDisplayEncoded, "RAID", "Alpha-Realm")
 assert(accepted, result)
 assert(result.RequestNeeded and result.RequestSent, "A missing exact tuple should send PAGE_REQUEST")
 assert(result.UIWarning == "ui-refresh-failed", "A committed active result should preserve UI warnings")
@@ -808,6 +905,7 @@ assert(requestTransport.Target == "Alpha-Realm", "PAGE_REQUEST should target the
 assert(requestEnvelope.Type == "PAGE_REQUEST", "Missing page should produce PAGE_REQUEST")
 assert(requestEnvelope.ReplyTo == remoteDisplayEnvelope.MessageId, "PAGE_REQUEST should identify triggering DISPLAY")
 
+currentTime = currentTime + 21
 local wrongSessionUpsert = BuildRemoteEnvelope("remote-other-session", "PAGE_UPSERT", remoteUpsert, {
     ReplyTo = requestEnvelope.MessageId,
 })
@@ -830,14 +928,14 @@ assert(
     "Exact page response should complete pending display"
 )
 
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, remoteDisplayEncoded, "RAID", "Alpha-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, remoteDisplayEncoded, "RAID", "Alpha-Realm")
 AssertError(accepted, result, "duplicate", "duplicate display")
 local staleDisplayEncoded = BuildRemoteEnvelope("remote-active-flow", "DISPLAY", {
     Displayed = false,
 }, {
     Sequence = 9,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, staleDisplayEncoded, "RAID", "Alpha-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, staleDisplayEncoded, "RAID", "Alpha-Realm")
 AssertError(accepted, result, "stale-display", "delayed display replay")
 
 local clearDisplayEncoded = BuildRemoteEnvelope("remote-active-flow", "DISPLAY", {
@@ -845,8 +943,84 @@ local clearDisplayEncoded = BuildRemoteEnvelope("remote-active-flow", "DISPLAY",
 }, {
     Sequence = 12,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, clearDisplayEncoded, "RAID", "Alpha-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, clearDisplayEncoded, "RAID", "Alpha-Realm")
 assert(accepted and result.Displayed == false, "A newer display clear should apply")
+
+local deferredRecoveryCalls = 0
+local canceledRecoveryCalls = 0
+local deferredRecoveryContexts = {}
+function AngryEra:DeferPendingDisplayRecovery(auth, envelope, reference)
+    deferredRecoveryCalls = deferredRecoveryCalls + 1
+    deferredRecoveryContexts[#deferredRecoveryContexts + 1] = {
+        Auth = auth,
+        Envelope = envelope,
+        Reference = reference,
+    }
+    return true, "scheduled"
+end
+function AngryEra:CancelPendingDisplayRecovery()
+    canceledRecoveryCalls = canceledRecoveryCalls + 1
+    return true
+end
+
+sentMessages = {}
+knownActivePages = {}
+pendingActiveDisplay = nil
+local newerRemoteReference = {
+    SyncId = remoteInstallationId .. ":page:2",
+    RevisionId = "fcs32:55555555",
+    ContextRevisionId = "fcs32:66666666",
+}
+local newerRemoteUpsert = PageUpsert(newerRemoteReference, remoteInstallationId, "Alpha-Realm")
+local firstRapidDisplay = BuildRemoteEnvelope("rapid-display-flow", "DISPLAY", remoteDisplayPayload, {
+    Sequence = 20,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, firstRapidDisplay, "RAID", "Alpha-Realm")
+assert(
+    accepted and result.RequestNeeded and result.RequestDeferred and not result.RequestSent,
+    "a promised group page should defer missing-context recovery"
+)
+local latestRapidDisplay, latestRapidDisplayEnvelope = BuildRemoteEnvelope("rapid-display-flow", "DISPLAY", {
+    Displayed = true,
+    SyncId = newerRemoteReference.SyncId,
+    RevisionId = newerRemoteReference.RevisionId,
+    ContextRevisionId = newerRemoteReference.ContextRevisionId,
+}, {
+    Sequence = 21,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, latestRapidDisplay, "RAID", "Alpha-Realm")
+assert(accepted and result.RequestDeferred, "a newer rapid display should replace the deferred target")
+assert(deferredRecoveryCalls == 2, "each missing rapid display should move the trailing recovery wait")
+assert(
+    deferredRecoveryContexts[2].Auth.Sender == "Alpha-Realm"
+        and deferredRecoveryContexts[2].Envelope.MessageId == latestRapidDisplayEnvelope.MessageId,
+    "deferred recovery should retain the authenticated sender and triggering DISPLAY"
+)
+assert(
+    deferredRecoveryContexts[2].Reference.SyncId == newerRemoteReference.SyncId
+        and deferredRecoveryContexts[2].Reference.RevisionId == newerRemoteReference.RevisionId
+        and deferredRecoveryContexts[2].Reference.ContextRevisionId == newerRemoteReference.ContextRevisionId,
+    "deferred recovery should retain the latest exact page tuple"
+)
+assert(#sentMessages == 0, "deferred rapid displays should not amplify into immediate page requests")
+
+local delayedFirstPage = BuildRemoteEnvelope("rapid-display-flow", "PAGE_UPSERT", remoteUpsert, {
+    Sequence = 22,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, delayedFirstPage, "RAID", "Alpha-Realm")
+assert(accepted and not result.CompletedDisplay, "an older page must not complete the newer pending display")
+assert(canceledRecoveryCalls == 0, "an irrelevant older page should retain latest-display recovery")
+local latestRapidPage = BuildRemoteEnvelope("rapid-display-flow", "PAGE_UPSERT", newerRemoteUpsert, {
+    Sequence = 23,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, latestRapidPage, "RAID", "Alpha-Realm")
+assert(
+    accepted and result.CompletedDisplay and result.CompletedDisplay.Displayed,
+    "the latest matching page should complete the rapid display"
+)
+assert(canceledRecoveryCalls == 1, "resolving the latest pending display should cancel recovery")
+AngryEra.DeferPendingDisplayRecovery = nil
+AngryEra.CancelPendingDisplayRecovery = nil
 
 sent, result = AngryEra:SendProtocolDisplayRequest("Alpha-Realm")
 assert(sent, result)
@@ -868,8 +1042,57 @@ local requestedRemoteDisplay = BuildRemoteEnvelope("remote-request-response", "D
     ReplyTo = localDisplayRequestId,
     Sequence = 2,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, requestedRemoteDisplay, "WHISPER", "Alpha-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, requestedRemoteDisplay, "WHISPER", "Alpha-Realm")
 assert(accepted and not result.RequestNeeded, "Correlated upsert then display should use exact cached tuple")
+
+sentMessages = {}
+sent, result = AngryEra:SendProtocolDisplayRequest("Alpha-Realm")
+assert(sent, result)
+local reorderedDisplayRequestId = result
+local reorderedDeferredCalls = 0
+local reorderedCancelCalls = 0
+function AngryEra:DeferPendingDisplayRecovery(auth, envelope, reference)
+    reorderedDeferredCalls = reorderedDeferredCalls + 1
+    assert(auth.Sender == "Alpha-Realm", "reordered recovery should retain the response sender")
+    assert(envelope.ReplyTo == reorderedDisplayRequestId, "reordered recovery should retain request correlation")
+    assert(reference.SyncId == remoteReference.SyncId, "reordered recovery should retain the exact tuple")
+    return true, "scheduled"
+end
+function AngryEra:CancelPendingDisplayRecovery()
+    reorderedCancelCalls = reorderedCancelCalls + 1
+    return true
+end
+local reorderedRemoteDisplay = BuildRemoteEnvelope("remote-reordered-response", "DISPLAY", remoteDisplayPayload, {
+    ReplyTo = reorderedDisplayRequestId,
+    Sequence = 1,
+})
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, reorderedRemoteDisplay, "WHISPER", "Alpha-Realm")
+assert(
+    accepted and result.RequestNeeded and result.RequestDeferred,
+    "a fast correlated DISPLAY may arrive before its page response"
+)
+assert(reorderedDeferredCalls == 1, "display-first response should defer recovery for its promised page")
+currentTime = currentTime + 21
+local reorderedRemotePage = BuildRemoteEnvelope("remote-reordered-response", "PAGE_UPSERT", remoteUpsert, {
+    ReplyTo = reorderedDisplayRequestId,
+    Sequence = 2,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, reorderedRemotePage, "WHISPER", "Alpha-Realm")
+assert(
+    accepted and result.CompletedDisplay and result.CompletedDisplay.Displayed,
+    "the later correlated page should complete a display-first response"
+)
+assert(reorderedCancelCalls == 1, "the later matching page should cancel deferred recovery")
+local duplicateReorderedPage = BuildRemoteEnvelope("remote-reordered-response", "PAGE_UPSERT", remoteUpsert, {
+    ReplyTo = reorderedDisplayRequestId,
+    Sequence = 3,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, duplicateReorderedPage, "WHISPER", "Alpha-Realm")
+AssertError(accepted, result, "uncorrelated-reply", "completed display-first response")
+AngryEra.DeferPendingDisplayRecovery = nil
+AngryEra.CancelPendingDisplayRecovery = nil
 
 -- Authorization is re-evaluated for every DISPLAY, so a former leader cannot
 -- keep driving the display after becoming an otherwise-qualified assistant.
@@ -879,7 +1102,7 @@ members["beta-realm"] = "assistant"
 local preHandoffDisplay = BuildRemoteEnvelope("leader-handoff-alpha", "DISPLAY", {
     Displayed = false,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, preHandoffDisplay, "RAID", "Alpha-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, preHandoffDisplay, "RAID", "Alpha-Realm")
 assert(accepted, result)
 
 members["alpha-realm"] = "assistant"
@@ -893,13 +1116,13 @@ local formerLeaderDisplay = BuildRemoteEnvelope("leader-handoff-alpha", "DISPLAY
 }, {
     Sequence = 2,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, formerLeaderDisplay, "RAID", "Alpha-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, formerLeaderDisplay, "RAID", "Alpha-Realm")
 AssertError(accepted, result, "unauthorized", "display from a leader demoted to qualified assistant")
 
 local newLeaderDisplay = BuildRemoteEnvelope("leader-handoff-beta", "DISPLAY", {
     Displayed = false,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, newLeaderDisplay, "RAID", "Beta-Realm")
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, newLeaderDisplay, "RAID", "Beta-Realm")
 assert(accepted, result or "The newly promoted leader should control the display immediately")
 
 displayRequiresLeader = false
@@ -911,12 +1134,14 @@ members["beta-realm"] = "assistant"
 local firstDisplaySessionPacket = BuildRemoteEnvelope("beta-display-session-1", "DISPLAY", {
     Displayed = false,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, firstDisplaySessionPacket, "RAID", "Beta-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, firstDisplaySessionPacket, "RAID", "Beta-Realm")
 assert(accepted, result)
 local secondDisplaySessionPacket = BuildRemoteEnvelope("beta-display-session-2", "DISPLAY", {
     Displayed = false,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, secondDisplaySessionPacket, "RAID", "Beta-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, secondDisplaySessionPacket, "RAID", "Beta-Realm")
 assert(accepted, result)
 
 local nondisplayRotatedSession = BuildRemoteEnvelope("beta-nondisplay-session", "PAGE_UPSERT", remoteUpsert)
@@ -927,7 +1152,8 @@ local activeDisplaySessionContinues = BuildRemoteEnvelope("beta-display-session-
 }, {
     Sequence = 2,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, activeDisplaySessionContinues, "RAID", "Beta-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, activeDisplaySessionContinues, "RAID", "Beta-Realm")
 assert(accepted, result or "Non-display traffic from another session must not retire the active display session")
 
 local retiredDisplaySessionPacket = BuildRemoteEnvelope("beta-display-session-1", "DISPLAY", {
@@ -935,20 +1161,22 @@ local retiredDisplaySessionPacket = BuildRemoteEnvelope("beta-display-session-1"
 }, {
     Sequence = 2,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, retiredDisplaySessionPacket, "RAID", "Beta-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, retiredDisplaySessionPacket, "RAID", "Beta-Realm")
 AssertError(accepted, result, "stale-display-session", "retired display session")
 
 for index = 3, 64 do
     local rotatedDisplay = BuildRemoteEnvelope("beta-display-session-" .. index, "DISPLAY", {
         Displayed = false,
     })
-    accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, rotatedDisplay, "RAID", "Beta-Realm")
+    accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, rotatedDisplay, "RAID", "Beta-Realm")
     assert(accepted, result)
 end
 local overflowDisplaySession = BuildRemoteEnvelope("beta-display-session-65", "DISPLAY", {
     Displayed = false,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, overflowDisplaySession, "RAID", "Beta-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, overflowDisplaySession, "RAID", "Beta-Realm")
 AssertError(accepted, result, "display-session-capacity", "display session rotation capacity")
 
 local lastDisplaySessionContinues = BuildRemoteEnvelope("beta-display-session-64", "DISPLAY", {
@@ -956,9 +1184,11 @@ local lastDisplaySessionContinues = BuildRemoteEnvelope("beta-display-session-64
 }, {
     Sequence = 2,
 })
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, lastDisplaySessionContinues, "RAID", "Beta-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, lastDisplaySessionContinues, "RAID", "Beta-Realm")
 assert(accepted, result or "Capacity rejection must not poison the active display session")
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, retiredDisplaySessionPacket, "RAID", "Beta-Realm")
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, retiredDisplaySessionPacket, "RAID", "Beta-Realm")
 AssertError(accepted, result, "stale-display-session", "retired session after replay-cache eviction")
 members["beta-realm"] = "member"
 
@@ -1019,9 +1249,15 @@ local beforeResetQuery = BuildRemoteEnvelope("remote-query-before-reset", "VERSI
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, beforeResetQuery, "RAID", "Alpha-Realm")
 assert(accepted, result)
 local activeResetsBeforePeerReset = activeResetCount
+local publicationResetsBeforePeerReset = publicationResetCount
 AngryEra:ResetProtocolPeers()
 assert(activeResetCount == activeResetsBeforePeerReset + 1, "Group reset should clear prior-group active render state")
-accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, requestedRemoteDisplay, "WHISPER", "Alpha-Realm")
+assert(
+    publicationResetCount == publicationResetsBeforePeerReset + 1,
+    "Group reset should clear prior-group publication state"
+)
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, requestedRemoteDisplay, "WHISPER", "Alpha-Realm")
 AssertError(accepted, result, "uncorrelated-reply", "peer reset should clear transport correlation")
 local afterResetQuery = BuildRemoteEnvelope("remote-query-after-reset", "VERSION_QUERY", {})
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, afterResetQuery, "RAID", "Alpha-Realm")
@@ -1090,9 +1326,9 @@ AssertError(sent, result, "no-channel", "query while solo")
 grouped = true
 
 local codec = AngryEra:GetProtocolCodec()
-local inflated, inflationError = codec.decompress(string.rep("x", 9), 8)
+local inflated, inflationError = codec.decompress("\001" .. string.rep("x", 9), 8)
 assert(inflated == nil and inflationError == "output-too-large", "Runtime decompression must enforce its budget")
-local badDecoded, badDecodeError = protocol.DecodeEnvelope("encoded:unknown", codec)
+local badDecoded, badDecodeError = protocol.DecodeEnvelope("encoded:\001unknown", codec)
 AssertError(badDecoded, badDecodeError, "deserialize-failed", "AceSerializer failure unwrapping")
 
 print("Protocol runtime tests passed.")

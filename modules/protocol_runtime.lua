@@ -13,11 +13,13 @@ local EnsureUnitFullName = helpers.EnsureUnitFullName
 local PlayerFullName = helpers.PlayerFullName
 
 local libS = app.libs.libS
+local libC = app.libs.libC
 local libD = app.libs.libD
 local core = AngryEra.core
 
 local QUERY_TTL_SECONDS = 20
 local INTERACTION_TTL_SECONDS = 20
+local ACTIVE_PAGE_CORRELATION_TTL_SECONDS = 15 * 60
 local QUERY_THROTTLE_SECONDS = core.updateFrequency or 2
 local REPLY_THROTTLE_SECONDS = core.updateFrequency or 2
 local MAX_PENDING_QUERIES = 32
@@ -210,6 +212,22 @@ local function GenerateSessionId()
     )
 end
 
+local HUFFMAN_STORED = 1
+local HUFFMAN_COMPRESSED = 3
+
+local function DeclaredHuffmanOutputBytes(value)
+    local method = value:byte(1)
+    if method == HUFFMAN_STORED then
+        return #value - 1
+    end
+    if method ~= HUFFMAN_COMPRESSED or #value < 5 then
+        return nil
+    end
+
+    local low, middle, high = value:byte(3, 5)
+    return low + middle * 256 + high * 65536
+end
+
 local protocolCodec = {
     serialize = function(value)
         return libS:Serialize(value)
@@ -220,16 +238,26 @@ local protocolCodec = {
             return decoded
         end
     end,
-    -- V3 intentionally avoids unbounded DEFLATE expansion. Manifest messages
-    -- are chunked at the protocol layer instead.
     compress = function(value)
-        return value
+        return libC:CompressHuffman(value)
     end,
     decompress = function(value, maximumOutputBytes)
-        if #value > maximumOutputBytes then
+        -- LibCompress Huffman framing exposes the exact output length before
+        -- decode: stored packets derive it from packet size and compressed
+        -- packets carry it in a fixed header. Reject that length before calling
+        -- the decoder so untrusted packets cannot cause unbounded expansion.
+        local declaredBytes = DeclaredHuffmanOutputBytes(value)
+        if declaredBytes == nil then
+            return nil, "invalid-compression-header"
+        end
+        if declaredBytes > maximumOutputBytes then
             return nil, "output-too-large"
         end
-        return value
+        local output = libC:Decompress(value)
+        if type(output) ~= "string" or #output ~= declaredBytes then
+            return nil, "invalid-compressed-payload"
+        end
+        return output
     end,
     encode = function(value)
         return libD:EncodeForWoWAddonChannel(value)
@@ -573,7 +601,7 @@ local function OutboundDisplayMatches(record, auth, reference)
     return record.Responders[senderKey] ~= true
 end
 
-local function CurrentDisplayThrottleKey(self, sender)
+local function CurrentDisplayThrottleKey(self, auth)
     local reference
     if type(self.GetActiveDisplayReference) == "function" then
         local ok, activeReference = pcall(self.GetActiveDisplayReference, self)
@@ -604,7 +632,12 @@ local function CurrentDisplayThrottleKey(self, sender)
             stateToken = "clear"
         end
     end
-    return (NormalizePlayerKey(sender) or "") .. "\0" .. stateToken
+    return table.concat({
+        NormalizePlayerKey(auth.Sender) or "",
+        auth.SenderInstallationId,
+        auth.SenderSessionId,
+        stateToken,
+    }, "\0")
 end
 
 local function ValidateChannelAndCorrelation(auth, channel, envelope, now)
@@ -788,6 +821,12 @@ function AngryEra:StartProtocolSession(sessionId)
             return false, "active-page-reset-failed"
         end
     end
+    if type(self.ResetDisplayPublicationState) == "function" then
+        local resetOk = pcall(self.ResetDisplayPublicationState, self)
+        if not resetOk then
+            return false, "display-publication-reset-failed"
+        end
+    end
 
     protocolSession = session
     return true
@@ -799,6 +838,9 @@ function AngryEra:ResetProtocolPeers()
     ResetTransportTables()
     if type(self.ResetActivePageTransientState) == "function" then
         pcall(self.ResetActivePageTransientState, self)
+    end
+    if type(self.ResetDisplayPublicationState) == "function" then
+        pcall(self.ResetDisplayPublicationState, self)
     end
 end
 
@@ -840,15 +882,9 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
         return false, encodeError
     end
 
-    local sent = pcall(
-        self.SendCommMessage,
-        self,
-        protocol.PREFIX,
-        encoded,
-        channel,
-        options.Target,
-        options.Priority or "NORMAL"
-    )
+    local prefix = messageType == "DISPLAY" and protocol.DISPLAY_PREFIX or protocol.PREFIX
+    local priority = messageType == "DISPLAY" and "ALERT" or options.Priority or "NORMAL"
+    local sent = pcall(self.SendCommMessage, self, prefix, encoded, channel, options.Target, priority)
     if not sent then
         return false, "send-failed"
     end
@@ -903,13 +939,15 @@ function AngryEra:SendProtocolDisplayRequest(target)
     if not sent then
         return false, messageId
     end
+    local now = Now()
     local remembered, rememberError = RememberInteraction(pendingDisplayRequests, messageId, {
         OwnerKey = targetKey,
         TargetKey = targetKey,
-    }, Now())
+    }, now)
     if not remembered then
         return false, rememberError
     end
+    pendingDisplayRequests[messageId].ExpiresAt = now + ACTIVE_PAGE_CORRELATION_TTL_SECONDS
     return true, messageId
 end
 
@@ -946,6 +984,7 @@ function AngryEra:SendProtocolPageRequest(target, displayEnvelope, reference)
     if not sent then
         return false, messageId
     end
+    local now = Now()
     local remembered, rememberError = RememberInteraction(pendingPageRequests, messageId, {
         OwnerKey = targetKey,
         TargetKey = targetKey,
@@ -960,10 +999,11 @@ function AngryEra:SendProtocolPageRequest(target, displayEnvelope, reference)
             RevisionId = reference.RevisionId,
             ContextRevisionId = reference.ContextRevisionId,
         },
-    }, Now())
+    }, now)
     if not remembered then
         return false, rememberError
     end
+    pendingPageRequests[messageId].ExpiresAt = now + ACTIVE_PAGE_CORRELATION_TTL_SECONDS
     return true, messageId
 end
 
@@ -997,6 +1037,7 @@ function AngryEra:SendProtocolDisplay(payload, options)
     local targetKey = safeOptions.Target and NormalizePlayerKey(safeOptions.Target) or nil
     local ownerKey = targetKey or "*"
     local reference = ReferenceFromPayload("DISPLAY", payload)
+    local now = Now()
     local remembered, rememberError = RememberInteraction(outboundDisplays, messageId, {
         OwnerKey = ownerKey,
         TargetKey = targetKey,
@@ -1008,10 +1049,11 @@ function AngryEra:SendProtocolDisplay(payload, options)
         ContextRevisionId = reference and reference.ContextRevisionId,
         Responders = {},
         RequestAttempts = {},
-    }, Now())
+    }, now)
     if not remembered then
         return false, rememberError
     end
+    outboundDisplays[messageId].ExpiresAt = now + ACTIVE_PAGE_CORRELATION_TTL_SECONDS
     return true, messageId
 end
 
@@ -1074,7 +1116,7 @@ function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
     if not IsLocalDisplayAuthority(self) then
         return false, "not-display-authority"
     end
-    local throttleKey = CurrentDisplayThrottleKey(self, auth.Sender)
+    local throttleKey = CurrentDisplayThrottleKey(self, auth)
     if displayRequestReplies[throttleKey] then
         return false, "throttled"
     end
@@ -1084,6 +1126,10 @@ function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
     if not remembered then
         return false, rememberError
     end
+    -- A failed response gets only the short retry throttle. Successful
+    -- publication below extends this record to suppress duplicate full-page
+    -- responses for the same requester session and active tuple.
+    displayRequestReplies[throttleKey].ExpiresAt = now + REPLY_THROTTLE_SECONDS
 
     local plan, planError = self:BuildActiveDisplayRequestResponse(auth, envelope.Payload)
     if not plan then
@@ -1108,6 +1154,9 @@ function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
         RecipientInstallationId = auth.SenderInstallationId,
         RecipientSessionId = auth.SenderSessionId,
     })
+    if sent then
+        displayRequestReplies[throttleKey].ExpiresAt = now + INTERACTION_TTL_SECONDS
+    end
     return sent, result
 end
 
@@ -1119,13 +1168,34 @@ function AngryEra:HandleProtocolDisplay(auth, _, envelope)
 
     local requestError
     if result.RequestNeeded then
-        local requested
-        requested, requestError = self:SendProtocolPageRequest(auth.Sender, envelope, result.RequestPayload)
-        result.RequestSent = requested == true
-        result.RequestError = requestError
+        local deferred
+        if type(self.DeferPendingDisplayRecovery) == "function" then
+            local called, scheduled, status =
+                pcall(self.DeferPendingDisplayRecovery, self, auth, envelope, result.RequestPayload)
+            if called and scheduled then
+                deferred = true
+                result.RequestDeferred = true
+                result.RequestError = status
+            end
+        end
+        if not deferred then
+            local requested
+            requested, requestError = self:SendProtocolPageRequest(auth.Sender, envelope, result.RequestPayload)
+            result.RequestSent = requested == true
+            result.RequestError = requestError
+        end
+    elseif type(self.CancelPendingDisplayRecovery) == "function" then
+        pcall(self.CancelPendingDisplayRecovery, self)
     end
     if envelope.ReplyTo ~= nil then
-        pendingDisplayRequests[envelope.ReplyTo] = nil
+        local pending = pendingDisplayRequests[envelope.ReplyTo]
+        if pending then
+            BindDisplayRequest(pending, auth, ReferenceFromPayload("DISPLAY", envelope.Payload))
+            pending.DisplayReceived = true
+            if not envelope.Payload.Displayed or pending.PageUpsertReceived then
+                pendingDisplayRequests[envelope.ReplyTo] = nil
+            end
+        end
     end
     result.UIWarning = warning
     return true, result, requestError or warning
@@ -1183,6 +1253,9 @@ function AngryEra:HandleProtocolPageUpsert(auth, channel, envelope)
         if displayPending then
             BindDisplayRequest(displayPending, auth, reference)
             displayPending.PageUpsertReceived = true
+            if displayPending.DisplayReceived then
+                pendingDisplayRequests[envelope.ReplyTo] = nil
+            end
         elseif pendingPageRequests[envelope.ReplyTo] then
             pendingPageRequests[envelope.ReplyTo] = nil
         end
@@ -1195,6 +1268,9 @@ function AngryEra:HandleProtocolPageUpsert(auth, channel, envelope)
         if displayAccepted then
             result.CompletedDisplay = displayResult
             displayWarning = completionWarning
+            if type(self.CancelPendingDisplayRecovery) == "function" then
+                pcall(self.CancelPendingDisplayRecovery, self)
+            end
         else
             result.DisplayCompletionError = displayResult
             displayWarning = displayResult
@@ -1225,7 +1301,7 @@ end
 
 --- Receives, authenticates, correlates, deduplicates, and dispatches protocol v3.
 function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
-    if prefix ~= protocol.PREFIX or type(sender) ~= "string" then
+    if (prefix ~= protocol.PREFIX and prefix ~= protocol.DISPLAY_PREFIX) or type(sender) ~= "string" then
         return false, "invalid-transport"
     end
 
@@ -1244,6 +1320,12 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     local envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec)
     if not envelope then
         return false, decodeError
+    end
+    if
+        (envelope.Type == "DISPLAY" and prefix ~= protocol.DISPLAY_PREFIX)
+        or (envelope.Type ~= "DISPLAY" and prefix ~= protocol.PREFIX)
+    then
+        return false, "invalid-transport-message-type"
     end
 
     local now = Now()

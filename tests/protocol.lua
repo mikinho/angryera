@@ -139,6 +139,7 @@ end
 
 AssertEqual(protocol.VERSION, 3, "protocol version")
 AssertEqual(protocol.PREFIX, "AngryEra3", "protocol prefix")
+AssertEqual(protocol.DISPLAY_PREFIX, "AngryEra3D", "display protocol prefix")
 AssertEqual(protocol.WIRE_LIMITS.EncodedBytes, 256 * 1024, "encoded byte limit")
 AssertEqual(protocol.WIRE_LIMITS.CompressedBytes, 256 * 1024, "compressed byte limit")
 AssertEqual(protocol.WIRE_LIMITS.SerializedBytes, 1024 * 1024, "serialized byte limit")

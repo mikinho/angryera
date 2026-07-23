@@ -166,8 +166,8 @@ variables.
 ## Protocol
 
 The protocol version is independent from the addon release version. This
-contract introduces protocol version `3` and the `AngryEra3` communication
-prefix.
+contract introduces protocol version `3`, the `AngryEra3` data prefix, and the
+`AngryEra3D` display-control prefix.
 
 All messages use a named envelope. Each addon enable creates an in-memory
 client-session ID and starts a session-local sequence. This prevents message-ID
@@ -200,6 +200,20 @@ entries with 32-byte names. Encoded and compressed messages are limited to 256
 KiB; serialized messages are limited to 1 MiB. These limits are enforced both
 while sending and receiving.
 
+Every envelope is serialized, passed through LibCompress's Huffman codec, and
+encoded for the WoW addon channel. The codec may use its stored representation
+when compression would not help. Both representations declare or imply their
+exact decompressed length before decoding. Receivers reject an oversized length
+before calling the decompressor, then verify that the decoded length exactly
+matches it. Raw DEFLATE is not accepted because its bundled decoder cannot
+enforce the output limit before expansion.
+
+`DISPLAY` is the only message type allowed on `AngryEra3D`; every other envelope
+must use `AngryEra3`. Prefix/type mismatches are rejected before dispatch.
+Display control uses AceComm `ALERT` priority, while data remains `NORMAL`.
+Keeping the priority classes on separate prefixes prevents a multipart page
+stream from blocking or interleaving with display selection messages.
+
 `VERSION_QUERY` is broadcast to the group. Each protocol-3 client replies by
 whisper with `VERSION`. A client advertises only capabilities implemented by
 its current code. The capability map may grow to include:
@@ -228,8 +242,8 @@ The initial message families are:
 - shared changes: `CHANGE_PROPOSE`, `CHANGE_RESULT`, `DELTA`,
   `DELTA_REQUEST`.
 
-The hard cutover registers and sends only `AngryEra3`. There is no positional
-protocol-1 fallback.
+The hard cutover registers and sends only the protocol-3 `AngryEra3` and
+`AngryEra3D` prefixes. There is no positional protocol-1 fallback.
 
 The raid leader is the canonical authority for each managed category scope.
 Publishing a scope or changing raid leadership creates a new
@@ -253,6 +267,35 @@ Active-page `PAGE_UPSERT` does not overwrite a receiver's locally owned source.
 During leader handoff, an identical relay from the current leader may provide
 volatile display context. Changed owner revisions require the canonical
 `CHANGE_PROPOSE`/`DELTA` path.
+
+A non-empty leader display emits its `DISPLAY` reference immediately on the
+control lane. If the exact `PAGE_UPSERT` has not already been published during
+the current group/session, its data snapshot enters a short trailing debounce
+before the data lane. A newer selection replaces an older snapshot that has not
+yet entered AceComm, while exact tuples already known to the group omit the
+redundant snapshot entirely.
+
+Receivers defer recovery when a referenced tuple is missing because the
+proactive page normally completes it. After a 30-second fallback window, a
+still-missing selection first requests only the exact tuple when its
+authenticated publisher is still the current online leader. Otherwise, and on
+further bounded attempts, it requests the current leader's display. This covers
+packet loss and a leadership change without asking a demoted publisher for more
+data or creating an immediate raid-wide request burst. Display and page-request
+correlations are retained long enough for throttled multipart responses.
+
+The current leader may also select an exact, already validated page/context
+tuple cached under a former publisher or protocol session. The receiver
+revalidates the cached payload and binds a volatile copy to the current
+leader/session without changing persisted page ownership or contents. Unknown,
+changed, or invalid tuples remain pending until their matching `PAGE_UPSERT`
+arrives.
+
+`DISPLAY` sequence numbers, not arrival timestamps, decide the winner within a
+leader session. The receiver retains only the newest pending selection, rejects
+lower delayed sequences, and completes a pending selection only from an exact
+matching page tuple. Thus an older delayed page transfer cannot reactivate an
+older display after a rapid page change.
 
 ## Entity revisions
 

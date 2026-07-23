@@ -16,6 +16,7 @@ local AngryEra = {
     utils = {
         protocol = {
             PREFIX = "AngryEra3",
+            DISPLAY_PREFIX = "AngryEra3D",
         },
         colors = {
             RGBToHex = function()
@@ -160,9 +161,21 @@ assert(calls[#calls].Value.Method == "SendRequestDisplay", "group join should re
 
 calls = {}
 AngryEra:AfterEnable()
+local registeredPrefixes = {}
 for _, call in ipairs(calls) do
     assert(call.Name ~= "clear-displayed", "delayed setup must not duplicate the startup clear")
+    if call.Name == "register-comm" then
+        registeredPrefixes[call.Value.Prefix] = call.Value.Method
+    end
 end
+assert(
+    registeredPrefixes.AngryEra3 == "ReceiveProtocolMessage",
+    "delayed setup should register the protocol data prefix"
+)
+assert(
+    registeredPrefixes.AngryEra3D == "ReceiveProtocolMessage",
+    "delayed setup should register the fast display prefix"
+)
 
 calls = {}
 AngryEra:GROUP_ROSTER_UPDATE()

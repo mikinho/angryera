@@ -1123,6 +1123,31 @@ local function CommitDisplayState(self, capture, nextState, nextReference, nextP
     return true
 end
 
+local function CommitReboundDisplayState(self, capture, nextState, nextContexts, nextReference)
+    if not StorageMatches(self, capture) then
+        return false, "stale-active-page-state"
+    end
+
+    local oldState = AngryAssign_State
+    local oldContexts = self._activePageContexts
+    local oldReference = self._activeDisplayReference
+    local oldPending = self._activePendingDisplay
+    local ok = pcall(function()
+        AngryAssign_State = nextState
+        self._activePageContexts = nextContexts
+        self._activeDisplayReference = nextReference
+        self._activePendingDisplay = nil
+    end)
+    if not ok then
+        AngryAssign_State = oldState
+        self._activePageContexts = oldContexts
+        self._activeDisplayReference = oldReference
+        self._activePendingDisplay = oldPending
+        return false, "active-display-commit-failed"
+    end
+    return true
+end
+
 local function CommitContextState(self, capture, nextContexts)
     if not StorageMatches(self, capture) then
         return false, "stale-active-page-state"
@@ -1943,6 +1968,42 @@ local function PendingDisplay(auth, payload)
     }
 end
 
+-- A leadership handoff may leave the exact immutable page/context tuple cached
+-- under the former publisher's sender/session. The current leader may rebind
+-- that already validated tuple for display only; changed or unknown tuples
+-- still require PAGE_UPSERT and take the pending request path.
+local function BuildReboundDisplayContexts(self, capture, auth, reference)
+    if not IsCurrentDisplayAuthority(self, auth.Sender) then
+        return nil
+    end
+
+    local cached = FindAnyContext(capture.Contexts, reference)
+    local cachedPayload = PayloadFromContext(cached)
+    if not cachedPayload then
+        return nil
+    end
+
+    local hashCallback = GetHashCallback(self)
+    if not hashCallback then
+        return nil
+    end
+    local valid, _, safePayload = activePage.ValidatePageUpsertPayload(cachedPayload, hashCallback)
+    if not valid then
+        return nil
+    end
+
+    local safeReference = ReferenceFromUpsert(safePayload)
+    if
+        safeReference.SyncId ~= reference.SyncId
+        or safeReference.RevisionId ~= reference.RevisionId
+        or safeReference.ContextRevisionId ~= reference.ContextRevisionId
+    then
+        return nil
+    end
+
+    return BuildNextContexts(capture.Contexts, auth, safePayload, capture.DisplayReference, capture.PendingDisplay)
+end
+
 local function ActivatePreparedDisplay(self, displayPayload, pageUpsert)
     local capture, captureError = CaptureStorage(self)
     if not capture then
@@ -2100,6 +2161,19 @@ local function AcceptDisplay(self, auth, payload)
         local entry = FindContext(capture.Contexts, safeAuth, reference)
         local indexed = capture.Indexed.BySyncId[reference.SyncId]
         local available = indexed and indexed.Kind == "page" and ContextMatches(entry, safeAuth, reference)
+        local reboundContexts
+
+        if not available and indexed and indexed.Kind == "page" then
+            local reboundError
+            reboundContexts, reboundError = BuildReboundDisplayContexts(self, capture, safeAuth, reference)
+            if reboundError then
+                return false, reboundError
+            end
+            if reboundContexts then
+                entry = FindContext(reboundContexts, safeAuth, reference)
+                available = ContextMatches(entry, safeAuth, reference)
+            end
+        end
 
         if not available then
             if not IsAuthorized(self, safeAuth.Sender, "display") then
@@ -2154,10 +2228,18 @@ local function AcceptDisplay(self, auth, payload)
 
         local nextState = ShallowCopy(capture.State)
         nextState.displayed = indexed.Id
-        if not IsAuthorized(self, safeAuth.Sender, "display") then
+        if reboundContexts and not IsCurrentDisplayAuthority(self, safeAuth.Sender) then
+            return false, "display-authorization-changed"
+        elseif not reboundContexts and not IsAuthorized(self, safeAuth.Sender, "display") then
             return false, "display-authorization-changed"
         end
-        local committed, commitError = CommitDisplayState(self, capture, nextState, nextReference, nil)
+        local committed
+        local commitError
+        if reboundContexts then
+            committed, commitError = CommitReboundDisplayState(self, capture, nextState, reboundContexts, nextReference)
+        else
+            committed, commitError = CommitDisplayState(self, capture, nextState, nextReference, nil)
+        end
         if not committed then
             return false, commitError
         end
@@ -2171,6 +2253,7 @@ local function AcceptDisplay(self, auth, payload)
             SyncId = reference.SyncId,
             RevisionId = reference.RevisionId,
             ContextRevisionId = reference.ContextRevisionId,
+            ContextRebound = reboundContexts ~= nil,
             UIRefreshed = false,
         }
         local refreshOk, refreshWarning

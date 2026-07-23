@@ -62,28 +62,44 @@ local canceled = {}
 local preparationCount = 0
 local nextActivationError
 local failPageSend = false
+local failPageRequest = false
+local canPublishDisplay = true
+local canPublishPage = true
+local activeDisplayReference
+local pageRevisionIds = {
+    [5] = "fcs32:12345678",
+    [6] = "fcs32:22345678",
+}
+local contextRevisionIds = {
+    [5] = "fcs32:87654321",
+    [6] = "fcs32:97654321",
+}
+local pendingDisplayRequest
 
 function AngryEra:CanLocalPlayerPublish(action)
-    return action == "pageUpsert" or action == "display"
+    if action == "display" then
+        return canPublishDisplay
+    end
+    return action == "pageUpsert" and canPublishPage
 end
 
-local function Upsert()
+local function Upsert(id)
     return {
         Page = {
-            SyncId = "ae3i:1:2:3:4:page:1",
-            RevisionId = "fcs32:12345678",
+            SyncId = "ae3i:1:2:3:4:page:" .. tostring(id),
+            RevisionId = pageRevisionIds[id],
         },
         AncestorVariableLayers = {},
-        ContextRevisionId = "fcs32:87654321",
+        ContextRevisionId = contextRevisionIds[id],
     }
 end
 
 function AngryEra:PrepareActivePageUpsert(id, options)
     preparationCount = preparationCount + 1
-    assert(id == 5, "page preparation should receive the local page id")
+    assert(pageRevisionIds[id], "page preparation should receive a known local page id")
     assert(options.UpdatedAt == currentTime, "page preparation should receive local time")
     assert(options.UpdatedBy == currentPlayer, "page preparation should receive authenticated local author")
-    return Upsert()
+    return Upsert(id)
 end
 
 function AngryEra:BuildActiveDisplayPayload(id, options)
@@ -95,8 +111,8 @@ function AngryEra:BuildActiveDisplayPayload(id, options)
             Displayed = false,
         }
     end
-    assert(id == 5, "display preparation should receive the local page id")
-    local upsert = Upsert()
+    assert(pageRevisionIds[id], "display preparation should receive a known local page id")
+    local upsert = Upsert(id)
     return {
         Displayed = true,
         SyncId = upsert.Page.SyncId,
@@ -117,6 +133,11 @@ function AngryEra:ActivatePreparedActiveDisplay(displayPayload, pagePayload)
         nextActivationError = nil
         return false, activationError
     end
+    activeDisplayReference = {
+        SyncId = displayPayload.SyncId,
+        RevisionId = displayPayload.RevisionId,
+        ContextRevisionId = displayPayload.ContextRevisionId,
+    }
     return true
 end
 
@@ -124,7 +145,12 @@ function AngryEra:ClearActiveDisplayReference()
     calls[#calls + 1] = {
         Type = "CLEAR_ACTIVE",
     }
+    activeDisplayReference = nil
     return true
+end
+
+function AngryEra:GetActiveDisplayReference()
+    return activeDisplayReference
 end
 
 function AngryEra:SendProtocolPageUpsert(payload)
@@ -152,6 +178,23 @@ function AngryEra:SendProtocolDisplayRequest(target)
         Target = target,
     }
     return true, "request-message"
+end
+
+function AngryEra:SendProtocolPageRequest(target, displayEnvelope, reference)
+    calls[#calls + 1] = {
+        Type = "PAGE_REQUEST",
+        Target = target,
+        DisplayEnvelope = displayEnvelope,
+        Reference = reference,
+    }
+    if failPageRequest then
+        return false, "page-request-failed"
+    end
+    return true, "page-request-message"
+end
+
+function AngryEra:GetPendingActiveDisplayRequest()
+    return pendingDisplayRequest
 end
 
 function AngryEra:ScheduleTimer(method, delay, argument)
@@ -184,38 +227,135 @@ AngryAssign_Pages = {
     [5] = {
         Id = 5,
     },
+    [6] = {
+        Id = 6,
+    },
 }
 
 assert(AngryEra.ReceiveMessage == nil, "protocol-1 receive entrypoint must not exist")
 assert(AngryEra.ProcessMessage == nil, "protocol-1 positional dispatcher must not exist")
 assert(AngryEra.SendOutMessage == nil, "protocol-1 send entrypoint must not exist")
 
+local function CopyReference(payload)
+    return {
+        SyncId = payload.Page.SyncId,
+        RevisionId = payload.Page.RevisionId,
+        ContextRevisionId = payload.ContextRevisionId,
+    }
+end
+
 local sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
 assert(sent and result == "display-message", "active display should send successfully")
 assert(activatedLocally, "successful display publication should report local activation")
 assert(preparationCount == 1, "active display should be prepared exactly once")
-assert(#calls == 3, "active display should activate locally and send exactly two envelopes")
+assert(#calls == 2, "active display should activate locally and send DISPLAY immediately")
 assert(calls[1].Type == "ACTIVATE", "exact display tuple must activate before transport")
-assert(calls[2].Type == "PAGE_UPSERT", "page snapshot must be sent before display selection")
-assert(calls[3].Type == "DISPLAY", "display selection should follow its snapshot")
+assert(calls[2].Type == "DISPLAY", "display selection should use the immediate control lane")
+local firstDisplayPageTimer = timers[#timers]
+assert(
+    firstDisplayPageTimer.Method == "SendDisplayPageMessage" and firstDisplayPageTimer.Delay == 0.5,
+    "an uncached display should debounce its page snapshot for half a second"
+)
+sent, result = AngryEra:SendDisplayPageMessage(firstDisplayPageTimer.Argument)
+assert(sent and result == "page-message", "the captured display-page timer should flush its snapshot")
+assert(calls[3].Type == "PAGE_UPSERT", "the debounced page snapshot should follow immediate DISPLAY")
 assert(
     calls[1].PagePayload.Page.RevisionId == calls[1].DisplayPayload.RevisionId
         and calls[1].PagePayload.ContextRevisionId == calls[1].DisplayPayload.ContextRevisionId
-        and calls[2].Payload.Page.RevisionId == calls[3].Payload.RevisionId
-        and calls[2].Payload.ContextRevisionId == calls[3].Payload.ContextRevisionId,
-    "page and display envelopes should carry one exact tuple"
+        and calls[3].Payload.Page.RevisionId == calls[2].Payload.RevisionId
+        and calls[3].Payload.ContextRevisionId == calls[2].Payload.ContextRevisionId,
+    "the delayed page and immediate display should carry one exact tuple"
 )
+
+local callsBeforeCachedDisplay = #calls
+local timersBeforeCachedDisplay = #timers
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message", "a cached display tuple should still publish its selection")
+assert(activatedLocally, "a cached display tuple should still activate locally")
+assert(#calls == callsBeforeCachedDisplay + 2, "a cached display tuple should skip its redundant page envelope")
+assert(calls[callsBeforeCachedDisplay + 1].Type == "ACTIVATE", "cached display should still activate first")
+assert(calls[#calls].Type == "DISPLAY", "cached display should publish only the selection after activation")
+assert(#timers == timersBeforeCachedDisplay, "a cached display tuple should not schedule a page timer")
+
+pageRevisionIds[5] = "fcs32:12345679"
+callsBeforeCachedDisplay = #calls
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message" and activatedLocally, "a new page revision should publish")
+assert(#calls == callsBeforeCachedDisplay + 2, "a new page revision should send DISPLAY before its page")
+local revisedPageTimer = timers[#timers]
+assert(revisedPageTimer.Method == "SendDisplayPageMessage", "a new page revision should queue its snapshot")
+sent, result = AngryEra:SendDisplayPageMessage(revisedPageTimer.Argument)
+assert(sent and result == "page-message", "a new page revision should flush asynchronously")
+assert(calls[#calls].Type == "PAGE_UPSERT", "the new page revision should resend its snapshot")
+
+contextRevisionIds[5] = "fcs32:87654322"
+callsBeforeCachedDisplay = #calls
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message" and activatedLocally, "a new render context should publish")
+assert(#calls == callsBeforeCachedDisplay + 2, "a new context should send DISPLAY before its page")
+local revisedContextTimer = timers[#timers]
+sent, result = AngryEra:SendDisplayPageMessage(revisedContextTimer.Argument)
+assert(sent and result == "page-message", "a new render context should flush asynchronously")
+assert(calls[#calls].Type == "PAGE_UPSERT", "the new context revision should resend its snapshot")
+
+pageRevisionIds[5] = "fcs32:12345680"
+local callsBeforeRapidDisplays = #calls
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message" and activatedLocally, "rapid page A should send DISPLAY immediately")
+local rapidPageATimer = timers[#timers]
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(6)
+assert(sent and result == "display-message" and activatedLocally, "rapid page B should send DISPLAY immediately")
+local rapidPageBTimer = timers[#timers]
+assert(canceled[rapidPageATimer], "rapid page B should cancel page A before A enters AceComm")
+assert(#calls == callsBeforeRapidDisplays + 4, "rapid A to B should immediately activate and display both selections")
+local callsBeforeStaleRapidFlush = #calls
+sent, result = AngryEra:SendDisplayPageMessage(rapidPageATimer.Argument)
+assert(sent and result == "superseded", "the canceled page A callback should be harmless")
+assert(#calls == callsBeforeStaleRapidFlush, "the superseded page A callback must not publish")
+sent, result = AngryEra:SendDisplayPageMessage(rapidPageBTimer.Argument)
+assert(sent and result == "page-message", "the latest rapid page should flush")
+assert(
+    calls[#calls].Type == "PAGE_UPSERT" and calls[#calls].Payload.Page.SyncId == Upsert(6).Page.SyncId,
+    "only rapid page B should enter page transport"
+)
+
+pageRevisionIds[5] = "fcs32:12345681"
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message" and activatedLocally, "authority recheck setup should publish DISPLAY")
+local authorityRecheckTimer = timers[#timers]
+local callsBeforeAuthorityRecheck = #calls
+canPublishDisplay = false
+sent, result = AngryEra:SendDisplayPageMessage(authorityRecheckTimer.Argument)
+canPublishDisplay = true
+assert(not sent and result == "unauthorized", "a delayed page flush should recheck display authority")
+assert(#calls == callsBeforeAuthorityRecheck, "lost display authority must prevent delayed page transport")
+
+pageRevisionIds[5] = "fcs32:12345682"
+local timersBeforeTupleRecheck = #timers
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message" and activatedLocally, "tuple recheck setup should publish DISPLAY")
+assert(#timers == timersBeforeTupleRecheck + 1, "tuple recheck setup should queue a new page snapshot")
+local tupleRecheckTimer = timers[#timers]
+activeDisplayReference = CopyReference(Upsert(6))
+local callsBeforeTupleRecheck = #calls
+sent, result = AngryEra:SendDisplayPageMessage(tupleRecheckTimer.Argument)
+assert(sent and result == "superseded", "a delayed page flush should discard a tuple that is no longer active")
+assert(#calls == callsBeforeTupleRecheck, "an obsolete active tuple must not enter page transport")
 
 local preparationBeforeFailure = preparationCount
 local callsBeforeFailure = #calls
-failPageSend = true
+pageRevisionIds[5] = "fcs32:12345683"
 sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message" and activatedLocally, "async failure setup should publish DISPLAY")
+local failedPageTimer = timers[#timers]
+failPageSend = true
+sent, result = AngryEra:SendDisplayPageMessage(failedPageTimer.Argument)
 failPageSend = false
-assert(not sent and result == "page-send-failed", "page transport errors should be returned")
-assert(activatedLocally, "transport failure after activation should retain the exact local display")
+assert(not sent and result == "page-send-failed", "async page errors should surface from the timer callback")
 assert(preparationCount == preparationBeforeFailure + 1, "failed transport must not prepare the page twice")
 assert(calls[callsBeforeFailure + 1].Type == "ACTIVATE", "local activation must precede failed transport")
-assert(calls[callsBeforeFailure + 2].Type == "PAGE_UPSERT", "failed page transport should still be attempted")
+assert(calls[callsBeforeFailure + 2].Type == "DISPLAY", "DISPLAY should succeed before an async page failure")
+assert(calls[callsBeforeFailure + 3].Type == "PAGE_UPSERT", "failed async page transport should be attempted")
 
 local preparationBeforeActivationFailure = preparationCount
 local callsBeforeActivationFailure = #calls
@@ -237,6 +377,7 @@ sent, result, activatedLocally = AngryEra:SendDisplay(5, true)
 assert(sent and result == "display-message", "forced display should send immediately")
 assert(activatedLocally, "forced display should activate its exact tuple immediately")
 assert(canceled[scheduledDisplay], "forced display should cancel its delayed predecessor")
+local forcedDisplayPageTimer = timers[#timers]
 
 local callsBeforeClear = #calls
 currentTime = 104
@@ -246,12 +387,19 @@ assert(activatedLocally, "display clear should report that local volatile state 
 assert(#calls == callsBeforeClear + 2, "display clear should clear locally and send no page snapshot")
 assert(calls[callsBeforeClear + 1].Type == "CLEAR_ACTIVE", "local active reference must clear before transport")
 assert(calls[#calls].Type == "DISPLAY" and calls[#calls].Payload.Displayed == false, "clear uses named payload")
+assert(canceled[forcedDisplayPageTimer], "display clear should cancel an unsent page snapshot")
 
 local preparationBeforePage = preparationCount
 sent, result = AngryEra:SendPageMessage(5)
 assert(sent and type(result) == "table", "page publication should return its prepared payload")
 assert(preparationCount == preparationBeforePage + 1, "page publication should prepare once")
 assert(calls[#calls].Type == "PAGE_UPSERT", "page publication should use protocol v3")
+
+callsBeforeCachedDisplay = #calls
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message" and activatedLocally, "a directly published page should seed display cache")
+assert(#calls == callsBeforeCachedDisplay + 2, "SendPage should prevent an identical display snapshot retransmission")
+assert(calls[#calls].Type == "DISPLAY", "cached page publication should be followed by only DISPLAY")
 
 currentTime = 105
 sent, result = AngryEra:SendPage(5)
@@ -278,6 +426,243 @@ grouped = true
 
 assert(AngryEra:GetRaidLeader(true) == "Leader-Realm", "leader lookup should retain group utility behavior")
 assert(AngryEra:GetCurrentGroup() == 2, "subgroup lookup should retain display rendering behavior")
+
+local recoveryAuth = {
+    Sender = "Leader-Realm",
+    SenderInstallationId = "leader-installation",
+    SenderSessionId = "leader-session",
+}
+local recoveryReference = {
+    SyncId = "ae3i:1:2:3:4:page:7",
+    RevisionId = "fcs32:33333333",
+    ContextRevisionId = "fcs32:44444444",
+}
+local recoveryEnvelope = {
+    Type = "DISPLAY",
+    MessageId = "leader-installation:leader-session:7",
+    Payload = {
+        Displayed = true,
+        SyncId = recoveryReference.SyncId,
+        RevisionId = recoveryReference.RevisionId,
+        ContextRevisionId = recoveryReference.ContextRevisionId,
+    },
+}
+pendingDisplayRequest = {
+    Sender = recoveryAuth.Sender,
+    SenderInstallationId = recoveryAuth.SenderInstallationId,
+    SenderSessionId = recoveryAuth.SenderSessionId,
+    Payload = {
+        SyncId = recoveryReference.SyncId,
+        RevisionId = recoveryReference.RevisionId,
+        ContextRevisionId = recoveryReference.ContextRevisionId,
+    },
+}
+local recoveryScheduled, recoveryStatus =
+    AngryEra:DeferPendingDisplayRecovery(recoveryAuth, recoveryEnvelope, recoveryReference)
+assert(recoveryScheduled and recoveryStatus == "scheduled", "missing display recovery should be deferred")
+local firstRecoveryTimer = timers[#timers]
+assert(
+    firstRecoveryTimer.Method == "RecoverPendingDisplay"
+        and firstRecoveryTimer.Delay == 30
+        and type(firstRecoveryTimer.Argument) == "number",
+    "display recovery should retain context for a 30-second fallback"
+)
+recoveryScheduled, recoveryStatus =
+    AngryEra:DeferPendingDisplayRecovery(recoveryAuth, recoveryEnvelope, recoveryReference)
+assert(recoveryScheduled and recoveryStatus == "scheduled", "a newer pending display should replace the recovery wait")
+local replacementRecoveryTimer = timers[#timers]
+assert(canceled[firstRecoveryTimer], "replacing a pending display should cancel its older recovery timer")
+assert(AngryEra:CancelPendingDisplayRecovery(), "explicit recovery cancellation should report pending work")
+assert(canceled[replacementRecoveryTimer], "explicit recovery cancellation should cancel the active timer")
+assert(not AngryEra:CancelPendingDisplayRecovery(), "recovery cancellation should be idempotent")
+
+local callsBeforeResolvedRecovery = #calls
+pendingDisplayRequest = nil
+recoveryScheduled, recoveryStatus =
+    AngryEra:DeferPendingDisplayRecovery(recoveryAuth, recoveryEnvelope, recoveryReference)
+assert(recoveryScheduled and recoveryStatus == "not-needed", "resolved display recovery should not schedule")
+sent, result = AngryEra:RecoverPendingDisplay(replacementRecoveryTimer.Argument)
+assert(sent and result == "superseded", "a canceled recovery callback should be superseded")
+assert(#calls == callsBeforeResolvedRecovery, "resolved display recovery should not use the transport")
+
+pendingDisplayRequest = {
+    Sender = recoveryAuth.Sender,
+    SenderInstallationId = recoveryAuth.SenderInstallationId,
+    SenderSessionId = recoveryAuth.SenderSessionId,
+    Payload = {
+        SyncId = recoveryReference.SyncId,
+        RevisionId = recoveryReference.RevisionId,
+        ContextRevisionId = recoveryReference.ContextRevisionId,
+    },
+}
+recoveryScheduled, recoveryStatus =
+    AngryEra:DeferPendingDisplayRecovery(recoveryAuth, recoveryEnvelope, recoveryReference)
+assert(recoveryScheduled and recoveryStatus == "scheduled", "exact recovery should schedule")
+local exactRecoveryTimer = timers[#timers]
+recoveryReference.RevisionId = "mutated-reference"
+recoveryEnvelope.Payload.RevisionId = "mutated-envelope"
+sent, result = AngryEra:RecoverPendingDisplay(exactRecoveryTimer.Argument)
+assert(sent and result == "page-request-message", "first recovery should request only the exact missing page")
+local exactPageRequest = calls[#calls]
+assert(exactPageRequest.Type == "PAGE_REQUEST", "first recovery should use PAGE_REQUEST")
+assert(exactPageRequest.Target == recoveryAuth.Sender, "exact recovery should target the authenticated publisher")
+assert(
+    exactPageRequest.Reference.RevisionId == "fcs32:33333333"
+        and exactPageRequest.DisplayEnvelope.Payload.RevisionId == "fcs32:33333333",
+    "recovery should retain detached envelope and reference snapshots"
+)
+local firstFallbackTimer = timers[#timers]
+assert(
+    firstFallbackTimer.Method == "RecoverPendingDisplay" and firstFallbackTimer.Delay == 30,
+    "exact recovery should schedule a bounded current-display fallback"
+)
+sent, result = AngryEra:RecoverPendingDisplay(firstFallbackTimer.Argument)
+assert(sent and result == "request-message", "second recovery should request the current leader display")
+assert(calls[#calls].Type == "DISPLAY_REQUEST", "second recovery should use DISPLAY_REQUEST")
+local finalFallbackTimer = timers[#timers]
+local timersBeforeFinalFallback = #timers
+sent, result = AngryEra:RecoverPendingDisplay(finalFallbackTimer.Argument)
+assert(sent and result == "request-message", "final bounded recovery should retry the current display")
+assert(calls[#calls].Type == "DISPLAY_REQUEST", "final bounded recovery should use DISPLAY_REQUEST")
+assert(#timers == timersBeforeFinalFallback, "the bounded recovery should stop after three attempts")
+local callsAfterRecoveryBudget = #calls
+sent, result = AngryEra:RecoverPendingDisplay(finalFallbackTimer.Argument)
+assert(sent and result == "exhausted", "a completed recovery generation should retain its exhausted state")
+assert(#calls == callsAfterRecoveryBudget, "an exhausted recovery must not retry transport")
+
+local exhaustedReference = {
+    SyncId = "ae3i:1:2:3:4:page:7",
+    RevisionId = "fcs32:33333333",
+    ContextRevisionId = "fcs32:44444444",
+}
+local exhaustedEnvelope = {
+    Type = "DISPLAY",
+    MessageId = "leader-installation:leader-session:9",
+    Payload = {
+        Displayed = true,
+        SyncId = exhaustedReference.SyncId,
+        RevisionId = exhaustedReference.RevisionId,
+        ContextRevisionId = exhaustedReference.ContextRevisionId,
+    },
+}
+local timersAfterRecoveryBudget = #timers
+recoveryScheduled, recoveryStatus =
+    AngryEra:DeferPendingDisplayRecovery(recoveryAuth, exhaustedEnvelope, exhaustedReference)
+assert(recoveryScheduled and recoveryStatus == "exhausted", "same-tuple DISPLAY should inherit recovery exhaustion")
+assert(#timers == timersAfterRecoveryBudget, "same-tuple fallback must not reset the recovery timer budget")
+assert(#calls == callsAfterRecoveryBudget, "same-tuple fallback must not issue more transport")
+
+local formerLeaderAuth = {
+    Sender = "Former-Realm",
+    SenderInstallationId = "former-installation",
+    SenderSessionId = "former-session",
+}
+local formerLeaderReference = {
+    SyncId = "ae3i:1:2:3:4:page:9",
+    RevisionId = "fcs32:77777777",
+    ContextRevisionId = "fcs32:88888888",
+}
+local formerLeaderEnvelope = {
+    Type = "DISPLAY",
+    MessageId = "former-installation:former-session:1",
+    Payload = {
+        Displayed = true,
+        SyncId = formerLeaderReference.SyncId,
+        RevisionId = formerLeaderReference.RevisionId,
+        ContextRevisionId = formerLeaderReference.ContextRevisionId,
+    },
+}
+pendingDisplayRequest = {
+    Sender = formerLeaderAuth.Sender,
+    SenderInstallationId = formerLeaderAuth.SenderInstallationId,
+    SenderSessionId = formerLeaderAuth.SenderSessionId,
+    Payload = {
+        SyncId = formerLeaderReference.SyncId,
+        RevisionId = formerLeaderReference.RevisionId,
+        ContextRevisionId = formerLeaderReference.ContextRevisionId,
+    },
+}
+recoveryScheduled, recoveryStatus =
+    AngryEra:DeferPendingDisplayRecovery(formerLeaderAuth, formerLeaderEnvelope, formerLeaderReference)
+assert(recoveryScheduled and recoveryStatus == "scheduled", "a changed-leader recovery should schedule")
+local changedLeaderRecoveryTimer = timers[#timers]
+local callsBeforeChangedLeaderRecovery = #calls
+sent, result = AngryEra:RecoverPendingDisplay(changedLeaderRecoveryTimer.Argument)
+assert(sent and result == "request-message", "a former publisher should fall back to the current leader")
+assert(#calls == callsBeforeChangedLeaderRecovery + 1, "leader handoff recovery should issue only one request")
+assert(
+    calls[#calls].Type == "DISPLAY_REQUEST" and calls[#calls].Target == "Leader-Realm",
+    "leader handoff recovery should skip PAGE_REQUEST and query the current online leader"
+)
+local changedLeaderFallbackTimer = timers[#timers]
+assert(
+    changedLeaderFallbackTimer.Method == "RecoverPendingDisplay" and changedLeaderFallbackTimer.Delay == 30,
+    "leader handoff recovery should retain its bounded fallback"
+)
+
+recoveryReference = {
+    SyncId = "ae3i:1:2:3:4:page:8",
+    RevisionId = "fcs32:55555555",
+    ContextRevisionId = "fcs32:66666666",
+}
+recoveryEnvelope = {
+    Type = "DISPLAY",
+    MessageId = "leader-installation:leader-session:8",
+    Payload = {
+        Displayed = true,
+        SyncId = recoveryReference.SyncId,
+        RevisionId = recoveryReference.RevisionId,
+        ContextRevisionId = recoveryReference.ContextRevisionId,
+    },
+}
+pendingDisplayRequest = {
+    Sender = recoveryAuth.Sender,
+    SenderInstallationId = recoveryAuth.SenderInstallationId,
+    SenderSessionId = recoveryAuth.SenderSessionId,
+    Payload = {
+        SyncId = recoveryReference.SyncId,
+        RevisionId = recoveryReference.RevisionId,
+        ContextRevisionId = recoveryReference.ContextRevisionId,
+    },
+}
+recoveryScheduled, recoveryStatus =
+    AngryEra:DeferPendingDisplayRecovery(recoveryAuth, recoveryEnvelope, recoveryReference)
+assert(recoveryScheduled and recoveryStatus == "scheduled", "reset should have a pending recovery timer")
+local resetRecoveryTimer = timers[#timers]
+assert(canceled[changedLeaderFallbackTimer], "a new tuple should replace the former leader fallback")
+
+pageRevisionIds[5] = "fcs32:12345684"
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(5)
+assert(sent and result == "display-message" and activatedLocally, "reset should have a pending display page")
+local resetDisplayPageTimer = timers[#timers]
+
+sent, result = AngryEra:SendPageMessage(6)
+assert(sent and type(result) == "table", "reset should seed page throttling state")
+sent, result = AngryEra:SendPage(6)
+assert(sent and result == "scheduled", "reset should have a pending page timer")
+local resetPageTimer = timers[#timers]
+
+sent, result, activatedLocally = AngryEra:SendDisplay(5)
+assert(sent and result == "scheduled" and not activatedLocally, "reset should have a pending display timer")
+local resetDisplayTimer = timers[#timers]
+
+AngryEra:ResetDisplayPublicationState()
+assert(canceled[resetRecoveryTimer], "publication reset should cancel pending recovery")
+assert(canceled[resetDisplayPageTimer], "publication reset should cancel the debounced display page")
+assert(canceled[resetPageTimer], "publication reset should cancel page throttling")
+assert(canceled[resetDisplayTimer], "publication reset should cancel display throttling")
+
+local timersBeforeResetDisplay = #timers
+callsBeforeCachedDisplay = #calls
+sent, result, activatedLocally = AngryEra:SendDisplayMessage(6)
+assert(sent and result == "display-message" and activatedLocally, "display should publish after a session reset")
+assert(#calls == callsBeforeCachedDisplay + 2, "reset display should send DISPLAY before its snapshot")
+assert(#timers == timersBeforeResetDisplay + 1, "session reset should clear the exact page tuple cache")
+local postResetPageTimer = timers[#timers]
+sent, result = AngryEra:SendDisplayPageMessage(postResetPageTimer.Argument)
+assert(sent and result == "page-message", "the reset display should resend its page snapshot")
+assert(calls[#calls].Type == "PAGE_UPSERT", "reset should require a fresh page publication")
+pendingDisplayRequest = nil
 
 local originalPrint = print
 local versionOutput = {}

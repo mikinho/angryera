@@ -13,6 +13,7 @@ AngryEra.Templates = app.Templates
 local core = AngryEra.core
 local isClassic = core.isClassic
 local protocolPrefix = AngryEra.utils.protocol.PREFIX
+local displayProtocolPrefix = AngryEra.utils.protocol.DISPLAY_PREFIX
 
 local colors = AngryEra.utils.colors
 local RGBToHex = colors.RGBToHex
@@ -719,6 +720,7 @@ end
 --- Post-enable delayed setup hook for communication/event wiring.
 function AngryEra:AfterEnable()
     self:RegisterComm(protocolPrefix, "ReceiveProtocolMessage")
+    self:RegisterComm(displayProtocolPrefix, "ReceiveProtocolMessage")
     AngryEra._protocolStarted = true
 
     --self:RegisterEvent("PARTY_CONVERTED_TO_RAID")
