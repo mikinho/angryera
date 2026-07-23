@@ -1,4 +1,4 @@
-.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-active-page-network test-permissions test-import-ownership test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-variable-meta test-display-inheritance test-category-serialization test-model-hierarchy-safety test-note-api test-public-api test-display-note-api test-display-fallback test-legacy-id-migration test-template-load check check-strict
+.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-active-page-network test-permissions test-import-ownership test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-variable-meta test-display-inheritance test-category-serialization test-model-hierarchy-safety test-note-api test-public-api test-display-note-api test-display-fallback test-legacy-id-migration test-template-load test-auto-markers check check-strict
 
 LDOC ?= ldoc
 LDOC_CONFIG ?= .ldoc
@@ -59,7 +59,7 @@ lint-luacheck-strict:
 	@command -v $(LUACHECK) >/dev/null 2>&1 || { echo "Error: $(LUACHECK) not found."; exit 1; }
 	@$(LUACHECK) --config $(LUACHECK_CONFIG) -- $(LUA_FILES)
 
-test: test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-active-page-network test-permissions test-import-ownership test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-variable-meta test-display-inheritance test-category-serialization test-model-hierarchy-safety test-note-api test-public-api test-display-note-api test-display-fallback test-legacy-id-migration test-template-load
+test: test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-active-page-network test-permissions test-import-ownership test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-variable-meta test-display-inheritance test-category-serialization test-model-hierarchy-safety test-note-api test-public-api test-display-note-api test-display-fallback test-legacy-id-migration test-template-load test-auto-markers
 
 test-json-regression:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
@@ -192,6 +192,10 @@ test-legacy-id-migration:
 test-template-load:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
 	@$(LUA_RUN) tests/template_load.lua
+
+test-auto-markers:
+	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
+	@$(LUA_RUN) tests/auto_markers.lua
 
 check: lint test docs
 

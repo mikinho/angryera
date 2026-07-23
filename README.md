@@ -20,6 +20,23 @@ The **AngryEra | Smart Markers** section in the game's keybinding menu provides 
 
 Assigning a marker that is already on the selected unit leaves it in place instead of toggling it off. The **Clear All Raid Targets** keybinding removes every active raid target icon.
 
+**Metadata auto-markers:** page metadata can assign markers to raiders
+automatically. Set `$STAR`, `$CIRCLE`, `$DIAMOND`, `$TRIANGLE`, `$MOON`,
+`$SQUARE`, `$X` (or `$CROSS`), or `$SKULL` to a player name or a variable
+reference, and the marker is applied whenever that page is displayed:
+
+```
+MT=Zessy
+$SQUARE=$MT
+$SKULL=Kway-OtherRealm
+```
+
+Values resolve realm-aware — exact `Name-Realm` matches win, an unqualified
+name accepts a unique cross-realm match, and an ambiguous name is skipped
+instead of guessed. Markers apply only when you are allowed to mark (raid
+leader or assistant in a raid; anyone in a party). Category metadata inherits,
+so a raid-wide `$SQUARE=$MT` set on the category follows every page.
+
 Using AngryEra as a raider
 ------------------------------
 First, you'll likely want to configure a keybinding for the "Toggle Display" function (it should appear under "Angry Assignments" in your game keybindings menu), this will let you easily show/hide the on-screen assignments display during raids.  

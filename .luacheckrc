@@ -37,6 +37,7 @@ globals = {
    "AngryEra_Window",
    "AngryEra_SetRaidTarget",
    "AngryEra_ClearAllRaidTargets",
+   "AngryEra_ApplyAutoMarkers",
 
    -- Built-in WoW UI Globals mutated by this addon
    "StaticPopupDialogs"

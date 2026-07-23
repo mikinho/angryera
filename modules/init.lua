@@ -642,6 +642,10 @@ function AngryEra:OnEnable()
 
     LSM.RegisterCallback(self, "LibSharedMedia_Registered", "UpdateMedia")
     LSM.RegisterCallback(self, "LibSharedMedia_SetGlobal", "UpdateMedia")
+
+    if type(self.NOTE_UPDATE_EVENT) == "string" and type(self.RegisterMessage) == "function" then
+        self:RegisterMessage(self.NOTE_UPDATE_EVENT, "ApplyDisplayedNoteMarkers")
+    end
 end
 
 function AngryEra:PARTY_LEADER_CHANGED()
