@@ -16,28 +16,28 @@ local _, app = ...
 -- Color Table
 -- -----------------------
 app.ColorTable = {
-    ["|cblue"]        = "|cff00cbf4",
+    ["|cblue"] = "|cff00cbf4",
     ["|cdeathknight"] = "|cffc41f3b",
     ["|cdemonhunter"] = "|cffa330c9",
-    ["|cdh"]          = "|cffa330c9",
-    ["|cdk"]          = "|cffc41f3b",
-    ["|cdruid"]       = "|cffff7d0a",
-    ["|cevoker"]      = "|cff33937f",
-    ["|cgreen"]       = "|cff0adc00",
-    ["|chunter"]      = "|cffabd473",
-    ["|cmage"]        = "|cff40C7eb",
-    ["|cmonk"]        = "|cff00ff96",
-    ["|corange"]      = "|cffff9d00",
-    ["|cpaladin"]     = "|cfff58cba",
-    ["|cpink"]        = "|cfff64c97",
-    ["|cpriest"]      = "|cffffffff",
-    ["|cpurple"]      = "|cffdc44eb",
-    ["|cred"]         = "|cffeb310c",
-    ["|crogue"]       = "|cfffff569",
-    ["|cshaman"]      = "|cff0070de",
-    ["|cwarlock"]     = "|cff8787ed",
-    ["|cwarrior"]     = "|cffc79c6e",
-    ["|cyellow"]      = "|cfffaf318"
+    ["|cdh"] = "|cffa330c9",
+    ["|cdk"] = "|cffc41f3b",
+    ["|cdruid"] = "|cffff7d0a",
+    ["|cevoker"] = "|cff33937f",
+    ["|cgreen"] = "|cff0adc00",
+    ["|chunter"] = "|cffabd473",
+    ["|cmage"] = "|cff40C7eb",
+    ["|cmonk"] = "|cff00ff96",
+    ["|corange"] = "|cffff9d00",
+    ["|cpaladin"] = "|cfff58cba",
+    ["|cpink"] = "|cfff64c97",
+    ["|cpriest"] = "|cffffffff",
+    ["|cpurple"] = "|cffdc44eb",
+    ["|cred"] = "|cffeb310c",
+    ["|crogue"] = "|cfffff569",
+    ["|cshaman"] = "|cff0070de",
+    ["|cwarlock"] = "|cff8787ed",
+    ["|cwarrior"] = "|cffc79c6e",
+    ["|cyellow"] = "|cfffaf318",
 }
 
 -- -----------------------
@@ -48,662 +48,663 @@ local AngryEra_RaidUtility = {
         ["Star"] = {
             ["name"] = "{rt1}",
             ["icon"] = "UI-RaidTargetingIcon_1",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["rt1"] = {
             ["name"] = "{rt1}",
             ["icon"] = "UI-RaidTargetingIcon_1",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["Circle"] = {
             ["name"] = "{rt2}",
             ["icon"] = "UI-RaidTargetingIcon_2",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["rt2"] = {
             ["name"] = "{rt2}",
             ["icon"] = "UI-RaidTargetingIcon_2",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["Diamond"] = {
             ["name"] = "{rt3}",
             ["icon"] = "UI-RaidTargetingIcon_3",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["rt3"] = {
             ["name"] = "{rt3}",
             ["icon"] = "UI-RaidTargetingIcon_3",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["Triangle"] = {
             ["name"] = "{rt4}",
             ["icon"] = "UI-RaidTargetingIcon_4",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["rt4"] = {
             ["name"] = "{rt4}",
             ["icon"] = "UI-RaidTargetingIcon_4",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["Moon"] = {
             ["name"] = "{rt5}",
             ["icon"] = "UI-RaidTargetingIcon_5",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["rt5"] = {
             ["name"] = "{rt5}",
             ["icon"] = "UI-RaidTargetingIcon_5",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["Square"] = {
             ["name"] = "{rt6}",
             ["icon"] = "UI-RaidTargetingIcon_6",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["rt6"] = {
             ["name"] = "{rt6}",
             ["icon"] = "UI-RaidTargetingIcon_6",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["Cross"] = {
             ["name"] = "{rt7}",
             ["icon"] = "UI-RaidTargetingIcon_7",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["x"] = {
             ["name"] = "{rt7}",
             ["icon"] = "UI-RaidTargetingIcon_7",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["rt7"] = {
             ["name"] = "{rt7}",
             ["icon"] = "UI-RaidTargetingIcon_7",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["Skull"] = {
             ["name"] = "{rt8}",
             ["icon"] = "UI-RaidTargetingIcon_8",
-            ["path"] = "Interface\\TargetingFrame\\"
+            ["path"] = "Interface\\TargetingFrame\\",
         },
         ["rt8"] = {
             ["name"] = "{rt8}",
             ["icon"] = "UI-RaidTargetingIcon_8",
-            ["path"] = "Interface\\TargetingFrame\\"
-        }
+            ["path"] = "Interface\\TargetingFrame\\",
+        },
     },
     ["Factions"] = {
         ["alliance"] = {
             ["name"] = "Alliance",
-            ["icon"] = "INV_BannerPVP_02"
+            ["icon"] = "INV_BannerPVP_02",
         },
         ["horde"] = {
             ["name"] = "Horde",
-            ["icon"] = "INV_BannerPVP_01"
-        }
+            ["icon"] = "INV_BannerPVP_01",
+        },
     },
     ["General"] = {
         ["healthstone"] = {
             ["name"] = "Healthstone",
-            ["icon"] = "inv_stone_04"
+            ["icon"] = "inv_stone_04",
         },
         ["hs"] = {
             ["name"] = "Healthstone",
-            ["icon"] = "inv_stone_04"
+            ["icon"] = "inv_stone_04",
         },
         ["damage"] = {
             ["name"] = "Damage",
             ["icon"] = "UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41",
-            ["path"] = "Interface\\LFGFrame\\"
+            ["path"] = "Interface\\LFGFrame\\",
         },
         ["dps"] = {
             ["name"] = "Damage",
             ["icon"] = "UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:22:41",
-            ["path"] = "Interface\\LFGFrame\\"
+            ["path"] = "Interface\\LFGFrame\\",
         },
         ["tank"] = {
             ["name"] = "Tanks",
             ["icon"] = "UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:0:19:22:41",
-            ["path"] = "Interface\\LFGFrame\\"
+            ["path"] = "Interface\\LFGFrame\\",
         },
         ["healer"] = {
             ["name"] = "Healers",
             ["icon"] = "UI-LFG-ICON-PORTRAITROLES:0:0:0:0:64:64:20:39:1:20",
-            ["path"] = "Interface\\LFGFrame\\"
+            ["path"] = "Interface\\LFGFrame\\",
         },
         ["bloodlust"] = {
             ["name"] = "Bloodlust",
-            ["icon"] = "spell_nature_bloodlust"
+            ["icon"] = "spell_nature_bloodlust",
         },
         ["bl"] = {
             ["name"] = "Bloodlust",
-            ["icon"] = "spell_nature_bloodlust"
+            ["icon"] = "spell_nature_bloodlust",
         },
         ["hero"] = {
             ["name"] = "Heroism",
-            ["icon"] = "ability_shaman_heroism"
+            ["icon"] = "ability_shaman_heroism",
         },
         ["heroism"] = {
             ["name"] = "Heroism",
-            ["icon"] = "ability_shaman_heroism"
+            ["icon"] = "ability_shaman_heroism",
         },
         ["stun"] = {
             ["name"] = "Stun",
-            ["icon"] = "spell_frost_stun"
+            ["icon"] = "spell_frost_stun",
         },
         ["frost"] = {
             ["name"] = "Frost",
-            ["icon"] = "spell_frost_frostbolt02"
+            ["icon"] = "spell_frost_frostbolt02",
         },
         ["engineer"] = {
             ["name"] = "Engineer",
-            ["icon"] = "trade_engineering"
-        }
+            ["icon"] = "trade_engineering",
+        },
     },
     ["Classes"] = {
         ["deathknight"] = {
             ["name"] = "Death Knight",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
         },
         ["dk"] = {
             ["name"] = "Death Knight",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:32:48|t",
         },
         ["demonhunter"] = {
             ["name"] = "Demon Hunter",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t",
         },
         ["dh"] = {
             ["name"] = "Demon Hunter",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:64:48:32:48|t",
         },
         ["druid"] = {
             ["name"] = "Druid",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:0:16|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:0:16|t",
         },
         ["evoker"] = {
             ["name"] = "Evoker",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:48:64|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:48:64|t",
         },
         ["hunter"] = {
             ["name"] = "Hunter",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:16:32|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:16:32|t",
         },
         ["mage"] = {
             ["name"] = "Mage",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:0:16|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:0:16|t",
         },
         ["monk"] = {
             ["name"] = "Monk",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:32:48|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:32:48|t",
         },
         ["paladin"] = {
             ["name"] = "Paladin",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:32:48|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:32:48|t",
         },
         ["priest"] = {
             ["name"] = "Priest",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:16:32|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:16:32|t",
         },
         ["rogue"] = {
             ["name"] = "Rogue",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:0:16|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:32:48:0:16|t",
         },
         ["shaman"] = {
             ["name"] = "Shaman",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:16:32|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:16:32:16:32|t",
         },
         ["warlock"] = {
             ["name"] = "Warlock",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:16:32|t"
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:48:64:16:32|t",
         },
         ["warrior"] = {
             ["name"] = "Warrior",
-            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:0:16|t"
-        }
+            ["texture"] = "|TInterface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES:0:0:0:0:64:64:0:16:0:16|t",
+        },
     },
     ["Bosses"] = {
         ["4hm"] = {
             ["name"] = "4 Horsemen",
-            ["texture"] = "|TInterface\\Icons\\INV_Helmet_09:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Helmet_09:0|t",
         },
         ["archi"] = {
             ["name"] = "Archimonde",
-            ["texture"] = "|TInterface\\Icons\\Spell_Shadow_DeathCoil:0|t"
+            ["texture"] = "|TInterface\\Icons\\Spell_Shadow_DeathCoil:0|t",
         },
         ["cthun"] = {
             ["name"] = "C'Thun",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_Eye_01:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_Eye_01:0|t",
         },
         ["gruul"] = {
             ["name"] = "Gruul",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_MonsterHead_04:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_MonsterHead_04:0|t",
         },
         ["hakkar"] = {
             ["name"] = "Hakkar",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Dragon_02:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Dragon_02:0|t",
         },
         ["illidan"] = {
             ["name"] = "Illidan",
-            ["texture"] = "|TInterface\\Icons\\INV_Weapon_Glaive_01:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Weapon_Glaive_01:0|t",
         },
         ["kael"] = {
             ["name"] = "Kael'thas",
-            ["texture"] = "|TInterface\\Icons\\Spell_Fire_Burnout:0|t"
+            ["texture"] = "|TInterface\\Icons\\Spell_Fire_Burnout:0|t",
         },
         ["kj"] = {
             ["name"] = "Kil'jaeden",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Demon_02:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Demon_02:0|t",
         },
         ["kt"] = {
             ["name"] = "Kel'thuzad",
-            ["texture"] = "|TInterface\\Icons\\INV_Lich_Phylactery:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Lich_Phylactery:0|t",
         },
         ["mag"] = {
             ["name"] = "Magtheridon",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_MonsterHead_03:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_MonsterHead_03:0|t",
         },
         ["nef"] = {
             ["name"] = "Nefarian",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Dragon_Black:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Dragon_Black:0|t",
         },
         ["ony"] = {
             ["name"] = "Onyxia",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Dragon_01:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Dragon_01:0|t",
         },
         ["patch"] = {
             ["name"] = "Patchwerk",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_MonsterHead_04:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_MonsterHead_04:0|t",
         },
         ["rag"] = {
             ["name"] = "Ragnaros",
-            ["texture"] = "|TInterface\\Icons\\INV_Hammer_Unique_Sulfuras:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Hammer_Unique_Sulfuras:0|t",
         },
         ["sapph"] = {
             ["name"] = "Sapphiron",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Dragon_Blue:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Dragon_Blue:0|t",
         },
         ["twins"] = {
             ["name"] = "Twin Emperors",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_QirajiCrystal_01:0|t"
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_QirajiCrystal_01:0|t",
         },
         ["vashj"] = {
             ["name"] = "Lady Vashj",
-            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Naga_01:0|t"
-        }
+            ["texture"] = "|TInterface\\Icons\\INV_Misc_Head_Naga_01:0|t",
+        },
     },
     ["Directional"] = {
         ["left"] = {
             ["name"] = "Left",
-            ["texture"] = "|TInterface\\Buttons\\UI-SpellbookIcon-PrevPage-Up:16:16:0:0:32:32:5:27:5:27|t"
+            ["texture"] = "|TInterface\\Buttons\\UI-SpellbookIcon-PrevPage-Up:16:16:0:0:32:32:5:27:5:27|t",
         },
         ["right"] = {
             ["name"] = "Right",
-            ["texture"] = "|TInterface\\Buttons\\UI-SpellbookIcon-NextPage-Up:16:16:0:0:32:32:5:27:5:27|t"
+            ["texture"] = "|TInterface\\Buttons\\UI-SpellbookIcon-NextPage-Up:16:16:0:0:32:32:5:27:5:27|t",
         },
         ["up"] = {
             ["name"] = "Up",
-            ["texture"] = "|TInterface\\ChatFrame\\UI-ChatIcon-ScrollUp-Up:16:16:0:0:32:32:5:27:5:27|t"
+            ["texture"] = "|TInterface\\ChatFrame\\UI-ChatIcon-ScrollUp-Up:16:16:0:0:32:32:5:27:5:27|t",
         },
         ["down"] = {
             ["name"] = "Down",
-            ["texture"] = "|TInterface\\ChatFrame\\UI-ChatIcon-ScrollDown-Up:16:16:0:0:32:32:5:27:5:27|t"
+            ["texture"] = "|TInterface\\ChatFrame\\UI-ChatIcon-ScrollDown-Up:16:16:0:0:32:32:5:27:5:27|t",
         },
         ["+"] = {
             ["name"] = "Positive",
-            ["texture"] = "|TInterface\\Icons\\Spell_ChargePositive:0|t"
+            ["texture"] = "|TInterface\\Icons\\Spell_ChargePositive:0|t",
         },
         ["-"] = {
             ["name"] = "Negative",
-            ["texture"] = "|TInterface\\Icons\\Spell_ChargeNegative:0|t"
+            ["texture"] = "|TInterface\\Icons\\Spell_ChargeNegative:0|t",
         },
         ["positive"] = {
             ["name"] = "Positive",
-            ["texture"] = "|TInterface\\Icons\\Spell_ChargePositive:0|t"
+            ["texture"] = "|TInterface\\Icons\\Spell_ChargePositive:0|t",
         },
         ["negative"] = {
             ["name"] = "Negative",
-            ["texture"] = "|TInterface\\Icons\\Spell_ChargeNegative:0|t"
-        }
+            ["texture"] = "|TInterface\\Icons\\Spell_ChargeNegative:0|t",
+        },
     },
     ["Consumables"] = {
         ["FAP"] = {
             ["name"] = "Free Action Potion",
-            ["icon"] = "inv_potion_04"
+            ["icon"] = "inv_potion_04",
         },
         ["Holy Water"] = {
             ["name"] = "Stratholme Holy Water",
-            ["icon"] = "inv_potion_75"
+            ["icon"] = "inv_potion_75",
         },
         ["LIP"] = {
             ["name"] = "Limited Invulnerability Potion",
-            ["icon"] = "inv_potion_62"
+            ["icon"] = "inv_potion_62",
         },
         ["Petri"] = {
             ["name"] = "Flask of Petrification",
-            ["icon"] = "inv_potion_26"
+            ["icon"] = "inv_potion_26",
         },
         ["Stone"] = {
             ["name"] = "Greater Stoneshield Potion",
-            ["icon"] = "inv_potion_69"
-        }
+            ["icon"] = "inv_potion_69",
+        },
     },
     ["Druid"] = {
         ["Abolish"] = {
             ["name"] = "Abolish Poison",
-            ["icon"] = "spell_nature_nullifypoison_02"
+            ["icon"] = "spell_nature_nullifypoison_02",
         },
         ["Bark"] = {
             ["name"] = "Barkskin",
-            ["icon"] = "spell_nature_stoneclawtotem"
+            ["icon"] = "spell_nature_stoneclawtotem",
         },
         ["BR"] = {
             ["name"] = "Rebirth",
-            ["icon"] = "spell_nature_reincarnation"
+            ["icon"] = "spell_nature_reincarnation",
         },
         ["FF"] = {
             ["name"] = "Faerie Fire",
-            ["icon"] = "spell_nature_faeriefire"
+            ["icon"] = "spell_nature_faeriefire",
         },
         ["GOTW"] = {
             ["name"] = "Gift of the Wild",
-            ["icon"] = "spell_nature_regeneration"
+            ["icon"] = "spell_nature_regeneration",
         },
         ["Innerv"] = {
             ["name"] = "Innervate",
-            ["icon"] = "spell_nature_lightning"
+            ["icon"] = "spell_nature_lightning",
         },
         ["Rejuv"] = {
             ["name"] = "Rejuvenation",
-            ["icon"] = "spell_nature_rejuvenation"
+            ["icon"] = "spell_nature_rejuvenation",
         },
         ["Remove"] = {
             ["name"] = "Remove Curse",
-            ["icon"] = "spell_nature_removecurse"
+            ["icon"] = "spell_nature_removecurse",
         },
         ["Thorns"] = {
             ["name"] = "Thorns",
-            ["icon"] = "spell_nature_thorns"
-        }
+            ["icon"] = "spell_nature_thorns",
+        },
     },
     ["Hunter"] = {
         ["Mark"] = {
             ["name"] = "Hunter's Mark",
-            ["icon"] = "ability_hunter_snipershot"
+            ["icon"] = "ability_hunter_snipershot",
         },
         ["Tranq"] = {
             ["name"] = "Tranquilizing Shot",
-            ["icon"] = "spell_nature_drowsy"
+            ["icon"] = "spell_nature_drowsy",
         },
         ["Trap"] = {
             ["name"] = "Freezing Trap",
-            ["icon"] = "spell_frost_freezingtrap"
-        }
+            ["icon"] = "spell_frost_freezingtrap",
+        },
     },
     ["Mage"] = {
         ["AI"] = {
             ["name"] = "Arcane Intellect",
-            ["icon"] = "spell_holy_magicalsentry"
+            ["icon"] = "spell_holy_magicalsentry",
         },
         ["Amplify"] = {
             ["name"] = "Amplify Magic",
-            ["icon"] = "spell_holy_flashheal"
+            ["icon"] = "spell_holy_flashheal",
         },
         ["Block"] = {
             ["name"] = "Ice Block",
-            ["icon"] = "spell_frost_frost"
+            ["icon"] = "spell_frost_frost",
         },
         ["CS"] = {
             ["name"] = "Counterspell",
-            ["icon"] = "spell_frost_iceshock"
+            ["icon"] = "spell_frost_iceshock",
         },
         ["Dampen"] = {
             ["name"] = "Dampen Magic",
-            ["icon"] = "spell_nature_abolishmagic"
+            ["icon"] = "spell_nature_abolishmagic",
         },
         ["Decurse"] = {
             ["name"] = "Remove Lesser Curse",
-            ["icon"] = "spell_nature_removecurse"
+            ["icon"] = "spell_nature_removecurse",
         },
         ["Pig"] = {
             ["name"] = "Polymorph: Pig",
-            ["icon"] = "spell_magic_polymorphpig"
+            ["icon"] = "spell_magic_polymorphpig",
         },
         ["Sheep"] = {
             ["name"] = "Polymorph",
-            ["icon"] = "spell_nature_polymorph"
+            ["icon"] = "spell_nature_polymorph",
         },
         ["Turtle"] = {
             ["name"] = "Polymorph: Turtle",
-            ["icon"] = "ability_hunter_pet_turtle"
-        }
+            ["icon"] = "ability_hunter_pet_turtle",
+        },
     },
     ["Paladin"] = {
         ["BoF"] = {
             ["name"] = "Blessing of Freedom",
-            ["icon"] = "spell_holy_sealofvalor"
+            ["icon"] = "spell_holy_sealofvalor",
         },
         ["BoK"] = {
             ["name"] = "Greater Blessing of Kings",
-            ["icon"] = "spell_magic_greaterblessingofkings"
+            ["icon"] = "spell_magic_greaterblessingofkings",
         },
         ["BoL"] = {
             ["name"] = "Greater Blessing of Light",
-            ["icon"] = "spell_holy_greaterblessingoflight"
+            ["icon"] = "spell_holy_greaterblessingoflight",
         },
         ["BoP"] = {
             ["name"] = "Blessing of Protection",
-            ["icon"] = "spell_holy_sealofprotection"
+            ["icon"] = "spell_holy_sealofprotection",
         },
         ["BoW"] = {
             ["name"] = "Greater Blessing of Wisdom",
-            ["icon"] = "spell_holy_greaterblessingofwisdom"
+            ["icon"] = "spell_holy_greaterblessingofwisdom",
         },
         ["Cleanse"] = {
             ["name"] = "Cleanse",
-            ["icon"] = "spell_holy_purify"
+            ["icon"] = "spell_holy_purify",
         },
         ["DI"] = {
             ["name"] = "Divine Intervention",
-            ["icon"] = "spell_nature_timestop"
+            ["icon"] = "spell_nature_timestop",
         },
         ["DS"] = {
             ["name"] = "Divine Shield",
-            ["icon"] = "spell_holy_divineshield"
+            ["icon"] = "spell_holy_divineshield",
         },
         ["JoJ"] = {
             ["name"] = "Judgement of Justice",
-            ["icon"] = "spell_holy_sealofwrath"
+            ["icon"] = "spell_holy_sealofwrath",
         },
         ["JoL"] = {
             ["name"] = "Judgement of Light",
-            ["icon"] = "spell_holy_healingaura"
+            ["icon"] = "spell_holy_healingaura",
         },
         ["JoW"] = {
             ["name"] = "Judgement of Wisdom",
-            ["icon"] = "spell_holy_righteousnessaura"
+            ["icon"] = "spell_holy_righteousnessaura",
         },
         ["LoH"] = {
             ["name"] = "Lay on Hands",
-            ["icon"] = "spell_holy_layonhands"
+            ["icon"] = "spell_holy_layonhands",
         },
         ["Sac"] = {
             ["name"] = "Blessing of Sacrifice",
-            ["icon"] = "spell_holy_sealofsacrifice"
+            ["icon"] = "spell_holy_sealofsacrifice",
         },
         ["Salv"] = {
             ["name"] = "Greater Blessing of Salvation",
-            ["icon"] = "spell_holy_greaterblessingofsalvation"
+            ["icon"] = "spell_holy_greaterblessingofsalvation",
         },
         ["Sanc"] = {
             ["name"] = "Greater Blessing of Sanctuary",
-            ["icon"] = "spell_holy_greaterblessingofsanctuary"
-        }
+            ["icon"] = "spell_holy_greaterblessingofsanctuary",
+        },
     },
     ["Priest"] = {
         ["Dispel"] = {
             ["name"] = "Dispel Magic",
-            ["icon"] = "spell_holy_dispelmagic"
+            ["icon"] = "spell_holy_dispelmagic",
         },
         ["Fade"] = {
             ["name"] = "Fade",
-            ["icon"] = "spell_magic_lesserinvisibility"
+            ["icon"] = "spell_magic_lesserinvisibility",
         },
         ["Fort"] = {
             ["name"] = "Power Word: Fortitude",
-            ["icon"] = "spell_holy_wordfortitude"
+            ["icon"] = "spell_holy_wordfortitude",
         },
         ["FW"] = {
             ["name"] = "Fear Ward",
-            ["icon"] = "spell_holy_fearward"
+            ["icon"] = "spell_holy_fearward",
         },
         ["MC"] = {
             ["name"] = "Mind Control",
-            ["icon"] = "spell_shadow_shadowworddominate"
+            ["icon"] = "spell_shadow_shadowworddominate",
         },
         ["PI"] = {
             ["name"] = "Power Infusion",
-            ["icon"] = "spell_holy_powerinfusion"
+            ["icon"] = "spell_holy_powerinfusion",
         },
         ["PW:S"] = {
             ["name"] = "Power Word: Shield",
-            ["icon"] = "spell_holy_powerwordshield"
+            ["icon"] = "spell_holy_powerwordshield",
         },
         ["Renew"] = {
             ["name"] = "Renew",
-            ["icon"] = "spell_holy_renew"
+            ["icon"] = "spell_holy_renew",
         },
         ["Shackle"] = {
             ["name"] = "Shackle Undead",
-            ["icon"] = "spell_nature_slow"
+            ["icon"] = "spell_nature_slow",
         },
         ["Shadow"] = {
             ["name"] = "Shadow Protection",
-            ["icon"] = "spell_shadow_antishadow"
+            ["icon"] = "spell_shadow_antishadow",
         },
         ["Spirit"] = {
             ["name"] = "Divine Spirit",
-            ["icon"] = "spell_holy_divinespirit"
-        }
+            ["icon"] = "spell_holy_divinespirit",
+        },
     },
     ["Rogue"] = {
         ["Blind"] = {
             ["name"] = "Blind",
-            ["icon"] = "spell_shadow_mindsteal"
+            ["icon"] = "spell_shadow_mindsteal",
         },
         ["Cheap"] = {
             ["name"] = "Cheap Shot",
-            ["icon"] = "ability_cheapshot"
+            ["icon"] = "ability_cheapshot",
         },
         ["Feint"] = {
             ["name"] = "Feint",
-            ["icon"] = "ability_rogue_feint"
+            ["icon"] = "ability_rogue_feint",
         },
         ["Kick"] = {
             ["name"] = "Kick",
-            ["icon"] = "ability_kick"
+            ["icon"] = "ability_kick",
         },
         ["Kidney"] = {
             ["name"] = "Kidney Shot",
-            ["icon"] = "ability_rogue_kidneyshot"
-        }
+            ["icon"] = "ability_rogue_kidneyshot",
+        },
     },
     ["Shaman"] = {
         ["BL"] = {
             ["name"] = "Bloodlust",
-            ["icon"] = "spell_nature_bloodlust"
+            ["icon"] = "spell_nature_bloodlust",
         },
         ["ES"] = {
             ["name"] = "Earth Shock",
-            ["icon"] = "spell_nature_earthshock"
+            ["icon"] = "spell_nature_earthshock",
         },
         ["Hero"] = {
             ["name"] = "Heroism",
-            ["icon"] = "ability_shaman_heroism"
+            ["icon"] = "ability_shaman_heroism",
         },
         ["Tremor"] = {
             ["name"] = "Tremor Totem",
-            ["icon"] = "spell_nature_tremortotem"
+            ["icon"] = "spell_nature_tremortotem",
         },
         ["WF"] = {
             ["name"] = "Windfury Totem",
-            ["icon"] = "spell_nature_windfury"
-        }
+            ["icon"] = "spell_nature_windfury",
+        },
     },
     ["Warlock"] = {
         ["Banish"] = {
             ["name"] = "Banish",
-            ["icon"] = "spell_shadow_banish"
+            ["icon"] = "spell_shadow_banish",
         },
         ["CoE"] = {
             ["name"] = "Curse of Elements",
-            ["icon"] = "spell_shadow_chilltouch"
+            ["icon"] = "spell_shadow_chilltouch",
         },
         ["CoR"] = {
             ["name"] = "Curse of Recklessness",
-            ["icon"] = "spell_shadow_unholystrength"
+            ["icon"] = "spell_shadow_unholystrength",
         },
         ["CoS"] = {
             ["name"] = "Curse of Shadow",
-            ["icon"] = "spell_shadow_curseofachimonde"
+            ["icon"] = "spell_shadow_curseofachimonde",
         },
         ["HS"] = {
             ["name"] = "Healthstone",
-            ["icon"] = "inv_stone_04"
+            ["icon"] = "inv_stone_04",
         },
         ["SS"] = {
             ["name"] = "Soulstone",
-            ["icon"] = "spell_shadow_soulgem"
-        }
+            ["icon"] = "spell_shadow_soulgem",
+        },
     },
     ["Warrior"] = {
         ["AoE"] = {
             ["name"] = "Challenging Shout",
-            ["icon"] = "ability_bullrush" -- This is the AoE Taunt
+            ["icon"] = "ability_bullrush", -- This is the AoE Taunt
         },
         ["Demo"] = {
             ["name"] = "Demoralizing Shout",
-            ["icon"] = "ability_warrior_waracry"
+            ["icon"] = "ability_warrior_waracry",
         },
         ["LS"] = {
             ["name"] = "Last Stand",
-            ["icon"] = "spell_holy_ashestoashes"
+            ["icon"] = "spell_holy_ashestoashes",
         },
         ["Mock"] = {
             ["name"] = "Mocking Blow",
-            ["icon"] = "ability_kick"
+            ["icon"] = "ability_kick",
         },
         ["Pummel"] = {
             ["name"] = "Pummel",
-            ["icon"] = "inv_gauntlets_04"
+            ["icon"] = "inv_gauntlets_04",
         },
         ["Shout"] = {
             ["name"] = "Challenging Shout",
-            ["icon"] = "ability_bullrush" -- This is the AoE Taunt
+            ["icon"] = "ability_bullrush", -- This is the AoE Taunt
         },
         ["Sunder"] = {
             ["name"] = "Sunder Armor",
-            ["icon"] = "ability_warrior_sunder"
+            ["icon"] = "ability_warrior_sunder",
         },
         ["SW"] = {
             ["name"] = "Shield Wall",
-            ["icon"] = "ability_warrior_shieldwall"
+            ["icon"] = "ability_warrior_shieldwall",
         },
         ["Taunt"] = {
             ["name"] = "Taunt",
-            ["icon"] = "spell_nature_reincarnation"
+            ["icon"] = "spell_nature_reincarnation",
         },
         ["Thunder"] = {
             ["name"] = "Thunder Clap",
-            ["icon"] = "spell_nature_thunderclap"
-        }
-    }
+            ["icon"] = "spell_nature_thunderclap",
+        },
+    },
 }
 
 local isTBC = select(4, GetBuildInfo()) >= 20000
 
 if isTBC then
     -- Warrior
-    AngryEra_RaidUtility.Warrior.Reflect = { ["name"] = "Spell Reflection", ["icon"] = "ability_warrior_shieldreflection" }
+    AngryEra_RaidUtility.Warrior.Reflect =
+        { ["name"] = "Spell Reflection", ["icon"] = "ability_warrior_shieldreflection" }
 
     -- Priest
     AngryEra_RaidUtility.Priest.MDS = { ["name"] = "Mass Dispel", ["icon"] = "spell_arcane_massdispel" }
@@ -1007,13 +1008,13 @@ parse_value = function(str, pos, depth)
     if (char >= "0" and char <= "9") or char == "-" then
         return parse_number(str, pos)
     end
-    if str:sub(pos, pos+3) == "true" then
+    if str:sub(pos, pos + 3) == "true" then
         return true, pos + 4
     end
-    if str:sub(pos, pos+4) == "false" then
+    if str:sub(pos, pos + 4) == "false" then
         return false, pos + 5
     end
-    if str:sub(pos, pos+3) == "null" then
+    if str:sub(pos, pos + 3) == "null" then
         return JSON_NULL, pos + 4
     end
     return nil, pos, "Syntax Error"

@@ -13,7 +13,8 @@ local GetAddOnMetadata = GetAddOnMetadata or C_AddOns.GetAddOnMetadata
 -- class AngryEra
 -- field window? AceGUIFrame The main configuration window
 -- field display_text? table fontstring/frame for display
-local AngryEra = LibStub("AceAddon-3.0"):NewAddon(appName, "AceConsole-3.0", "AceEvent-3.0", "AceComm-3.0", "AceTimer-3.0")
+local AngryEra =
+    LibStub("AceAddon-3.0"):NewAddon(appName, "AceConsole-3.0", "AceEvent-3.0", "AceComm-3.0", "AceTimer-3.0")
 app.AngryEra = AngryEra
 
 app.libs = {}

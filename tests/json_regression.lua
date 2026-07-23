@@ -95,7 +95,10 @@ do
         name = app.JSON_NULL,
     })
     assert_truthy(encoded:find("\"name\":null", 1, true) ~= nil, "Expected JSON_Encode to write JSON null")
-    assert_truthy(encoded:find("\"content\":\"# Trash\\n\\nLine2\"", 1, true) ~= nil, "Expected JSON_Encode to escape newlines")
+    assert_truthy(
+        encoded:find("\"content\":\"# Trash\\n\\nLine2\"", 1, true) ~= nil,
+        "Expected JSON_Encode to escape newlines"
+    )
 
     local roundTrip = app.JSON_TryDecode(encoded)
     assert_truthy(roundTrip, "Expected encoded JSON to decode")
