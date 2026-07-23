@@ -98,41 +98,102 @@ local function IsDebugEnabled(self)
     return type(callback) == "function" and callback(self) == true
 end
 
+local function DiagnosticInteger(value)
+    if type(value) ~= "number" then
+        return "-"
+    end
+    return tostring(math.floor(value))
+end
+
 local function ChatThrottleDebugSnapshot()
-    local frameRate = "-"
+    local snapshot = {
+        AlertAvailable = "-",
+        AlertPipes = "-",
+        Available = "-",
+        Choking = "-",
+        FrameRate = "-",
+        QueueStates = "-",
+    }
     local getFrameRate = rawget(_G, "GetFramerate")
     if type(getFrameRate) == "function" then
         local ok, value = pcall(getFrameRate)
         if ok and type(value) == "number" and value >= 0 then
-            frameRate = tostring(math.floor(value + 0.5))
+            snapshot.FrameRate = tostring(math.floor(value + 0.5))
         end
     end
 
-    local available = "-"
     local activeQueues = {}
     local throttle = rawget(_G, "ChatThrottleLib")
     if type(throttle) == "table" then
-        if type(throttle.avail) == "number" then
-            available = tostring(math.floor(throttle.avail))
-        end
+        snapshot.Available = DiagnosticInteger(throttle.avail)
+        snapshot.Bypass = type(throttle.nBypass) == "number" and throttle.nBypass or nil
+        snapshot.Choking = type(throttle.bChoking) == "boolean" and tostring(throttle.bChoking) or "-"
         local priorities = throttle.Prio
         if type(priorities) == "table" then
+            local totalSent = 0
+            local hasTotalSent = false
             for _, priority in ipairs({ "ALERT", "NORMAL", "BULK" }) do
                 local state = priorities[priority]
-                if
-                    type(state) == "table"
-                    and (
-                        (type(state.Ring) == "table" and state.Ring.pos ~= nil)
-                        or (type(state.Blocked) == "table" and state.Blocked.pos ~= nil)
-                    )
-                then
-                    activeQueues[#activeQueues + 1] = priority
+                if type(state) == "table" then
+                    if type(state.nTotalSent) == "number" then
+                        totalSent = totalSent + state.nTotalSent
+                        hasTotalSent = true
+                    end
+                    if priority == "ALERT" then
+                        snapshot.AlertAvailable = DiagnosticInteger(state.avail)
+                        snapshot.AlertTotalSent = type(state.nTotalSent) == "number" and state.nTotalSent or nil
+                        if type(state.ByName) == "table" then
+                            local pipes = 0
+                            for _ in pairs(state.ByName) do
+                                pipes = pipes + 1
+                            end
+                            snapshot.AlertPipes = tostring(pipes)
+                        end
+                    end
+
+                    local states = {}
+                    if type(state.Ring) == "table" and state.Ring.pos ~= nil then
+                        states[#states + 1] = "ring"
+                    end
+                    if type(state.Blocked) == "table" and state.Blocked.pos ~= nil then
+                        states[#states + 1] = "blocked"
+                    end
+                    if #states > 0 then
+                        activeQueues[#activeQueues + 1] = priority .. ":" .. table.concat(states, "+")
+                    end
                 end
             end
+            snapshot.TotalSent = hasTotalSent and totalSent or nil
         end
     end
 
-    return frameRate, available, #activeQueues > 0 and table.concat(activeQueues, ",") or "-"
+    snapshot.QueueStates = #activeQueues > 0 and table.concat(activeQueues, ",") or "-"
+    return snapshot
+end
+
+local function CounterDelta(before, after)
+    if type(before) ~= "number" or type(after) ~= "number" then
+        return "-"
+    end
+    return tostring(math.floor(after - before))
+end
+
+local function ActivePagePayloadDebugAnatomy(payload)
+    local page = type(payload) == "table" and payload.Page or nil
+    local layers = type(payload) == "table" and payload.AncestorVariableLayers or nil
+    local contentsBytes = type(page) == "table" and type(page.Contents) == "string" and #page.Contents or 0
+    local pageVarsBytes = type(page) == "table" and type(page.Vars) == "string" and #page.Vars or 0
+    local ancestorVarsBytes = 0
+    local layerCount = 0
+    if type(layers) == "table" then
+        for _, layer in ipairs(layers) do
+            layerCount = layerCount + 1
+            if type(layer) == "table" and type(layer.Vars) == "string" then
+                ancestorVarsBytes = ancestorVarsBytes + #layer.Vars
+            end
+        end
+    end
+    return contentsBytes, pageVarsBytes, ancestorVarsBytes, layerCount
 end
 
 local function IsActivePageMessage(messageType)
@@ -1180,11 +1241,11 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
         Trace(
             self,
             "tx-submit",
-            "type=%s id=%s seq=%d sentAt=%d sync=%s rev=%s ctx=%s prefix=%s channel=%s target=%s replyTo=%s bytes=%d chunks=%d",
+            "type=%s id=%s seq=%d sentAt=%s sync=%s rev=%s ctx=%s prefix=%s channel=%s target=%s replyTo=%s bytes=%d chunks=%d",
             messageType,
             packet.Envelope.MessageId,
             packet.Envelope.Sequence,
-            packet.Envelope.SentAt,
+            tostring(packet.Envelope.SentAt),
             syncId,
             revisionId,
             contextRevisionId,
@@ -1237,15 +1298,24 @@ local function FinishActivePageTransfer(state, succeeded, status)
     end
 
     if state.Debug then
+        local elapsed = math.max(PreciseNowMilliseconds() - state.QueuedAt, 0)
+        local throughput = elapsed > 0 and tostring(math.floor((state.Bytes * 1000 / elapsed) + 0.5)) or "-"
+        local throttle = ChatThrottleDebugSnapshot()
+        local submittedThrottle = state.ThrottleAtSubmit or {}
         Trace(
             state.Self,
             succeeded and "page-stream-done" or "page-stream-stop",
-            "id=%s generation=%d chunks=%d/%d elapsed=%dms status=%s",
+            "id=%s generation=%d chunks=%d/%d elapsed=%dms gapMax=%dms bps=%s ctlSentDelta=%s ctlAlertSentDelta=%s ctlBypassDelta=%s status=%s",
             state.MessageId,
             state.Generation,
             state.SentChunks,
             state.TotalChunks,
-            math.max(PreciseNowMilliseconds() - state.QueuedAt, 0),
+            elapsed,
+            state.MaxCallbackGap or 0,
+            throughput,
+            CounterDelta(submittedThrottle.TotalSent, throttle.TotalSent),
+            CounterDelta(submittedThrottle.AlertTotalSent, throttle.AlertTotalSent),
+            CounterDelta(submittedThrottle.Bypass, throttle.Bypass),
             tostring(status)
         )
     end
@@ -1285,6 +1355,13 @@ local function ActivePageChunkSent(frameState, didSend, sendResult)
             QueueActivePageChunk(latest)
         end
         return
+    end
+
+    if state.Debug then
+        local callbackAt = PreciseNowMilliseconds()
+        local previousCallbackAt = state.LastCallbackAt or state.QueuedAt
+        state.MaxCallbackGap = math.max(state.MaxCallbackGap or 0, callbackAt - previousCallbackAt, 0)
+        state.LastCallbackAt = callbackAt
     end
     if didSend ~= true then
         FinishActivePageTransfer(state, false, "send-failed:" .. tostring(sendResult))
@@ -1440,14 +1517,16 @@ function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
     activePageTransfer = state
     if debugEnabled then
         local syncId, revisionId, contextRevisionId = DebugReference("PAGE_UPSERT", payload)
-        local frameRate, throttleAvailable, throttleQueues = ChatThrottleDebugSnapshot()
+        local throttle = ChatThrottleDebugSnapshot()
+        local contentsBytes, pageVarsBytes, ancestorVarsBytes, layerCount = ActivePagePayloadDebugAnatomy(payload)
+        state.ThrottleAtSubmit = throttle
         Trace(
             self,
             "page-stream-submit",
-            "id=%s seq=%d sentAt=%d generation=%d sync=%s rev=%s ctx=%s channel=%s bytes=%d chunks=%d fps=%s ctlAvail=%s ctlQueues=%s",
+            "id=%s seq=%d sentAt=%s generation=%d sync=%s rev=%s ctx=%s channel=%s bytes=%d chunks=%d contentsBytes=%d pageVarsBytes=%d ancestorVarsBytes=%d layers=%d fps=%s ctlAvail=%s ctlAlertAvail=%s ctlAlertPipes=%s ctlChoking=%s ctlQueues=%s",
             state.MessageId,
             packet.Envelope.Sequence,
-            packet.Envelope.SentAt,
+            tostring(packet.Envelope.SentAt),
             state.Generation,
             syncId,
             revisionId,
@@ -1455,9 +1534,16 @@ function AngryEra:SendProtocolActivePageUpsert(payload, callback, callbackArg)
             state.Channel,
             state.Bytes,
             state.TotalChunks,
-            frameRate,
-            throttleAvailable,
-            throttleQueues
+            contentsBytes,
+            pageVarsBytes,
+            ancestorVarsBytes,
+            layerCount,
+            throttle.FrameRate,
+            throttle.Available,
+            throttle.AlertAvailable,
+            throttle.AlertPipes,
+            throttle.Choking,
+            throttle.QueueStates
         )
     end
 
@@ -2035,12 +2121,12 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         Trace(
             self,
             "rx-decoded",
-            "type=%s id=%s seq=%d sentAt=%d age~=%dms sync=%s rev=%s ctx=%s sender=%s prefix=%s channel=%s replyTo=%s bytes=%d decode=%dms",
+            "type=%s id=%s seq=%d sentAt=%s age~=%sms sync=%s rev=%s ctx=%s sender=%s prefix=%s channel=%s replyTo=%s bytes=%d decode=%dms",
             envelope.Type,
             envelope.MessageId,
             envelope.Sequence,
-            envelope.SentAt,
-            approximateAge,
+            tostring(envelope.SentAt),
+            tostring(approximateAge),
             syncId,
             revisionId,
             contextRevisionId,

@@ -478,6 +478,13 @@ local function LastActiveCallNamed(name)
 end
 
 local timestampTest = {}
+timestampTest.FindPrintedTrace = function(stage, firstIndex)
+    for index = firstIndex or 1, #printedMessages do
+        if printedMessages[index]:find(stage, 1, true) then
+            return printedMessages[index]
+        end
+    end
+end
 timestampTest.NextRemoteSentAt = function()
     local candidate = currentTime * 1000 + math.floor(preciseTime * 1000) % 1000
     if timestampTest.RemoteProtocolSentAt and candidate <= timestampTest.RemoteProtocolSentAt then
@@ -793,6 +800,35 @@ assert(
 
 local debugOutputBeforeTransport = #printedMessages
 AngryEra._syncDebugEnabled = true
+timestampTest.SavedPreciseTime = preciseTime
+preciseTime = 3000000.125
+timestampTest.LargeDebugTimestamp = currentTime * 1000 + 123
+AngryEra:SyncDebug("large-clock", "sentAt=%s", tostring(timestampTest.LargeDebugTimestamp))
+timestampTest.LargeClockTrace = printedMessages[#printedMessages]
+assert(
+    timestampTest.LargeClockTrace:find("[sync 3000000125ms]", 1, true)
+        and timestampTest.LargeClockTrace:find("sentAt=" .. tostring(timestampTest.LargeDebugTimestamp), 1, true)
+        and not timestampTest.LargeClockTrace:find("format-error", 1, true),
+    "debug tracing should render large uptime and epoch-millisecond values as strings"
+)
+preciseTime = timestampTest.SavedPreciseTime
+
+timestampTest.DebugRemoteSentAt = currentTime * 1000 + 123
+timestampTest.DebugRemotePage = BuildRemoteEnvelope("debug-large-timestamp", "PAGE_UPSERT", remoteUpsert, {
+    SentAt = timestampTest.DebugRemoteSentAt,
+})
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, timestampTest.DebugRemotePage, "PARTY", "Alpha-Realm")
+AssertError(accepted, result, "invalid-channel", "debug large-timestamp receive")
+timestampTest.DebugReceiveTrace = printedMessages[#printedMessages]
+assert(
+    timestampTest.DebugReceiveTrace:find("rx-decoded", 1, true)
+        and timestampTest.DebugReceiveTrace:find("sentAt=" .. tostring(timestampTest.DebugRemoteSentAt), 1, true)
+        and timestampTest.DebugReceiveTrace:find("age~=377ms", 1, true)
+        and not timestampTest.DebugReceiveTrace:find("format-error", 1, true),
+    "receive tracing should render 13-digit timestamps and ages without a format failure"
+)
+
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, "malformed", "RAID", "Alpha-Realm")
 AssertError(accepted, result, "compact-display-decode-failed", "malformed compact display while debugging")
 assert(
@@ -806,6 +842,13 @@ sent, result = AngryEra:SendProtocolDisplay({
 assert(sent, result)
 local debugTransport = sentMessages[#sentMessages]
 local _, debugDisplayEnvelope = DecodeSent()
+timestampTest.DebugSubmitTrace = timestampTest.FindPrintedTrace("tx-submit", debugOutputBeforeTransport + 1)
+assert(
+    timestampTest.DebugSubmitTrace
+        and timestampTest.DebugSubmitTrace:find("sentAt=" .. tostring(debugDisplayEnvelope.SentAt), 1, true)
+        and not timestampTest.DebugSubmitTrace:find("format-error", 1, true),
+    "send tracing should render a 13-digit timestamp without a format failure"
+)
 assert(
     type(debugTransport.Callback) == "function" and type(debugTransport.CallbackArg) == "table",
     "debug mode should attach an AceComm drain callback"
@@ -842,8 +885,17 @@ do
         return 18
     end
     _G.ChatThrottleLib.avail = -123
+    _G.ChatThrottleLib.bChoking = true
+    _G.ChatThrottleLib.nBypass = 20
+    _G.ChatThrottleLib.nTotalSent = 1000
     _G.ChatThrottleLib.Prio = {
         ALERT = {
+            avail = -45,
+            ByName = {
+                AngryEra3P = {},
+                OtherAddon = {},
+            },
+            nTotalSent = 400,
             Ring = {
                 pos = {},
             },
@@ -855,32 +907,75 @@ do
         },
         BULK = {},
     }
+    local debugUpsert = PageUpsert(localReference, localInstallationId, currentPlayer)
+    debugUpsert.Page.ParentSyncId = localInstallationId .. ":category:1"
+    debugUpsert.Page.Vars = "$MT=Alpha"
+    debugUpsert.AncestorVariableLayers = {
+        {
+            SyncId = debugUpsert.Page.ParentSyncId,
+            Vars = "$HEAL=Beta",
+        },
+    }
     AngryEra._syncDebugEnabled = true
-    sent, result = AngryEra:SendProtocolActivePageUpsert(localUpsert, RecordActiveTransfer, "escaped")
+    sent, result = AngryEra:SendProtocolActivePageUpsert(debugUpsert, RecordActiveTransfer, "escaped")
     assert(sent, result)
-    local activeSubmitTrace
-    for index = debugBeforeActiveTransfer + 1, #printedMessages do
-        if printedMessages[index]:find("page%-stream%-submit") then
-            activeSubmitTrace = printedMessages[index]
-            break
-        end
-    end
+    local activeSubmitTrace = timestampTest.FindPrintedTrace("page-stream-submit", debugBeforeActiveTransfer + 1)
+    local expectedActiveSentAt = currentTime * 1000 + math.floor(preciseTime * 1000) % 1000
     assert(
         activeSubmitTrace
-            and activeSubmitTrace:find("fps=18")
-            and activeSubmitTrace:find("ctlAvail=%-123")
-            and activeSubmitTrace:find("ctlQueues=ALERT,NORMAL"),
-        "active-page debug should expose sender frame rate and existing throttle congestion"
+            and activeSubmitTrace:find("sentAt=" .. tostring(expectedActiveSentAt), 1, true)
+            and activeSubmitTrace:find("contentsBytes=" .. tostring(#debugUpsert.Page.Contents), 1, true)
+            and activeSubmitTrace:find("pageVarsBytes=" .. tostring(#debugUpsert.Page.Vars), 1, true)
+            and activeSubmitTrace:find(
+                "ancestorVarsBytes=" .. tostring(#debugUpsert.AncestorVariableLayers[1].Vars),
+                1,
+                true
+            )
+            and activeSubmitTrace:find("layers=1", 1, true)
+            and activeSubmitTrace:find("fps=18", 1, true)
+            and activeSubmitTrace:find("ctlAvail=-123", 1, true)
+            and activeSubmitTrace:find("ctlAlertAvail=-45", 1, true)
+            and activeSubmitTrace:find("ctlAlertPipes=2", 1, true)
+            and activeSubmitTrace:find("ctlChoking=true", 1, true)
+            and activeSubmitTrace:find("ctlQueues=ALERT:ring,NORMAL:blocked", 1, true)
+            and not activeSubmitTrace:find("format-error", 1, true),
+        "active-page debug should expose safe payload anatomy and detailed throttle congestion"
     )
     assert(
         #throttleFrames == 1 and throttleFrames[1].Data:byte(1) == 4 and throttleFrames[1].Data:byte(2) == 1,
         "a short control-prefixed packet should use AceComm's escape frame"
     )
+    local callbackTransfer = throttleFrames[1].CallbackArg.Transfer
+    preciseTime = preciseTime + 0.25
+    _G.ChatThrottleLib.nTotalSent = 1108
+    _G.ChatThrottleLib.Prio.ALERT.nTotalSent = 508
+    _G.ChatThrottleLib.nBypass = 27
     throttleFrames[1].Callback(throttleFrames[1].CallbackArg, true, 0)
+    local activeDoneTrace = timestampTest.FindPrintedTrace("page-stream-done", debugBeforeActiveTransfer + 1)
+    local expectedThroughput = math.floor((callbackTransfer.Bytes * 1000 / 250) + 0.5)
+    assert(
+        activeDoneTrace
+            and activeDoneTrace:find("gapMax=250ms", 1, true)
+            and activeDoneTrace:find("bps=" .. tostring(expectedThroughput), 1, true)
+            and activeDoneTrace:find("ctlSentDelta=108", 1, true)
+            and activeDoneTrace:find("ctlAlertSentDelta=108", 1, true)
+            and activeDoneTrace:find("ctlBypassDelta=7", 1, true),
+        "active-page completion tracing should summarize throttle deltas, callback stalls, and throughput"
+    )
+    preciseTime = preciseTime - 0.25
     AngryEra._syncDebugEnabled = false
     _G.GetFramerate = nil
     _G.ChatThrottleLib.avail = nil
+    _G.ChatThrottleLib.bChoking = nil
+    _G.ChatThrottleLib.nBypass = nil
+    _G.ChatThrottleLib.nTotalSent = nil
     _G.ChatThrottleLib.Prio = nil
+    for index = debugOutputBeforeTransport + 1, #printedMessages do
+        assert(
+            not printedMessages[index]:find("format-error", 1, true),
+            "large-number debug coverage should not emit a format error"
+        )
+    end
     assert(
         #completions == 1 and completions[1].Label == "escaped" and completions[1].Succeeded == true,
         "the escaped single-frame transfer should complete"

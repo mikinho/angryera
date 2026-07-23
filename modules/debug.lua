@@ -71,7 +71,7 @@ function AngryEra:SyncDebug(stage, formatText, ...)
             details = " format-error"
         end
     end
-    self:Print(string.format("[sync %dms] %s%s", PreciseMilliseconds(), tostring(stage), details))
+    self:Print(string.format("[sync %sms] %s%s", tostring(PreciseMilliseconds()), tostring(stage), details))
     return true
 end
 
