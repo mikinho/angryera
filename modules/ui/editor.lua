@@ -834,6 +834,7 @@ end
 AngryEra._AngryEra_ClearPage = AngryEra_ClearPage
 
 local function AngryEra_TextChanged(widget, event, value)
+    AngryEra.window.button_revert:SetDisabled(false)
     AngryEra.window.button_restore:SetDisabled(false)
     AngryEra.window.button_display:SetDisabled(true)
     AngryEra.window.button_output:SetDisabled(true)
@@ -841,6 +842,13 @@ end
 
 local function AngryEra_TextEntered(widget, event, value)
     AngryEra:UpdateContents(AngryEra:SelectedId(), value)
+end
+
+local function AngryEra_RevertPage()
+    if not AngryEra.window then
+        return
+    end
+    AngryEra:UpdateSelected(true)
 end
 
 local function AngryEra_OutputSelectedPage()
@@ -874,10 +882,9 @@ local function AngryEra_RestorePage(widget, event, value)
             table.insert(menu, {
                 text = string.format("|cff999999%s|r |cffffd100%s|r: %s...", dateStr, author, contentPreview),
                 func = function()
-                    AngryEra:UpdateContents(pageId, entry.content)
                     AngryEra.window.text:SetText(entry.content)
                     AngryEra.window.text.button:Enable()
-                    AngryEra_TextChanged(widget, event, value)
+                    AngryEra_TextChanged()
                 end,
                 notCheckable = true,
             })
@@ -1405,6 +1412,9 @@ function AngryEra:CreateWindow()
         window.frame:SetScale(AngryEra:GetConfig("scale"))
     end
     window:SetStatusTable(AngryAssign_State.window)
+    if window.frame:GetWidth() < 780 then
+        window:SetWidth(780)
+    end
     window:Hide()
     AngryEra.window = window
 
@@ -1425,9 +1435,9 @@ function AngryEra:CreateWindow()
 
     AngryEra_Window = window.frame
     if window.frame.SetResizeBounds then -- WoW 10.0
-        window.frame:SetResizeBounds(600, 300)
+        window.frame:SetResizeBounds(780, 300)
     else
-        window.frame:SetMinResize(600, 300)
+        window.frame:SetMinResize(780, 300)
     end
     window.frame:SetFrameStrata("HIGH")
     window.frame:SetFrameLevel(1)
@@ -1502,6 +1512,7 @@ function AngryEra:CreateWindow()
     text:SetCallback("OnEnterPressed", AngryEra_TextEntered)
     tree:AddChild(text)
     window.text = text
+    text.button:SetText("Save")
     text.button:SetWidth(75)
     local buttontext = text.button:GetFontString()
     buttontext:ClearAllPoints()
@@ -1521,13 +1532,22 @@ function AngryEra:CreateWindow()
 
     window.button_display = button_display
 
+    local button_revert = AceGUI:Create("Button")
+    button_revert:SetText("Revert")
+    button_revert:SetWidth(70)
+    button_revert:SetHeight(22)
+    button_revert:ClearAllPoints()
+    button_revert:SetPoint("BOTTOMLEFT", text.frame, "BOTTOMLEFT", 100, 4)
+    button_revert:SetCallback("OnClick", AngryEra_RevertPage)
+    tree:AddChild(button_revert)
+    window.button_revert = button_revert
+
     local button_restore = AceGUI:Create("Button")
     button_restore:SetText("Restore")
     button_restore:SetWidth(80)
     button_restore:SetHeight(22)
     button_restore:ClearAllPoints()
-    -- Anchor directly to text frame (replace Revert button position)
-    button_restore:SetPoint("BOTTOMLEFT", text.frame, "BOTTOMLEFT", 100, 4)
+    button_restore:SetPoint("LEFT", button_revert.frame, "RIGHT", 6, 0)
     button_restore:SetCallback("OnClick", AngryEra_RestorePage)
     tree:AddChild(button_restore)
     window.button_restore = button_restore
@@ -1961,14 +1981,14 @@ function AngryEra:UpdateSelected(destructive)
         self.window.text.button:Disable()
     end
     if page and permission then
-        -- self.window.button_revert:SetDisabled(not self.window.text.button:IsEnabled()) -- Removed Revert
+        self.window.button_revert:SetDisabled(not self.window.text.button:IsEnabled())
         self.window.button_display:SetDisabled(self.window.text.button:IsEnabled())
         self.window.button_output:SetDisabled(self.window.text.button:IsEnabled())
         -- Always enable Restore button so users can see the menu (even if empty)
         self.window.button_restore:SetDisabled(false)
         self.window.text:SetDisabled(false)
     else
-        -- self.window.button_revert:SetDisabled(true) -- Removed Revert
+        self.window.button_revert:SetDisabled(true)
         self.window.button_display:SetDisabled(true)
         self.window.button_output:SetDisabled(true)
         self.window.button_restore:SetDisabled(true)
