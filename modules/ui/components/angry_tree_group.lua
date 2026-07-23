@@ -143,7 +143,12 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
     end
 
     if self.buttonFont then
+        local fontObject = button:GetNormalFontObject()
         button.text:SetFont(self.buttonFont, self.buttonFontSize or 11)
+        if fontObject then
+            local r, g, b = fontObject:GetTextColor()
+            button.text:SetTextColor(r, g, b)
+        end
     end
 
     if canExpand then

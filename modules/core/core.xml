@@ -1,0 +1,4 @@
+<Ui>
+	<Script file="bootstrap.lua"/>
+	<Script file="constants.lua"/>
+</Ui>

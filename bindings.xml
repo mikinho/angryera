@@ -1,29 +1,29 @@
 <Bindings>
 	<Binding name="AngryEra_DISPLAY" category="BINDING_HEADER_AngryEra">
-		AngryAssign_ToggleDisplay()
+		AngryEra_ToggleDisplay()
 	</Binding>
 	<Binding name="AngryEra_SHOW_DISPLAY" category="BINDING_HEADER_AngryEra">
-		AngryAssign_ShowDisplay()
+		AngryEra_ShowDisplay()
 	</Binding>
 	<Binding name="AngryEra_HIDE_DISPLAY" category="BINDING_HEADER_AngryEra">
-		AngryAssign_HideDisplay()
+		AngryEra_HideDisplay()
 	</Binding>
 	<Binding name="AngryEra_PREV_PAGE" category="BINDING_HEADER_AngryEra">
-		AngryAssign_PrevPage()
+		AngryEra_PrevPage()
 	</Binding>
 	<Binding name="AngryEra_NEXT_PAGE" category="BINDING_HEADER_AngryEra">
-		AngryAssign_NextPage()
+		AngryEra_NextPage()
 	</Binding>
 	<Binding name="AngryEra_FIRST_PAGE" category="BINDING_HEADER_AngryEra">
-		AngryAssign_FirstPage()
+		AngryEra_FirstPage()
 	</Binding>
 	<Binding name="AngryEra_LOCK" category="BINDING_HEADER_AngryEra">
-		AngryAssign_ToggleLock()
+		AngryEra_ToggleLock()
 	</Binding>
 	<Binding name="AngryEra_WINDOW" category="BINDING_HEADER_AngryEra">
-		AngryAssign_ToggleWindow()
+		AngryEra_ToggleWindow()
 	</Binding>
 	<Binding name="AngryEra_OUTPUT" category="BINDING_HEADER_AngryEra">
-		AngryAssign_OutputDisplayed()
+		AngryEra_OutputDisplayed()
 	</Binding>
 </Bindings>

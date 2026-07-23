@@ -12,8 +12,10 @@ exclude_files = {
 -- Explicitly whitelist the global variables that your addon creates,
 -- WoW's standard globals that get mutated, and SavedVariables.
 globals = {
-   -- Addon Base & Saved Variables
-   "AngryAssign",
+   -- Addon Object
+   "AngryEra",
+
+   -- SavedVariables (declared in both TOC files)
    "AngryAssign_Pages",
    "AngryAssign_Categories",
    "AngryAssign_State",
@@ -21,17 +23,16 @@ globals = {
    "AngryAssign_Templates",
 
    -- Keybind and Display Globals
-   "AngryAssign_ToggleWindow",
-   "AngryAssign_ToggleLock",
-   "AngryAssign_ToggleDisplay",
-   "AngryAssign_ShowDisplay",
-   "AngryAssign_HideDisplay",
-   "AngryAssign_PrevPage",
-   "AngryAssign_NextPage",
-   "AngryAssign_FirstPage",
-   "AngryAssign_PageMenu",
-   "AngryAssign_Window",
-   "AngryAssign_OutputDisplayed",
+   "AngryEra_ToggleWindow",
+   "AngryEra_ToggleLock",
+   "AngryEra_ToggleDisplay",
+   "AngryEra_ShowDisplay",
+   "AngryEra_HideDisplay",
+   "AngryEra_PrevPage",
+   "AngryEra_NextPage",
+   "AngryEra_FirstPage",
+   "AngryEra_PageMenu",
+   "AngryEra_OutputDisplayed",
 
    -- Built-in WoW UI Globals mutated by this addon
    "StaticPopupDialogs"

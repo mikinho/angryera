@@ -1,0 +1,9 @@
+<Ui>
+	<Include file="utils\utils.xml"/>
+	<Script file="permissions.lua"/>
+	<Script file="network.lua"/>
+	<Script file="models.lua"/>
+	<Include file="ui\ui.xml"/>
+	<Script file="chat_output.lua"/>
+	<Script file="init.lua"/>
+</Ui>
