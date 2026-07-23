@@ -33,6 +33,23 @@ local function ShallowCopy(value)
     return copy
 end
 
+local function DeepCopy(value, seen)
+    if type(value) ~= "table" then
+        return value
+    end
+    seen = seen or {}
+    if seen[value] then
+        return seen[value]
+    end
+
+    local copy = {}
+    seen[value] = copy
+    for key, item in pairs(value) do
+        copy[DeepCopy(key, seen)] = DeepCopy(item, seen)
+    end
+    return copy
+end
+
 local function Repeat(character, count)
     return string.rep(character, count)
 end
@@ -47,6 +64,41 @@ local function MakeVersionPayload()
             ownership = 2,
         },
         AcceptsCurrentGroup = true,
+    }
+end
+
+local activeInstallationId = "ae3i:1234abcd:11111111:22222222:33333333"
+local activeRootSyncId = activeInstallationId .. ":category:1"
+local activeParentSyncId = activeInstallationId .. ":category:2"
+local activePageSyncId = activeInstallationId .. ":page:3"
+
+local function MakePageUpsertPayload()
+    return {
+        Page = {
+            Kind = "page",
+            SyncId = activePageSyncId,
+            OwnerId = activeInstallationId,
+            Revision = 4,
+            RevisionId = "fcs32:12345678",
+            UpdatedAt = 100,
+            UpdatedBy = "Leader-Realm",
+            ParentSyncId = activeParentSyncId,
+            Order = 2,
+            Name = "Active Page",
+            Vars = "role=page",
+            Contents = "Assignments",
+        },
+        AncestorVariableLayers = {
+            {
+                SyncId = activeRootSyncId,
+                Vars = "role=root",
+            },
+            {
+                SyncId = activeParentSyncId,
+                Vars = "role=parent",
+            },
+        },
+        ContextRevisionId = "fcs32:87654321",
     }
 end
 
@@ -139,8 +191,8 @@ local failedEnvelope, failedEnvelopeError = protocol.BuildEnvelope(
 AssertError(failedEnvelope, failedEnvelopeError, "version-query-payload-not-empty", "non-empty version query payload")
 AssertEqual(session.Sequence, sequenceBeforeFailure, "failed build does not advance sequence")
 
-failedEnvelope, failedEnvelopeError = protocol.BuildEnvelope(session, "PAGE_UPSERT", {}, { SentAt = 102 })
-AssertError(failedEnvelope, failedEnvelopeError, "unknown-message-type", "inactive message family")
+failedEnvelope, failedEnvelopeError = protocol.BuildEnvelope(session, "DELTA", {}, { SentAt = 102 })
+AssertError(failedEnvelope, failedEnvelopeError, "unknown-message-type", "unknown message family")
 AssertEqual(session.Sequence, sequenceBeforeFailure, "unknown message does not advance sequence")
 
 failedEnvelope, failedEnvelopeError = protocol.BuildEnvelope(session, "VERSION_QUERY", {}, {})
@@ -170,7 +222,7 @@ valid, validationError = protocol.ValidateEnvelope(invalidEnvelope)
 AssertError(valid, validationError, "invalid-message-type", "lowercase message type")
 
 invalidEnvelope = ShallowCopy(queryEnvelope)
-invalidEnvelope.Type = "PAGE_UPSERT"
+invalidEnvelope.Type = "DELTA"
 valid, validationError = protocol.ValidateEnvelope(invalidEnvelope)
 AssertError(valid, validationError, "unknown-message-type", "unknown validly formatted type")
 
@@ -276,6 +328,200 @@ versionPayload = MakeVersionPayload()
 versionPayload.FutureField = { ignored = true }
 payloadValid, payloadError = protocol.ValidatePayload("VERSION", versionPayload)
 Assert(payloadValid and payloadError == nil, "unknown version fields remain forward-compatible")
+
+Assert(protocol.MESSAGE_TYPES.DISPLAY_REQUEST, "display request message type is registered")
+Assert(protocol.MESSAGE_TYPES.DISPLAY, "display message type is registered")
+Assert(protocol.MESSAGE_TYPES.PAGE_REQUEST, "page request message type is registered")
+Assert(protocol.MESSAGE_TYPES.PAGE_UPSERT, "page upsert message type is registered")
+
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY_REQUEST", {})
+Assert(payloadValid and payloadError == nil, "empty display request payload")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY_REQUEST", { unexpected = true })
+AssertError(payloadValid, payloadError, "display-request-payload-not-empty", "non-empty display request payload")
+
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", { Displayed = false })
+Assert(payloadValid and payloadError == nil, "explicit clear display payload")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = false,
+    SyncId = activePageSyncId,
+})
+AssertError(payloadValid, payloadError, "display-clear-has-page", "clear display with page identity")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = true,
+    SyncId = activePageSyncId,
+    RevisionId = "fcs32:12345678",
+    ContextRevisionId = "fcs32:87654321",
+})
+Assert(payloadValid and payloadError == nil, "set display payload")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = true,
+    SyncId = activePageSyncId,
+    RevisionId = "fcs32:12345678",
+})
+AssertError(payloadValid, payloadError, "display-missing-ContextRevisionId", "display missing context identity")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = "yes",
+})
+AssertError(payloadValid, payloadError, "invalid-displayed", "non-boolean display state")
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = false,
+    Unknown = true,
+})
+AssertError(payloadValid, payloadError, "display-unknown-field", "unknown display field")
+
+local pageReference = {
+    SyncId = activePageSyncId,
+    RevisionId = "fcs32:12345678",
+    ContextRevisionId = "fcs32:87654321",
+}
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_REQUEST", pageReference)
+Assert(payloadValid and payloadError == nil, "page request payload")
+local invalidReference = ShallowCopy(pageReference)
+invalidReference.SyncId = activeRootSyncId
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_REQUEST", invalidReference)
+AssertError(payloadValid, payloadError, "invalid-sync-id", "page request category identity")
+invalidReference = ShallowCopy(pageReference)
+invalidReference.SyncId = activeInstallationId .. ":page:03"
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_REQUEST", invalidReference)
+AssertError(payloadValid, payloadError, "invalid-sync-id", "page request noncanonical identity sequence")
+invalidReference = ShallowCopy(pageReference)
+invalidReference.RevisionId = "fcs32:ABCDEF12"
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_REQUEST", invalidReference)
+AssertError(payloadValid, payloadError, "invalid-revision-id", "page request uppercase revision identity")
+invalidReference = ShallowCopy(pageReference)
+invalidReference.ContextRevisionId = "fcs32:1234567"
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_REQUEST", invalidReference)
+AssertError(payloadValid, payloadError, "invalid-context-revision-id", "page request short context identity")
+invalidReference = ShallowCopy(pageReference)
+invalidReference.Unknown = true
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_REQUEST", invalidReference)
+AssertError(payloadValid, payloadError, "page-request-unknown-field", "unknown page request field")
+
+payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
+    Displayed = true,
+    SyncId = activeInstallationId .. ":page:2147483648",
+    RevisionId = pageReference.RevisionId,
+    ContextRevisionId = pageReference.ContextRevisionId,
+})
+AssertError(payloadValid, payloadError, "invalid-sync-id", "display identity sequence overflow")
+
+local pageUpsertPayload = MakePageUpsertPayload()
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", pageUpsertPayload)
+Assert(payloadValid and payloadError == nil, "shallow page upsert payload")
+
+local activeSession = assert(protocol.NewSession(installationId, "active-session"))
+local activeEnvelope, activeEnvelopeError =
+    protocol.BuildEnvelope(activeSession, "PAGE_UPSERT", pageUpsertPayload, { SentAt = 200 })
+Assert(activeEnvelope ~= nil and activeEnvelopeError == nil, "valid page upsert envelope builds")
+AssertEqual(activeEnvelope.Type, "PAGE_UPSERT", "active envelope type")
+
+local malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Unknown = true
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "page-upsert-unknown-field", "unknown page upsert field")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Page.Unknown = true
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "page-unknown-field", "unknown page field")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Page.Kind = "category"
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-page-kind", "page upsert category record")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Page.OwnerId = "invalid"
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-page-owner-id", "invalid page owner")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Page.OwnerId = "ae3i:a:b:c:d"
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "owner-mismatch", "mismatched page owner")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Page.Revision = 0
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-page-revision", "zero page revision")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Page.UpdatedAt = -1
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-page-updated-at", "negative page update time")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Page.ParentSyncId = activePageSyncId
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-page-parent-sync-id", "page parent identity")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Page.Name = Repeat("n", protocol.LIMITS.ActivePageNameBytes + 1)
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-page-name", "oversized page name")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.Page.Contents = Repeat("c", protocol.LIMITS.ActivePageContentsBytes + 1)
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-page-contents", "oversized page contents")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.AncestorVariableLayers[1].Unknown = true
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "ancestor-layer-unknown-field", "unknown ancestor layer field")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.AncestorVariableLayers[2] = nil
+malformedPageUpsert.AncestorVariableLayers[3] = {
+    SyncId = activeInstallationId .. ":category:3",
+    Vars = "",
+}
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-ancestor-layers", "sparse ancestor layers")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.AncestorVariableLayers = {}
+for index = 1, protocol.LIMITS.ActivePageAncestorCount + 1 do
+    malformedPageUpsert.AncestorVariableLayers[index] = {
+        SyncId = activeInstallationId .. ":category:" .. index,
+        Vars = "",
+    }
+end
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-ancestor-layers", "too many ancestor layers")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+malformedPageUpsert.AncestorVariableLayers[1].Vars = Repeat("v", protocol.LIMITS.ActivePageVarsBytes + 1)
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-ancestor-vars", "oversized ancestor variables")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+setmetatable(malformedPageUpsert.Page, {})
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-page", "metatable-backed page")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+setmetatable(malformedPageUpsert.AncestorVariableLayers, {})
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-ancestor-layers", "metatable-backed ancestor layer array")
+
+malformedPageUpsert = DeepCopy(pageUpsertPayload)
+setmetatable(malformedPageUpsert.AncestorVariableLayers[1], {})
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+AssertError(payloadValid, payloadError, "invalid-ancestor-layer", "metatable-backed ancestor layer")
+
+for _, invalidKey in ipairs({ 0, 1.5, "first" }) do
+    malformedPageUpsert = DeepCopy(pageUpsertPayload)
+    malformedPageUpsert.AncestorVariableLayers[invalidKey] = {
+        SyncId = activeInstallationId .. ":category:4",
+        Vars = "",
+    }
+    payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", malformedPageUpsert)
+    AssertError(payloadValid, payloadError, "invalid-ancestor-layers", "invalid ancestor layer key")
+end
+
+payloadValid, payloadError = protocol.ValidatePayload("PAGE_UPSERT", setmetatable({}, {}))
+AssertError(payloadValid, payloadError, "invalid-payload", "metatable-backed active payload")
 
 local tooManyCapabilities = {}
 for index = 1, 33 do

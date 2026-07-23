@@ -261,7 +261,11 @@ sender's revision identity after sanitizing the data into different content.
 
 Page wire records contain `SyncId`, ownership and revision metadata,
 `ParentSyncId`, normalized integer order, name, raw contents, page variables,
-and ordered ancestor variable layers when sent outside a manifest.
+and ordered ancestor variable layers when sent outside a manifest. Active-page
+messages also carry `ContextRevisionId`, a canonical FCS32 identity for those
+ordered ancestor layers plus the page variables. Display selection is therefore
+matched by `SyncId`, `RevisionId`, and `ContextRevisionId`; an unchanged page
+revision cannot accidentally reuse stale inherited category variables.
 
 Category wire records contain `SyncId`, ownership and revision metadata,
 `ParentSyncId`, normalized integer order, name, and category variables.

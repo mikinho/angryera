@@ -4,6 +4,7 @@
 	<Script file="utils\protocol.lua"/>
 	<Script file="utils\variables.lua"/>
 	<Script file="sync\schema.lua"/>
+	<Script file="sync\active_page.lua"/>
 	<Script file="sync\revisions.lua"/>
 	<Script file="sync\scopes.lua"/>
 	<Script file="sync\snapshot.lua"/>

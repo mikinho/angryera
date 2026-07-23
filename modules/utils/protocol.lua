@@ -9,7 +9,7 @@ local _, app = ...
 local AngryEra = app.AngryEra
 local identity = AngryEra.identity
 
-if not identity or type(identity.ValidateInstallationId) ~= "function" then
+if not identity or type(identity.ValidateInstallationId) ~= "function" or type(identity.ParseSyncId) ~= "function" then
     error("AngryEra identity must load before protocol")
 end
 
@@ -37,6 +37,16 @@ protocol.LIMITS = {
     CapabilityCount = 32,
     CapabilityNameBytes = 32,
     CapabilityVersion = 2147483647,
+    ActivePageAncestorCount = 32,
+    ActivePageNameBytes = 100,
+    ActivePageContentsBytes = 20000,
+    ActivePageVarsBytes = 5000,
+    ActivePageAuthorBytes = 128,
+    ActivePageSyncIdBytes = 160,
+    ActivePageRevisionIdBytes = 14,
+    ActivePageRevision = 2147483647,
+    ActivePageOrder = 512,
+    ActivePageTimestamp = 9007199254740991,
     Sequence = 2147483647,
     SeenEntries = 512,
     SeenEntriesMaximum = 4096,
@@ -45,6 +55,10 @@ protocol.LIMITS = {
 local MESSAGE_TYPES = {
     VERSION_QUERY = true,
     VERSION = true,
+    DISPLAY_REQUEST = true,
+    DISPLAY = true,
+    PAGE_REQUEST = true,
+    PAGE_UPSERT = true,
 }
 protocol.MESSAGE_TYPES = MESSAGE_TYPES
 
@@ -72,8 +86,65 @@ local function IsIdentifier(value, maximum)
     return IsBoundedString(value, maximum, false) and value:match("^[A-Za-z0-9][A-Za-z0-9_-]*$") ~= nil
 end
 
+local function IsPlainTable(value)
+    return type(value) == "table" and getmetatable(value) == nil
+end
+
 local function IsInstallationId(value)
     return IsBoundedString(value, protocol.LIMITS.InstallationIdBytes, false) and identity.ValidateInstallationId(value)
+end
+
+local function IsSyncId(value, kind)
+    if not IsBoundedString(value, protocol.LIMITS.ActivePageSyncIdBytes, false) then
+        return false
+    end
+
+    local installationId, parsedKind, sequence = identity.ParseSyncId(value)
+    return parsedKind == kind
+        and IsInteger(sequence, 1, protocol.LIMITS.ActivePageRevision)
+        and value == string.format("%s:%s:%d", installationId, parsedKind, sequence)
+end
+
+local function IsRevisionId(value)
+    return type(value) == "string"
+        and #value == protocol.LIMITS.ActivePageRevisionIdBytes
+        and value:match("^fcs32:[0-9a-f]+$") ~= nil
+end
+
+local function ValidateKnownFields(value, knownFields, requiredFields, prefix)
+    for key in pairs(value) do
+        if type(key) ~= "string" or not knownFields[key] then
+            return false, prefix .. "-unknown-field"
+        end
+    end
+    for _, field in ipairs(requiredFields) do
+        if rawget(value, field) == nil then
+            return false, prefix .. "-missing-" .. field
+        end
+    end
+    return true
+end
+
+local function DenseArrayLength(value, maximum)
+    if not IsPlainTable(value) then
+        return nil
+    end
+
+    local count = 0
+    local highest = 0
+    for key in pairs(value) do
+        if not IsInteger(key, 1, maximum) then
+            return nil
+        end
+        count = count + 1
+        if key > highest then
+            highest = key
+        end
+    end
+    if count ~= highest then
+        return nil
+    end
+    return count
 end
 
 local function ValidateMessageId(value)
@@ -148,6 +219,223 @@ local function CallBoundedDecompress(callback, input, maximumOutputBytes)
     return output
 end
 
+local ACTIVE_REFERENCE_FIELDS = {
+    SyncId = true,
+    RevisionId = true,
+    ContextRevisionId = true,
+}
+
+local ACTIVE_REFERENCE_REQUIRED_FIELDS = {
+    "SyncId",
+    "RevisionId",
+    "ContextRevisionId",
+}
+
+local DISPLAY_FIELDS = {
+    Displayed = true,
+    SyncId = true,
+    RevisionId = true,
+    ContextRevisionId = true,
+}
+
+local PAGE_UPSERT_FIELDS = {
+    Page = true,
+    AncestorVariableLayers = true,
+    ContextRevisionId = true,
+}
+
+local PAGE_UPSERT_REQUIRED_FIELDS = {
+    "Page",
+    "AncestorVariableLayers",
+    "ContextRevisionId",
+}
+
+local PAGE_FIELDS = {
+    Kind = true,
+    SyncId = true,
+    OwnerId = true,
+    Revision = true,
+    RevisionId = true,
+    UpdatedAt = true,
+    UpdatedBy = true,
+    ParentSyncId = true,
+    Order = true,
+    Name = true,
+    Vars = true,
+    Contents = true,
+}
+
+local PAGE_REQUIRED_FIELDS = {
+    "Kind",
+    "SyncId",
+    "OwnerId",
+    "Revision",
+    "RevisionId",
+    "UpdatedAt",
+    "UpdatedBy",
+    "Order",
+    "Name",
+    "Vars",
+    "Contents",
+}
+
+local ANCESTOR_LAYER_FIELDS = {
+    SyncId = true,
+    Vars = true,
+}
+
+local ANCESTOR_LAYER_REQUIRED_FIELDS = {
+    "SyncId",
+    "Vars",
+}
+
+local function ValidateEmptyPayload(payload, prefix)
+    if next(payload) ~= nil then
+        return false, prefix .. "-payload-not-empty"
+    end
+    return true
+end
+
+local function ValidateActiveReference(payload, prefix)
+    local known, knownError =
+        ValidateKnownFields(payload, ACTIVE_REFERENCE_FIELDS, ACTIVE_REFERENCE_REQUIRED_FIELDS, prefix)
+    if not known then
+        return false, knownError
+    end
+    if not IsSyncId(payload.SyncId, "page") then
+        return false, "invalid-sync-id"
+    end
+    if not IsRevisionId(payload.RevisionId) then
+        return false, "invalid-revision-id"
+    end
+    if not IsRevisionId(payload.ContextRevisionId) then
+        return false, "invalid-context-revision-id"
+    end
+    return true
+end
+
+local function ValidateDisplayPayload(payload)
+    local known, knownError = ValidateKnownFields(payload, DISPLAY_FIELDS, { "Displayed" }, "display")
+    if not known then
+        return false, knownError
+    end
+    if type(payload.Displayed) ~= "boolean" then
+        return false, "invalid-displayed"
+    end
+
+    if not payload.Displayed then
+        if payload.SyncId ~= nil or payload.RevisionId ~= nil or payload.ContextRevisionId ~= nil then
+            return false, "display-clear-has-page"
+        end
+        return true
+    end
+
+    local reference = {
+        SyncId = payload.SyncId,
+        RevisionId = payload.RevisionId,
+        ContextRevisionId = payload.ContextRevisionId,
+    }
+    return ValidateActiveReference(reference, "display")
+end
+
+local function ValidateShallowPage(page)
+    if not IsPlainTable(page) then
+        return false, "invalid-page"
+    end
+    local known, knownError = ValidateKnownFields(page, PAGE_FIELDS, PAGE_REQUIRED_FIELDS, "page")
+    if not known then
+        return false, knownError
+    end
+    if page.Kind ~= "page" then
+        return false, "invalid-page-kind"
+    end
+    if not IsSyncId(page.SyncId, "page") then
+        return false, "invalid-page-sync-id"
+    end
+    if not IsInstallationId(page.OwnerId) then
+        return false, "invalid-page-owner-id"
+    end
+    local syncInstallationId = identity.ParseSyncId(page.SyncId)
+    if page.OwnerId ~= syncInstallationId then
+        return false, "owner-mismatch"
+    end
+    if not IsInteger(page.Revision, 1, protocol.LIMITS.ActivePageRevision) then
+        return false, "invalid-page-revision"
+    end
+    if not IsRevisionId(page.RevisionId) then
+        return false, "invalid-page-revision-id"
+    end
+    if not IsInteger(page.UpdatedAt, 0, protocol.LIMITS.ActivePageTimestamp) then
+        return false, "invalid-page-updated-at"
+    end
+    if not IsBoundedString(page.UpdatedBy, protocol.LIMITS.ActivePageAuthorBytes, false) then
+        return false, "invalid-page-updated-by"
+    end
+    if page.ParentSyncId ~= nil and not IsSyncId(page.ParentSyncId, "category") then
+        return false, "invalid-page-parent-sync-id"
+    end
+    if not IsInteger(page.Order, 1, protocol.LIMITS.ActivePageOrder) then
+        return false, "invalid-page-order"
+    end
+    if not IsBoundedString(page.Name, protocol.LIMITS.ActivePageNameBytes, false) then
+        return false, "invalid-page-name"
+    end
+    if not IsBoundedString(page.Vars, protocol.LIMITS.ActivePageVarsBytes, true) then
+        return false, "invalid-page-vars"
+    end
+    if not IsBoundedString(page.Contents, protocol.LIMITS.ActivePageContentsBytes, true) then
+        return false, "invalid-page-contents"
+    end
+    return true
+end
+
+local function ValidateShallowAncestorLayers(layers)
+    local count = DenseArrayLength(layers, protocol.LIMITS.ActivePageAncestorCount)
+    if not count then
+        return false, "invalid-ancestor-layers"
+    end
+
+    for index = 1, count do
+        local layer = layers[index]
+        if not IsPlainTable(layer) then
+            return false, "invalid-ancestor-layer"
+        end
+        local known, knownError =
+            ValidateKnownFields(layer, ANCESTOR_LAYER_FIELDS, ANCESTOR_LAYER_REQUIRED_FIELDS, "ancestor-layer")
+        if not known then
+            return false, knownError
+        end
+        if not IsSyncId(layer.SyncId, "category") then
+            return false, "invalid-ancestor-sync-id"
+        end
+        if not IsBoundedString(layer.Vars, protocol.LIMITS.ActivePageVarsBytes, true) then
+            return false, "invalid-ancestor-vars"
+        end
+    end
+    return true
+end
+
+local function ValidatePageUpsertPayload(payload)
+    local known, knownError =
+        ValidateKnownFields(payload, PAGE_UPSERT_FIELDS, PAGE_UPSERT_REQUIRED_FIELDS, "page-upsert")
+    if not known then
+        return false, knownError
+    end
+
+    local validPage, pageError = ValidateShallowPage(payload.Page)
+    if not validPage then
+        return false, pageError
+    end
+    local validLayers, layerError = ValidateShallowAncestorLayers(payload.AncestorVariableLayers)
+    if not validLayers then
+        return false, layerError
+    end
+    if not IsRevisionId(payload.ContextRevisionId) then
+        return false, "invalid-context-revision-id"
+    end
+    return true
+end
+
 --- Validates a capability-version map.
 -- @tparam table capabilities Capability names mapped to positive integer schema versions.
 -- @treturn boolean valid
@@ -178,7 +466,8 @@ function protocol.ValidateCapabilities(capabilities)
 end
 
 --- Validates a message payload for its declared protocol message type.
--- Only message types implemented by this inactive protocol slice are accepted.
+-- Active-page payload validation here is deliberately structural. Canonical
+-- entity and render-context hashes are verified by the synchronization layer.
 -- @tparam string messageType Protocol message type.
 -- @tparam table payload Message payload.
 -- @treturn boolean valid
@@ -187,15 +476,20 @@ function protocol.ValidatePayload(messageType, payload)
     if not MESSAGE_TYPES[messageType] then
         return false, "unknown-message-type"
     end
-    if type(payload) ~= "table" then
+    if not IsPlainTable(payload) then
         return false, "invalid-payload"
     end
 
     if messageType == "VERSION_QUERY" then
-        if next(payload) ~= nil then
-            return false, "version-query-payload-not-empty"
-        end
-        return true
+        return ValidateEmptyPayload(payload, "version-query")
+    elseif messageType == "DISPLAY_REQUEST" then
+        return ValidateEmptyPayload(payload, "display-request")
+    elseif messageType == "DISPLAY" then
+        return ValidateDisplayPayload(payload)
+    elseif messageType == "PAGE_REQUEST" then
+        return ValidateActiveReference(payload, "page-request")
+    elseif messageType == "PAGE_UPSERT" then
+        return ValidatePageUpsertPayload(payload)
     end
 
     if not IsBoundedString(payload.AddonVersion, protocol.LIMITS.AddonVersionBytes, false) then
