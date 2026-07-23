@@ -4,6 +4,7 @@
 	<Script file="utils\protocol.lua"/>
 	<Script file="utils\variables.lua"/>
 	<Script file="sync\schema.lua"/>
+	<Script file="sync\scopes.lua"/>
 	<Script file="entities.lua"/>
 	<Script file="smart_markers.lua"/>
 	<Script file="permissions.lua"/>
