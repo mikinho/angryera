@@ -4,9 +4,7 @@ description = "LDoc configuration for AngryEra addon source documentation."
 format = "markdown"
 dir = "docs/ldoc"
 file = {
-    "modules/ui/components/angry_tree_group.lua",
-    "Core.lua",
-    "Data.lua"
+    "modules"
 }
 readme = "README.md"
 sort = true

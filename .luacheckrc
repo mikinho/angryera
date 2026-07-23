@@ -33,6 +33,7 @@ globals = {
    "AngryEra_FirstPage",
    "AngryEra_PageMenu",
    "AngryEra_OutputDisplayed",
+   "AngryEra_Window",
 
    -- Built-in WoW UI Globals mutated by this addon
    "StaticPopupDialogs"
