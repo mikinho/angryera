@@ -1,4 +1,4 @@
-local currentTime = 100
+local currentTime = 1750000000
 local preciseTime = 42.5
 local grouped = true
 local raid = true
@@ -24,6 +24,9 @@ _G.AngryAssign_Meta = {
 _G.LE_PARTY_CATEGORY_INSTANCE = 1
 _G.LE_PARTY_CATEGORY_HOME = 2
 _G.time = function()
+    return currentTime
+end
+_G.GetServerTime = function()
     return currentTime
 end
 _G.GetTimePreciseSec = function()
@@ -441,6 +444,16 @@ local function LastActiveCallNamed(name)
     end
 end
 
+local timestampTest = {}
+timestampTest.NextRemoteSentAt = function()
+    local candidate = currentTime * 1000 + math.floor(preciseTime * 1000) % 1000
+    if timestampTest.RemoteProtocolSentAt and candidate <= timestampTest.RemoteProtocolSentAt then
+        candidate = timestampTest.RemoteProtocolSentAt + 1
+    end
+    timestampTest.RemoteProtocolSentAt = candidate
+    return candidate
+end
+
 local function BuildRemoteEnvelope(sessionId, messageType, payload, options)
     options = options or {}
     local installationId = options.InstallationId or remoteInstallationId
@@ -450,7 +463,7 @@ local function BuildRemoteEnvelope(sessionId, messageType, payload, options)
     end
     local envelope = assert(protocol.BuildEnvelope(session, messageType, payload, {
         ReplyTo = options.ReplyTo,
-        SentAt = options.SentAt or currentTime,
+        SentAt = options.SentAt or timestampTest.NextRemoteSentAt(),
     }))
     local encoded = assert(protocol.EncodeEnvelope(envelope, AngryEra:GetProtocolCodec()))
     return encoded, envelope
@@ -711,6 +724,31 @@ assert(displayTransport.Prefix == protocol.DISPLAY_PREFIX, "DISPLAY should use t
 assert(displayTransport.Priority == "ALERT", "DISPLAY should use alert priority on its isolated prefix")
 assert(displayTransport.Channel == "RAID", "Uncorrelated DISPLAY should use the current group channel")
 assert(displayEnvelope.ReplyTo == nil, "Group DISPLAY must not carry correlation")
+assert(
+    type(displayEnvelope.SentAt) == "number"
+        and displayEnvelope.SentAt == math.floor(displayEnvelope.SentAt)
+        and displayEnvelope.SentAt >= currentTime * 1000
+        and displayEnvelope.SentAt <= 9007199254740991,
+    "Protocol sends should carry a safe server-epoch millisecond order stamp"
+)
+assert(
+    AngryAssign_Meta.LastDisplaySentAt == displayEnvelope.SentAt,
+    "The latest display timestamp should persist across reloads"
+)
+
+timestampTest.TimeBeforeRollback = currentTime
+currentTime = currentTime - 1
+sent, result = AngryEra:SendProtocolMessage("DISPLAY", {
+    Displayed = false,
+})
+assert(sent, result)
+timestampTest.RollbackDisplayEnvelope = select(2, DecodeSent())
+assert(
+    timestampTest.RollbackDisplayEnvelope.SentAt == displayEnvelope.SentAt + 1,
+    "A backwards clock should advance the display timestamp by one logical tick"
+)
+sentMessages[#sentMessages] = nil
+currentTime = timestampTest.TimeBeforeRollback
 
 currentTime = currentTime + 21
 local pageRequestEncoded, pageRequestEnvelope =
@@ -891,7 +929,6 @@ local remoteDisplayPayload = {
 local remoteDisplayEncoded, remoteDisplayEnvelope =
     BuildRemoteEnvelope("remote-active-flow", "DISPLAY", remoteDisplayPayload, {
         Sequence = 10,
-        SentAt = 1,
     })
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, remoteDisplayEncoded, "RAID", "Alpha-Realm")
 AssertError(accepted, result, "invalid-transport-message-type", "display envelope over data prefix")
@@ -1099,7 +1136,8 @@ AngryEra.CancelPendingDisplayRecovery = nil
 displayRequiresLeader = true
 members["alpha-realm"] = "leader"
 members["beta-realm"] = "assistant"
-local preHandoffDisplay = BuildRemoteEnvelope("leader-handoff-alpha", "DISPLAY", {
+local preHandoffDisplay
+preHandoffDisplay, timestampTest.PreHandoffEnvelope = BuildRemoteEnvelope("leader-handoff-alpha", "DISPLAY", {
     Displayed = false,
 })
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, preHandoffDisplay, "RAID", "Alpha-Realm")
@@ -1121,6 +1159,8 @@ AssertError(accepted, result, "unauthorized", "display from a leader demoted to 
 
 local newLeaderDisplay = BuildRemoteEnvelope("leader-handoff-beta", "DISPLAY", {
     Displayed = false,
+}, {
+    SentAt = timestampTest.PreHandoffEnvelope.SentAt - 1,
 })
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, newLeaderDisplay, "RAID", "Beta-Realm")
 assert(accepted, result or "The newly promoted leader should control the display immediately")
@@ -1131,18 +1171,66 @@ members["beta-realm"] = "member"
 AngryEra:ResetProtocolPeers()
 
 members["beta-realm"] = "assistant"
-local firstDisplaySessionPacket = BuildRemoteEnvelope("beta-display-session-1", "DISPLAY", {
+currentTime = currentTime + 301
+timestampTest.ExpiredDisplayTimestamp = BuildRemoteEnvelope("beta-expired-display-clock", "DISPLAY", {
     Displayed = false,
+}, {
+    SentAt = (currentTime - 301) * 1000,
 })
+accepted, result = AngryEra:ReceiveProtocolMessage(
+    protocol.DISPLAY_PREFIX,
+    timestampTest.ExpiredDisplayTimestamp,
+    "RAID",
+    "Beta-Realm"
+)
+AssertError(accepted, result, "invalid-display-timestamp", "expired display timestamp")
+timestampTest.FutureDisplayTimestamp = BuildRemoteEnvelope("beta-future-display-clock", "DISPLAY", {
+    Displayed = false,
+}, {
+    SentAt = (currentTime + 11) * 1000,
+})
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, timestampTest.FutureDisplayTimestamp, "RAID", "Beta-Realm")
+AssertError(accepted, result, "invalid-display-timestamp", "future display timestamp")
+
+local firstDisplaySessionPacket
+firstDisplaySessionPacket, timestampTest.FirstDisplaySessionEnvelope =
+    BuildRemoteEnvelope("beta-display-session-1", "DISPLAY", {
+        Displayed = false,
+    })
 accepted, result =
     AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, firstDisplaySessionPacket, "RAID", "Beta-Realm")
 assert(accepted, result)
-local secondDisplaySessionPacket = BuildRemoteEnvelope("beta-display-session-2", "DISPLAY", {
-    Displayed = false,
-})
+local secondDisplaySessionPacket
+secondDisplaySessionPacket, timestampTest.SecondDisplaySessionEnvelope =
+    BuildRemoteEnvelope("beta-display-session-2", "DISPLAY", {
+        Displayed = false,
+    })
 accepted, result =
     AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, secondDisplaySessionPacket, "RAID", "Beta-Realm")
 assert(accepted, result)
+
+timestampTest.QueuedOldDisplaySession = BuildRemoteEnvelope("beta-display-session-queued-old", "DISPLAY", {
+    Displayed = false,
+}, {
+    SentAt = timestampTest.FirstDisplaySessionEnvelope.SentAt,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(
+    protocol.DISPLAY_PREFIX,
+    timestampTest.QueuedOldDisplaySession,
+    "RAID",
+    "Beta-Realm"
+)
+AssertError(
+    accepted,
+    result,
+    "stale-display-timestamp",
+    "previously unseen queued session older than the active display"
+)
+assert(
+    timestampTest.SecondDisplaySessionEnvelope.SentAt > timestampTest.FirstDisplaySessionEnvelope.SentAt,
+    "Remote display fixtures should model strictly ordered millisecond sends"
+)
 
 local nondisplayRotatedSession = BuildRemoteEnvelope("beta-nondisplay-session", "PAGE_UPSERT", remoteUpsert)
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, nondisplayRotatedSession, "RAID", "Beta-Realm")
@@ -1196,6 +1284,7 @@ local localSessionForCapacity = AngryEra:GetProtocolSession()
 assert(localSessionForCapacity.Sequence < 98, "Capacity test requires a controlled sequence boundary")
 localSessionForCapacity.Sequence = 98
 local chronologicalDisplayIds = {}
+timestampTest.PreviousChronologicalSentAt = nil
 for index = 1, 10 do
     sent, chronologicalDisplayIds[index] = AngryEra:SendProtocolDisplay({
         Displayed = true,
@@ -1204,6 +1293,14 @@ for index = 1, 10 do
         ContextRevisionId = localReference.ContextRevisionId,
     })
     assert(sent, chronologicalDisplayIds[index])
+    timestampTest.ChronologicalDisplayEnvelope = select(2, DecodeSent())
+    if timestampTest.PreviousChronologicalSentAt then
+        assert(
+            timestampTest.ChronologicalDisplayEnvelope.SentAt == timestampTest.PreviousChronologicalSentAt + 1,
+            "Same-millisecond display sends should advance by one logical tick"
+        )
+    end
+    timestampTest.PreviousChronologicalSentAt = timestampTest.ChronologicalDisplayEnvelope.SentAt
 end
 local evictedChronologicalRequest =
     BuildRemoteEnvelope("remote-chronological-evicted", "PAGE_REQUEST", localReference, {
@@ -1263,6 +1360,7 @@ local afterResetQuery = BuildRemoteEnvelope("remote-query-after-reset", "VERSION
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, afterResetQuery, "RAID", "Alpha-Realm")
 assert(accepted, result)
 
+timestampTest.SentAtBeforeSessionRestart = AngryAssign_Meta.LastDisplaySentAt
 started, startError = AngryEra:StartProtocolSession("local-session-2")
 assert(started and not startError, "A second enable should create a fresh session")
 assert(activeResetCount == activeResetsBeforePeerReset + 2, "A new session should clear active transients")
@@ -1272,6 +1370,21 @@ assert(
     "Installation identity should remain stable across sessions"
 )
 assert(AngryEra:GetProtocolPeer("Alpha-Realm") == nil, "Starting a new session should clear stale peers")
+assert(
+    AngryAssign_Meta.LastDisplaySentAt == timestampTest.SentAtBeforeSessionRestart,
+    "Starting a new protocol session should retain the monotonic timestamp watermark"
+)
+
+sentMessages = {}
+sent, result = AngryEra:SendProtocolMessage("DISPLAY", {
+    Displayed = false,
+})
+assert(sent, result)
+timestampTest.RestartedSessionEnvelope = select(2, DecodeSent())
+assert(
+    timestampTest.RestartedSessionEnvelope.SentAt > timestampTest.SentAtBeforeSessionRestart,
+    "The first display in a new session should remain newer than the prior session"
+)
 
 sentMessages = {}
 local chronologicalQueryIds = {}
@@ -1324,6 +1437,36 @@ grouped = false
 sent, result = AngryEra:SendProtocolVersionQuery(true)
 AssertError(sent, result, "no-channel", "query while solo")
 grouped = true
+
+timestampTest.PersistedSentAtBeforeReload = AngryAssign_Meta.LastDisplaySentAt
+assert(loadfile("modules/protocol_runtime.lua"))("AngryEra", app)
+started, startError = AngryEra:StartProtocolSession("local-session-after-reload")
+assert(started and not startError, "A reloaded runtime should start a fresh protocol session")
+sentMessages = {}
+sent, result = AngryEra:SendProtocolMessage("DISPLAY", {
+    Displayed = false,
+})
+assert(sent, result)
+timestampTest.AfterReloadEnvelope = select(2, DecodeSent())
+assert(
+    timestampTest.AfterReloadEnvelope.SentAt == timestampTest.PersistedSentAtBeforeReload + 1,
+    "A reloaded runtime should continue above its persisted timestamp"
+)
+
+AngryAssign_Meta.LastDisplaySentAt = (currentTime + 11) * 1000
+assert(loadfile("modules/protocol_runtime.lua"))("AngryEra", app)
+started, startError = AngryEra:StartProtocolSession("local-session-after-poisoned-clock")
+assert(started and not startError, "A runtime with a poisoned saved clock should still start")
+sentMessages = {}
+sent, result = AngryEra:SendProtocolMessage("DISPLAY", {
+    Displayed = false,
+})
+assert(sent, result)
+timestampTest.RepairedClockEnvelope = select(2, DecodeSent())
+assert(
+    timestampTest.RepairedClockEnvelope.SentAt == currentTime * 1000 + math.floor(preciseTime * 1000) % 1000,
+    "An implausibly future saved timestamp should be ignored and repaired"
+)
 
 local codec = AngryEra:GetProtocolCodec()
 local inflated, inflationError = codec.decompress("\001" .. string.rep("x", 9), 8)

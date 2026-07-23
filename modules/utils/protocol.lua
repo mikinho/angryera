@@ -593,7 +593,7 @@ end
 -- @tparam table session Session returned by `NewSession`.
 -- @tparam string messageType Protocol message type.
 -- @tparam table payload Type-specific payload.
--- @tparam table options Requires `SentAt`; may include `ReplyTo`.
+-- @tparam table options Requires millisecond `SentAt`; may include `ReplyTo`.
 -- @treturn table|nil envelope
 -- @treturn string|nil errorCode
 function protocol.BuildEnvelope(session, messageType, payload, options)

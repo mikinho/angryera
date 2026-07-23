@@ -26,6 +26,7 @@ Every installation has account-wide metadata stored in a dedicated
 - an installation identifier generated once and reused by every character
   sharing that SavedVariables file;
 - a persisted monotonic entity counter;
+- the last monotonic display-send order stamp;
 - idempotent migration markers.
 
 Display, window, and tree resets never clear identity metadata.
@@ -182,7 +183,7 @@ reuse after a reload:
     SenderInstallationId = "installation-id",
     SenderSessionId = "session-id",
     Sequence = 1,
-    SentAt = 1234567890,
+    SentAt = 1234567890123,
     Payload = {},
 }
 ```
@@ -207,6 +208,15 @@ exact decompressed length before decoding. Receivers reject an oversized length
 before calling the decompressor, then verify that the decoded length exactly
 matches it. Raw DEFLATE is not accepted because its bundled decoder cannot
 enforce the output limit before expansion.
+
+`SentAt` is a hybrid server-epoch millisecond order stamp. For `DISPLAY`, the
+sender combines the synchronized `GetServerTime()` second with the millisecond
+component of `GetTimePreciseSec()` (or `GetTime()` when necessary), persists the
+last display value, and advances it by one logical tick whenever the sampled
+clock ties or moves backward. This keeps display enqueues strictly ordered
+across rapid sends, protocol session rotation, and UI reloads. Other envelope
+types carry the current millisecond stamp without consuming the display-order
+counter.
 
 `DISPLAY` is the only message type allowed on `AngryEra3D`; every other envelope
 must use `AngryEra3`. Prefix/type mismatches are rejected before dispatch.
@@ -291,11 +301,16 @@ leader/session without changing persisted page ownership or contents. Unknown,
 changed, or invalid tuples remain pending until their matching `PAGE_UPSERT`
 arrives.
 
-`DISPLAY` sequence numbers, not arrival timestamps, decide the winner within a
-leader session. The receiver retains only the newest pending selection, rejects
-lower delayed sequences, and completes a pending selection only from an exact
-matching page tuple. Thus an older delayed page transfer cannot reactivate an
-older display after a rapid page change.
+`DISPLAY` sequence numbers decide the winner within one leader session. The
+receiver also requires each accepted display timestamp from that authenticated
+player to be newer than the last accepted timestamp, so a delayed packet from a
+previously unseen older session cannot rotate over the active session. Display
+timestamps are compared only within one player identity; current-leader
+authorization remains decisive across a leadership handoff. Implausibly old or
+future display timestamps are rejected without advancing the watermark. The
+receiver retains only the newest pending selection and completes it only from
+an exact matching page tuple, so an older delayed page transfer cannot
+reactivate an older display after a rapid page change.
 
 ## Entity revisions
 

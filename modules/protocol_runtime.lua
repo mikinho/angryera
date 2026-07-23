@@ -29,6 +29,11 @@ local MAX_REPLAY_PLAYERS = 64
 local MAX_REPLAY_SESSIONS_PER_PLAYER = 4
 local MAX_SEEN_PER_SESSION = 64
 local MAX_DISPLAY_SESSIONS_PER_PLAYER = 64
+local TIMESTAMP_MILLISECONDS_PER_SECOND = 1000
+local DISPLAY_TIMESTAMP_MAX_AGE_SECONDS = 5 * 60
+local DISPLAY_TIMESTAMP_MAX_FUTURE_SECONDS = 10
+local MINIMUM_PLAUSIBLE_SERVER_EPOCH = 1000000000
+local MAX_SAFE_INTEGER = 9007199254740991
 
 local protocolSession
 local peers = {}
@@ -45,6 +50,7 @@ local lastVersionReplyCount = 0
 local lastQueryAt
 local warnedOutOfDate = false
 local transportOrdinal = 0
+local lastDisplaySentAt
 
 local HANDLERS
 
@@ -54,6 +60,94 @@ end
 
 local function IsPlainTable(value)
     return type(value) == "table" and getmetatable(value) == nil
+end
+
+local function IsSafeInteger(value)
+    return type(value) == "number" and value == math.floor(value) and value >= 0 and value <= MAX_SAFE_INTEGER
+end
+
+local function CurrentEpochSeconds()
+    if type(GetServerTime) == "function" then
+        local ok, value = pcall(GetServerTime)
+        if ok and IsSafeInteger(value) and value >= MINIMUM_PLAUSIBLE_SERVER_EPOCH then
+            return value
+        end
+    end
+
+    local value = Now()
+    if not IsSafeInteger(value) then
+        return nil
+    end
+    return value
+end
+
+local function CurrentPreciseMillisecond()
+    local clock
+    if type(GetTimePreciseSec) == "function" then
+        clock = GetTimePreciseSec
+    elseif type(GetTime) == "function" then
+        clock = GetTime
+    end
+    if not clock then
+        return 0
+    end
+
+    local ok, value = pcall(clock)
+    if not ok or type(value) ~= "number" or value < 0 then
+        return 0
+    end
+    return math.floor(value * TIMESTAMP_MILLISECONDS_PER_SECOND) % TIMESTAMP_MILLISECONDS_PER_SECOND
+end
+
+local function CurrentEpochMilliseconds()
+    local seconds = CurrentEpochSeconds()
+    if not seconds or seconds > math.floor(MAX_SAFE_INTEGER / TIMESTAMP_MILLISECONDS_PER_SECOND) then
+        return nil
+    end
+    return seconds * TIMESTAMP_MILLISECONDS_PER_SECOND + CurrentPreciseMillisecond()
+end
+
+local function NextDisplaySentAt()
+    local candidate = CurrentEpochMilliseconds()
+    if not candidate then
+        return nil, "invalid-clock"
+    end
+
+    local previous = lastDisplaySentAt
+    local meta = IsPlainTable(AngryAssign_Meta) and AngryAssign_Meta or nil
+    local persisted = meta and rawget(meta, "LastDisplaySentAt") or nil
+    if
+        previous == nil
+        and IsSafeInteger(persisted)
+        and persisted <= candidate + DISPLAY_TIMESTAMP_MAX_FUTURE_SECONDS * TIMESTAMP_MILLISECONDS_PER_SECOND
+    then
+        previous = persisted
+    end
+
+    local sentAt = candidate
+    if previous and previous >= sentAt then
+        if previous >= MAX_SAFE_INTEGER then
+            return nil, "timestamp-exhausted"
+        end
+        sentAt = previous + 1
+    end
+
+    lastDisplaySentAt = sentAt
+    if meta then
+        meta.LastDisplaySentAt = sentAt
+    end
+    return sentAt
+end
+
+local function ValidateDisplayTimestamp(sentAt)
+    local seconds = CurrentEpochSeconds()
+    if not seconds then
+        return false
+    end
+
+    local sentSeconds = math.floor(sentAt / TIMESTAMP_MILLISECONDS_PER_SECOND)
+    return sentSeconds >= seconds - DISPLAY_TIMESTAMP_MAX_AGE_SECONDS
+        and sentSeconds <= seconds + DISPLAY_TIMESTAMP_MAX_FUTURE_SECONDS
 end
 
 local function NormalizePlayerKey(player)
@@ -414,6 +508,7 @@ local function GetReplayState(auth, create)
             DisplaySessionCount = 0,
             ActiveDisplaySessionKey = nil,
             DisplayEpoch = 0,
+            HighestDisplaySentAt = nil,
         }
         replayPlayers[playerKey] = playerState
         replayPlayerCount = replayPlayerCount + 1
@@ -479,10 +574,13 @@ local function IsSeen(sessionState, sender, messageId)
     return sessionState.Seen.Entries[sender .. "\0" .. messageId] == true
 end
 
-local function ValidateDisplayOrder(playerState, sessionKey, sequence)
+local function ValidateDisplayOrder(playerState, sessionKey, sequence, sentAt)
     local displaySession = playerState.DisplaySessions[sessionKey]
     if displaySession and displaySession.Retired then
         return false, "stale-display-session"
+    end
+    if playerState.HighestDisplaySentAt ~= nil and sentAt <= playerState.HighestDisplaySentAt then
+        return false, "stale-display-timestamp"
     end
     if
         displaySession
@@ -498,7 +596,7 @@ local function ValidateDisplayOrder(playerState, sessionKey, sequence)
     return true
 end
 
-local function CommitDisplayOrder(playerState, sessionKey, sequence)
+local function CommitDisplayOrder(playerState, sessionKey, sequence, sentAt)
     local displaySession = playerState.DisplaySessions[sessionKey]
     if playerState.ActiveDisplaySessionKey ~= sessionKey then
         local activeSession = playerState.DisplaySessions[playerState.ActiveDisplaySessionKey]
@@ -520,6 +618,7 @@ local function CommitDisplayOrder(playerState, sessionKey, sequence)
 
     displaySession.HighestSequence = sequence
     displaySession.LastAcceptedOrdinal = NextTransportOrdinal()
+    playerState.HighestDisplaySentAt = sentAt
 end
 
 local function SafeCanReceive(self, sender, action)
@@ -869,9 +968,21 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
         return false, "missing-target"
     end
 
+    local sentAt
+    local sentAtError
+    if messageType == "DISPLAY" then
+        sentAt, sentAtError = NextDisplaySentAt()
+    else
+        sentAt = CurrentEpochMilliseconds()
+        sentAtError = sentAt and nil or "invalid-clock"
+    end
+    if not sentAt then
+        return false, sentAtError
+    end
+
     local envelope, envelopeError = protocol.BuildEnvelope(protocolSession, messageType, payload, {
         ReplyTo = options.ReplyTo,
-        SentAt = options.SentAt or Now(),
+        SentAt = sentAt,
     })
     if not envelope then
         return false, envelopeError
@@ -899,9 +1010,7 @@ function AngryEra:SendProtocolVersionQuery(force)
         return false, "throttled"
     end
 
-    local sent, messageId = self:SendProtocolMessage("VERSION_QUERY", {}, {
-        SentAt = now,
-    })
+    local sent, messageId = self:SendProtocolMessage("VERSION_QUERY", {})
     if not sent then
         return false, messageId
     end
@@ -1339,6 +1448,9 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     if not action or not SafeCanReceive(self, sender, action) then
         return false, "unauthorized"
     end
+    if envelope.Type == "DISPLAY" and not ValidateDisplayTimestamp(envelope.SentAt) then
+        return false, "invalid-display-timestamp"
+    end
 
     local replayState, replayError, replayPlayer, replaySessionKey = GetReplayState(auth, true)
     if not replayState then
@@ -1346,7 +1458,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     end
     if envelope.Type == "DISPLAY" then
         local displayOrderValid, displayOrderError =
-            ValidateDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence)
+            ValidateDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence, envelope.SentAt)
         if not displayOrderValid and displayOrderError == "stale-display-session" then
             return false, displayOrderError
         end
@@ -1356,7 +1468,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     end
     if envelope.Type == "DISPLAY" then
         local displayOrderValid, displayOrderError =
-            ValidateDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence)
+            ValidateDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence, envelope.SentAt)
         if not displayOrderValid then
             return false, displayOrderError
         end
@@ -1372,7 +1484,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
 
     local accepted, result, warning = self:DispatchProtocolMessage(auth, channel, envelope)
     if accepted and envelope.Type == "DISPLAY" then
-        CommitDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence)
+        CommitDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence, envelope.SentAt)
     end
     return accepted, result, warning
 end
