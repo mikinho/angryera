@@ -1798,9 +1798,7 @@ local function BindDisplayAuthority(auth)
         Sender = auth.Sender,
         SenderInstallationId = auth.SenderInstallationId,
         SenderSessionId = auth.SenderSessionId,
-        SignalSentAt = auth.SentAt,
     }
-    ObserveDisplayAuthoritySignal(auth)
 end
 
 local function PendingDisplayAuthorityBootstraps(auth, now)
@@ -4254,6 +4252,13 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
             correlationRecord.AuthorityBootstrap = true
         end
         BindDisplayAuthority(auth)
+    end
+    -- PAGE_UPSERT may establish the correlated identity before DISPLAY arrives,
+    -- but its wire timestamp is not an authority freshness signal. Only
+    -- accepted DISPLAY (validated above against the local clock) may advance
+    -- the chronological signal for this bound tenure.
+    if accepted and envelope.Type == "DISPLAY" then
+        ObserveDisplayAuthoritySignal(auth)
     end
     if accepted and envelope.Type == "PAGE_UPSERT" and compactPageMetadata then
         if compactPageMetadata.AncestorContextIncluded == true and #envelope.Payload.AncestorVariableLayers > 0 then

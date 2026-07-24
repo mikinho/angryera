@@ -3687,6 +3687,101 @@ function AngryEra:RunAuthorityTenureTests()
         self:ResetProtocolPeers()
     end
 
+    do
+        sentMessages = {}
+        local requestSent, requestId = self:SendProtocolDisplayRequest("Beta-Realm")
+        assert(requestSent, requestId)
+        local pageReference = {
+            SyncId = installationB .. ":page:92",
+            Revision = 1,
+            RevisionId = "fcs32:93939393",
+            ContextRevisionId = "fcs32:94949494",
+        }
+        local futurePage = BuildRemoteEnvelope(
+            "leader-b-page-first",
+            "PAGE_UPSERT",
+            PageUpsert(pageReference, installationB, "Beta-Realm"),
+            {
+                InstallationId = installationB,
+                ReplyTo = requestId,
+                SentAt = (currentTime + 24 * 60 * 60) * 1000,
+            }
+        )
+        local pageAccepted, pageResult =
+            self:ReceiveProtocolMessage(protocol.PAGE_PREFIX, futurePage, "WHISPER", "Beta-Realm")
+        assert(pageAccepted, pageResult)
+        assert(
+            self:GetProtocolDisplayAuthority().SenderSessionId == "leader-b-page-first",
+            "a correlated page-first response should bind the exact leader identity"
+        )
+
+        sentMessages = {}
+        local nextQuery = BuildRemoteEnvelope("leader-b-after-page", "VERSION_QUERY", {}, {
+            InstallationId = installationB,
+            SentAt = currentTime * 1000,
+        })
+        local queryAccepted, queryResult =
+            self:ReceiveProtocolMessage(protocol.PREFIX, nextQuery, "RAID", "Beta-Realm")
+        assert(queryAccepted, queryResult)
+        local displayRequestCount = 0
+        for index = 1, #sentMessages do
+            local _, sentEnvelope = DecodeSent(index)
+            if sentEnvelope.Type == "DISPLAY_REQUEST" then
+                displayRequestCount = displayRequestCount + 1
+            end
+        end
+        assert(
+            displayRequestCount == 1 and self:GetProtocolDisplayAuthority() == nil,
+            "a page-first timestamp must permit exactly one fresh leader-session bootstrap"
+        )
+        self:ResetProtocolPeers()
+    end
+
+    do
+        sentMessages = {}
+        local requestSent, requestId = self:SendProtocolDisplayRequest("Beta-Realm")
+        assert(requestSent, requestId)
+        local acceptedDisplay = BuildRemoteEnvelope("leader-b-display-signal", "DISPLAY", {
+            Displayed = false,
+            ActivePageChanges = true,
+        }, {
+            InstallationId = installationB,
+            ReplyTo = requestId,
+            SentAt = (currentTime + 1) * 1000,
+        })
+        local displayAccepted, displayResult =
+            self:ReceiveProtocolMessage(
+                protocol.DISPLAY_PREFIX,
+                acceptedDisplay,
+                "WHISPER",
+                "Beta-Realm"
+            )
+        assert(displayAccepted, displayResult)
+
+        local olderSessionQuery = BuildRemoteEnvelope(
+            "leader-b-before-display-signal",
+            "VERSION_QUERY",
+            {},
+            {
+                InstallationId = installationB,
+                SentAt = currentTime * 1000,
+            }
+        )
+        local queryAccepted, queryError =
+            self:ReceiveProtocolMessage(protocol.PREFIX, olderSessionQuery, "RAID", "Beta-Realm")
+        AssertError(
+            queryAccepted,
+            queryError,
+            "stale-display-authority",
+            "an older different-session query after an accepted display"
+        )
+        assert(
+            self:GetProtocolDisplayAuthority().SenderSessionId == "leader-b-display-signal",
+            "a stale query must not replace the accepted display authority"
+        )
+        self:ResetProtocolPeers()
+    end
+
     RequestAndBind("Beta-Realm", installationB, "leader-b-1")
     local authority = self:GetProtocolDisplayAuthority()
     assert(
