@@ -1,3 +1,30 @@
+## v3.1.0-BETA
+
+* **BREAKING CHANGE**: Rebuilt shared assignments for the current group. This beta cannot share assignments or displayed pages with earlier AngryEra or AngryAssignments versions. Everyone who participates in shared assignments must update before the raid.
+* **BREAKING CHANGE**: The current party or raid leader is now the only player who can select or clear the shared display. AngryEra shares the active page and the variable context needed to render it instead of mirroring entire page libraries through the guild.
+* Improvement: Existing pages, categories, settings, and legacy permission choices migrate automatically. Downgrading after opening this beta requires restoring a pre-upgrade SavedVariables backup.
+* New Feature: Added inherited variables across nested categories. Values merge from the outermost category through nested categories to the page, with the nearest value winning.
+* New Feature: Added inherited `$` metadata for assignment automation and addon integrations.
+* New Feature: Added automatic raid-marker assignments using `$STAR`, `$CIRCLE`, `$DIAMOND`, `$TRIANGLE`, `$MOON`, `$SQUARE`, `$X`/`$CROSS`, and `$SKULL` page metadata.
+* New Feature: Added boss-kill auto-advance with `$AUTOADVANCE`, `$ENCOUNTER`, and `$ENCOUNTERID`. Only the leader advances after a successful kill, and sequences use locally owned sibling pages inside one category.
+* New Feature: Added `ANGRYERA_NOTE_UPDATE` and public getters for the displayed note, resolved variables, metadata, and hierarchy for WeakAuras and other addons.
+* New Feature: Added session-only `/aa debug`, `/aa debug on`, `/aa debug off`, and `/aa debug status` diagnostics.
+* New Feature: Added **Leader + Qualified Assistants**, **Leader Only**, and **Ignore Shared Changes** receive policies, plus **Trusted Assistants** and **Allow All Raid Assistants** controls.
+* New Feature: Qualified raid assistants can propose name, variable, and content edits to the exact active shared page. They must currently have raid assist and also be a guild officer or higher in the leader's guild, be listed as trusted, or be covered by **Allow All Raid Assistants**.
+* Improvement: The leader serializes accepted assistant edits and publishes the final page. Conflicting or superseded assistant work remains visible as a recoverable draft instead of being silently discarded.
+* Improvement: Page changes are faster and ordered. Rapid Previous/Next navigation settles on the final selection, and an older delayed update cannot replace the newest page.
+* Improvement: Late joiners, reloaded clients, dropped display responses, and raid-leader changes automatically recover the leader's current page.
+* Improvement: Received-page revisions preserve each player's local category placement and ordering. Replacing read-only received data during import creates a uniquely named local copy.
+* Improvement: Restore loads an older content version as an unsaved draft; the page changes only after **Save**.
+* Improvement: Version checks now focus on the current party or raid and report same or different versions, clients not accepting shared changes, and clients without the addon.
+* Improvement: Strengthened validation and size limits for encoded imports and shared data.
+* Fix: Stopped unnecessary idle sharing requests and stale responses that could cause repeated background traffic.
+* Fix: Prevented page jumping, stale leader state, and updates from a former leader after group leadership changes.
+* Fix: Hardened automatic marker cleanup so AngryEra does not fight manual marker changes.
+* Fix: Hardened auto-advance against wipes, ambiguous encounter bindings, missing next pages, and temporary send failures.
+* Fix: Removed the invalid `PARTY_CONVERTED_TO_RAID` event registration that caused an error on Classic clients.
+* Developer: Added broad regression coverage for permissions, leader handoffs, active-page delivery, variables, metadata, automatic markers, auto-advance, imports, migrations, and the public API.
+
 ## v3.0.1
 
 * New Feature: Added recursive variable references, allowing variables such as `LIP1={{FURY12}}` to resolve through other page or category variables.
