@@ -685,7 +685,6 @@ function AngryEra:OnEnable()
     self:RegisterEvent("GUILD_ROSTER_UPDATE")
     self:RegisterEvent("ENCOUNTER_END")
     self:RegisterEvent("PARTY_LEADER_CHANGED")
-    self:RegisterEvent("PARTY_CONVERTED_TO_RAID")
     self:RegisterEvent("GROUP_JOINED")
     self:RegisterEvent("GROUP_ROSTER_UPDATE")
 
@@ -739,34 +738,6 @@ function AngryEra:PARTY_LEADER_CHANGED()
             self:SendRequestDisplay()
         end
     end
-end
-
-function AngryEra:PARTY_CONVERTED_TO_RAID()
-    local localAuthority = type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
-    if self._protocolStarted and type(self.ResetDisplayAuthorityPublicationState) == "function" then
-        self:ResetDisplayAuthorityPublicationState("group-channel-changed")
-    end
-    if self._protocolStarted and type(self.ResetProtocolAncestorAnnouncements) == "function" then
-        self:ResetProtocolAncestorAnnouncements()
-    end
-    if self._protocolStarted and localAuthority then
-        if type(self.RestoreDisplayAuthority) == "function" then
-            self:RestoreDisplayAuthority()
-        end
-    elseif self._protocolStarted then
-        local authority
-        if type(self.GetProtocolDisplayAuthority) == "function" then
-            authority = self:GetProtocolDisplayAuthority()
-        end
-        local authorityCurrent = type(authority) == "table" and type(authority.Sender) == "string"
-        if authorityCurrent and type(self.CanReceiveFrom) == "function" then
-            authorityCurrent = self:CanReceiveFrom(authority.Sender, "display") == true
-        end
-        if not authorityCurrent then
-            self:ScheduleTimer("SendRequestDisplayIfUnbound", 0.5)
-        end
-    end
-    self:UpdateDisplayedIfNewGroup()
 end
 
 function AngryEra:GROUP_JOINED()

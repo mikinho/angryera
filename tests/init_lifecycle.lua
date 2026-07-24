@@ -109,6 +109,7 @@ function AngryEra:ScheduleTimer(method, delay)
 end
 
 function AngryEra:RegisterEvent(event)
+    assert(event ~= "PARTY_CONVERTED_TO_RAID", "Classic rejects the PARTY_CONVERTED_TO_RAID event")
     Record("register-event", event)
 end
 
@@ -273,10 +274,10 @@ assert(registeredPrefixes.AngryEra3P == "ReceiveProtocolMessage", "startup shoul
 assert(#registrationOrder == 4, "startup should register exactly four protocol prefixes")
 assert(
     registeredEvents.PARTY_LEADER_CHANGED
-        and registeredEvents.PARTY_CONVERTED_TO_RAID
         and registeredEvents.GROUP_JOINED
-        and registeredEvents.GROUP_ROSTER_UPDATE,
-    "leader, party-conversion, and group-boundary handlers must be active before delayed discovery"
+        and registeredEvents.GROUP_ROSTER_UPDATE
+        and not registeredEvents.PARTY_CONVERTED_TO_RAID,
+    "supported leader and group-boundary handlers must be active without registering the invalid conversion event"
 )
 assert(
     sessionIndex < registrationOrder[1].Index
@@ -387,6 +388,12 @@ for _, call in ipairs(calls) do
     end
     assert(call.Name ~= "version-query", "routine roster refreshes must not rediscover protocol peers")
     assert(call.Name ~= "request-display", "routine roster refreshes must not request the active page")
+    assert(
+        call.Name ~= "reset-authority-publication"
+            and call.Name ~= "reset-protocol-ancestor-announcements"
+            and call.Name ~= "restore-display-authority",
+        "same-channel roster refreshes must not disturb publication state"
+    )
 end
 assert(markerRetryCount == 1, "a roster update should retry unresolved displayed-note marker targets once")
 
@@ -430,53 +437,6 @@ assert(calls[5].Name == "version-query", "a promoted leader should advertise pro
 assert(calls[6].Name == "restore-display-authority", "a promoted leader should restore its current display anchor")
 for _, call in ipairs(calls) do
     assert(call.Name ~= "request-display", "a promoted leader must not whisper a display request to itself")
-end
-
-calls = {}
-isRaidLeader = false
-AngryEra:PARTY_CONVERTED_TO_RAID()
-assert(
-    calls[1].Name == "reset-authority-publication"
-        and calls[2].Name == "reset-protocol-ancestor-announcements"
-        and calls[3].Name == "schedule"
-        and calls[3].Value.Method == "SendRequestDisplayIfUnbound",
-    "a follower party conversion should explicitly schedule a targeted display request"
-)
-assert(calls[4].Name == "update-group-display", "party conversion should reconcile the displayed group afterward")
-for _, call in ipairs(calls) do
-    assert(call.Name ~= "version-query", "followers must not broadcast discovery after party conversion")
-    assert(call.Name ~= "refresh-tenure", "a channel conversion must preserve leader-bound proposal correlations")
-end
-
-calls = {}
-protocolDisplayAuthority = {
-    Sender = "Leader-Realm",
-}
-AngryEra:PARTY_CONVERTED_TO_RAID()
-for _, call in ipairs(calls) do
-    assert(
-        call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplayIfUnbound",
-        "a bound follower should consume the leader's one raid reannouncement without redundant whispers"
-    )
-end
-protocolDisplayAuthority = nil
-
-calls = {}
-isRaidLeader = true
-restoreAsAuthority = true
-AngryEra:PARTY_CONVERTED_TO_RAID()
-restoreAsAuthority = false
-assert(
-    calls[3].Name == "restore-display-authority",
-    "the leader should reannounce its current DISPLAY/PAGE on the new raid channel"
-)
-for _, call in ipairs(calls) do
-    assert(call.Name ~= "version-query", "channel conversion should not emit an O(N) discovery query")
-    assert(call.Name ~= "refresh-tenure", "channel conversion must not rotate the valid authority session")
-    assert(
-        call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplayIfUnbound",
-        "the leader must not schedule a display request to itself after party conversion"
-    )
 end
 isRaidLeader = false
 
