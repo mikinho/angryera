@@ -1,6 +1,12 @@
 local calls = {}
 local restoreAsAuthority = false
 local isRaidLeader = false
+local protocolDisplayAuthority
+local refreshPendingDisplayBootstrap = false
+local requestDisplaySucceeds = true
+local requestDisplayError = "request-failed"
+local versionQuerySucceeds = true
+local authorityReceiveAllowed = true
 
 local function Record(name, value)
     calls[#calls + 1] = {
@@ -119,12 +125,34 @@ end
 
 function AngryEra:SendProtocolVersionQuery(force)
     Record("version-query", force)
-    return true, "query-id"
+    return versionQuerySucceeds, versionQuerySucceeds and "query-id" or "query-failed"
 end
 
 function AngryEra:SendRequestDisplay()
     Record("request-display")
-    return true, "display-request-id"
+    return requestDisplaySucceeds, requestDisplaySucceeds and "display-request-id" or requestDisplayError
+end
+
+function AngryEra:CancelDisplayRequestWatchdog()
+    Record("cancel-display-request-watchdog")
+    return true
+end
+
+function AngryEra:GetProtocolDisplayAuthority()
+    return protocolDisplayAuthority
+end
+
+function AngryEra:CanReceiveFrom(_, action)
+    return action == "display" and authorityReceiveAllowed
+end
+
+function AngryEra:RefreshProtocolLeadershipTenure(_, force)
+    Record("refresh-tenure", force)
+    return true, {
+        LocalAuthority = isRaidLeader,
+        PendingDisplayBootstrap = not isRaidLeader and refreshPendingDisplayBootstrap,
+        Rotated = isRaidLeader and force == true,
+    }
 end
 
 function AngryEra:UpdateDisplayedIfNewGroup()
@@ -137,6 +165,10 @@ end
 
 function AngryEra:ResetDisplayPublicationState()
     Record("reset-display-publication")
+end
+
+function AngryEra:ResetDisplayAuthorityPublicationState(reason)
+    Record("reset-authority-publication", reason)
 end
 
 function AngryEra:ResetProtocolAncestorAnnouncements()
@@ -187,6 +219,8 @@ local captureIndex
 local startupClearIndex
 local sessionIndex
 local restoreIndex
+local startupRequestIndex
+local startupQueryIndex
 local registeredPrefixes = {}
 local registrationOrder = {}
 local registeredEvents = {}
@@ -201,6 +235,10 @@ for index, call in ipairs(calls) do
         sessionIndex = index
     elseif call.Name == "restore-display-authority" then
         restoreIndex = index
+    elseif call.Name == "request-display" then
+        startupRequestIndex = index
+    elseif call.Name == "version-query" then
+        startupQueryIndex = index
     elseif call.Name == "register-comm" then
         registeredPrefixes[call.Value.Prefix] = call.Value.Method
         registrationOrder[#registrationOrder + 1] = {
@@ -214,6 +252,12 @@ end
 assert(
     createIndex and captureIndex and startupClearIndex and sessionIndex and restoreIndex,
     "startup should capture display continuity, clear follower state, start protocol, and attempt authority restore"
+)
+assert(
+    startupRequestIndex
+        and not startupQueryIndex
+        and restoreIndex < startupRequestIndex,
+    "a follower should request the current display immediately after registered startup restore"
 )
 assert(
     createIndex < captureIndex
@@ -260,10 +304,12 @@ assert(
 assert(calls[2].Name == "clear-displayed", "group join must clear the prior display before all new-group work")
 assert(calls[3].Name == "reset-protocol-peers", "group join should reset prior-group transport state after clearing")
 assert(
-    calls[4].Name == "schedule" and calls[4].Value.Method == "SendRequestDisplay",
+    calls[4].Name == "refresh-tenure"
+        and calls[5].Name == "schedule"
+        and calls[5].Value.Method == "SendRequestDisplayIfUnbound",
     "a follower group join should request the new leader only after clearing prior-group state"
 )
-assert(calls[5].Name == "update-group-display", "group display reconciliation should follow follower bootstrap")
+assert(calls[6].Name == "update-group-display", "group display reconciliation should follow follower bootstrap")
 for _, call in ipairs(calls) do
     assert(call.Name ~= "version-query", "followers must not broadcast discovery on group join")
 end
@@ -278,12 +324,59 @@ for _, call in ipairs(calls) do
     assert(call.Name ~= "register-event", "delayed setup must not leave a startup leader-event blind spot")
     if call.Name == "version-query" then
         afterEnableVersionQueryCount = afterEnableVersionQueryCount + 1
-    elseif call.Name == "schedule" and call.Value.Method == "SendRequestDisplay" then
+    elseif call.Name == "schedule" and call.Value.Method == "SendRequestDisplayIfUnbound" then
         afterEnableDisplayRequestCount = afterEnableDisplayRequestCount + 1
     end
 end
 assert(afterEnableVersionQueryCount == 0, "a follower delayed startup must not broadcast discovery")
-assert(afterEnableDisplayRequestCount == 1, "delayed startup should schedule one explicit display request")
+assert(
+    afterEnableDisplayRequestCount == 0,
+    "a successful immediate request should rely on its watchdog instead of scheduling duplicate discovery"
+)
+
+calls = {}
+AngryEra._startupDiscoveryRetryNeeded = true
+protocolDisplayAuthority = nil
+AngryEra:AfterEnable()
+assert(
+    calls[2].Name == "schedule" and calls[2].Value.Method == "SendRequestDisplayIfUnbound",
+    "failed immediate follower discovery should retain one delayed fallback"
+)
+
+calls = {}
+AngryEra._startupDiscoveryRetryNeeded = true
+protocolDisplayAuthority = {
+    Sender = "Leader-Realm",
+}
+AngryEra:AfterEnable()
+for _, call in ipairs(calls) do
+    assert(
+        call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplayIfUnbound",
+        "a follower already bound before fallback must not request the full display again"
+    )
+end
+protocolDisplayAuthority = nil
+
+calls = {}
+protocolDisplayAuthority = {
+    Sender = "Leader-Realm",
+}
+local lifecycleResolved, lifecycleStatus = AngryEra:SendRequestDisplayIfUnbound()
+assert(
+    lifecycleResolved and lifecycleStatus == "already-bound" and #calls == 0,
+    "a delayed lifecycle callback should become a no-op after its earlier request binds authority"
+)
+
+calls = {}
+protocolDisplayAuthority = nil
+local lifecycleSent, lifecycleMessageId = AngryEra:SendRequestDisplayIfUnbound()
+assert(
+    lifecycleSent
+        and lifecycleMessageId == "display-request-id"
+        and #calls == 1
+        and calls[1].Name == "request-display",
+    "an unbound delayed lifecycle callback should issue exactly one request"
+)
 
 calls = {}
 AngryEra:GROUP_ROSTER_UPDATE()
@@ -300,24 +393,41 @@ assert(markerRetryCount == 1, "a roster update should retry unresolved displayed
 calls = {}
 AngryEra:PARTY_LEADER_CHANGED()
 assert(
-    calls[1].Name == "reset-protocol-ancestor-announcements"
-        and calls[2].Name == "reset-display-publication"
-        and calls[3].Name == "permissions-updated",
-    "leader changes must reset ancestor announcements and queued publication state before reevaluating permissions"
+    calls[1].Name == "refresh-tenure"
+        and calls[1].Value == true
+        and calls[2].Name == "reset-authority-publication"
+        and calls[3].Name == "reset-protocol-ancestor-announcements"
+        and calls[4].Name == "permissions-updated",
+    "leader changes must force an epoch boundary and narrowly reset queued authority publication"
 )
-assert(calls[4].Name == "request-display", "followers should explicitly request the new leader's display")
+assert(
+    calls[5].Name == "cancel-display-request-watchdog"
+        and calls[6].Name == "request-display",
+    "a hard follower boundary should discard stale watchdog state before requesting the new leader"
+)
 for _, call in ipairs(calls) do
     assert(call.Name ~= "version-query", "a follower leader-change handler must not broadcast discovery")
     assert(call.Name ~= "restore-display-authority", "followers must not attempt leader publication restore")
 end
 
 calls = {}
+refreshPendingDisplayBootstrap = true
+AngryEra:PARTY_LEADER_CHANGED()
+for _, call in ipairs(calls) do
+    assert(
+        call.Name ~= "request-display" and call.Name ~= "cancel-display-request-watchdog",
+        "a query-first exact bootstrap and watchdog must survive the matching leader event without R2"
+    )
+end
+refreshPendingDisplayBootstrap = false
+
+calls = {}
 isRaidLeader = true
 restoreAsAuthority = true
 AngryEra:PARTY_LEADER_CHANGED()
 restoreAsAuthority = false
-assert(calls[4].Name == "version-query", "a promoted leader should advertise protocol capabilities")
-assert(calls[5].Name == "restore-display-authority", "a promoted leader should restore its current display anchor")
+assert(calls[5].Name == "version-query", "a promoted leader should advertise protocol capabilities")
+assert(calls[6].Name == "restore-display-authority", "a promoted leader should restore its current display anchor")
 for _, call in ipairs(calls) do
     assert(call.Name ~= "request-display", "a promoted leader must not whisper a display request to itself")
 end
@@ -326,21 +436,45 @@ calls = {}
 isRaidLeader = false
 AngryEra:PARTY_CONVERTED_TO_RAID()
 assert(
-    calls[1].Name == "schedule" and calls[1].Value.Method == "SendRequestDisplay",
+    calls[1].Name == "reset-authority-publication"
+        and calls[2].Name == "reset-protocol-ancestor-announcements"
+        and calls[3].Name == "schedule"
+        and calls[3].Value.Method == "SendRequestDisplayIfUnbound",
     "a follower party conversion should explicitly schedule a targeted display request"
 )
-assert(calls[2].Name == "update-group-display", "party conversion should reconcile the displayed group afterward")
+assert(calls[4].Name == "update-group-display", "party conversion should reconcile the displayed group afterward")
 for _, call in ipairs(calls) do
     assert(call.Name ~= "version-query", "followers must not broadcast discovery after party conversion")
+    assert(call.Name ~= "refresh-tenure", "a channel conversion must preserve leader-bound proposal correlations")
 end
 
 calls = {}
-isRaidLeader = true
+protocolDisplayAuthority = {
+    Sender = "Leader-Realm",
+}
 AngryEra:PARTY_CONVERTED_TO_RAID()
-assert(calls[1].Name == "version-query", "the leader should advertise after party conversion")
 for _, call in ipairs(calls) do
     assert(
-        call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplay",
+        call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplayIfUnbound",
+        "a bound follower should consume the leader's one raid reannouncement without redundant whispers"
+    )
+end
+protocolDisplayAuthority = nil
+
+calls = {}
+isRaidLeader = true
+restoreAsAuthority = true
+AngryEra:PARTY_CONVERTED_TO_RAID()
+restoreAsAuthority = false
+assert(
+    calls[3].Name == "restore-display-authority",
+    "the leader should reannounce its current DISPLAY/PAGE on the new raid channel"
+)
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "version-query", "channel conversion should not emit an O(N) discovery query")
+    assert(call.Name ~= "refresh-tenure", "channel conversion must not rotate the valid authority session")
+    assert(
+        call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplayIfUnbound",
         "the leader must not schedule a display request to itself after party conversion"
     )
 end
@@ -350,6 +484,34 @@ local totalClearCount = clearCountBeforeJoin + 1
 assert(totalClearCount == 2, "startup and group join should each perform one local-only clear")
 
 local successfulStartProtocolSession = AngryEra.StartProtocolSession
+calls = {}
+requestDisplaySucceeds = false
+requestDisplayError = "shared-display-disabled"
+AngryEra:OnEnable()
+local disabledStartupRequests = 0
+for _, call in ipairs(calls) do
+    if call.Name == "request-display" then
+        disabledStartupRequests = disabledStartupRequests + 1
+    end
+end
+assert(
+    AngryEra._protocolStarted
+        and AngryEra._startupDiscoveryRetryNeeded == false
+        and disabledStartupRequests == 1,
+    "ignoreShared startup should make one gated check without arming delayed discovery"
+)
+calls = {}
+AngryEra:AfterEnable()
+for _, call in ipairs(calls) do
+    assert(
+        call.Name ~= "request-display"
+            and (call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplayIfUnbound"),
+        "stable disabled sharing must not retry display discovery after startup"
+    )
+end
+requestDisplaySucceeds = true
+requestDisplayError = "request-failed"
+
 function AngryEra:StartProtocolSession()
     Record("start-protocol-session")
     return false, "test-session-failure"
@@ -368,7 +530,7 @@ AngryEra:AfterEnable()
 for _, call in ipairs(calls) do
     assert(call.Name ~= "version-query", "delayed setup must not discover peers after session failure")
     assert(
-        call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplay",
+        call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplayIfUnbound",
         "delayed setup must not request display state after session failure"
     )
 end

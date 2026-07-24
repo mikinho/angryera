@@ -246,7 +246,7 @@ local function ActiveDisplayMatches(self, payload)
     })
 end
 
-local function CancelPendingDisplayPage(self, reason)
+local function CancelPendingDisplayPage(self, reason, transferReason)
     local pending = pendingDisplayPage
     displayPageGeneration = displayPageGeneration + 1
     CancelTimer(self, pendingDisplayPageTimer)
@@ -263,7 +263,7 @@ local function CancelPendingDisplayPage(self, reason)
         )
     end
     if type(self.CancelProtocolActivePageTransfer) == "function" then
-        self:CancelProtocolActivePageTransfer(reason or "superseded")
+        self:CancelProtocolActivePageTransfer(transferReason or reason or "superseded")
     end
 end
 
@@ -440,6 +440,20 @@ local function SamePlayer(left, right)
     return type(left) == "string" and type(right) == "string" and left:lower() == right:lower()
 end
 
+local function CanReceiveSharedDisplayFrom(self, target)
+    if type(self.CanReceiveFrom) == "function" then
+        local called, accepted = pcall(self.CanReceiveFrom, self, target, "display")
+        if called then
+            return accepted == true
+        end
+    end
+    if type(self.IsValidRaid) == "function" then
+        local called, accepted = pcall(self.IsValidRaid, self)
+        return called and accepted == true
+    end
+    return false
+end
+
 local function CopyDesiredPageState(desired)
     if type(desired) ~= "table" then
         return nil
@@ -456,6 +470,14 @@ local function CopyDesiredPageState(desired)
         Vars = desired.Vars,
         Contents = desired.Contents,
     }
+end
+
+local function PageMatchesDesiredState(page, desired)
+    return type(page) == "table"
+        and type(desired) == "table"
+        and page.Name == desired.Name
+        and page.Vars == desired.Vars
+        and page.Contents == desired.Contents
 end
 
 local function CopyChangeReference(reference)
@@ -592,6 +614,19 @@ local function CurrentSharedPageReference(self, draft)
     }
 end
 
+local function CurrentSharedPageMatchesDesired(self, draft, reference, desired)
+    local current = CurrentSharedPageReference(self, draft)
+    if not SameChangeReference(current, reference) then
+        return false
+    end
+    local page = type(AngryAssign_Pages) == "table" and rawget(AngryAssign_Pages, draft.LocalId) or nil
+    return type(page) == "table"
+        and page.SyncId == draft.SyncId
+        and page.Revision == reference.Revision
+        and page.RevisionId == reference.RevisionId
+        and PageMatchesDesiredState(page, desired)
+end
+
 local function ScheduleSharedPageChangeFlush(self, draft)
     CancelTimer(self, sharedPageChangeTimer)
     sharedPageChangeGeneration = sharedPageChangeGeneration + 1
@@ -606,8 +641,14 @@ end
 
 local function FinishAcceptedSharedPageChange(self, draft)
     local queued = draft.Generation > (draft.SentGeneration or 0)
+    local messageId = draft.InFlightMessageId
+    CancelTimer(self, sharedPageChangeTimeoutTimer)
     CancelTimer(self, sharedPageChangeCommitTimer)
+    sharedPageChangeTimeoutTimer = nil
     sharedPageChangeCommitTimer = nil
+    if messageId and type(self.CancelProtocolChangeProposal) == "function" then
+        pcall(self.CancelProtocolChangeProposal, self, messageId)
+    end
     draft.InFlightMessageId = nil
     draft.AcceptedReference = nil
     ClearObservedCanonicalReferences(draft)
@@ -844,12 +885,30 @@ function AngryEra:HandleSharedPageChangeResult(_, result, _, messageId)
         draft.Halted = true
         local reference = result.Status ~= "unavailable" and result or nil
         SetSharedPageChangeConflict(self, draft, result.Status, "leader-" .. result.Status, reference)
+        if type(self.UpdateSelected) == "function" then
+            pcall(self.UpdateSelected, self, false)
+        end
+        if
+            (
+                result.Status == "unavailable"
+                or (
+                    (result.Status == "conflict" or result.Status == "busy")
+                    and not SameChangeReference(reference, CurrentSharedPageReference(self, draft))
+                )
+            ) and type(self.SendRequestDisplay) == "function"
+        then
+            pcall(self.SendRequestDisplay, self)
+        end
         return true, result.Status
     end
 
     draft.AcceptedReference = CopyChangeReference(result)
-    if HasObservedCanonicalReference(draft, draft.AcceptedReference)
-        or SameChangeReference(draft.AcceptedReference, CurrentSharedPageReference(self, draft))
+    if
+        (
+            HasObservedCanonicalReference(draft, draft.AcceptedReference)
+            or SameChangeReference(draft.AcceptedReference, CurrentSharedPageReference(self, draft))
+        )
+        and CurrentSharedPageMatchesDesired(self, draft, draft.AcceptedReference, draft.SentDesired)
     then
         return FinishAcceptedSharedPageChange(self, draft)
     end
@@ -878,7 +937,7 @@ end
 
 --- Observes leader PAGE_UPSERT acceptance so page-before-result and
 -- result-before-page delivery both complete the same proposal safely.
-function AngryEra:ObserveSharedPageCanonicalUpdate(_, payload)
+function AngryEra:ObserveSharedPageCanonicalUpdate(_, payload, applyResult)
     local draft = sharedPageChangeDraft
     local page = type(payload) == "table" and payload.Page or nil
     if not draft or type(page) ~= "table" or page.SyncId ~= draft.SyncId then
@@ -890,10 +949,29 @@ function AngryEra:ObserveSharedPageCanonicalUpdate(_, payload)
         RevisionId = page.RevisionId,
         ContextRevisionId = payload.ContextRevisionId,
     }
+    local installed =
+        type(applyResult) == "table"
+        and applyResult.ContextOnly ~= true
+        and (applyResult.Applied == true or applyResult.NoOp == true)
+        and applyResult.LocalId == draft.LocalId
+        and applyResult.SyncId == draft.SyncId
+        and SameChangeReference(canonicalReference, CurrentSharedPageReference(self, draft))
+    if not installed then
+        return true, "observed"
+    end
+    local canonicalMatchesDesired =
+        CurrentSharedPageMatchesDesired(self, draft, canonicalReference, draft.SentDesired)
+    if
+        draft.InFlightMessageId
+        and canonicalMatchesDesired
+        and PageMatchesDesiredState(page, draft.SentDesired)
+    then
+        return FinishAcceptedSharedPageChange(self, draft)
+    end
     if draft.InFlightMessageId then
         RememberObservedCanonicalReference(draft, canonicalReference)
     end
-    if SameChangeReference(draft.AcceptedReference, canonicalReference) then
+    if canonicalMatchesDesired and SameChangeReference(draft.AcceptedReference, canonicalReference) then
         return FinishAcceptedSharedPageChange(self, draft)
     end
     return true, "observed"
@@ -1072,6 +1150,10 @@ function AngryEra:RetryDisplayRequest(generation)
         local restored, result = self:RestoreDisplayAuthority()
         return restored, result
     end
+    if target and not CanReceiveSharedDisplayFrom(self, target) then
+        self:CancelDisplayRequestWatchdog()
+        return false, "shared-display-disabled"
+    end
 
     record.Attempts = record.Attempts + 1
     local sent
@@ -1134,18 +1216,25 @@ end
 
 --- Clears group/session-bound page publication and recovery state.
 -- Callers must reset this state whenever the protocol session or group changes.
-function AngryEra:ResetDisplayPublicationState()
+function AngryEra:ResetDisplayAuthorityPublicationState(reason)
     self:CancelPendingDisplayRecovery()
-    self:CancelDisplayRequestWatchdog()
-    self:ResetSharedPageChangeState("publication-reset")
-    CancelPendingDisplayPage(self, "reset")
-    CancelPendingDisplayControl(self, "reset")
+    CancelPendingDisplayPage(self, reason or "authority-reset", "superseded")
+    CancelPendingDisplayControl(self, reason or "authority-reset")
     for _, timerId in pairs(pageTimerId) do
         CancelTimer(self, timerId)
     end
     pageTimerId = {}
     pageLastUpdate = {}
     publishedDisplayTuples = {}
+end
+
+--- Clears every group/session-bound publication, discovery, and proposal state.
+-- Use the narrower authority reset during leadership lifecycle transitions that
+-- must preserve an unanswered DISPLAY_REQUEST or assistant proposal.
+function AngryEra:ResetDisplayPublicationState()
+    self:ResetDisplayAuthorityPublicationState("publication-reset")
+    self:CancelDisplayRequestWatchdog()
+    self:ResetSharedPageChangeState("publication-reset")
 end
 
 --- Defers recovery for an accepted DISPLAY whose exact page tuple is missing.
@@ -1611,19 +1700,40 @@ end
 -- @treturn boolean sent
 -- @treturn string|nil messageIdOrError
 function AngryEra:SendRequestDisplay(suppressWatchdog)
-    if suppressWatchdog ~= true then
-        self:CancelDisplayRequestWatchdog()
-    end
     if not IsGrouped() then
+        if suppressWatchdog ~= true then
+            self:CancelDisplayRequestWatchdog()
+        end
         return false, "not-grouped"
     end
 
     local target = self:GetRaidLeader(true)
     if not target then
+        if suppressWatchdog ~= true then
+            self:CancelDisplayRequestWatchdog()
+        end
         return false, "leader-unavailable"
     end
     if SamePlayer(target, PlayerFullName()) then
+        if suppressWatchdog ~= true then
+            self:CancelDisplayRequestWatchdog()
+        end
         return false, "local-player-is-leader"
+    end
+    if not CanReceiveSharedDisplayFrom(self, target) then
+        self:CancelDisplayRequestWatchdog()
+        return false, "shared-display-disabled"
+    end
+    if
+        suppressWatchdog ~= true
+        and displayRequestWatchdog
+        and displayRequestWatchdogTimer
+        and SamePlayer(displayRequestWatchdog.Target, target)
+    then
+        return true, displayRequestWatchdog.MessageId
+    end
+    if suppressWatchdog ~= true then
+        self:CancelDisplayRequestWatchdog()
     end
 
     local sent, result = self:SendProtocolDisplayRequest(target)

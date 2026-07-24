@@ -651,6 +651,7 @@ function AngryEra:OnEnable()
         self.syncRuntimeStartupWarning = nil
     end
     AngryEra._protocolStarted = false
+    AngryEra._startupDiscoveryRetryNeeded = false
     local protocolStarted, protocolError = self:StartProtocolSession()
     if not protocolStarted then
         self:Print("Unable to start synchronization session: " .. tostring(protocolError))
@@ -660,9 +661,21 @@ function AngryEra:OnEnable()
         self:RegisterComm(pageProtocolPrefix, "ReceiveProtocolMessage")
         self:RegisterComm(activePageProtocolPrefix, "ReceiveProtocolMessage")
         AngryEra._protocolStarted = true
+        local localAuthority =
+            type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
+        local discoverySent
+        local discoveryResult
+        if localAuthority then
+            discoverySent, discoveryResult = self:SendProtocolVersionQuery(true)
+        end
         if type(self.RestoreDisplayAuthority) == "function" then
             self:RestoreDisplayAuthority()
         end
+        if not localAuthority and type(self.SendRequestDisplay) == "function" then
+            discoverySent, discoveryResult = self:SendRequestDisplay()
+        end
+        AngryEra._startupDiscoveryRetryNeeded =
+            discoverySent ~= true and discoveryResult ~= "shared-display-disabled"
     end
 
     self:ScheduleTimer("AfterEnable", 4)
@@ -691,16 +704,18 @@ end
 function AngryEra:PARTY_LEADER_CHANGED()
     local tenure
     if self._protocolStarted and type(self.RefreshProtocolLeadershipTenure) == "function" then
-        local refreshed, result = self:RefreshProtocolLeadershipTenure()
+        local refreshed, result = self:RefreshProtocolLeadershipTenure(nil, true)
         if refreshed and type(result) == "table" then
             tenure = result
         end
     end
+    if type(self.ResetDisplayAuthorityPublicationState) == "function" then
+        self:ResetDisplayAuthorityPublicationState("leader-changed")
+    elseif type(self.CancelPendingDisplayRecovery) == "function" then
+        self:CancelPendingDisplayRecovery()
+    end
     if type(self.ResetProtocolAncestorAnnouncements) == "function" then
         self:ResetProtocolAncestorAnnouncements()
-    end
-    if type(self.ResetDisplayPublicationState) == "function" then
-        self:ResetDisplayPublicationState()
     end
     self:PermissionsUpdated()
     if self._protocolStarted then
@@ -717,7 +732,10 @@ function AngryEra:PARTY_LEADER_CHANGED()
             local _, _, isLocalAuthority = self:RestoreDisplayAuthority()
             localAuthority = isLocalAuthority == true
         end
-        if not localAuthority then
+        if not localAuthority and not (tenure and tenure.PendingDisplayBootstrap == true) then
+            if type(self.CancelDisplayRequestWatchdog) == "function" then
+                self:CancelDisplayRequestWatchdog()
+            end
             self:SendRequestDisplay()
         end
     end
@@ -725,16 +743,28 @@ end
 
 function AngryEra:PARTY_CONVERTED_TO_RAID()
     local localAuthority = type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
-    if self._protocolStarted and type(self.RefreshProtocolLeadershipTenure) == "function" then
-        local refreshed, result = self:RefreshProtocolLeadershipTenure()
-        if refreshed and type(result) == "table" then
-            localAuthority = result.LocalAuthority == true
-        end
+    if self._protocolStarted and type(self.ResetDisplayAuthorityPublicationState) == "function" then
+        self:ResetDisplayAuthorityPublicationState("group-channel-changed")
+    end
+    if self._protocolStarted and type(self.ResetProtocolAncestorAnnouncements) == "function" then
+        self:ResetProtocolAncestorAnnouncements()
     end
     if self._protocolStarted and localAuthority then
-        self:SendProtocolVersionQuery(true)
+        if type(self.RestoreDisplayAuthority) == "function" then
+            self:RestoreDisplayAuthority()
+        end
     elseif self._protocolStarted then
-        self:ScheduleTimer("SendRequestDisplay", 0.5)
+        local authority
+        if type(self.GetProtocolDisplayAuthority) == "function" then
+            authority = self:GetProtocolDisplayAuthority()
+        end
+        local authorityCurrent = type(authority) == "table" and type(authority.Sender) == "string"
+        if authorityCurrent and type(self.CanReceiveFrom) == "function" then
+            authorityCurrent = self:CanReceiveFrom(authority.Sender, "display") == true
+        end
+        if not authorityCurrent then
+            self:ScheduleTimer("SendRequestDisplayIfUnbound", 0.5)
+        end
     end
     self:UpdateDisplayedIfNewGroup()
 end
@@ -756,7 +786,7 @@ function AngryEra:GROUP_JOINED()
         if localAuthority then
             self:SendProtocolVersionQuery(true)
         else
-            self:ScheduleTimer("SendRequestDisplay", 0.5)
+            self:ScheduleTimer("SendRequestDisplayIfUnbound", 0.5)
         end
     end
     self:UpdateDisplayedIfNewGroup()
@@ -812,15 +842,51 @@ function AngryEra:GUILD_ROSTER_UPDATE(...)
     end
 end
 
+--- Requests lifecycle discovery only when no current authorized leader tenure
+-- became bound while the delayed callback was waiting.
+-- Explicit recovery callers continue to use SendRequestDisplay directly.
+-- @treturn boolean sentOrResolved
+-- @treturn string|nil messageIdOrStatus
+function AngryEra:SendRequestDisplayIfUnbound()
+    local authority
+    if type(self.GetProtocolDisplayAuthority) == "function" then
+        local called, current = pcall(self.GetProtocolDisplayAuthority, self)
+        if called then
+            authority = current
+        end
+    end
+    if type(authority) == "table" and type(authority.Sender) == "string" then
+        local authorized = true
+        if type(self.CanReceiveFrom) == "function" then
+            local called, allowed = pcall(self.CanReceiveFrom, self, authority.Sender, "display")
+            authorized = called and allowed == true
+        end
+        if authorized then
+            return true, "already-bound"
+        end
+    end
+    if type(self.SendRequestDisplay) ~= "function" then
+        return false, "display-request-unavailable"
+    end
+    return self:SendRequestDisplay()
+end
+
 --- Post-enable delayed setup hook for group discovery and event wiring.
 function AngryEra:AfterEnable()
     self:UpdateDisplayedIfNewGroup()
-    if self._protocolStarted then
+    if self._protocolStarted and self._startupDiscoveryRetryNeeded == true then
+        self._startupDiscoveryRetryNeeded = false
         local localAuthority = type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
         if localAuthority then
             self:SendProtocolVersionQuery(true)
         else
-            self:ScheduleTimer("SendRequestDisplay", 0.5)
+            local authority
+            if type(self.GetProtocolDisplayAuthority) == "function" then
+                authority = self:GetProtocolDisplayAuthority()
+            end
+            if authority == nil then
+                self:ScheduleTimer("SendRequestDisplayIfUnbound", 0.5)
+            end
         end
     end
 end
