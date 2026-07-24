@@ -834,7 +834,7 @@ local boundedSecondRetry = timers[#timers]
 sent, result = AngryEra:RetryDisplayRequest(boundedSecondRetry.Argument)
 assert(sent and result == "request-message", "bounded retry attempt three should send")
 local boundedFinalRetry = timers[#timers]
-assert(boundedFinalRetry.Delay == 13, "the final reserved retry should outlast the leader response throttle")
+assert(boundedFinalRetry.Delay == 13, "the final reserved retry should retain bounded backoff")
 local timersBeforeBoundedFinalRetry = #timers
 sent, result = AngryEra:RetryDisplayRequest(boundedFinalRetry.Argument)
 assert(sent and result == "request-message", "the final bounded retry should send")

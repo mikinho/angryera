@@ -2323,6 +2323,28 @@ accepted, result =
 AssertError(accepted, result, "throttled", "successful recovered display response")
 assert(displayResponseBuildCalls == 1, "A successful plan should retain the existing response throttle")
 assert(#sentMessages == 2, "The successful-plan throttle must prevent response amplification")
+currentTime = currentTime + 3
+timestampTest.RetriedDisplayRequest, timestampTest.RetriedDisplayRequestEnvelope =
+    BuildRemoteEnvelope("transient-display-request", "DISPLAY_REQUEST", {}, {
+        Sequence = 4,
+    })
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(
+        protocol.PREFIX,
+        timestampTest.RetriedDisplayRequest,
+        "WHISPER",
+        "Beta-Realm"
+    )
+assert(accepted, result or "a watchdog retry must recover after a queued response is lost")
+assert(displayResponseBuildCalls == 2, "The first watchdog retry should rebuild the display response")
+assert(#sentMessages == 4, "The first watchdog retry should resend the page and display")
+timestampTest.RetriedDisplayPage = select(2, DecodeSent(3))
+timestampTest.RetriedDisplay = select(2, DecodeSent(4))
+assert(
+    timestampTest.RetriedDisplayPage.ReplyTo == timestampTest.RetriedDisplayRequestEnvelope.MessageId
+        and timestampTest.RetriedDisplay.ReplyTo == timestampTest.RetriedDisplayRequestEnvelope.MessageId,
+    "A recovery response must correlate both packets to the new request"
+)
 
 displayResponseError = "display-plan-unavailable"
 local failedDisplayRequest = BuildRemoteEnvelope("failed-display-request", "DISPLAY_REQUEST", {})

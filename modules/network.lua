@@ -22,9 +22,8 @@ local displayPageDebounce = 0.125
 local pendingDisplayRecoveryDelay = math.max(updateFrequency * 15, 30)
 local requestedDisplayRecoveryDelay = math.max(updateFrequency * 2, 5)
 local maximumDisplayRecoveryAttempts = 3
--- Keep early discovery retries responsive while reserving one attempt beyond
--- the leader's successful-response throttle. This covers both a leader whose
--- addon is still starting and the rarer case where a sent response is lost.
+-- Keep early discovery retries responsive while retaining bounded backoff for
+-- a leader whose addon is still starting or whose queued response is lost.
 local displayRequestRetryDelays = {
     math.max(updateFrequency, 3),
     math.max(updateFrequency * 2.5, 5),

@@ -3326,9 +3326,9 @@ function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
     if not remembered then
         return false, rememberError
     end
-    -- A failed response gets only the short retry throttle. Successful
-    -- publication below extends this record to suppress duplicate full-page
-    -- responses for the same requester session and active tuple.
+    -- Queue acceptance is not delivery confirmation. Keep this throttle shorter
+    -- than the follower's first watchdog retry so a lost PAGE_UPSERT/DISPLAY
+    -- pair can be requested again without waiting for the interaction TTL.
     displayRequestReplies[throttleKey].ExpiresAt = now + REPLY_THROTTLE_SECONDS
 
     local plan, planError = self:BuildActiveDisplayRequestResponse(auth, envelope.Payload)
@@ -3358,9 +3358,6 @@ function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
         RecipientInstallationId = auth.SenderInstallationId,
         RecipientSessionId = auth.SenderSessionId,
     })
-    if sent then
-        displayRequestReplies[throttleKey].ExpiresAt = now + INTERACTION_TTL_SECONDS
-    end
     return sent, result
 end
 
