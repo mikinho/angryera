@@ -3548,6 +3548,13 @@ function AngryEra:RunAuthorityTenureTests()
             and authority.SenderSessionId == "leader-b-1",
         "a fresh follower should bind the exact correlated leader session"
     )
+    sessionStarted, sessionError = self:RefreshProtocolLeadershipTenure()
+    assert(
+        sessionStarted
+            and sessionError.Changed == false
+            and self:GetProtocolDisplayAuthority().SenderSessionId == "leader-b-1",
+        "a settled roster refresh must preserve an authorized follower binding"
+    )
     assert(
         self:PeerSupports("Beta-Realm", protocol.ACTIVE_PAGE_CHANGES_CAPABILITY),
         "a correlated DISPLAY should advertise proposal capability without follower version broadcast"

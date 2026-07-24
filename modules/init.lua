@@ -652,6 +652,8 @@ function AngryEra:OnEnable()
     end
     AngryEra._protocolStarted = false
     AngryEra._startupDiscoveryRetryNeeded = false
+    AngryEra._leadershipRosterReconcilePending = false
+    AngryEra._leadershipRosterReconcileAttempts = 0
     local protocolStarted, protocolError = self:StartProtocolSession()
     if not protocolStarted then
         self:Print("Unable to start synchronization session: " .. tostring(protocolError))
@@ -738,9 +740,12 @@ function AngryEra:PARTY_LEADER_CHANGED()
             self:SendRequestDisplay()
         end
     end
+    self._leadershipRosterReconcilePending = self._protocolStarted == true
+    self._leadershipRosterReconcileAttempts = 0
 end
 
 function AngryEra:GROUP_JOINED()
+    local preserveLeadershipReconcile = self._leadershipRosterReconcilePending == true
     if type(self.DiscardDisplayAuthorityRecovery) == "function" then
         self:DiscardDisplayAuthorityRecovery()
     end
@@ -761,6 +766,11 @@ function AngryEra:GROUP_JOINED()
         end
     end
     self:UpdateDisplayedIfNewGroup()
+    self._leadershipRosterReconcilePending =
+        preserveLeadershipReconcile and self._protocolStarted == true
+    if not self._leadershipRosterReconcilePending then
+        self._leadershipRosterReconcileAttempts = 0
+    end
 end
 
 function AngryEra:PLAYER_REGEN_DISABLED()
@@ -769,9 +779,75 @@ function AngryEra:PLAYER_REGEN_DISABLED()
     end
 end
 
+--- Rechecks protocol tenure after roster roles have settled.
+-- PARTY_LEADER_CHANGED can precede the roster API update on Classic. This
+-- second pass is a no-op for a stable tenure, but repairs a missed promotion,
+-- demotion, or remote-leader transition exactly once.
+-- @treturn boolean reconciled
+-- @treturn table|string resultOrStatus
+function AngryEra:ReconcileProtocolLeadershipFromRoster()
+    if not self._protocolStarted or type(self.RefreshProtocolLeadershipTenure) ~= "function" then
+        return false, "protocol-not-started"
+    end
+
+    local refreshed, result = self:RefreshProtocolLeadershipTenure()
+    if not refreshed or type(result) ~= "table" then
+        return false, result
+    end
+    if result.Changed ~= true then
+        local authority
+        if result.LocalAuthority ~= true and type(self.GetProtocolDisplayAuthority) == "function" then
+            local called, current = pcall(self.GetProtocolDisplayAuthority, self)
+            if called then
+                authority = current
+            end
+        end
+        if
+            result.LocalAuthority ~= true
+            and type(authority) ~= "table"
+            and type(self.SendRequestDisplay) == "function"
+        then
+            local sent, requestResult = self:SendRequestDisplay()
+            return sent,
+                {
+                    Changed = false,
+                    LocalAuthority = false,
+                    PendingDisplayBootstrap = true,
+                    RequestResult = requestResult,
+                }
+        end
+        return true, result
+    end
+
+    if type(self.ResetDisplayAuthorityPublicationState) == "function" then
+        self:ResetDisplayAuthorityPublicationState("roster-leadership-reconciled")
+    elseif type(self.CancelPendingDisplayRecovery) == "function" then
+        self:CancelPendingDisplayRecovery()
+    end
+    if type(self.ResetProtocolAncestorAnnouncements) == "function" then
+        self:ResetProtocolAncestorAnnouncements()
+    end
+
+    if result.LocalAuthority == true then
+        self:SendProtocolVersionQuery(result.Rotated == true)
+        if type(self.RestoreDisplayAuthority) == "function" then
+            self:RestoreDisplayAuthority()
+        end
+    elseif result.PendingDisplayBootstrap ~= true then
+        if type(self.CancelDisplayRequestWatchdog) == "function" then
+            self:CancelDisplayRequestWatchdog()
+        end
+        self:SendRequestDisplay()
+    end
+    return true, result
+end
+
 function AngryEra:GROUP_ROSTER_UPDATE()
     self:PermissionsUpdated()
+    local reconcileLeadership = self._leadershipRosterReconcilePending == true
     if not (IsInRaid() or IsInGroup()) then
+        self._leadershipRosterReconcilePending = false
+        self._leadershipRosterReconcileAttempts = 0
         if type(self.DiscardDisplayAuthorityRecovery) == "function" then
             self:DiscardDisplayAuthorityRecovery()
         end
@@ -781,6 +857,15 @@ function AngryEra:GROUP_ROSTER_UPDATE()
         self:ResetProtocolPeers()
     else
         self:PruneProtocolPeers()
+        if reconcileLeadership then
+            local attempts = (self._leadershipRosterReconcileAttempts or 0) + 1
+            local _, result = self:ReconcileProtocolLeadershipFromRoster()
+            local retryUnsettled = type(result) == "table"
+                and result.Changed == false
+                and attempts < 3
+            self._leadershipRosterReconcilePending = retryUnsettled
+            self._leadershipRosterReconcileAttempts = retryUnsettled and attempts or 0
+        end
         self:UpdateDisplayedIfNewGroup()
         if type(self.RetryDisplayedNoteMarkers) == "function" then
             self:RetryDisplayedNoteMarkers()

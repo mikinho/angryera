@@ -2284,6 +2284,21 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
     end
 
     local isLocalAuthority = IsLocalDisplayAuthority(self)
+    local boundAuthorityCurrent = boundDisplayAuthority == nil
+        or SafeCanReceive(self, boundDisplayAuthority.Sender, "display")
+    if
+        forceLocalRotation ~= true
+        and isLocalAuthority == localLeadershipTenureActive
+        and (isLocalAuthority or boundAuthorityCurrent)
+    then
+        return true, {
+            Changed = false,
+            LocalAuthority = isLocalAuthority,
+            PendingDisplayBootstrap = false,
+            Rotated = false,
+            SessionId = protocolSession.SessionId,
+        }
+    end
     if
         not isLocalAuthority
         and forceLocalRotation == true
@@ -2297,6 +2312,7 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
         localLeadershipTenureActive = false
         return true, {
             AlreadyBound = true,
+            Changed = false,
             LocalAuthority = false,
             PendingDisplayBootstrap = true,
             Rotated = false,
@@ -2322,6 +2338,7 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
         end
         localLeadershipTenureActive = false
         return true, {
+            Changed = true,
             LocalAuthority = false,
             Rotated = false,
             PendingDisplayBootstrap = preservedDisplayRequestCount > 0,
@@ -2329,6 +2346,7 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
     end
     if localLeadershipTenureActive and forceLocalRotation ~= true then
         return true, {
+            Changed = false,
             LocalAuthority = true,
             Rotated = false,
             SessionId = protocolSession.SessionId,
@@ -2350,6 +2368,7 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
     end
     localLeadershipTenureActive = true
     return true, {
+        Changed = true,
         LocalAuthority = true,
         Rotated = true,
         SessionId = protocolSession.SessionId,

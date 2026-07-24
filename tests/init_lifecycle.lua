@@ -1,6 +1,8 @@
 local calls = {}
 local restoreAsAuthority = false
 local isRaidLeader = false
+local tenureLocalAuthority = false
+local tenureRotationCount = 0
 local protocolDisplayAuthority
 local refreshPendingDisplayBootstrap = false
 local requestDisplaySucceeds = true
@@ -149,10 +151,17 @@ end
 
 function AngryEra:RefreshProtocolLeadershipTenure(_, force)
     Record("refresh-tenure", force)
+    local changed = isRaidLeader ~= tenureLocalAuthority
+    local rotated = isRaidLeader and (changed or force == true)
+    if rotated then
+        tenureRotationCount = tenureRotationCount + 1
+    end
+    tenureLocalAuthority = isRaidLeader
     return true, {
+        Changed = changed or force == true,
         LocalAuthority = isRaidLeader,
         PendingDisplayBootstrap = not isRaidLeader and refreshPendingDisplayBootstrap,
-        Rotated = isRaidLeader and force == true,
+        Rotated = rotated,
     }
 end
 
@@ -396,6 +405,152 @@ for _, call in ipairs(calls) do
     )
 end
 assert(markerRetryCount == 1, "a roster update should retry unresolved displayed-note marker targets once")
+
+calls = {}
+local rotationsBeforeSettledPromotion = tenureRotationCount
+AngryEra:PARTY_LEADER_CHANGED()
+for _, call in ipairs(calls) do
+    assert(
+        call.Name ~= "version-query" and call.Name ~= "restore-display-authority",
+        "a stale follower-role leader event must not publish a leader tenure"
+    )
+end
+assert(
+    tenureRotationCount == rotationsBeforeSettledPromotion
+        and AngryEra._leadershipRosterReconcilePending == true,
+    "the stale leader event should defer one settled-roster reconciliation without rotating"
+)
+
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+assert(
+    tenureRotationCount == rotationsBeforeSettledPromotion
+        and AngryEra._leadershipRosterReconcilePending == true,
+    "a still-stale first roster callback should retain the bounded reconciliation"
+)
+
+calls = {}
+isRaidLeader = true
+restoreAsAuthority = true
+AngryEra:GROUP_ROSTER_UPDATE()
+restoreAsAuthority = false
+local settledQueryCount = 0
+local settledRestoreCount = 0
+local settledQueryForced = false
+for _, call in ipairs(calls) do
+    if call.Name == "version-query" then
+        settledQueryCount = settledQueryCount + 1
+        settledQueryForced = call.Value == true
+    elseif call.Name == "restore-display-authority" then
+        settledRestoreCount = settledRestoreCount + 1
+    end
+end
+assert(
+    tenureRotationCount == rotationsBeforeSettledPromotion + 1
+        and settledQueryCount == 1
+        and settledQueryForced
+        and settledRestoreCount == 1,
+    "the settled roster should rotate, advertise, and restore the missed leader tenure exactly once"
+)
+
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+for _, call in ipairs(calls) do
+    assert(
+        call.Name ~= "version-query"
+            and call.Name ~= "restore-display-authority"
+            and call.Name ~= "reset-authority-publication",
+        "duplicate settled roster events must not rotate or republish a stable leader tenure"
+    )
+end
+assert(
+    tenureRotationCount == rotationsBeforeSettledPromotion + 1,
+    "duplicate settled roster events must preserve the promoted protocol session"
+)
+
+calls = {}
+local rotationsBeforeSettledDemotion = tenureRotationCount
+AngryEra:PARTY_LEADER_CHANGED()
+assert(
+    tenureRotationCount == rotationsBeforeSettledDemotion + 1
+        and AngryEra._leadershipRosterReconcilePending == true,
+    "a stale local-leader demotion event should retain a settled-roster correction"
+)
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+assert(
+    AngryEra._leadershipRosterReconcilePending == true,
+    "a still-stale leader roster callback should retain the bounded demotion correction"
+)
+calls = {}
+isRaidLeader = false
+AngryEra:GROUP_ROSTER_UPDATE()
+local settledDemotionRequests = 0
+for _, call in ipairs(calls) do
+    if call.Name == "request-display" then
+        settledDemotionRequests = settledDemotionRequests + 1
+    end
+end
+assert(
+    settledDemotionRequests == 1 and AngryEra._leadershipRosterReconcilePending == false,
+    "a settled demotion should retire leader tenure and request the new authority once"
+)
+
+calls = {}
+protocolDisplayAuthority = nil
+AngryEra:PARTY_LEADER_CHANGED()
+assert(
+    AngryEra._leadershipRosterReconcilePending == true,
+    "a remote leader event should await one settled-roster bootstrap check"
+)
+AngryEra:GROUP_JOINED()
+assert(
+    AngryEra._leadershipRosterReconcilePending == true,
+    "a group-boundary callback must preserve the pending settled-leader check"
+)
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+local settledFollowerRequests = 0
+for _, call in ipairs(calls) do
+    if call.Name == "request-display" then
+        settledFollowerRequests = settledFollowerRequests + 1
+    end
+end
+assert(
+    settledFollowerRequests == 1,
+    "an unbound follower should re-resolve the leader once after roster roles settle"
+)
+assert(
+    AngryEra._leadershipRosterReconcilePending == true,
+    "an unresolved first follower bootstrap should retain one bounded settled-roster check"
+)
+protocolDisplayAuthority = {
+    Sender = "Leader-Realm",
+}
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "request-display", "a newly bound follower must not restart its display bootstrap")
+end
+assert(
+    AngryEra._leadershipRosterReconcilePending == true,
+    "a first bound callback should retain the remaining bounded event-order check"
+)
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "request-display", "a bound follower must remain quiet through the final bounded check")
+end
+assert(
+    AngryEra._leadershipRosterReconcilePending == false,
+    "the bounded follower reconciliation should expire after stable roster evidence"
+)
+protocolDisplayAuthority = nil
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "request-display", "routine roster updates must remain free of display requests")
+end
 
 calls = {}
 AngryEra:PARTY_LEADER_CHANGED()
