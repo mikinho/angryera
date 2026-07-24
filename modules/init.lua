@@ -16,6 +16,8 @@ local protocolPrefix = AngryEra.utils.protocol.PREFIX
 local displayProtocolPrefix = AngryEra.utils.protocol.DISPLAY_PREFIX
 local pageProtocolPrefix = AngryEra.utils.protocol.PAGE_PREFIX
 local activePageProtocolPrefix = AngryEra.utils.protocol.ACTIVE_PAGE_PREFIX
+local leadershipRosterReconcileDelay = 0.25
+local leadershipRosterReconcileMaxAttempts = 3
 
 local colors = AngryEra.utils.colors
 local RGBToHex = colors.RGBToHex
@@ -637,9 +639,129 @@ function AngryEra:ChatCommand(input)
     end
 end
 
+local function CancelLeadershipRosterReconcileTimer(self)
+    local timer = self._leadershipRosterReconcileTimer
+    self._leadershipRosterReconcileTimer = nil
+    if timer and type(self.CancelTimer) == "function" then
+        pcall(self.CancelTimer, self, timer)
+    end
+    return timer ~= nil
+end
+
+--- Cancels and invalidates the current settled-roster reconciliation.
+-- A generation increment makes an already-dispatched AceTimer callback inert.
+-- @treturn boolean canceled Whether a timer was pending.
+function AngryEra:CancelProtocolLeadershipRosterReconcile()
+    local canceled = CancelLeadershipRosterReconcileTimer(self)
+    self._leadershipRosterReconcileGeneration =
+        (self._leadershipRosterReconcileGeneration or 0) + 1
+    self._leadershipRosterReconcilePending = false
+    self._leadershipRosterReconcileAttempts = 0
+    return canceled
+end
+
+local function ScheduleLeadershipRosterReconcile(self)
+    if
+        self._leadershipRosterReconcilePending ~= true
+        or not self._protocolStarted
+        or type(self.ScheduleTimer) ~= "function"
+    then
+        return false, "leadership-reconcile-inactive"
+    end
+
+    CancelLeadershipRosterReconcileTimer(self)
+    self._leadershipRosterReconcileGeneration =
+        (self._leadershipRosterReconcileGeneration or 0) + 1
+    local generation = self._leadershipRosterReconcileGeneration
+    local timer =
+        self:ScheduleTimer(
+            "RetryProtocolLeadershipRosterReconcile",
+            leadershipRosterReconcileDelay,
+            generation
+        )
+    if not timer then
+        return false, "leadership-reconcile-schedule-failed"
+    end
+    self._leadershipRosterReconcileTimer = timer
+    return true, timer
+end
+
+--- Starts one bounded settled-roster reconciliation generation.
+-- Roster events may run it early; the timer guarantees progress when Classic
+-- updates the role APIs without emitting another GROUP_ROSTER_UPDATE.
+-- @treturn boolean scheduled
+-- @treturn table|string timerOrError
+function AngryEra:StartProtocolLeadershipRosterReconcile()
+    self:CancelProtocolLeadershipRosterReconcile()
+    if not self._protocolStarted then
+        return false, "protocol-not-started"
+    end
+    self._leadershipRosterReconcilePending = true
+    return ScheduleLeadershipRosterReconcile(self)
+end
+
+--- Runs one generation-scoped settled-roster reconciliation attempt.
+-- Roster events may consume the first two attempts. The terminal attempt is
+-- reserved for the trailing timer so an event burst cannot exhaust recovery
+-- before Classic's role APIs settle.
+-- @tparam number generation Expected lifecycle generation.
+-- @tparam[opt=false] boolean timerDriven Whether this invocation is the timer callback.
+-- @treturn boolean reconciled
+-- @treturn table|string resultOrStatus
+-- @treturn string|nil schedulingError
+function AngryEra:RunProtocolLeadershipRosterReconcile(generation, timerDriven)
+    if
+        self._leadershipRosterReconcilePending ~= true
+        or generation ~= self._leadershipRosterReconcileGeneration
+    then
+        return true, "superseded"
+    end
+
+    CancelLeadershipRosterReconcileTimer(self)
+    if not self._protocolStarted or not (IsInRaid() or IsInGroup()) then
+        self:CancelProtocolLeadershipRosterReconcile()
+        return false, "protocol-or-group-inactive"
+    end
+
+    local completedAttempts = self._leadershipRosterReconcileAttempts or 0
+    if
+        timerDriven ~= true
+        and completedAttempts >= leadershipRosterReconcileMaxAttempts - 1
+    then
+        local scheduled, scheduleResult = ScheduleLeadershipRosterReconcile(self)
+        return true, "awaiting-timer", scheduled and nil or scheduleResult
+    end
+
+    local attempts = completedAttempts + 1
+    self._leadershipRosterReconcileAttempts = attempts
+    local reconciled, result = self:ReconcileProtocolLeadershipFromRoster()
+    local retryUnsettled = type(result) == "table"
+        and result.Changed == false
+        and attempts < leadershipRosterReconcileMaxAttempts
+    if not retryUnsettled then
+        self:CancelProtocolLeadershipRosterReconcile()
+        return reconciled, result
+    end
+
+    local scheduled, scheduleResult = ScheduleLeadershipRosterReconcile(self)
+    return reconciled, result, scheduled and nil or scheduleResult
+end
+
+--- Timer callback for one settled-roster reconciliation generation.
+-- @tparam number generation Generation captured when the timer was scheduled.
+-- @treturn boolean reconciled
+-- @treturn table|string resultOrStatus
+function AngryEra:RetryProtocolLeadershipRosterReconcile(generation)
+    if generation == self._leadershipRosterReconcileGeneration then
+        self._leadershipRosterReconcileTimer = nil
+    end
+    return self:RunProtocolLeadershipRosterReconcile(generation, true)
+end
+
 --- Addon enable hook.
 -- Initializes display and core event listeners.
 function AngryEra:OnEnable()
+    self:CancelProtocolLeadershipRosterReconcile()
     self:ResetOfficerRank()
     self:CreateDisplay()
     if type(self.CaptureDisplayAuthorityRecovery) == "function" then
@@ -652,8 +774,6 @@ function AngryEra:OnEnable()
     end
     AngryEra._protocolStarted = false
     AngryEra._startupDiscoveryRetryNeeded = false
-    AngryEra._leadershipRosterReconcilePending = false
-    AngryEra._leadershipRosterReconcileAttempts = 0
     local protocolStarted, protocolError = self:StartProtocolSession()
     if not protocolStarted then
         self:Print("Unable to start synchronization session: " .. tostring(protocolError))
@@ -740,12 +860,14 @@ function AngryEra:PARTY_LEADER_CHANGED()
             self:SendRequestDisplay()
         end
     end
-    self._leadershipRosterReconcilePending = self._protocolStarted == true
-    self._leadershipRosterReconcileAttempts = 0
+    self:StartProtocolLeadershipRosterReconcile()
 end
 
 function AngryEra:GROUP_JOINED()
     local preserveLeadershipReconcile = self._leadershipRosterReconcilePending == true
+    local preservedLeadershipReconcileAttempts =
+        self._leadershipRosterReconcileAttempts or 0
+    self:CancelProtocolLeadershipRosterReconcile()
     if type(self.DiscardDisplayAuthorityRecovery) == "function" then
         self:DiscardDisplayAuthorityRecovery()
     end
@@ -766,10 +888,10 @@ function AngryEra:GROUP_JOINED()
         end
     end
     self:UpdateDisplayedIfNewGroup()
-    self._leadershipRosterReconcilePending =
-        preserveLeadershipReconcile and self._protocolStarted == true
-    if not self._leadershipRosterReconcilePending then
-        self._leadershipRosterReconcileAttempts = 0
+    if preserveLeadershipReconcile and self._protocolStarted then
+        self:StartProtocolLeadershipRosterReconcile()
+        self._leadershipRosterReconcileAttempts =
+            preservedLeadershipReconcileAttempts
     end
 end
 
@@ -781,8 +903,8 @@ end
 
 --- Rechecks protocol tenure after roster roles have settled.
 -- PARTY_LEADER_CHANGED can precede the roster API update on Classic. This
--- second pass is a no-op for a stable tenure, but repairs a missed promotion,
--- demotion, or remote-leader transition exactly once.
+-- bounded pass is a no-op for a stable tenure, but repairs one missed
+-- promotion, demotion, or remote-leader transition.
 -- @treturn boolean reconciled
 -- @treturn table|string resultOrStatus
 function AngryEra:ReconcileProtocolLeadershipFromRoster()
@@ -846,8 +968,7 @@ function AngryEra:GROUP_ROSTER_UPDATE()
     self:PermissionsUpdated()
     local reconcileLeadership = self._leadershipRosterReconcilePending == true
     if not (IsInRaid() or IsInGroup()) then
-        self._leadershipRosterReconcilePending = false
-        self._leadershipRosterReconcileAttempts = 0
+        self:CancelProtocolLeadershipRosterReconcile()
         if type(self.DiscardDisplayAuthorityRecovery) == "function" then
             self:DiscardDisplayAuthorityRecovery()
         end
@@ -858,13 +979,9 @@ function AngryEra:GROUP_ROSTER_UPDATE()
     else
         self:PruneProtocolPeers()
         if reconcileLeadership then
-            local attempts = (self._leadershipRosterReconcileAttempts or 0) + 1
-            local _, result = self:ReconcileProtocolLeadershipFromRoster()
-            local retryUnsettled = type(result) == "table"
-                and result.Changed == false
-                and attempts < 3
-            self._leadershipRosterReconcilePending = retryUnsettled
-            self._leadershipRosterReconcileAttempts = retryUnsettled and attempts or 0
+            self:RunProtocolLeadershipRosterReconcile(
+                self._leadershipRosterReconcileGeneration
+            )
         end
         self:UpdateDisplayedIfNewGroup()
         if type(self.RetryDisplayedNoteMarkers) == "function" then

@@ -9,6 +9,9 @@ local requestDisplaySucceeds = true
 local requestDisplayError = "request-failed"
 local versionQuerySucceeds = true
 local authorityReceiveAllowed = true
+local grouped = true
+local scheduledTimers = {}
+local timerOrdinal = 0
 
 local function Record(name, value)
     calls[#calls + 1] = {
@@ -102,12 +105,31 @@ function AngryEra:StartProtocolSession()
     return true
 end
 
-function AngryEra:ScheduleTimer(method, delay)
+function AngryEra:ScheduleTimer(method, delay, ...)
+    timerOrdinal = timerOrdinal + 1
+    local timer = {
+        Active = true,
+        Arguments = { ... },
+        Delay = delay,
+        Id = timerOrdinal,
+        Method = method,
+    }
+    scheduledTimers[#scheduledTimers + 1] = timer
     Record("schedule", {
+        Arguments = timer.Arguments,
         Method = method,
         Delay = delay,
+        Timer = timer,
     })
-    return {}
+    return timer
+end
+
+function AngryEra:CancelTimer(timer)
+    if type(timer) ~= "table" or timer.Active ~= true then
+        return false
+    end
+    timer.Active = false
+    return true
 end
 
 function AngryEra:RegisterEvent(event)
@@ -124,6 +146,14 @@ end
 
 function AngryEra:ResetProtocolPeers()
     Record("reset-protocol-peers")
+end
+
+function AngryEra:ResetCurrentGroup()
+    Record("reset-current-group")
+end
+
+function AngryEra:ResetPermissionWarning()
+    Record("reset-permission-warning")
 end
 
 function AngryEra:SendProtocolVersionQuery(force)
@@ -206,11 +236,47 @@ local function CommandInput(value)
 end
 
 function _G.IsInRaid()
-    return true
+    return grouped
 end
 
 function _G.IsInGroup()
-    return true
+    return grouped
+end
+
+local function LatestTimer(method)
+    for index = #scheduledTimers, 1, -1 do
+        local timer = scheduledTimers[index]
+        if timer.Method == method then
+            return timer
+        end
+    end
+end
+
+local function FireTimer(timer)
+    assert(type(timer) == "table", "a scheduled timer is required")
+    timer.Active = false
+    local callback = assert(AngryEra[timer.Method], "the scheduled callback must exist")
+    return callback(AngryEra, timer.Arguments[1])
+end
+
+local function CountCalls(name)
+    local count = 0
+    for _, call in ipairs(calls) do
+        if call.Name == name then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function CountActiveTimers(method)
+    local count = 0
+    for _, timer in ipairs(scheduledTimers) do
+        if timer.Active and timer.Method == method then
+            count = count + 1
+        end
+    end
+    return count
 end
 
 assert(not AngryEra:IsSyncDebugEnabled(), "sync debug should be disabled by default")
@@ -542,8 +608,19 @@ for _, call in ipairs(calls) do
     assert(call.Name ~= "request-display", "a bound follower must remain quiet through the final bounded check")
 end
 assert(
+    AngryEra._leadershipRosterReconcilePending == true
+        and AngryEra._leadershipRosterReconcileAttempts == 2,
+    "roster evidence should reserve the terminal reconciliation for its trailing timer"
+)
+local settledFollowerTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+calls = {}
+FireTimer(settledFollowerTimer)
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "request-display", "the terminal bound-follower timer must remain quiet")
+end
+assert(
     AngryEra._leadershipRosterReconcilePending == false,
-    "the bounded follower reconciliation should expire after stable roster evidence"
+    "the terminal timer should expire the bounded follower reconciliation"
 )
 protocolDisplayAuthority = nil
 calls = {}
@@ -551,6 +628,266 @@ AngryEra:GROUP_ROSTER_UPDATE()
 for _, call in ipairs(calls) do
     assert(call.Name ~= "request-display", "routine roster updates must remain free of display requests")
 end
+
+-- A timer must finish a promotion even when Classic settles the role API
+-- without emitting a second GROUP_ROSTER_UPDATE.
+AngryEra:CancelProtocolLeadershipRosterReconcile()
+grouped = true
+isRaidLeader = false
+tenureLocalAuthority = false
+protocolDisplayAuthority = nil
+calls = {}
+local rotationsBeforeTimerPromotion = tenureRotationCount
+AngryEra:PARTY_LEADER_CHANGED()
+local promotionEventTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+assert(
+    promotionEventTimer
+        and promotionEventTimer.Active
+        and promotionEventTimer.Delay == 0.25
+        and AngryEra._leadershipRosterReconcilePending == true,
+    "a leader event should arm one settled-roster fallback timer"
+)
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+local promotionFallbackTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+assert(
+    promotionEventTimer.Active == false
+        and promotionFallbackTimer ~= promotionEventTimer
+        and promotionFallbackTimer.Active
+        and promotionFallbackTimer.Arguments[1] ~= promotionEventTimer.Arguments[1]
+        and AngryEra._leadershipRosterReconcileAttempts == 1,
+    "a stale roster callback should consume one attempt and re-arm a fresh timer generation"
+)
+calls = {}
+FireTimer(promotionEventTimer)
+assert(
+    CountCalls("refresh-tenure") == 0 and promotionFallbackTimer.Active,
+    "a canceled timer must not consume or clear its re-armed replacement"
+)
+isRaidLeader = true
+restoreAsAuthority = true
+calls = {}
+FireTimer(promotionFallbackTimer)
+restoreAsAuthority = false
+assert(
+    tenureRotationCount == rotationsBeforeTimerPromotion + 1
+        and CountCalls("version-query") == 1
+        and CountCalls("restore-display-authority") == 1
+        and AngryEra._leadershipRosterReconcilePending == false,
+    "the fallback timer should rotate, advertise, and restore a silently settled promotion once"
+)
+
+-- Demotion has no follower display watchdog, so the same timer must retire the
+-- local tenure and request the newly settled leader.
+calls = {}
+local rotationsBeforeTimerDemotion = tenureRotationCount
+restoreAsAuthority = true
+AngryEra:PARTY_LEADER_CHANGED()
+restoreAsAuthority = false
+local demotionEventTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+assert(
+    tenureRotationCount == rotationsBeforeTimerDemotion + 1 and demotionEventTimer.Active,
+    "a stale demotion event should arm a correction after its provisional rotation"
+)
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+local demotionFallbackTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+assert(
+    demotionEventTimer.Active == false
+        and demotionFallbackTimer ~= demotionEventTimer
+        and demotionFallbackTimer.Active,
+    "a stale leader roster should re-arm the demotion correction"
+)
+isRaidLeader = false
+calls = {}
+FireTimer(demotionFallbackTimer)
+assert(
+    CountCalls("request-display") == 1
+        and CountCalls("version-query") == 0
+        and AngryEra._leadershipRosterReconcilePending == false,
+    "the fallback timer should retire a silently settled demotion and request its new leader once"
+)
+
+-- A settled roster callback wins the race with its timer and invalidates the
+-- already-dispatched generation before it can duplicate promotion work.
+isRaidLeader = false
+tenureLocalAuthority = false
+calls = {}
+AngryEra:PARTY_LEADER_CHANGED()
+local rosterWinsTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+isRaidLeader = true
+restoreAsAuthority = true
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+restoreAsAuthority = false
+assert(
+    rosterWinsTimer.Active == false
+        and CountCalls("version-query") == 1
+        and CountCalls("restore-display-authority") == 1
+        and AngryEra._leadershipRosterReconcilePending == false,
+    "a settled roster callback should cancel its fallback after reconciling once"
+)
+calls = {}
+FireTimer(rosterWinsTimer)
+assert(
+    CountCalls("refresh-tenure") == 0
+        and CountCalls("version-query") == 0
+        and CountCalls("restore-display-authority") == 0,
+    "a canceled fallback must not duplicate settled-roster promotion work"
+)
+
+-- New leader events and group boundaries must invalidate callbacks captured
+-- from an older lifecycle generation.
+isRaidLeader = false
+tenureLocalAuthority = false
+calls = {}
+AngryEra:PARTY_LEADER_CHANGED()
+local supersededEventTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+local supersededGeneration = supersededEventTimer.Arguments[1]
+AngryEra:PARTY_LEADER_CHANGED()
+local replacementEventTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+assert(
+    supersededEventTimer.Active == false
+        and replacementEventTimer.Active
+        and replacementEventTimer.Arguments[1] ~= supersededGeneration,
+    "a newer leader event should replace and invalidate the prior timer generation"
+)
+calls = {}
+FireTimer(supersededEventTimer)
+assert(
+    CountCalls("refresh-tenure") == 0 and replacementEventTimer.Active,
+    "a superseded event callback must not consume the replacement generation"
+)
+AngryEra:CancelProtocolLeadershipRosterReconcile()
+
+calls = {}
+AngryEra:PARTY_LEADER_CHANGED()
+AngryEra:GROUP_ROSTER_UPDATE()
+local preJoinTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+local preJoinGeneration = preJoinTimer.Arguments[1]
+assert(
+    AngryEra._leadershipRosterReconcileAttempts == 1,
+    "the pre-join roster should consume one shared bounded attempt"
+)
+AngryEra:GROUP_JOINED()
+local postJoinTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+assert(
+    preJoinTimer.Active == false
+        and postJoinTimer.Active
+        and postJoinTimer.Arguments[1] ~= preJoinGeneration,
+    "GROUP_JOINED should preserve the boundary under a fresh timer generation"
+)
+assert(
+    AngryEra._leadershipRosterReconcileAttempts == 1,
+    "GROUP_JOINED should preserve the shared attempt budget while re-arming"
+)
+calls = {}
+FireTimer(preJoinTimer)
+assert(
+    CountCalls("refresh-tenure") == 0 and postJoinTimer.Active,
+    "a pre-join callback must not act on post-join protocol state"
+)
+AngryEra:CancelProtocolLeadershipRosterReconcile()
+
+-- Group departure and OnEnable both cancel and invalidate any pending callback.
+calls = {}
+AngryEra:PARTY_LEADER_CHANGED()
+local departureTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+grouped = false
+calls = {}
+AngryEra:GROUP_ROSTER_UPDATE()
+assert(
+    departureTimer.Active == false and AngryEra._leadershipRosterReconcilePending == false,
+    "group departure should cancel settled-roster reconciliation"
+)
+grouped = true
+calls = {}
+FireTimer(departureTimer)
+assert(
+    CountCalls("refresh-tenure") == 0 and CountCalls("request-display") == 0,
+    "a callback captured before group departure must remain inert"
+)
+
+calls = {}
+AngryEra:PARTY_LEADER_CHANGED()
+local preEnableTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+calls = {}
+AngryEra:OnEnable()
+assert(
+    preEnableTimer.Active == false and AngryEra._leadershipRosterReconcilePending == false,
+    "OnEnable should invalidate a timer retained from an earlier enable lifecycle"
+)
+calls = {}
+FireTimer(preEnableTimer)
+assert(
+    CountCalls("refresh-tenure") == 0,
+    "a callback captured before OnEnable must not enter the new protocol session"
+)
+
+-- Stable evidence is bounded to exactly three total attempts, regardless of
+-- whether those attempts are event-driven or timer-driven.
+isRaidLeader = false
+tenureLocalAuthority = false
+protocolDisplayAuthority = {
+    Sender = "Leader-Realm",
+}
+AngryEra:CancelProtocolLeadershipRosterReconcile()
+local timersBeforeBoundedRun = #scheduledTimers
+calls = {}
+AngryEra:PARTY_LEADER_CHANGED()
+local boundedTimerOne = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+calls = {}
+FireTimer(boundedTimerOne)
+local boundedTimerTwo = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+FireTimer(boundedTimerTwo)
+local boundedTimerThree = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+FireTimer(boundedTimerThree)
+assert(
+    #scheduledTimers == timersBeforeBoundedRun + 3
+        and CountCalls("refresh-tenure") == 3
+        and CountCalls("request-display") == 0
+        and AngryEra._leadershipRosterReconcilePending == false
+        and AngryEra._leadershipRosterReconcileAttempts == 0,
+    "three stable attempts should exhaust without scheduling a fourth timer or adding display traffic"
+)
+
+-- A burst of roster events may consume the first two attempts, but it may only
+-- trailingly re-arm the reserved terminal attempt until the burst goes quiet.
+AngryEra:CancelProtocolLeadershipRosterReconcile()
+isRaidLeader = false
+tenureLocalAuthority = false
+local rotationsBeforeRosterBurst = tenureRotationCount
+calls = {}
+AngryEra:PARTY_LEADER_CHANGED()
+calls = {}
+for _ = 1, 4 do
+    AngryEra:GROUP_ROSTER_UPDATE()
+end
+local rosterBurstTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
+assert(
+    CountCalls("refresh-tenure") == 2
+        and AngryEra._leadershipRosterReconcileAttempts == 2
+        and AngryEra._leadershipRosterReconcilePending == true
+        and CountActiveTimers("RetryProtocolLeadershipRosterReconcile") == 1
+        and rosterBurstTimer.Active,
+    "rapid stale roster events must reserve exactly one active delayed reconciliation"
+)
+isRaidLeader = true
+restoreAsAuthority = true
+calls = {}
+FireTimer(rosterBurstTimer)
+restoreAsAuthority = false
+assert(
+    tenureRotationCount == rotationsBeforeRosterBurst + 1
+        and CountCalls("refresh-tenure") == 1
+        and CountCalls("version-query") == 1
+        and CountCalls("restore-display-authority") == 1
+        and AngryEra._leadershipRosterReconcilePending == false,
+    "the reserved timer should reconcile a role API that settles silently after the roster burst"
+)
+protocolDisplayAuthority = nil
+isRaidLeader = false
+tenureLocalAuthority = false
 
 calls = {}
 AngryEra:PARTY_LEADER_CHANGED()
