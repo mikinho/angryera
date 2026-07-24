@@ -432,7 +432,25 @@ function AngryEra:BuildActivePageChangeProposal(_, desired)
     }
 end
 
+function AngryEra:AssertActivePageAuthForTest(auth, context)
+    assert(type(auth) == "table" and getmetatable(auth) == nil, context .. " auth must be plain")
+    for key in pairs(auth) do
+        assert(
+            key == "Sender"
+                or key == "SenderInstallationId"
+                or key == "SenderSessionId"
+                or key == "ReceivedAt",
+            context .. " auth leaked transport field " .. tostring(key)
+        )
+    end
+    assert(auth.Sender ~= nil, context .. " auth is missing Sender")
+    assert(auth.SenderInstallationId ~= nil, context .. " auth is missing SenderInstallationId")
+    assert(auth.SenderSessionId ~= nil, context .. " auth is missing SenderSessionId")
+    assert(auth.ReceivedAt ~= nil, context .. " auth is missing ReceivedAt")
+end
+
 function AngryEra:ApplyActivePageChangeProposal(auth, payload)
+    self:AssertActivePageAuthForTest(auth, "change proposal")
     appliedChangeProposals[#appliedChangeProposals + 1] = {
         Auth = auth,
         Payload = payload,
@@ -476,6 +494,7 @@ function AngryEra:BuildActiveDisplayPayload(pageId)
 end
 
 function AngryEra:BuildActiveDisplayRequestResponse(auth, payload)
+    self:AssertActivePageAuthForTest(auth, "display request")
     activeCalls[#activeCalls + 1] = {
         Name = "display-request",
         Auth = auth,
@@ -495,6 +514,7 @@ function AngryEra:BuildActiveDisplayRequestResponse(auth, payload)
 end
 
 function AngryEra:BuildActivePageRequestResponse(auth, payload)
+    self:AssertActivePageAuthForTest(auth, "page request")
     activeCalls[#activeCalls + 1] = {
         Name = "page-request",
         Auth = auth,
@@ -515,6 +535,7 @@ function AngryEra:BuildActivePageRequestResponse(auth, payload)
 end
 
 function AngryEra:AcceptActivePageUpsert(auth, payload, options)
+    self:AssertActivePageAuthForTest(auth, "page upsert")
     activeCalls[#activeCalls + 1] = {
         Name = "page-upsert",
         Auth = auth,
@@ -558,6 +579,7 @@ function AngryEra:AcceptActivePageUpsert(auth, payload, options)
 end
 
 function AngryEra:AcceptActiveDisplay(auth, payload)
+    self:AssertActivePageAuthForTest(auth, "display")
     activeCalls[#activeCalls + 1] = {
         Name = "display",
         Auth = auth,

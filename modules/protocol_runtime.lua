@@ -1596,6 +1596,19 @@ local function BuildAuth(sender, envelope, receivedAt)
     }
 end
 
+-- Transport-only metadata such as the sender-controlled SentAt timestamp is
+-- used for tenure and ordering checks before dispatch. Keep it out of the
+-- stricter page-runtime auth boundary, which accepts only canonical identity
+-- plus the trusted local receive time.
+local function BuildHandlerAuth(auth)
+    return {
+        Sender = auth.Sender,
+        SenderInstallationId = auth.SenderInstallationId,
+        SenderSessionId = auth.SenderSessionId,
+        ReceivedAt = auth.ReceivedAt,
+    }
+end
+
 local function ReplaySessionKey(auth)
     return auth.SenderInstallationId .. "\0" .. auth.SenderSessionId
 end
@@ -3949,7 +3962,14 @@ function AngryEra:DispatchProtocolMessage(auth, channel, envelope, correlationKi
     if not handler then
         return false, "unknown-message-type"
     end
-    return handler(self, auth, channel, envelope, correlationKind, authorityBootstrap)
+    return handler(
+        self,
+        BuildHandlerAuth(auth),
+        channel,
+        envelope,
+        correlationKind,
+        authorityBootstrap
+    )
 end
 
 --- Receives, authenticates, correlates, deduplicates, and dispatches protocol v3.
