@@ -1,399 +1,510 @@
-**AngryEra** is a modern fork of the legendary AngryAssignments for **WoW Classic Era, Hardcore, Season of Discovery, and Burning Crusade Anniversary**. The current release supports Classic Era 1.15.9 and Burning Crusade Anniversary 2.5.6.
+# AngryEra
 
-Designed for raid leaders who demand flexibility and speed, AngryEra revitalizes assignment management:
+AngryEra is a modern fork of AngryAssignments for WoW Classic Era, Hardcore, Season of Discovery, and Burning Crusade Anniversary. It combines a fast shared assignment display with nested pages, reusable variables, automatic raid markers, encounter-driven page advancement, import/export tools, and WeakAuras integration.
 
-*   **Dynamic Variables**: Define key roles (e.g., `MT=PlayerName`) once, and watch every boss assignment update instantly.
-*   **Mustache Logic**: Automate assignments with logic like `{{#classes.WARRIOR}}` based on your live raid roster.
-*   **Drag & Drop**: Effortlessly organize pages and categories with intuitive drag-and-drop controls.
-*   **Markdown Support**: Create clear, formatted strategies with headers, bold text, and lists.
-*   **Safer Imports**: JSON/encoded imports are validated with payload and nesting guardrails to prevent malformed data from causing instability.
-*   **Raid Templates**: Includes pre-loaded, optimized strategies for MC, BWL, AQ40, and Naxxramas.
-*   **Smart Markers**: Assign raid target icons to your target or mouseover unit with dedicated keybindings.
-*   **Modern UI**: A polished interface with pixel-perfect alignment and smarter context menus.
+Supported game clients:
 
-Ensure your team knows exactly what to do, whether you're organizing a PUG or leading a hardcore progression guild.
+- Classic Era 1.15.9
+- Burning Crusade Anniversary 2.5.6
 
-Smart Markers
--------------
+> [!IMPORTANT]
+> **BREAKING CHANGE:** This release cannot share assignments or displayed pages with earlier AngryEra or AngryAssignments versions. Update everyone who needs shared assignments before the raid. Existing local pages and settings are migrated automatically, but downgrading after opening this version is unsupported unless you restore a SavedVariables backup.
 
-The **AngryEra | Smart Markers** section in the game's keybinding menu provides actions for assigning Star, Circle, Diamond, Triangle, Moon, Square, X, or Skull to either your current target or mouseover unit.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not run a mixed-version raid.
 
-Assigning a marker that is already on the selected unit leaves it in place instead of toggling it off. The **Clear All Raid Targets** keybinding removes every active raid target icon.
+## What is new
 
-**Metadata auto-markers:** page metadata can assign markers to raiders
-automatically whenever a page is displayed:
+- **Fast, ordered shared displays:** page changes arrive quickly, rapid navigation publishes the final selection, and older delayed changes cannot replace the newest page.
+- **Automatic recovery:** late joiners and reloaded clients retrieve the leader's current page, and display control follows a raid-leader change.
+- **Safer shared editing:** only the current leader commits shared changes. Qualified raid assistants can submit edits to the exact active page without directly overwriting it.
+- **Inherited variables:** variables flow through nested categories to their pages, with the closest category or page value winning.
+- **Page metadata:** `$` variables can drive automatic raid markers, encounter advancement, WeakAuras, and other addons.
+- **Automatic raid markers:** display a page and AngryEra can mark the assigned players.
+- **Boss-kill auto-advance:** after a successful encounter, the leader can automatically display the next page in the category.
+- **Displayed-note API:** WeakAuras and other addons can read the active note, resolved variables, metadata, and hierarchy.
+- **Safer restore workflow:** choosing an older page version loads it as a draft; nothing changes until you click **Save**.
+- **Safer imports and migration:** imported data is bounded and validated, and existing pages and settings are migrated automatically.
 
+## Quick start
+
+### For every raider
+
+1. Install the same AngryEra release as the rest of the group.
+2. Type `/aa` to open the addon settings.
+3. Set a keybinding for **Toggle Display** under **Angry Era** in the game's keybinding menu.
+4. Use `/aa lock` or the **Toggle Lock** keybinding to show the display mover.
+5. Drag the display into position, resize it from the red strip, choose whether it grows upward or downward, and lock it again.
+
+When the group leader displays an assignment, it appears automatically. Reloading, reconnecting, or joining late retrieves the current page again.
+
+### For raid and party leaders
+
+1. Open the editor with `/aa window` or the **Toggle Window** keybinding.
+2. Create pages and categories from **Menu**, or load one of the included raid templates.
+3. Select a page and click **Send**. Double-clicking a page in the tree does the same thing.
+4. Use the **Previous Page**, **Next Page**, and **First Page** keybindings to navigate the category containing the actively displayed page.
+5. Use **Menu > Clear Page** or `/aa clear` to clear the shared display.
+
+Only the current party or raid leader selects and clears the shared display. Leadership transfers automatically when the group leader changes.
+
+### For raid assistants
+
+Raid assistants can output assignments to chat. They can also edit the exact active shared page when the leader's permission settings accept them. See [Shared pages and permissions](#shared-pages-and-permissions).
+
+## Shared pages and permissions
+
+### What AngryEra shares
+
+AngryEra shares the active assignment page and the category-variable context needed to render it correctly. It does not broadcast your entire page library.
+
+Your local pages, categories, placement, imports, exports, and private organization remain yours. To give someone a complete page or category for their own library, use **Export > Encoded AA** and have them import it.
+
+If a displayed page is new to your installation, it appears unfiled. You may organize or delete that received page locally; later shared revisions preserve your local placement. If the leader displays a page you deleted, AngryEra can receive it again.
+
+Shared page changes are fast and ordered. If the leader rapidly presses Previous and Next, followers move to the final selection instead of replaying obsolete intermediate pages.
+
+### Who may change a shared page
+
+The current leader is always the final authority. A raid assistant may submit a non-destructive edit only to the exact page currently displayed. Under the default policy, that assistant must also be one of the following:
+
+- a guild officer or higher in the leader's guild;
+- listed in the leader's **Trusted Assistants** setting; or
+- covered by the leader's **Allow All Raid Assistants** option.
+
+Officer status without raid assist is not enough. Raid assist alone is not enough by default, and a name in **Trusted Assistants** still needs raid assist.
+
+The leader processes simultaneous edits in order and shares each accepted result. If the active page changes, the leader changes, or another edit wins, AngryEra keeps the assistant's text visible as a recoverable draft instead of silently discarding it.
+
+Assistant edits are limited to the active page's name, variables, and contents. They do not grant permission to select or clear the display, edit categories or background received pages, reorder shared data, or perform shared deletions. Party sharing is leader-only because parties do not have a raid-assistant role.
+
+### Permission settings
+
+Open `/aa` and find **Permissions**:
+
+- **Leader + Qualified Assistants** is the default. It accepts the leader plus assistants who meet the rules above.
+- **Leader Only** rejects assistant edits. The leader still controls the shared page normally.
+- **Ignore Shared Changes** keeps this installation private and ignores group-shared page changes and displays.
+- **Allow All Raid Assistants** trusts every raid assistant for non-destructive active-page edits. It is off by default and should be used carefully when assist is handed out broadly.
+- **Trusted Assistants** accepts `Name-Realm` entries separated by spaces or commas. Prefer full names when players may be from different realms.
+
+These settings never let an assistant select or clear the shared display.
+
+## Editor guide
+
+Open the editor with `/aa window` or **Toggle Window**. The left side contains a searchable page tree with drag-and-drop ordering and nested categories. Right-click pages and categories for their management menus.
+
+### Main menu
+
+The **Menu** button provides:
+
+- **Add Page**
+- **Add Category**
+- **Load Raid Template**
+- **Import > Encoded AA / JSON / Markdown**
+- **Manage Pages**
+- **Clear Page**, which clears the current display
+
+Right-click a page or category to rename it, delete it, edit variables, export it, or change its category placement. Categories can also be saved as reusable templates.
+
+### Editor controls
+
+| Control | What it does |
+| --- | --- |
+| **Save** | Saves the editor draft. Local pages save locally; on the active shared page, the leader commits the change and a qualified assistant submits it to the leader. |
+| **Revert** | Discards the visible draft and reloads the current stored page. |
+| **Restore** | Opens up to ten prior content versions. Selecting one loads only its contents as an unsaved draft; click **Save** to keep it. |
+| **Output** | Sends the page selected in the editor to group chat without changing the shared display. |
+| **Highlight** | Inserts class-color codes around recognized raid and guild names and saves the updated page immediately. |
+| **Send** | Displays the page selected in the editor. While grouped, only the current leader can use it. |
+
+If another update arrives while you are editing, AngryEra warns you and leaves your draft visible. Click **Revert** to load the received version, or keep working and **Save** again.
+
+### Local and shared editing
+
+- Your locally owned pages remain editable while solo or grouped.
+- A leader can edit and republish shared pages.
+- An assistant can edit only the exact active shared page and only when the leader accepts that assistant.
+- Received background pages and received categories remain read-only.
+- Private category placement and organization remain local.
+
+## Page navigation and chat output
+
+Keybindings under **Angry Era**:
+
+- **Toggle Display**
+- **Show Display**
+- **Hide Display**
+- **Previous Page**
+- **Next Page**
+- **First Page**
+- **Toggle Lock**
+- **Toggle Window**
+- **Output Assignment to Chat**
+
+Previous, Next, and First Page start from the actively displayed page and stay within its category. **First Page** jumps to the first page in that category; pressing it again returns to the page it left when possible.
+
+While grouped, only the leader's navigation changes the shared display. Rapid navigation is coalesced so the group settles on the leader's latest choice.
+
+The output source depends on how you invoke it:
+
+- The editor's **Output** button outputs the page currently selected in the editor.
+- The **Output Assignment to Chat** keybinding and `/aa output` output the actively displayed page.
+- Output automatically chooses the appropriate available group chat channel.
+- Leaders and raid assistants may output while grouped.
+
+Use **Chat Output Format** in `/aa` to choose spell names or acronyms.
+
+## Variables and inheritance
+
+Right-click a page or category and choose **Edit Variables**. Variables accept either `Key=Value` lines or a JSON object.
+
+```text
+MT=Zessy
+OT1=Kwayteow
+HEALER=Eblis
 ```
+
+Use them in page text with Mustache syntax:
+
+```text
+Main Tank: {{MT}}
+Off Tank: {{OT1}}
+```
+
+### Category inheritance
+
+Variables are merged in this order:
+
+1. outermost category;
+2. each nested category;
+3. the page.
+
+The nearest value wins. Put raid-wide defaults on an outer category, encounter defaults on a nested category, and exceptions on individual pages.
+
+References resolve after all layers are merged. This lets a category define a reusable expression that picks up a page override:
+
+```text
+Tank={{MT}}
+```
+
+If a page later sets `MT=Roselea`, `{{Tank}}` resolves to `Roselea`.
+
+### Roster templates
+
+Common Mustache examples:
+
+```text
+You: {{me}}
+{{#classes.WARRIOR}}{{name}}{{/classes.WARRIOR}}
+{{#groups.1}}{{name}}{{/groups.1}}
+```
+
+Player names are class-colored automatically in the on-screen assignment display.
+
+## Page metadata and automation
+
+A variable whose name starts with `$` is metadata. Metadata inherits and resolves references like ordinary variables, but it is intended to describe what AngryEra, WeakAuras, or another addon should do.
+
+Metadata can also appear in page text. It is excluded from automatic word highlighting and is exposed to integrations without the `$` prefix.
+
+### Automatic raid markers
+
+Supported marker keys are case-insensitive:
+
+```text
+$STAR
+$CIRCLE
+$DIAMOND
+$TRIANGLE
+$MOON
+$SQUARE
+$X
+$CROSS
+$SKULL
+```
+
+`$X` and `$CROSS` refer to the same marker. A value may be a player name, an ordinary variable, or another metadata variable.
+
+```text
 MT=Zessy
 $MT={{MT}}
 $SQUARE=$MT
 $SKULL=Kway-OtherRealm
 ```
 
-See the **Page Metadata ($ Variables)** section for the full rules, including
-realm-aware name resolution and marking permissions.
+When the page is displayed, AngryEra resolves the assignments and applies the requested markers:
 
-Using AngryEra as a raider
-------------------------------
-First, you'll likely want to configure a keybinding for the "Toggle Display" function (it should appear under "Angry Assignments" in your game keybindings menu), this will let you easily show/hide the on-screen assignments display during raids.  
+- An exact `Name-Realm` match wins.
+- A short name is used only when it uniquely identifies one group member.
+- Ambiguous short names are skipped instead of guessed.
+- Only the leader or a raid assistant applies automatic markers in a raid.
+- Any party member may apply them in a party.
+- Missing roster members are retried when roster information changes.
 
-The rest of the important configuration is primarily in the game's Interface menu, Addons tab, where you should now have a menu for "Angry Assignments" (you can also bring this screen up with the "/aa" command):
+When the display changes or clears, AngryEra removes only stale markers that it assigned. It does not remove a matching marker that already existed, and it does not fight a marker someone changes manually.
 
-* "Toggle Display" will toggle the on-screen display on and off (can also use "/aa toggle", but most of the time you'll want to use the keybinding discussed above).
-* "Toggle Lock" will lock/unlock the anchor for the on-screen display (can also use "/aa lock" or a keybinding), so that you can configure its location, direction, and width.
-* In the "Highlight" field, you can set some words that will always be highlighted in on-screen assignments.  Separate multiple words with commas or spaces.  Typically, you will want to set this to your name and any short versions of it that are commonly used.  If you add the special word "Group" into the list of highlights, then raid group numbers (ie "G1", "G2", etc) that appear in assignments will always be highlighted whenever you are a part of that group.
-* You may wish to turn on the "Hide on Combat" option which will automatically hide the on-screen assignments whenever you get into combat.  You can always bring them back up during combat by using the keybinding (or other methods mentioned above).
-* You can configure the font face, size, color, and outline style that will be used for the on-screen assignments.  You can also configure the color used for highlighted words.
-* The "Toggle Window" and "Scale" features here are used for the edit window that officers/raid assistants use to edit assignments.  If you are not going to be doing that, then you can safely ignore them.
+### Automatic encounter advancement
 
-For initial setup, unlock the on-screen display if necessary (use the button mentioned above, or "/aa lock", or the keybinding if you set one for it), and you should see a red horizontal strip.  You can adjust the width of the strip (long lines will be word-wrapped as needed) and place it in whatever location you want.  The up/down arrow at the far left of the strip will determine whether the assignments text goes up or down from the location at which you place the strip.  When you're done, click the lock on the strip and it will disappear from view.
+To advance assignments after boss kills:
 
-During raids, whenever any change in assignments occurs, the new assignments will re-appear on your screen if you had hidden them (along with a noticeable visual indicator).  They will auto-hide during combat, if you selected that option above, but you can bring them back up at any time during combat by using the Toggle Display keybinding or other methods.  If you re-log or reload your UI during the raid, your addon will pull information from the raid leader to get back in sync (if you are the raid leader yourself, it will use saved data).  Upon leaving the raid, the on-screen assignments will go away.  
+1. Put the encounter pages in the desired order inside one category.
+2. Right-click the category, choose **Edit Variables**, and add:
 
-Using AngryEra as an officer/raid assistant
--------------------------------------------
+   ```text
+   $AUTOADVANCE=true
+   ```
 
-Shared page changes are canonicalized by the current group leader. A raid assistant may propose a non-destructive edit to the exact active page when that assistant is a guild officer (or higher) in the leader's guild, or is named in the leader's **Trusted Assistants** setting. The leader validates and serializes accepted proposals, then publishes the canonical page revision. Officer rank without raid assist does not grant proposal authority, and raid assist alone is not enough. The current group leader alone controls which page is shown on-screen or clears the shared display.
+3. Name each page after its encounter, or add an explicit page binding:
 
-The leader's installation applies its receiver policy to incoming proposals and every client rejects unauthorized canonical traffic. **Leader Only** rejects assistant proposals, while **Ignore Shared Changes** keeps the local library private. **Allow All Raid Assistants** is an explicit override for groups where every assistant should be trusted to propose non-destructive active-page changes; it never grants canonical publication or shared display control and is disabled by default. Creating, organizing, deleting, importing, and exporting private local content does not require raid authority.
+   ```text
+   $ENCOUNTER=Patchwerk
+   ```
 
-Shared page snapshots are compressed in transit. Display selections use a compact, single-frame control lane, so a large page transfer cannot hold the leader's newest selection signal behind it. Interactive page changes activate locally at once, while their outbound display control uses one 125-millisecond trailing-edge window: rapidly stepping through several pages replaces the pending choice, and only the final selection is published. If that final page revision/context tuple is already cached, the leader sends only its small display reference. Otherwise, its replaceable active-page stream begins on the next timer turn without waiting through a second 125-millisecond delay. Selecting a newer page stops production of obsolete frames instead of draining the old page first. Forced publications—including displayed-page revision and hierarchy updates—shared clears, and protocol responses bypass interactive coalescing, so their display control remains immediate. Selections are ordered by both the leader's protocol sequence and a monotonic millisecond send-order stamp, so a delayed older selection can never replace the newest one. Each exact tuple is published once per group session, and a newly joined or reloaded client requests any missing tuple directly from the leader.
+   You may instead use a numeric encounter ID:
 
-You will likely want to configure a keybinding for "Toggle Window" in the game keybindings.  This brings up the edit window, which is what officers and raid assistants will use to modify the assignment pages.  The edit window can be scaled up or down via the "Scale" parameter in the configuration menu (or via "/aa scale").
+   ```text
+   $ENCOUNTERID=1112
+   ```
 
-The edit window contains a list of assignment pages you have on the left.  When you select one, you'll see the current contents of that page on the right.  You can **drag and drop** pages and categories to reorder them or nest them inside folders. You can also "Add", "Rename", and "Delete" pages via the buttons at the far bottom left.
+4. To stop after a particular page, override the inherited setting on that page:
 
-When editing pages, you'll have several buttons of interest:
+   ```text
+   $AUTOADVANCE=false
+   ```
 
-* "Save" will become available after you've begun changing a page. It commits the draft without selecting a different page. When the raid leader saves, the leader publishes the canonical revision; saving the displayed page also makes that exact revision the shared on-screen version. A qualified assistant instead submits the complete desired active-page state to the leader, which validates and publishes the canonical result.
-* "Revert" will become available after you've begun changing a page.  It will abandon your current edits, going back to the previous version of the page.
-* "Restore" lets you choose a historical version and loads it into the editor as a draft. Nothing is sent until you click "Save"; click "Revert" to discard the restored draft and return to the current stored version.
-* "Send and Display" is only available to the current group leader while grouped and only while not actively editing a page. It publishes the current version and makes it the shared on-screen display. If you're not in a group, it displays on-screen for you personally so you can preview it.
-* "Output" is available to the current group leader and raid assistants. It sends the page shown in the editor to group chat without changing the shared display.
-* "Clear Displayed" removes the shared on-screen display when used by the current group leader. For anyone else it clears only the local display. It doesn't affect page contents.
+Only the current group leader advances the shared display. Successful kills advance; wipes do not. Auto-advance uses locally owned sibling pages inside one category; it does not infer a sequence from root-level, unfiled, or received remote-owned pages. Advancement stops when there is no next page. Duplicate encounter names or IDs are treated as ambiguous and do not advance.
 
-Within assignment pages, you can use raid symbols such as {rt1}, {rt2}, {circle}, {star}, etc.  {hs} or {healthstone} will insert the icon for a healthstone, and {bl} or {bloodlust} will insert the icon for bloodlust.  You can insert any other icon in the game using this syntax: {icon spell_holy_sealofprotection}.  Icon names can be looked up by going to a spell's page on [Wowhead](http://www.wowhead.com) and then clicking on the icon.  You can also use any UI escape sequences, see [WoWWiki's page](http://www.wowwiki.com/UI_escape_sequences) for a full list.
+### Custom metadata
 
-If someone else saves edits to a particular page while you are editing that page, you'll receive a pop-up box notifying you of the fact. Your draft remains visible. You can continue editing and eventually overwrite their updated version by clicking "Save", or click "Revert" to abandon your draft and load their updated version. (Tip: before you click Revert, you may want to copy the section you were working on so you can paste it into the new version.)
+Any other `$` key is available to WeakAuras and addons:
 
-Individual pages are identified internally with unique IDs.  The names seen in the edit window are only used for display purposes, so there can be multiple pages with the same name.  Much like an edit, if someone renames a page, that rename is sent out to everyone in the guild who's online at the time (others will get the rename later, whenever that page is next edited or sent).  Deletes, however, are only done locally - so if you delete a page, others will still have it.  If you've deleted a page, and later on someone else edits it or sends it, you'll get it back again.
-
-Template System & Variables
----------------------------
-
-AngryEra now supports **Mustache-style templating** to create dynamic assignments that adapt to your raid composition.
-
-**Basic Usage:**
-* `{{me}}`: Displays your own name.
-* `{{#classes.WARRIOR}} {{name}} {{/classes.WARRIOR}}`: Iterates through all Warriors in the raid.
-* `{{#groups.1}} {{name}} {{/groups.1}}`: Iterates through Group 1.
-
-**Custom Variables:**
-You can define custom variables for each page or category to simplify your templates.
-1. Right-click a Page or Category and select **Edit Variables**.
-2. Enter your variables in `Key=Value` format or JSON.
-   * Example:
-     ```
-     MT=Zessy
-     OT1=Kwayteow
-     Healer1=Eblis
-     ```
-3. Use them in your assignment text:
-   * `Main Tank: {{MT}}` -> Displays "Main Tank: Zessy"
-   * `Off Tank: {{OT1}}` -> Displays "Off Tank: Kwayteow"
-
-**Class Coloring:**
-Names of players in your Raid or Guild will automatically be **class-colored** when displayed in the assignment window.
-
-Page Metadata ($ Variables)
----------------------------
-
-Any variable whose name starts with `$` is **page metadata**: a machine-facing
-channel that travels with your assignments. Metadata behaves exactly like a
-normal template variable — it inherits from category to page, resolves
-`{{references}}`, and can be rendered in note text — but it is never
-auto-highlighted, and it is published to WeakAuras and other addons with the
-`$` prefix stripped. Set metadata on a category to apply it to every page
-inside; set it on a page to override.
-
-The intent: your assignment pages describe *what the raid does*, and metadata
-describes *what the addon should do about it*. Everything below rides the
-existing variable sync, so the whole raid stays consistent with zero extra
-setup.
-
-**Reserved keys AngryEra acts on:**
-
-* `$STAR`, `$CIRCLE`, `$DIAMOND`, `$TRIANGLE`, `$MOON`, `$SQUARE`, `$X` (or
-  `$CROSS`), `$SKULL` — **auto-markers**. Set one to a player name or a
-  variable reference (`$SQUARE=$MT`) and the marker is applied to that raider
-  whenever the page is displayed. Names resolve realm-aware: exact
-  `Name-Realm` first, a unique cross-realm match for unqualified names, and
-  ambiguous names are skipped instead of guessed. Only clients allowed to
-  mark will act (raid leader or assistant in a raid; anyone in a party).
-* `$AUTOADVANCE` — **kill-driven page advancement**. Set `$AUTOADVANCE=true`
-  on a category and, after each boss kill, the raid leader's client advances
-  the display to the next page — so the upcoming assignments are on screen
-  ahead of the pull. Wipes never advance. The rendered page's exact metadata
-  snapshot decides whether advancement is enabled, so a later private category
-  edit cannot change the behavior of the note already on screen. Set
-  `$AUTOADVANCE=false` on a specific page to stop the chain at that boss (for
-  example, the final boss of the night). A shared-display transport failure is
-  warned about and retried twice; local activation alone is not reported as a
-  shared success.
-* `$ENCOUNTER` / `$ENCOUNTERID` — **encounter binding** for auto-advance.
-  The displayed page is matched first by encounter id, then by `$ENCOUNTER` or
-  its own name (so template pages named "Lucifron" bind automatically). If it
-  does not match, Angry Era searches only its bounded, locally authoritative
-  sibling sequence and finally falls back to the displayed page. Duplicate id
-  or name bindings in that sequence are treated as ambiguous and do not
-  advance. Receiver-private placement of a remote-owned displayed page is
-  never used to infer what comes next. Use explicit bindings when a page's
-  name differs from the boss (`$ENCOUNTER=Patchwerk` on a page called
-  "Patch").
-
-**Custom keys** are yours: anything else (`$phase=2`, `$note=swap fast`) is
-carried along, inherited, and exposed through `AngryEra:GetDisplayedMeta()`
-and the `ANGRYERA_NOTE_UPDATE` event for WeakAuras — see the WeakAuras &
-Addon API section.
-
-Importing
----------
-
-You can import pages and categories by string. This is useful for sharing assignments or backing them up.
-
-1. Click standard **Menu** button at the bottom left of the window.
-2. Select **Import Page**.
-3. Paste your content.
-   * If the content contains headers (lines starting with `# `), a **Category** will be created with individual pages for each header.
-   * If no headers are found, a single **Page** will be created.
-4. Enter a name. If importing a category, this will be the Category Name. If importing a single page, this will be the Page Name.
-
-Import safety and behavior notes:
-* JSON escaped newlines (`\n`) are restored to real line breaks on import.
-* JSON `null` values are preserved internally and safely re-encoded on export.
-* Encoded imports are bounded and validated (size/schema/depth) before they are applied.
-
-Exporting
----------
-
-Right-click any page or category to **Export** it in one of three formats:
-* **JSON**: Used for backups or sharing full data structures.
-* **Markdown**: Raw text format. Great for sharing with other Raid Leaders.
-* **Output**: Processed text (with variables resolved and icons converted). Ideal for copying into Discord.
-
-Markdown Support
-----------------
-
-You can use basic Markdown syntax to style your assignments:
-* **Headers**: `## Title` (Gold Color)
-* **Lists**: `- Item` (Bullet point)
-* **Bold**: `**Text**` (White Color)
-* **Italic**: `_Text_` (Grey Color)
-
-Chat Output
------------
-Clicking the **Output** button will render the assignment (including all templates and variables) and send it to the selected chat channel (Raid, Party, or Instance).
-
-Raid Shortcuts
---------------------
-You can use the following shortcuts in your assignments to display icons for spells and abilities:
-
-**Warrior**
-* `{Sunder}` Sunder Armor, `{AoE}` Challenging Shout, `{Mock}` Mocking Blow, `{Pummel}` Pummel
-* `{Taunt}` Taunt, `{Demo}` Demoralizing Shout, `{Thunder}` Thunder Clap, `{SW}` Shield Wall, `{LS}` Last Stand, `{Reflect}` Spell Reflection
-
-**Priest**
-* `{MC}` Mind Control, `{PI}` Power Infusion, `{FW}` Fear Ward, `{Shackle}` Shackle Undead
-* `{Dispel}` Dispel Magic, `{PW:S}` Power Word: Shield, `{Renew}` Renew
-* `{Fort}` Power Word: Fortitude, `{Spirit}` Divine Spirit, `{Shadow}` Shadow Protection, `{Fade}` Fade, `{MDS}` Mass Dispel
-
-**Druid**
-* `{FF}` Faerie Fire, `{Innerv}` Innervate, `{BR}` Rebirth, `{Remove}` Remove Curse
-* `{Rejuv}` Rejuvenation, `{Abolish}` Abolish Poison, `{GOTW}` Gift of the Wild, `{Thorns}` Thorns, `{Bark}` Barkskin
-
-**Paladin**
-* `{JoL}` Judgement of Light, `{JoW}` Judgement of Wisdom, `{BoP}` Blessing of Protection, `{DI}` Divine Intervention, `{BoF}` Blessing of Freedom, `{JoJ}` Judgement of Justice, `{Sac}` Blessing of Sacrifice, `{DS}` Divine Shield
-* `{Cleanse}` Cleanse, `{LoH}` Lay on Hands
-* `{BoK}` Kings, `{BoW}` Wisdom, `{Salv}` Salvation, `{Sanc}` Sanctuary, `{BoL}` Light
-
-**Mage**
-* `{CS}` Counterspell, `{Sheep}` Polymorph, `{Decurse}` Remove Lesser Curse
-* `{AI}` Arcane Intellect, `{Dampen}` Dampen Magic, `{Amplify}` Amplify Magic, `{Block}` Ice Block
-
-**Warlock**
-* `{CoE}` Curse of Elements, `{CoS}` Curse of Shadow, `{CoR}` Curse of Recklessness
-* `{SS}` Soulstone, `{Banish}` Banish, `{HS}` Healthstone, `{Seed}` Seed of Corruption
-
-**Hunter**
-* `{Tranq}` Tranquilizing Shot, `{Mark}` Hunter's Mark, `{MD}` Misdirection, `{Trap}` Freezing Trap
-
-**Shaman**
-* `{ES}` Earth Shock, `{WF}` Windfury Totem, `{Tremor}` Tremor Totem, `{BL}` Bloodlust, `{Hero}` Heroism
-
-**Rogue**
-* `{Kick}` Kick, `{Feint}` Feint, `{Cloak}` Cloak of Shadows, `{Blind}` Blind
-
-**Directional & Mechanics**
-* `{left}`, `{right}`, `{up}`, `{down}` (Large Arrows)
-* `{+}`, `{-}`, `{positive}`, `{negative}` (Polarity/Charge)
-* `{page}` (Displays Title of Current Page)
-
-**Consumables**
-* `{LIP}`, `{Stone}` (Stoneshield), `{FAP}`, `{Petri}`
-
-**Miscellaneous**
-* Faction: `{alliance}`, `{horde}`
-* Bosses: `{rag}`, `{nef}`, `{ony}`, `{hakkar}`, `{cthun}`, `{kt}`, `{sapph}`, `{patch}`, `{4hm}`, `{twins}`, `{gruul}`, `{mag}`, `{vashj}`, `{kael}`, `{illidan}`
-
-Miscellaneous
---------------------
-
-The "/aa help" command will list all console commands.
-
-The "/aa version" command (also available from the config menu) will perform a version check.  You'll be shown the current AA version of everyone in the guild, plus a list of players in your raid that aren't running AA.
-
-The "/aa backup" command (also available from the config menu) will store the current version of every page for later "Restore" (similar to if you had just edited every page and made no actual changes).
-
-The "/aa deleteall" command will delete all pages you have stored.  This could be used occasionally to clean out old assignment pages that are no longer used, for example, when beginning a new tier.  Of course, if others in the guild still have those pages, and choose to edit them and/or send them out for display, you'll get them back if you're online at the time.
-
-The "/aa debug" command toggles session-local synchronization timing output. Use "/aa debug on", "/aa debug off", or "/aa debug status" for an explicit state. Debug mode resets to off when the UI reloads and never prints page contents or variable values. It does include character names plus message, page, and revision identifiers, so review the output before sharing it publicly.
-
-WeakAuras & Addon API
---------------------
-
-AngryEra exposes the actively displayed note to WeakAuras and other addons.
-
-**Page metadata:** any variable whose name starts with `$` is page metadata.
-Metadata behaves like a normal template variable (it inherits from category to
-page, resolves `{{references}}`, and can be rendered in note text), but it is
-never auto-highlighted and is additionally published to the API with the `$`
-prefix stripped. Scalars work in `Key=Value` form; tables, arrays, and JSON null
-are also preserved when the variables are entered as a JSON object. Example
-page variables:
-
-```
-MT=Zessy
-$encounter=Patchwerk
-$phase=2
+```text
+$PHASE=2
+$CALL=spread
+$NOTE=swap fast
 ```
 
-**Event:** `ANGRYERA_NOTE_UPDATE` fires whenever any published field in the
-displayed-note snapshot changes, including metadata or ancestor names, and once
-when the display clears. It is delivered both as a WeakAuras custom event
-(`ScanEvents`) and as an AceEvent message, with `syncId, pageName,
-categoryName` arguments.
+See [WeakAuras and addon integration](#weakauras-and-addon-integration).
 
-**API:** the stable public entry point is the global `AngryEra` object
-(`_G.AngryEra`). It references the same addon object used internally. AngryEra
-will not overwrite an existing global with that name during startup. Every
-successful getter returns a detached copy. JSON null values are represented by
-fresh marker tables; use `AngryEra:IsDisplayedNull(value)` to recognize them.
-If a snapshot exceeds the defensive graph-copy limits, a getter returns nil
-plus the `snapshot-too-complex` error code.
+## Smart Marker keybindings
 
-* `AngryEra:GetDisplayedNote()` returns the full snapshot: `Name`, `Category`,
-  `CategorySyncId`, `Ancestors` (root-to-parent `{ SyncId, Name }`), `Raw`,
-  `Rendered`, `Vars`, `Meta`, revision identifiers, and audit fields. Returns
-  nil when nothing is displayed.
-* `AngryEra:GetDisplayedVars()` returns resolved template variables with
-  metadata excluded.
-* `AngryEra:GetDisplayedMeta()` returns `$` metadata with the prefix stripped.
-* `AngryEra:IsDisplayedNull(value)` identifies JSON null markers returned
-  anywhere inside a detached snapshot.
-* `AngryEra.NOTE_API_VERSION` and `AngryEra.NOTE_UPDATE_EVENT` support feature
-  detection.
+The **AngryEra | Smart Markers** section in the game's keybinding menu contains:
 
-Other addons should declare AngryEra as an optional dependency before reading
-the API. WeakAuras can feature-detect it directly:
+- Star, Circle, Diamond, Triangle, Moon, Square, X, and Skull for your current target;
+- the same eight markers for your mouseover unit; and
+- **Clear All Raid Targets**.
 
+Assigning a marker that is already on the selected unit leaves it in place rather than toggling it off.
+
+## Importing, exporting, and backups
+
+### Import
+
+Open the editor and choose **Menu > Import**:
+
+- **Encoded AA** imports a full AngryEra page or recursive category export, including variables and nested organization.
+- **JSON** imports structured page or category data.
+- **Markdown** imports plain assignment text. Lines beginning with `# ` create pages inside a category.
+
+Imports are validated and bounded before they change local data. If a matching page or category name exists, AngryEra asks before replacing it.
+
+Read-only received data is protected: choosing **Replace** for an item you cannot edit creates a uniquely named local copy instead. Importing into the exact active shared page follows the same leader and qualified-assistant rules as editing it.
+
+### Export
+
+Right-click a page or category and choose **Export**:
+
+- **Encoded AA** is the best format for transferring or backing up complete AngryEra data.
+- **JSON** is useful for structured interchange.
+- **Markdown** is convenient for Discord, documents, or manual editing.
+- **Output** resolves templates and produces chat-ready text.
+
+For a release upgrade or downgrade backup, export important categories as **Encoded AA** or copy the addon's SavedVariables file. `/aa backup` only refreshes a legacy per-page backup field; it does not populate the **Restore** history menu and is not a portable backup.
+
+### Page history
+
+When page contents change, AngryEra retains up to ten previous non-empty versions. Use **Restore** to load one as a draft. Restore affects page contents only; the current page name and variables remain unchanged.
+
+## Markdown and assignment tags
+
+The on-screen display supports:
+
+- `## Header` for a gold header;
+- `- Item` for a bulleted list;
+- `**Bold**` for bold text; and
+- `*Italic*` for italic text.
+
+Use `{icon spell_holy_sealofprotection}` to insert a game texture. The following shortcuts are also available.
+
+### Raid targets and navigation
+
+- `{star}`, `{circle}`, `{diamond}`, `{triangle}`, `{moon}`, `{square}`, `{x}`, `{cross}`, `{skull}`
+- `{rt1}` through `{rt8}`
+- `{left}`, `{right}`, `{up}`, `{down}`
+- `{+}`, `{-}`, `{positive}`, `{negative}`
+- `{page}` for the rendered page name
+
+### Class and utility shortcuts
+
+- **Warrior:** `{Sunder}`, `{AoE}`, `{Mock}`, `{Pummel}`, `{Taunt}`, `{Demo}`, `{Thunder}`, `{SW}`, `{LS}`, `{Reflect}`
+- **Priest:** `{MC}`, `{PI}`, `{FW}`, `{Shackle}`, `{Dispel}`, `{PW:S}`, `{Renew}`, `{Fort}`, `{Spirit}`, `{Shadow}`, `{Fade}`, `{MDS}`
+- **Druid:** `{FF}`, `{Innerv}`, `{BR}`, `{Remove}`, `{Rejuv}`, `{Abolish}`, `{GOTW}`, `{Thorns}`, `{Bark}`
+- **Paladin:** `{JoL}`, `{JoW}`, `{BoP}`, `{DI}`, `{BoF}`, `{JoJ}`, `{Sac}`, `{DS}`, `{Cleanse}`, `{LoH}`, `{BoK}`, `{BoW}`, `{Salv}`, `{Sanc}`, `{BoL}`
+- **Mage:** `{CS}`, `{Sheep}`, `{Decurse}`, `{AI}`, `{Dampen}`, `{Amplify}`, `{Block}`
+- **Warlock:** `{CoE}`, `{CoS}`, `{CoR}`, `{SS}`, `{Banish}`, `{HS}`, `{Seed}`
+- **Hunter:** `{Tranq}`, `{Mark}`, `{MD}`, `{Trap}`
+- **Shaman:** `{ES}`, `{WF}`, `{Tremor}`, `{BL}`, `{Hero}`
+- **Rogue:** `{Kick}`, `{Feint}`, `{Cloak}`, `{Blind}`
+- **Consumables:** `{LIP}`, `{Stone}`, `{FAP}`, `{Petri}`
+- **Bosses:** `{rag}`, `{nef}`, `{ony}`, `{hakkar}`, `{cthun}`, `{kt}`, `{sapph}`, `{patch}`, `{4hm}`, `{twins}`, `{gruul}`, `{mag}`, `{vashj}`, `{kael}`, `{illidan}`
+- **Faction:** `{alliance}`, `{horde}`
+- **Other:** `{hs}`, `{healthstone}`, `{bl}`, `{bloodlust}`
+
+Named raid targets become native `{rt1}` through `{rt8}` tokens when output to chat.
+
+## Display settings
+
+Open `/aa` to configure:
+
+- highlighted words and the special `Group` keyword;
+- hide-on-combat behavior;
+- editor scale;
+- display backdrop and colors;
+- update-notification glow color;
+- font face, size, outline, colors, and line spacing;
+- whether the edit box uses the display font; and
+- chat output format.
+
+Adding `Group` to **Highlight** emphasizes your current group token, such as `G2`, when it appears in a displayed assignment.
+
+## Slash commands
+
+| Command | Action |
+| --- | --- |
+| `/aa` | Open settings. |
+| `/aa help` | List available commands. |
+| `/aa window` | Toggle the editor window. |
+| `/aa toggle` | Toggle the assignment display. |
+| `/aa lock` | Show or hide the display mover. |
+| `/aa send <exact page name>` | Display a page by its exact name. |
+| `/aa clear` | Clear the shared display as leader, or the local display otherwise. |
+| `/aa first` | Toggle to or from the first page in the active category. |
+| `/aa output` | Output the actively displayed page to group chat. |
+| `/aa version` | Check AngryEra versions in the current party or raid. |
+| `/aa resetposition` | Reset the assignment display position and size. |
+| `/aa defaults` | Restore configuration defaults after confirmation. |
+| `/aa deleteall` | Permanently delete the local page library after confirmation. |
+| `/aa debug [on\|off\|status]` | Control session-local sharing diagnostics. |
+
+Debug is off by default and resets to off after a UI reload. It never prints page contents or variable values, but it does include character names and message, page, and revision identifiers. Review debug output before sharing it publicly.
+
+## Troubleshooting
+
+### A raider does not receive the displayed page
+
+1. Confirm every client is running this release; prior versions are incompatible.
+2. Confirm the sender is the current party or raid leader.
+3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
+4. Run `/aa version` in the group.
+5. Reload the affected client. It should request the active page automatically.
+6. If needed, enable `/aa debug on`, reproduce one page change, then disable it with `/aa debug off`.
+
+### An assistant's edit is rejected
+
+Confirm that the player:
+
+- currently has raid assist;
+- is a guild officer or higher, is listed in the leader's **Trusted Assistants**, or is covered by **Allow All Raid Assistants**; and
+- is editing the exact active shared page.
+
+Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader Only**.
+
+### Automatic markers do not appear
+
+- Confirm the local client may place markers: leader or assistant in a raid.
+- Prefer `Name-Realm`, or verify that the short name is unique in the group.
+- Confirm the metadata key begins with `$`.
+- Confirm the displayed page inherited the expected variable value.
+
+### Auto-advance does not run
+
+- Confirm the encounter ended successfully; wipes never advance.
+- Confirm the current client is the group leader.
+- Confirm the page is inside a category with a next sibling page.
+- Confirm the displayed page inherits `$AUTOADVANCE=true`.
+- Match the page name to the encounter or add `$ENCOUNTER` or `$ENCOUNTERID`.
+- Remove duplicate encounter bindings.
+
+## WeakAuras and addon integration
+
+AngryEra exposes the actively displayed note through the global `AngryEra` object.
+
+### WeakAuras event
+
+`ANGRYERA_NOTE_UPDATE` fires whenever the displayed note changes and once when it clears. WeakAuras receives it as a custom event with:
+
+```text
+syncId, pageName, categoryName
 ```
+
+Example WeakAuras trigger:
+
+1. Choose **Custom** trigger type.
+2. Choose **Event**.
+3. Enter `ANGRYERA_NOTE_UPDATE` as the event.
+4. Use:
+
+   ```lua
+   function(event, syncId, pageName, categoryName)
+       local meta = AngryEra:GetDisplayedMeta()
+       return meta and meta.ENCOUNTER == "Patchwerk"
+   end
+   ```
+
+Metadata keys are returned without `$` and retain the case used when they were defined.
+
+### Public getters
+
+- `AngryEra:GetDisplayedNote()` returns the displayed page snapshot, including raw and rendered text, resolved variables, metadata, revision information, and ancestor identities.
+- `AngryEra:GetDisplayedVars()` returns resolved template variables with metadata excluded.
+- `AngryEra:GetDisplayedMeta()` returns metadata with the `$` prefix removed.
+- `AngryEra:IsDisplayedNull(value)` recognizes JSON null markers returned inside snapshots.
+- `AngryEra.NOTE_API_VERSION` and `AngryEra.NOTE_UPDATE_EVENT` support feature detection.
+
+Successful getters return detached copies so consumers cannot mutate AngryEra's stored display state. A category name may be unavailable when that category does not exist in the local library.
+
+Other addons should declare AngryEra as an optional dependency and feature-detect the API:
+
+```lua
 local available = type(AngryEra) == "table"
     and type(AngryEra.NOTE_API_VERSION) == "number"
     and AngryEra.NOTE_API_VERSION >= 1
     and type(AngryEra.GetDisplayedNote) == "function"
 ```
 
-Example WeakAuras trigger (Custom, Event: `ANGRYERA_NOTE_UPDATE`):
+## Contributor checks
 
+Common local checks:
+
+```sh
+make test
+make lint-syntax lint-style
+make lint
+make docs
 ```
-function(event, syncId, pageName, categoryName)
-    local meta = AngryEra:GetDisplayedMeta()
-    return meta and meta.encounter == "Patchwerk"
-end
+
+Strict formatter and static-analysis targets are also available:
+
+```sh
+make lint-stylua-strict
+make lint-luacheck-strict
+make check-strict
 ```
 
-Category names resolve when the category exists locally (your own library or
-an adopted synchronized scope); ancestor sync ids are always included even
-when their names are unknown.
+Generated API documentation is written under `docs/ldoc/`; remove it with `make docs-clean`.
 
-Developer Documentation (LDoc)
---------------------
+## Credits
 
-This repository includes an LDoc configuration file at `.ldoc`.
+AngryEra is based on AngryAssignments by Ermad.
 
-Generate API documentation:
-
-1. Install [LDoc](https://github.com/lunarmodules/LDoc) (for example via LuaRocks).
-2. Run from the repo root:
-   ```
-   make docs
-   ```
-   Or directly:
-   ```
-   ldoc .
-   ```
-3. Open generated docs in `docs/ldoc/` (HTML and Markdown output, depending on LDoc setup).
-4. To remove generated docs:
-   ```
-   make docs-clean
-   ```
-
-Developer Checks
---------------------
-
-Run local quality checks from the repo root:
-
-1. Run lint checks:
-   ```
-   make lint
-   ```
-   This runs:
-   - Lua syntax validation (`luac -p`) on all `*.lua` files.
-   - Style checks for trailing whitespace and CRLF line endings.
-   - `stylua --check` with repo settings from `.stylua.toml` (when installed).
-     In `make lint`, stylua is advisory (differences do not fail the target).
-   - `luacheck` with repo settings from `.luacheckrc` when installed.
-     In `make lint`, luacheck is advisory (warnings do not fail the target).
-     Note: luacheck is not fully WoW-API-aware in this repo yet, but it still
-     helps surface glaring issues and cleanup opportunities.
-2. Run strict luacheck:
-   ```
-   make lint-luacheck-strict
-   ```
-   This fails on luacheck warnings and is useful for incremental cleanup.
-3. Run strict formatting check:
-   ```
-   make lint-stylua-strict
-   ```
-   This fails when code formatting differs from `.stylua.toml`.
-4. Run full local verification:
-   ```
-   make check
-   ```
-   This runs `make lint`, `make test`, and `make docs`.
-5. Run JSON regression tests directly:
-   ```
-   make test
-   ```
-   This validates JSON import/export edge cases, including escaped newlines and
-   preserved `null` values.
-6. Run strict CI-style verification:
-   ```
-   make check-strict
-   ```
-   This uses strict formatter/linter checks (`stylua` + `luacheck`) and is
-   intended for PR/CI gating.
-
-Credits
--------
 Maintained by **Eblis/Zessy/Kwayteow** on Pagle (Classic Era).
