@@ -203,13 +203,28 @@ entries with 32-byte names. Encoded and compressed messages are limited to 256
 KiB; serialized messages are limited to 1 MiB. These limits are enforced both
 while sending and receiving.
 
-Data envelopes are serialized, passed through LibCompress's Huffman codec, and
-encoded for the WoW addon channel. The codec may use its stored representation
-when compression would not help. Both representations declare or imply their
-exact decompressed length before decoding. Receivers reject an oversized length
-before calling the decompressor, then verify that the decoded length exactly
-matches it. Raw DEFLATE is not accepted because its bundled decoder cannot
-enforce the output limit before expansion.
+Most generic data envelopes are serialized, passed through LibCompress's
+Huffman codec, and encoded for the WoW addon channel. The codec may use its
+stored representation when compression would not help. Both representations
+declare or imply their exact decompressed length before decoding. Receivers
+reject an oversized length before calling the decompressor, then verify that
+the decoded length exactly matches it.
+
+The empty `VERSION_QUERY` and `DISPLAY_REQUEST` authority-bootstrap controls
+instead use zlib-wrapped DEFLATE with the same bounded decoder as compact page
+traffic. Their dedicated limits are 254 encoded bytes, 254 compressed bytes,
+and 1 KiB serialized, so a valid control always fits one physical AceComm frame
+even if AceComm must escape its first byte. On the generic prefix, receivers
+first try the Huffman codec for migration compatibility and only try the zlib
+codec for packets within the control bound. A zlib envelope is accepted there
+only when its validated type is `VERSION_QUERY` or `DISPLAY_REQUEST`. Raw
+DEFLATE remains invalid.
+
+This dual decoder accepts Huffman controls emitted by earlier protocol-3
+development builds. Compatibility is intentionally one-way: those earlier
+builds cannot decode the new zlib controls, so every client in a mixed
+development test must be updated before authority bootstrap is expected to
+work.
 
 `DISPLAY` uses a type-specific packed representation on `AngryEra3D`. The
 decoder reconstructs the same validated envelope before authorization,

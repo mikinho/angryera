@@ -661,7 +661,24 @@ local function DecodeSent(index)
     else
         envelope, decodeError = protocol.DecodeEnvelope(sent.Data, AngryEra:GetProtocolCodec())
         if not envelope then
-            envelope, decodeError = protocol.DecodeEnvelope(sent.Data, AngryEra:GetProtocolControlCodec())
+            local controlEnvelope
+            local controlDecodeError
+            controlEnvelope, controlDecodeError = protocol.DecodeEnvelope(
+                sent.Data,
+                AngryEra:GetProtocolControlCodec(),
+                AngryEra:GetProtocolControlWireLimits()
+            )
+            if
+                controlEnvelope
+                and (controlEnvelope.Type == "DISPLAY_REQUEST" or controlEnvelope.Type == "VERSION_QUERY")
+            then
+                envelope = controlEnvelope
+                decodeError = nil
+            elseif controlEnvelope then
+                decodeError = "invalid-transport-message-type"
+            else
+                decodeError = controlDecodeError
+            end
         end
     end
     assert(envelope, decodeError)
@@ -800,6 +817,32 @@ assert(accepted, result)
 assert(#sentMessages == 2, "The sender-level throttle should reopen after its interval")
 members["alpha-realm"] = "assistant"
 
+members["gamma-realm"] = "leader"
+timestampTest.ZlibQueryEnvelope = select(2, BuildRemoteEnvelope("zlib-query", "VERSION_QUERY", {}))
+timestampTest.ZlibQueryEncoded = assert(
+    protocol.EncodeEnvelope(
+        timestampTest.ZlibQueryEnvelope,
+        AngryEra:GetProtocolControlCodec(),
+        AngryEra:GetProtocolControlWireLimits()
+    )
+)
+timestampTest.SentBeforeZlibQuery = #sentMessages
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, timestampTest.ZlibQueryEncoded, "RAID", "Gamma-Realm")
+assert(accepted, result)
+assert(
+    #sentMessages == timestampTest.SentBeforeZlibQuery + 1,
+    "A zlib authority query should receive one reply"
+)
+timestampTest.ZlibQueryReply = select(2, DecodeSent())
+assert(
+    timestampTest.ZlibQueryReply.Type == "VERSION"
+        and timestampTest.ZlibQueryReply.ReplyTo == timestampTest.ZlibQueryEnvelope.MessageId,
+    "A zlib authority query should reach the normal correlated query handler"
+)
+sentMessages[#sentMessages] = nil
+members["gamma-realm"] = nil
+
 local wrongChannelQuery = BuildRemoteEnvelope("remote-session-2", "VERSION_QUERY", {})
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, wrongChannelQuery, "PARTY", "Beta-Realm")
 AssertError(accepted, result, "invalid-channel", "query over a non-current group channel")
@@ -880,6 +923,40 @@ do
 end
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, "malformed", "RAID", "Beta-Realm")
 AssertError(accepted, result, "decode-failed", "malformed encoded payload")
+timestampTest.InvalidLegacyEnvelope = {
+    Protocol = 2,
+}
+timestampTest.InvalidLegacySerialized = libS:Serialize(timestampTest.InvalidLegacyEnvelope)
+timestampTest.InvalidLegacyCompressed = libC:CompressHuffman(timestampTest.InvalidLegacySerialized)
+timestampTest.InvalidLegacyEncoded = libD:EncodeForWoWAddonChannel(timestampTest.InvalidLegacyCompressed)
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, timestampTest.InvalidLegacyEncoded, "RAID", "Beta-Realm")
+AssertError(accepted, result, "invalid-protocol", "malformed Huffman envelope validation")
+timestampTest.MalformedControl =
+    libD:EncodeForWoWAddonChannel(libD:CompressZlib("not-an-ace-serializer-envelope"))
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, timestampTest.MalformedControl, "RAID", "Beta-Realm")
+AssertError(accepted, result, "deserialize-failed", "malformed zlib control serialization")
+-- Independent zlib fixture for 1,025 repeated "x" bytes: compact on the wire,
+-- but one byte beyond the dedicated serialized control allowance.
+timestampTest.OversizedControl = libD:EncodeForWoWAddonChannel(
+    ("\120\156\171\168\024\005\163\096\020\140\088\000\000\012\230\224\136")
+)
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, timestampTest.OversizedControl, "RAID", "Beta-Realm")
+AssertError(accepted, result, "serialized-too-large", "oversized zlib control output")
+timestampTest.ZlibNonControlEnvelope =
+    select(2, BuildRemoteEnvelope("zlib-non-control", "VERSION", VersionPayload()))
+timestampTest.ZlibNonControl = assert(
+    protocol.EncodeEnvelope(
+        timestampTest.ZlibNonControlEnvelope,
+        AngryEra:GetProtocolControlCodec(),
+        AngryEra:GetProtocolControlWireLimits()
+    )
+)
+accepted, result =
+    AngryEra:ReceiveProtocolMessage(protocol.PREFIX, timestampTest.ZlibNonControl, "WHISPER", "Beta-Realm")
+AssertError(accepted, result, "invalid-transport-message-type", "zlib codec must reject non-control envelopes")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, "malformed", "RAID", "Outside-Realm")
 AssertError(accepted, result, "unauthorized", "absent sender should be rejected before decode")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, wrongChannelQuery, "RAID", "Outside-Realm")
@@ -894,10 +971,58 @@ local queryMessageId = result
 local queryTransport, localQueryEnvelope = DecodeSent()
 assert(queryTransport.Channel == "RAID", "A raid query should broadcast to RAID")
 assert(queryTransport.Priority == "ALERT", "leader discovery control should bypass queued page data")
+assert(#queryTransport.Data <= 254, "VERSION_QUERY must fit one physical AceComm frame")
 assert(localQueryEnvelope.Type == "VERSION_QUERY", "Discovery should send VERSION_QUERY")
 assert(
     not protocol.DecodeEnvelope(queryTransport.Data, AngryEra:GetProtocolCodec()),
     "VERSION_QUERY should use the compact authority-control codec"
+)
+encodedLeadingControl = true
+timestampTest.ControlBoundaryBase =
+    assert(
+        protocol.EncodeEnvelope(
+            localQueryEnvelope,
+            AngryEra:GetProtocolControlCodec(),
+            AngryEra:GetProtocolControlWireLimits()
+        )
+    )
+encodedPadding = AngryEra:GetProtocolControlWireLimits().EncodedBytes - #timestampTest.ControlBoundaryBase
+assert(encodedPadding >= 0, "The baseline authority control must fit its production wire limit")
+timestampTest.ControlBoundary =
+    assert(
+        protocol.EncodeEnvelope(
+            localQueryEnvelope,
+            AngryEra:GetProtocolControlCodec(),
+            AngryEra:GetProtocolControlWireLimits()
+        )
+    )
+assert(
+    #timestampTest.ControlBoundary == AngryEra:GetProtocolControlWireLimits().EncodedBytes
+        and timestampTest.ControlBoundary:byte(1) == 1,
+    "A 254-byte authority control with a reserved first byte must remain valid"
+)
+assert(
+    protocol.DecodeEnvelope(
+        timestampTest.ControlBoundary,
+        AngryEra:GetProtocolControlCodec(),
+        AngryEra:GetProtocolControlWireLimits()
+    ),
+    "The exact-boundary authority control must decode under production limits"
+)
+encodedPadding = encodedPadding + 1
+timestampTest.OversizedControl, timestampTest.OversizedControlError =
+    protocol.EncodeEnvelope(
+        localQueryEnvelope,
+        AngryEra:GetProtocolControlCodec(),
+        AngryEra:GetProtocolControlWireLimits()
+    )
+encodedPadding = 0
+encodedLeadingControl = false
+AssertError(
+    timestampTest.OversizedControl,
+    timestampTest.OversizedControlError,
+    "encoded-too-large",
+    "a 255-byte authority control"
 )
 
 local versionEncoded = BuildRemoteEnvelope(
@@ -2608,6 +2733,7 @@ local localDisplayRequestId = result
 local localDisplayRequestTransport, localDisplayRequestEnvelope = DecodeSent()
 assert(localDisplayRequestTransport.Channel == "WHISPER", "Display request should be whispered")
 assert(localDisplayRequestTransport.Priority == "ALERT", "Display recovery should bypass queued page data")
+assert(#localDisplayRequestTransport.Data <= 254, "DISPLAY_REQUEST must fit one physical AceComm frame")
 assert(localDisplayRequestEnvelope.ReplyTo == nil, "DISPLAY_REQUEST must be uncorrelated")
 assert(
     not protocol.DecodeEnvelope(localDisplayRequestTransport.Data, AngryEra:GetProtocolCodec()),

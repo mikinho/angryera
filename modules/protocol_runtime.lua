@@ -1289,6 +1289,30 @@ local CONTROL_MESSAGE_TYPES = {
     VERSION_QUERY = true,
 }
 
+-- Authority bootstrap must never depend on AceComm multipart reassembly.
+-- The serialized allowance is deliberately small because both supported
+-- controls have empty payloads; the encoded ceiling also bounds fallback work
+-- on untrusted generic-prefix traffic.
+local CONTROL_WIRE_LIMITS = {
+    EncodedBytes = ACECOMM_MULTIPART_BYTES,
+    CompressedBytes = ACECOMM_MULTIPART_BYTES,
+    SerializedBytes = 1024,
+}
+
+local function HasControlZlibHeader(encoded)
+    if type(encoded) ~= "string" or #encoded > CONTROL_WIRE_LIMITS.EncodedBytes then
+        return false
+    end
+    local ok, compressed = pcall(controlCodec.decode, encoded)
+    if not ok or type(compressed) ~= "string" or #compressed < 2 then
+        return false
+    end
+    local compression, flags = compressed:byte(1, 2)
+    return compression % 16 == 8
+        and math.floor(compression / 16) <= 7
+        and (compression * 256 + flags) % 31 == 0
+end
+
 local function GroupChannel()
     if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) or IsInRaid(LE_PARTY_CATEGORY_INSTANCE) then
         return "INSTANCE_CHAT"
@@ -2235,6 +2259,11 @@ function AngryEra:GetProtocolControlCodec()
     return controlCodec
 end
 
+--- Returns a detached copy of the authority-control wire limits.
+function AngryEra:GetProtocolControlWireLimits()
+    return CopyMap(CONTROL_WIRE_LIMITS)
+end
+
 --- Starts a fresh ephemeral protocol session and clears transport-bound state.
 -- @tparam[opt] string sessionId Injectable session identifier for tests.
 -- @treturn boolean ok
@@ -2446,7 +2475,7 @@ local function PrepareProtocolPacket(messageType, payload, options, compactPageO
                 IncludeAncestorContext = true,
             })
     elseif CONTROL_MESSAGE_TYPES[messageType] then
-        encoded, encodeError = protocol.EncodeEnvelope(envelope, controlCodec)
+        encoded, encodeError = protocol.EncodeEnvelope(envelope, controlCodec, CONTROL_WIRE_LIMITS)
     else
         encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec)
     end
@@ -3987,11 +4016,24 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         end
     else
         envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec)
-        if not envelope then
-            local controlEnvelope = protocol.DecodeEnvelope(data, controlCodec)
-            if controlEnvelope and CONTROL_MESSAGE_TYPES[controlEnvelope.Type] then
-                envelope = controlEnvelope
-                decodeError = nil
+        if
+            not envelope
+            and decodeError == "decompress-failed"
+            and HasControlZlibHeader(data)
+        then
+            local controlEnvelope, controlDecodeError =
+                protocol.DecodeEnvelope(data, controlCodec, CONTROL_WIRE_LIMITS)
+            if controlEnvelope then
+                if CONTROL_MESSAGE_TYPES[controlEnvelope.Type] then
+                    envelope = controlEnvelope
+                    decodeError = nil
+                else
+                    decodeError = "invalid-transport-message-type"
+                end
+            elseif controlDecodeError ~= "decode-failed" and controlDecodeError ~= "decompress-failed" then
+                -- A successful channel/zlib decode is stronger evidence than
+                -- the expected Huffman-header failure for a control packet.
+                decodeError = controlDecodeError
             end
         end
     end
