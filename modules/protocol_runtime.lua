@@ -1271,6 +1271,24 @@ local compactPageCodec = {
     hash = compactPageHash,
 }
 
+-- Empty authority-control envelopes compress poorly with Huffman and can spill
+-- into two AceComm frames despite carrying no payload. DEFLATE keeps them in
+-- the bounded codec path used by compact pages and, in production, below the
+-- single-frame addon-message ceiling.
+local controlCodec = {
+    serialize = protocolCodec.serialize,
+    deserialize = protocolCodec.deserialize,
+    compress = compactPageCodec.compress,
+    decompress = compactPageCodec.decompress,
+    encode = compactPageCodec.encode,
+    decode = compactPageCodec.decode,
+}
+
+local CONTROL_MESSAGE_TYPES = {
+    DISPLAY_REQUEST = true,
+    VERSION_QUERY = true,
+}
+
 local function GroupChannel()
     if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) or IsInRaid(LE_PARTY_CATEGORY_INSTANCE) then
         return "INSTANCE_CHAT"
@@ -2212,6 +2230,11 @@ function AngryEra:GetProtocolCodec()
     return protocolCodec
 end
 
+--- Returns the bounded DEFLATE codec used for authority-control packets.
+function AngryEra:GetProtocolControlCodec()
+    return controlCodec
+end
+
 --- Starts a fresh ephemeral protocol session and clears transport-bound state.
 -- @tparam[opt] string sessionId Injectable session identifier for tests.
 -- @treturn boolean ok
@@ -2403,6 +2426,8 @@ local function PrepareProtocolPacket(messageType, payload, options, compactPageO
             protocol.EncodeCompactPageEnvelope(envelope, compactPageCodec, compactPageOptions or {
                 IncludeAncestorContext = true,
             })
+    elseif CONTROL_MESSAGE_TYPES[messageType] then
+        encoded, encodeError = protocol.EncodeEnvelope(envelope, controlCodec)
     else
         encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec)
     end
@@ -2936,6 +2961,7 @@ function AngryEra:SendProtocolDisplayRequest(target)
     local fullTarget = EnsureUnitFullName(target)
     local sent, messageId = self:SendProtocolMessage("DISPLAY_REQUEST", {}, {
         Channel = "WHISPER",
+        Priority = "ALERT",
         Target = fullTarget,
     })
     if not sent then
@@ -3942,6 +3968,13 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         end
     else
         envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec)
+        if not envelope then
+            local controlEnvelope = protocol.DecodeEnvelope(data, controlCodec)
+            if controlEnvelope and CONTROL_MESSAGE_TYPES[controlEnvelope.Type] then
+                envelope = controlEnvelope
+                decodeError = nil
+            end
+        end
     end
     if not envelope then
         if decodeError == "compact-page-ancestor-context-missing" then

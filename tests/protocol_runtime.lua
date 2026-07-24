@@ -660,6 +660,9 @@ local function DecodeSent(index)
         envelope, decodeError, metadata = protocol.DecodeCompactPageEnvelope(sent.Data, compactPageCodec)
     else
         envelope, decodeError = protocol.DecodeEnvelope(sent.Data, AngryEra:GetProtocolCodec())
+        if not envelope then
+            envelope, decodeError = protocol.DecodeEnvelope(sent.Data, AngryEra:GetProtocolControlCodec())
+        end
     end
     assert(envelope, decodeError)
     return sent, envelope, metadata
@@ -892,6 +895,10 @@ local queryTransport, localQueryEnvelope = DecodeSent()
 assert(queryTransport.Channel == "RAID", "A raid query should broadcast to RAID")
 assert(queryTransport.Priority == "ALERT", "leader discovery control should bypass queued page data")
 assert(localQueryEnvelope.Type == "VERSION_QUERY", "Discovery should send VERSION_QUERY")
+assert(
+    not protocol.DecodeEnvelope(queryTransport.Data, AngryEra:GetProtocolCodec()),
+    "VERSION_QUERY should use the compact authority-control codec"
+)
 
 local versionEncoded = BuildRemoteEnvelope(
     "remote-session-3",
@@ -2368,6 +2375,8 @@ AngryEra.BuildActiveDisplayRequestResponse = savedBuildDisplayResponse
 sentMessages = {}
 local displayRequestEncoded, displayRequestEnvelope =
     BuildRemoteEnvelope("remote-display-request", "DISPLAY_REQUEST", {})
+displayRequestEncoded =
+    assert(protocol.EncodeEnvelope(displayRequestEnvelope, AngryEra:GetProtocolControlCodec()))
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, displayRequestEncoded, "RAID", "Alpha-Realm")
 AssertError(accepted, result, "invalid-channel", "DISPLAY_REQUEST over group")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, displayRequestEncoded, "WHISPER", "Alpha-Realm")
@@ -2598,7 +2607,12 @@ assert(sent, result)
 local localDisplayRequestId = result
 local localDisplayRequestTransport, localDisplayRequestEnvelope = DecodeSent()
 assert(localDisplayRequestTransport.Channel == "WHISPER", "Display request should be whispered")
+assert(localDisplayRequestTransport.Priority == "ALERT", "Display recovery should bypass queued page data")
 assert(localDisplayRequestEnvelope.ReplyTo == nil, "DISPLAY_REQUEST must be uncorrelated")
+assert(
+    not protocol.DecodeEnvelope(localDisplayRequestTransport.Data, AngryEra:GetProtocolCodec()),
+    "DISPLAY_REQUEST should use the compact authority-control codec"
+)
 
 local requestedRemoteUpsert = BuildRemoteEnvelope("remote-request-response", "PAGE_UPSERT", remoteUpsert, {
     ReplyTo = localDisplayRequestId,
