@@ -4064,6 +4064,32 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     local tenureValid, tenureError, bindDisplayAuthority =
         ValidateDisplayAuthorityTenure(self, auth, envelope, correlationKind)
     if not tenureValid then
+        local recoverySent
+        local recoveryStatus
+        if
+            tenureError == "unbound-display-authority"
+            and envelope.Type == "DISPLAY"
+            and IsCurrentGroupChannel(channel)
+            and type(self.SendRequestDisplay) == "function"
+        then
+            local recoveryCalled
+            recoveryCalled, recoverySent, recoveryStatus = pcall(self.SendRequestDisplay, self)
+            if not recoveryCalled then
+                recoverySent = false
+                recoveryStatus = "display-request-failed"
+            end
+        end
+        if debugEnabled and envelope.Type == "DISPLAY" then
+            Trace(
+                self,
+                "rx-drop",
+                "type=DISPLAY id=%s reason=%s recoverySent=%s recovery=%s",
+                envelope.MessageId,
+                tostring(tenureError),
+                tostring(recoverySent == true),
+                tostring(recoveryStatus)
+            )
+        end
         return false, tenureError
     end
 

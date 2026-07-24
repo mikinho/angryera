@@ -3395,6 +3395,114 @@ function AngryEra:RunAuthorityTenureTests()
     local sessionStarted, sessionError = self:StartProtocolSession("authority-follower-local")
     assert(sessionStarted, sessionError)
 
+    do
+        local recoveryReference = {
+            SyncId = installationB .. ":page:91",
+            Revision = 1,
+            RevisionId = "fcs32:91919191",
+            ContextRevisionId = "fcs32:92929292",
+        }
+        local recoveryPage = PageUpsert(recoveryReference, installationB, "Beta-Realm")
+        recoveryPage.Page.ParentSyncId = installationB .. ":category:90"
+        recoveryPage.AncestorVariableLayers = {
+            {
+                SyncId = recoveryPage.Page.ParentSyncId,
+                Vars = "$TANK=Beta-Realm",
+            },
+        }
+
+        local savedSendRequestDisplay = self.SendRequestDisplay
+        local recoveryCalls = 0
+        function self:SendRequestDisplay()
+            recoveryCalls = recoveryCalls + 1
+            return self:SendProtocolDisplayRequest("Beta-Realm")
+        end
+
+        sentMessages = {}
+        local unboundDisplay = BuildRemoteEnvelope("leader-b-unbound", "DISPLAY", {
+            Displayed = true,
+            SyncId = recoveryReference.SyncId,
+            Revision = recoveryReference.Revision,
+            RevisionId = recoveryReference.RevisionId,
+            ContextRevisionId = recoveryReference.ContextRevisionId,
+            PageFollows = true,
+            ActivePageChanges = true,
+        }, {
+            InstallationId = installationB,
+            Sequence = 1,
+        })
+        local unboundAccepted, unboundError =
+            self:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, unboundDisplay, "RAID", "Beta-Realm")
+        AssertError(
+            unboundAccepted,
+            unboundError,
+            "unbound-display-authority",
+            "an unbound follower group display"
+        )
+        local recoveryRequest = assert(
+            FindSentEnvelope("DISPLAY_REQUEST"),
+            "an unbound leader display should initiate a correlated authority bootstrap"
+        )
+        assert(recoveryCalls == 1 and #sentMessages == 1, "the rejected display should start one targeted request")
+
+        local omittedRecoveryPage = BuildRemoteEnvelope("leader-b-unbound", "PAGE_UPSERT", recoveryPage, {
+            IncludeAncestorContext = false,
+            InstallationId = installationB,
+            Sequence = 2,
+        })
+        unboundAccepted, unboundError =
+            self:ReceiveProtocolMessage(protocol.ACTIVE_PAGE_PREFIX, omittedRecoveryPage, "RAID", "Beta-Realm")
+        AssertError(
+            unboundAccepted,
+            unboundError,
+            "compact-page-ancestor-context-missing",
+            "an unbound follower omitted ancestor context"
+        )
+        assert(
+            recoveryCalls == 1 and #sentMessages == 1,
+            "the following omitted page should reuse the display-initiated bootstrap"
+        )
+
+        local inlineRecoveryPage = BuildRemoteEnvelope("leader-b-unbound", "PAGE_UPSERT", recoveryPage, {
+            InstallationId = installationB,
+            ReplyTo = recoveryRequest.MessageId,
+            Sequence = 3,
+        })
+        unboundAccepted, unboundError =
+            self:ReceiveProtocolMessage(protocol.PAGE_PREFIX, inlineRecoveryPage, "WHISPER", "Beta-Realm")
+        assert(unboundAccepted, unboundError)
+
+        local correlatedRecoveryDisplay = BuildRemoteEnvelope("leader-b-unbound", "DISPLAY", {
+            Displayed = true,
+            SyncId = recoveryReference.SyncId,
+            Revision = recoveryReference.Revision,
+            RevisionId = recoveryReference.RevisionId,
+            ContextRevisionId = recoveryReference.ContextRevisionId,
+            PageFollows = true,
+            ActivePageChanges = true,
+        }, {
+            InstallationId = installationB,
+            ReplyTo = recoveryRequest.MessageId,
+            Sequence = 4,
+        })
+        unboundAccepted, unboundError =
+            self:ReceiveProtocolMessage(
+                protocol.DISPLAY_PREFIX,
+                correlatedRecoveryDisplay,
+                "WHISPER",
+                "Beta-Realm"
+            )
+        assert(unboundAccepted and not unboundError.RequestNeeded, unboundError)
+        local recoveredAuthority = self:GetProtocolDisplayAuthority()
+        assert(
+            recoveredAuthority and recoveredAuthority.SenderSessionId == "leader-b-unbound",
+            "the self-contained correlated response should bind the exact leader session"
+        )
+
+        self.SendRequestDisplay = savedSendRequestDisplay
+        self:ResetProtocolPeers()
+    end
+
     RequestAndBind("Beta-Realm", installationB, "leader-b-1")
     local authority = self:GetProtocolDisplayAuthority()
     assert(
