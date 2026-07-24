@@ -112,7 +112,68 @@ function AngryEra:ConfirmImportPage(data)
     end
 end
 
+local function IsRemoteSynchronizedEntity(self, entity)
+    if type(entity) ~= "table" or type(entity.SyncId) ~= "string" then
+        return false
+    end
+    if type(self.IsLocallyOwned) ~= "function" then
+        return true
+    end
+    local checked, locallyOwned = pcall(self.IsLocallyOwned, self, entity)
+    return not checked or locallyOwned ~= true
+end
+
+local function ApplyImportedPageFields(self, id, data)
+    local proposed = false
+    local saved
+    local result
+    local fieldProposed
+
+    saved, result, fieldProposed = self:UpdateContents(id, data.Contents or "")
+    if saved ~= true then
+        return false, result, fieldProposed == true
+    end
+    proposed = proposed or fieldProposed == true
+
+    saved, result, fieldProposed = self:UpdatePageVars(id, data.Vars)
+    if saved ~= true then
+        return false, result, proposed or fieldProposed == true
+    end
+    proposed = proposed or fieldProposed == true
+
+    saved, result, fieldProposed = self:RenamePage(id, data.Name)
+    if saved ~= true then
+        return false, result, proposed or fieldProposed == true
+    end
+    return true, result, proposed or fieldProposed == true
+end
+
+--- Applies imported contents and private order without mutating canonical state
+-- after UpdateContents routed the edit through CHANGE_PROPOSE.
+-- @tparam number id Existing page id.
+-- @tparam string contents Imported page contents.
+-- @tparam number index Receiver-private sibling order.
+-- @treturn boolean updated
+-- @treturn string|nil resultOrError
+-- @treturn boolean proposed
+function AngryEra:ApplyImportedPageUpdate(id, contents, index)
+    local updated, result, proposed = self:UpdateContents(id, contents)
+    if updated ~= true or proposed == true then
+        return updated == true, result, proposed == true
+    end
+
+    local page = type(AngryAssign_Pages) == "table" and AngryAssign_Pages[id] or nil
+    if type(page) ~= "table" then
+        return false, "Page not found.", false
+    end
+    page.Index = index
+    self:PageUpdated(id)
+    return true, result, false
+end
+
 --- Imports (or overwrites) a single page payload.
+-- Remote synchronized pages use the canonical change-proposal model path;
+-- their private placement is never overwritten as a side effect.
 -- @tparam table data Page payload.
 -- @tparam[opt] number parentId Optional parent category id.
 -- @tparam[opt] number overwriteId Existing page id to overwrite.
@@ -126,6 +187,18 @@ function AngryEra:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
         existing = nil
         importedName = self:GetUniqueEntityName(importedName, "Page")
     end
+    if existing and IsRemoteSynchronizedEntity(self, existing) then
+        local applied, applyError, proposed = ApplyImportedPageFields(self, overwriteId, {
+            Name = importedName,
+            Contents = data.Contents,
+            Vars = data.Vars,
+        })
+        if not applied then
+            return nil, applyError, proposed
+        end
+        return overwriteId, applyError, proposed
+    end
+
     local fields = {
         Updated = time(),
         UpdateId = self:Hash(importedName, data.Contents, data.Vars),
@@ -462,9 +535,10 @@ local function AngryEra_ImportPage()
                         end
 
                         if pageId then
-                            AngryEra:UpdateContents(pageId, pContent)
-                            AngryAssign_Pages[pageId].Index = i
-                            AngryEra:PageUpdated(pageId)
+                            local updated, updateError = AngryEra:ApplyImportedPageUpdate(pageId, pContent, i)
+                            if not updated and updateError then
+                                print(updateError)
+                            end
                         else
                             AngryEra:CreatePage(pName, pContent, catId, i)
                         end
@@ -584,9 +658,10 @@ local function AngryEra_ImportPage()
                     end
 
                     if pageId then
-                        AngryEra:UpdateContents(pageId, block)
-                        AngryAssign_Pages[pageId].Index = i
-                        AngryEra:PageUpdated(pageId)
+                        local updated, updateError = AngryEra:ApplyImportedPageUpdate(pageId, block, i)
+                        if not updated and updateError then
+                            print(updateError)
+                        end
                     else
                         AngryEra:CreatePage(pageTitle, block, catId, i)
                     end

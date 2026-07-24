@@ -617,7 +617,10 @@ local function AngryEra_RenamePage(pageId)
                 if p then
                     local editBox = self.editBox or self.wideEditBox or self.EditBox
                     if editBox then
-                        editBox:SetText(p.Name)
+                        local draft = type(AngryEra.GetSharedPageChangeDraft) == "function"
+                                and AngryEra:GetSharedPageChangeDraft(id)
+                            or nil
+                        editBox:SetText(draft and draft.Desired.Name or p.Name)
                         editBox:HighlightText()
                     end
                 end
@@ -832,7 +835,10 @@ local function AngryEra_TextChanged(widget, event, value)
 end
 
 local function AngryEra_TextEntered(widget, event, value)
-    AngryEra:UpdateContents(AngryEra:SelectedId(), value)
+    local saved, saveError = AngryEra:UpdateContents(AngryEra:SelectedId(), value)
+    if not saved and saveError then
+        print(saveError)
+    end
 end
 
 local function AngryEra_RevertPage()
@@ -1020,6 +1026,12 @@ local function AngryEra_EditVariables(id, type)
         return
     end
     local vars = entity.Vars
+    if type ~= "category" and AngryEra.GetSharedPageChangeDraft then
+        local draft = AngryEra:GetSharedPageChangeDraft(id)
+        if draft then
+            vars = draft.Desired.Vars
+        end
+    end
 
     local DEFAULT_VARS_TEMPLATE = "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK="
     if not vars or vars == "" or vars == "{}" then
@@ -1053,6 +1065,9 @@ local function AngryEra_EditVariables(id, type)
             text = nil
         end
 
+        local saved = true
+        local saveError
+        local proposed = false
         if type == "category" then
             local cat = AngryAssign_Categories[id]
             if cat and AngryEra:CanEditEntityLocally(cat) then
@@ -1062,9 +1077,19 @@ local function AngryEra_EditVariables(id, type)
         else
             local page = AngryAssign_Pages[id]
             if page and AngryEra:CanEditEntityLocally(page) then
-                page.Vars = text
-                AngryEra:PageUpdated(id)
+                saved, saveError, proposed = AngryEra:UpdatePageVars(id, text)
             end
+        end
+        if not saved then
+            if saveError then
+                print(saveError)
+            end
+            return
+        end
+        -- A shared-page proposal intentionally leaves the canonical page and
+        -- editor draft unchanged until the leader commits a new revision.
+        if proposed then
+            return
         end
         frame:Hide()
         AngryEra:UpdateDisplayed()
@@ -1953,17 +1978,24 @@ end
 function AngryEra:UpdateSelected(destructive)
     if destructive then
         self:ClearSyncDraftConflict()
+        if type(self.ClearSharedPageChangeDraft) == "function" then
+            self:ClearSharedPageChangeDraft()
+        end
     end
     if not self.window then
         return
     end
     local page = AngryAssign_Pages[self:SelectedId()]
+    local sharedDraft = page
+            and type(self.GetSharedPageChangeDraft) == "function"
+            and self:GetSharedPageChangeDraft(page.Id)
+        or nil
     local canEdit = self:CanEditEntityLocally(page)
     local canDisplay = self:CanLocalPlayerPublish("display")
     local canOutput = self:CanLocalPlayerOutput()
     if destructive or not self.window.text.button:IsEnabled() then
         if page then
-            self.window.text:SetText(page.Contents)
+            self.window.text:SetText(sharedDraft and sharedDraft.Desired.Contents or page.Contents)
         else
             self.window.text:SetText("")
         end

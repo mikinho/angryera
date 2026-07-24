@@ -129,7 +129,10 @@ local function ResolveDisplayedSnapshot(self)
         return nil, nil, nil, "display-snapshot-stale"
     end
 
-    if (note.RevisionId == nil) ~= (note.ContextRevisionId == nil) then
+    if
+        (note.Revision == nil) ~= (note.RevisionId == nil)
+        or (note.RevisionId == nil) ~= (note.ContextRevisionId == nil)
+    then
         return nil, nil, nil, "display-snapshot-stale"
     end
     if note.RevisionId ~= nil or note.ContextRevisionId ~= nil then
@@ -141,6 +144,7 @@ local function ResolveDisplayedSnapshot(self)
             not referenceOk
             or not IsPlainTable(reference)
             or reference.SyncId ~= note.SyncId
+            or reference.Revision ~= note.Revision
             or reference.RevisionId ~= note.RevisionId
             or reference.ContextRevisionId ~= note.ContextRevisionId
         then
@@ -149,13 +153,19 @@ local function ResolveDisplayedSnapshot(self)
     end
 
     local activeContext
-    if note.RevisionId ~= nil and note.ContextRevisionId ~= nil then
+    if note.Revision ~= nil and note.RevisionId ~= nil and note.ContextRevisionId ~= nil then
         if type(self.GetActivePageRenderContext) ~= "function" then
             return nil, nil, nil, "display-snapshot-stale"
         end
         local contextOk
-        contextOk, activeContext =
-            pcall(self.GetActivePageRenderContext, self, note.SyncId, note.RevisionId, note.ContextRevisionId)
+        contextOk, activeContext = pcall(
+            self.GetActivePageRenderContext,
+            self,
+            note.SyncId,
+            note.Revision,
+            note.RevisionId,
+            note.ContextRevisionId
+        )
         if
             not contextOk
             or not IsPlainTable(activeContext)

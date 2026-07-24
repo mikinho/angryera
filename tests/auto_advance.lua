@@ -180,16 +180,19 @@ local function Reset(displayedId, meta, categorySyncId)
 end
 
 local function SetExactActiveContext(ancestorLayers)
+    displayedNote.Revision = 1
     displayedNote.RevisionId = "rev-current"
     displayedNote.ContextRevisionId = "ctx-current"
     activeReference = {
         SyncId = displayedNote.SyncId,
+        Revision = displayedNote.Revision,
         RevisionId = displayedNote.RevisionId,
         ContextRevisionId = displayedNote.ContextRevisionId,
     }
     activeRenderContext = {
         Page = {
             SyncId = displayedNote.SyncId,
+            Revision = displayedNote.Revision,
         },
         AncestorVariableLayers = ancestorLayers,
     }
@@ -284,10 +287,12 @@ AngryAssign_Pages[10].OwnerId = localInstallationId
 
 -- Exact active tuple identifiers must still match the rendered snapshot.
 Reset(10, { AUTOADVANCE = true })
+displayedNote.Revision = 1
 displayedNote.RevisionId = "rev-current"
 displayedNote.ContextRevisionId = "ctx-current"
 activeReference = {
     SyncId = displayedNote.SyncId,
+    Revision = displayedNote.Revision,
     RevisionId = "rev-stale",
     ContextRevisionId = "ctx-current",
 }

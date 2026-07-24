@@ -245,6 +245,7 @@ its current code. The capability map may grow to include:
 ```lua
 {
     activePage = 1,
+    activePageChanges = 1,
     hierarchyManifest = 1,
     hierarchyDelta = 1,
     variableInheritance = 1,
@@ -254,6 +255,17 @@ its current code. The capability map may grow to include:
 ```
 
 Capabilities are compatibility claims only. They never grant permission.
+`VERSION` carries the full capability map. Compact `DISPLAY` also carries the
+leader's `activePageChanges` claim, allowing an accepted display to establish
+that session's active-page edit support even before a separate discovery reply.
+
+Automatic group discovery is leader-driven. At startup and whenever leadership
+rotates, only the current leader broadcasts `VERSION_QUERY`; each other client
+whispers at most one `VERSION` response. This keeps automatic discovery O(N)
+rather than having every member broadcast a query. A promoted leader starts a
+fresh protocol session for its leadership tenure. Demotion retires queued
+leader publication, and followers discard leader-bound correlations before
+binding traffic from the new tenure.
 
 The initial message families are:
 
@@ -272,30 +284,39 @@ fallback. All three receive prefixes are registered immediately after the
 protocol session starts so a freshly loaded client has no delayed receive
 window.
 
-The raid leader is the canonical authority for each managed category scope.
-Publishing a scope or changing raid leadership creates a new
-`AuthorityEpoch`. Each canonical transaction increments `ScopeRevision`
+The current leader is the canonical authority. For the implemented active-page
+edit path, a qualified assistant may whisper `CHANGE_PROPOSE` only for the
+exact actively displayed page. The proposal binds `SyncId`, numeric
+`BaseRevision`, `BaseRevisionId`, and `BaseContextRevisionId`, and carries the
+complete desired page name, variables, and contents. The leader serializes
+proposals, rechecks authorization and the exact base, assigns the next
+canonical page revision, broadcasts `PAGE_UPSERT`, and whispers
+`CHANGE_RESULT`. Only the leader publishes that canonical page commit; an
+assistant never broadcasts its draft as `PAGE_UPSERT`.
+
+`DELTA` remains the future selected-category hierarchy path. Publishing a
+managed scope or changing raid leadership creates a new `AuthorityEpoch`.
+Each future canonical hierarchy transaction increments `ScopeRevision`
 exactly once. `ScopeRevision` remains monotonic when the authority epoch
 changes so retained tombstone and cleanup revisions stay comparable. Manifest
 and epoch identifiers must match both the authenticated sender installation
-and its current protocol session.
-
-A qualified assistant whispers a non-destructive `CHANGE_PROPOSE` containing
-the base scope and entity revisions. The leader rechecks authorization,
-validates the proposal, assigns canonical revisions, and broadcasts `DELTA`.
-Only the leader broadcasts manifests, canonical deltas, deletions, and
-tombstone operations. The assistant receives `CHANGE_RESULT`.
+and its current protocol session. Only the leader will broadcast manifests,
+canonical deltas, deletions, and tombstone operations.
 
 Active-page-only clients that have not opted into hierarchy synchronization
 still receive `PAGE_UPSERT`. It contains ordered ancestor variable layers so
 the page renders identically without importing the hierarchy.
 
-Active-page `PAGE_UPSERT` does not overwrite a receiver's locally owned source.
-During leader handoff, an identical relay from the current leader may provide
-volatile display context. Changed owner revisions require the canonical
-`CHANGE_PROPOSE`/`DELTA` path.
+For a receiver-local owner, an identical `PAGE_UPSERT` relay from the current
+leader provides volatile display context without replacing the page. A
+leader-canonical forward revision may update that locally owned source,
+including a jump over missed intermediate revisions. The apply preserves
+receiver-private placement, order, backup fields, ownership provenance, and
+retained history. Same-revision divergence and ordinary rollback remain
+rejected.
 
-An ordinary interactive selection activates its exact local page/context
+An ordinary interactive selection activates its exact local page/context tuple
+(`SyncId`, numeric `Revision`, `RevisionId`, and `ContextRevisionId`)
 immediately, then replaces one 125-millisecond trailing-edge control timer. A
 new interactive choice during that window supersedes the prepared older choice
 before it allocates a protocol sequence, `SentAt`, or transport work. When the
@@ -355,6 +376,17 @@ leader/session without changing persisted page ownership or contents. Unknown,
 changed, or invalid tuples remain pending until their matching `PAGE_UPSERT`
 arrives.
 
+Leader authority is bound to both the authenticated player and that leader's
+installation/session tenure. A fresh leader `VERSION_QUERY` retires bindings
+to an older session of the same player and starts a correlated display
+bootstrap that only the announced installation/session may satisfy. During a
+true authority handoff, an older or same-number divergent page revision may
+replace storage only as the correlated reply for the pending exact display
+from that newly bound authority and only on the explicit authority-bootstrap
+path. The displaced revision is retained in history and receiver-local fields
+are preserved. Uncorrelated rollback, a reply from the wrong session, and
+ordinary stale traffic remain rejected.
+
 `DISPLAY` sequence numbers decide the winner within one leader session. The
 receiver also requires each accepted display timestamp from that authenticated
 player to be newer than the last accepted timestamp, so a delayed packet from a
@@ -392,17 +424,21 @@ Page wire records contain `SyncId`, ownership and revision metadata,
 and ordered ancestor variable layers when sent outside a manifest. Active-page
 messages also carry `ContextRevisionId`, a canonical FCS32 identity for those
 ordered ancestor layers plus the page variables. Display selection is therefore
-matched by `SyncId`, `RevisionId`, and `ContextRevisionId`; an unchanged page
-revision cannot accidentally reuse stale inherited category variables.
+matched by `SyncId`, numeric `Revision`, `RevisionId`, and
+`ContextRevisionId`. Numeric revision distinguishes repeated content such as
+A -> B -> A even when the content-addressed `RevisionId` repeats, while the
+context identity prevents an unchanged page revision from reusing stale
+inherited category variables.
 
 Category wire records contain `SyncId`, ownership and revision metadata,
 `ParentSyncId`, normalized integer order, name, and category variables.
 
 `SyncId` and `OwnerId` are immutable after creation.
 
-`BaseRevisionId` belongs to a proposal or delta operation rather than stored
-entity state. An operation whose base revision does not match the stored
-revision is a conflict, not an unconditional last-packet-wins overwrite.
+`BaseRevision`, `BaseRevisionId`, and `BaseContextRevisionId` belong to a
+proposal or delta operation rather than stored entity state. An operation whose
+exact base does not match the stored active tuple is a conflict, not an
+unconditional last-packet-wins overwrite.
 
 Every canonical `DELTA` contains:
 

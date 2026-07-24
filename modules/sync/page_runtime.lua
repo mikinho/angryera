@@ -55,6 +55,7 @@ local AUTH_KEYS = {
 }
 local ACCEPT_OPTION_KEYS = {
     CorrelatedReply = true,
+    AuthorityBootstrap = true,
 }
 local LOCAL_FIELDS = {
     "CategoryId",
@@ -69,6 +70,11 @@ local REVISION_FIELDS = {
     "RevisionId",
     "UpdatedAt",
     "UpdatedBy",
+}
+local CHANGE_DESIRED_FIELDS = {
+    Name = true,
+    Vars = true,
+    Contents = true,
 }
 
 local function PreciseNowMilliseconds()
@@ -262,6 +268,7 @@ local function ValidateAcceptOptions(options)
     if options == nil then
         return {
             CorrelatedReply = false,
+            AuthorityBootstrap = false,
         }
     end
     if not IsPlainTable(options) then
@@ -278,8 +285,12 @@ local function ValidateAcceptOptions(options)
     if options.CorrelatedReply ~= true then
         return nil, "invalid-active-page-correlated-reply"
     end
+    if options.AuthorityBootstrap ~= nil and type(options.AuthorityBootstrap) ~= "boolean" then
+        return nil, "invalid-active-page-authority-bootstrap"
+    end
     return {
         CorrelatedReply = true,
+        AuthorityBootstrap = options.AuthorityBootstrap == true,
     }
 end
 
@@ -771,6 +782,7 @@ local function BuildContextEntry(auth, payload)
     contextArrivalOrdinal = contextArrivalOrdinal + 1
     return {
         SyncId = payload.Page.SyncId,
+        Revision = payload.Page.Revision,
         RevisionId = payload.Page.RevisionId,
         ContextRevisionId = payload.ContextRevisionId,
         Page = Clone(payload.Page),
@@ -826,10 +838,12 @@ local function ContextKey(sender, installationId, sessionId, reference)
         installationId,
         sessionId,
         reference.SyncId,
+        tostring(reference.Revision),
         reference.RevisionId,
         reference.ContextRevisionId,
     }
     for index, value in ipairs(parts) do
+        value = tostring(value)
         parts[index] = tostring(#value) .. ":" .. value
     end
     return table.concat(parts)
@@ -842,6 +856,7 @@ local function ContextKeyForReference(reference)
         or type(reference.SenderInstallationId) ~= "string"
         or type(reference.SenderSessionId) ~= "string"
         or type(reference.SyncId) ~= "string"
+        or not IsInteger(reference.Revision, 1, schema.LIMITS.Revision)
         or type(reference.RevisionId) ~= "string"
         or type(reference.ContextRevisionId) ~= "string"
     then
@@ -870,6 +885,7 @@ local function FindAnyContext(contexts, reference)
         if
             IsPlainTable(entry)
             and entry.SyncId == reference.SyncId
+            and entry.Revision == reference.Revision
             and entry.RevisionId == reference.RevisionId
             and entry.ContextRevisionId == reference.ContextRevisionId
             and (
@@ -966,6 +982,7 @@ local function BuildNextContexts(current, auth, payload, activeReference, pendin
             SenderInstallationId = pendingDisplay.SenderInstallationId,
             SenderSessionId = pendingDisplay.SenderSessionId,
             SyncId = pendingDisplay.Payload.SyncId,
+            Revision = pendingDisplay.Payload.Revision,
             RevisionId = pendingDisplay.Payload.RevisionId,
             ContextRevisionId = pendingDisplay.Payload.ContextRevisionId,
         })
@@ -1003,6 +1020,7 @@ end
 local function ContextMatches(entry, auth, reference)
     return IsPlainTable(entry)
         and entry.SyncId == reference.SyncId
+        and entry.Revision == reference.Revision
         and entry.RevisionId == reference.RevisionId
         and entry.ContextRevisionId == reference.ContextRevisionId
         and entry.Sender == auth.Sender
@@ -1013,6 +1031,7 @@ end
 local function ReferenceFromPayload(payload)
     return {
         SyncId = payload.SyncId,
+        Revision = payload.Revision,
         RevisionId = payload.RevisionId,
         ContextRevisionId = payload.ContextRevisionId,
     }
@@ -1021,6 +1040,7 @@ end
 local function ReferenceFromUpsert(payload)
     return {
         SyncId = payload.Page.SyncId,
+        Revision = payload.Page.Revision,
         RevisionId = payload.Page.RevisionId,
         ContextRevisionId = payload.ContextRevisionId,
     }
@@ -1030,6 +1050,7 @@ local function SameReference(left, right)
     return IsPlainTable(left)
         and IsPlainTable(right)
         and left.SyncId == right.SyncId
+        and left.Revision == right.Revision
         and left.RevisionId == right.RevisionId
         and left.ContextRevisionId == right.ContextRevisionId
         and left.Sender == right.Sender
@@ -1044,6 +1065,7 @@ local function PendingMatchesReference(pending, auth, reference)
         and pending.SenderInstallationId == auth.SenderInstallationId
         and pending.SenderSessionId == auth.SenderSessionId
         and pending.Payload.SyncId == reference.SyncId
+        and pending.Payload.Revision == reference.Revision
         and pending.Payload.RevisionId == reference.RevisionId
         and pending.Payload.ContextRevisionId == reference.ContextRevisionId
 end
@@ -1143,6 +1165,34 @@ local function CommitPageState(self, capture, nextPages, nextMeta, nextIndexes, 
         self.entitySyncIndexes = oldIndexes
         self._activePageContexts = oldContexts
         return false, "active-page-commit-failed"
+    end
+    return true
+end
+
+local function CommitProposedPageState(self, capture, nextPages, nextIndexes, nextContexts, nextReference)
+    if not StorageMatches(self, capture) then
+        return false, "stale-active-page-state"
+    end
+
+    local oldPages = AngryAssign_Pages
+    local oldIndexes = self.entitySyncIndexes
+    local oldContexts = self._activePageContexts
+    local oldReference = self._activeDisplayReference
+    local oldPending = self._activePendingDisplay
+    local ok = pcall(function()
+        AngryAssign_Pages = nextPages
+        InstallIndexes(self, nextIndexes)
+        self._activePageContexts = nextContexts
+        self._activeDisplayReference = nextReference
+        self._activePendingDisplay = nil
+    end)
+    if not ok then
+        AngryAssign_Pages = oldPages
+        self.entitySyncIndexes = oldIndexes
+        self._activePageContexts = oldContexts
+        self._activeDisplayReference = oldReference
+        self._activePendingDisplay = oldPending
+        return false, "active-page-proposal-commit-failed"
     end
     return true
 end
@@ -1380,6 +1430,324 @@ local function LocalContextAuth(self, installationId)
     })
 end
 
+local function ValidateChangeDesired(desired)
+    if not IsPlainTable(desired) then
+        return nil, "invalid-page-change-desired"
+    end
+    for key in pairs(desired) do
+        if type(key) ~= "string" or not CHANGE_DESIRED_FIELDS[key] then
+            return nil, "page-change-desired-unknown-field"
+        end
+    end
+    for key in pairs(CHANGE_DESIRED_FIELDS) do
+        if rawget(desired, key) == nil then
+            return nil, "page-change-desired-missing-" .. key
+        end
+    end
+    return {
+        Name = desired.Name,
+        Vars = desired.Vars,
+        Contents = desired.Contents,
+    }
+end
+
+local function DesiredMatchesPage(desired, page)
+    return desired.Name == rawget(page, "Name")
+        and desired.Vars == (rawget(page, "Vars") or "")
+        and desired.Contents == (rawget(page, "Contents") or "")
+end
+
+local function ActiveProposalContext(capture, syncId, hashCallback)
+    local indexed = capture.Indexed.BySyncId[syncId]
+    if
+        not indexed
+        or indexed.Kind ~= "page"
+        or capture.DisplayedId ~= indexed.Id
+        or not IsPlainTable(capture.DisplayReference)
+        or capture.DisplayReference.SyncId ~= syncId
+        or capture.PendingDisplay ~= nil
+    then
+        return nil, nil, "page-change-unavailable"
+    end
+
+    local context = FindContext(capture.Contexts, capture.DisplayReference, capture.DisplayReference)
+    local payload = PayloadFromContext(context)
+    if not payload then
+        return nil, nil, "page-change-context-unavailable"
+    end
+    local valid, validationError, safePayload = activePage.ValidatePageUpsertPayload(payload, hashCallback)
+    if not valid then
+        return nil, nil, validationError
+    end
+    if
+        safePayload.Page.SyncId ~= syncId
+        or not StoredPageMatchesWire(indexed.Record, safePayload.Page)
+        or safePayload.Page.Revision ~= capture.DisplayReference.Revision
+        or safePayload.Page.RevisionId ~= capture.DisplayReference.RevisionId
+        or safePayload.ContextRevisionId ~= capture.DisplayReference.ContextRevisionId
+    then
+        return nil, nil, "stale-page-change-context"
+    end
+    return indexed, safePayload
+end
+
+local function BuildChangeProposalResult(status, syncId, indexed, pageUpsert)
+    local result = {
+        Status = status,
+        LocalId = indexed and indexed.Id or nil,
+        SyncId = syncId,
+        Applied = status == "applied",
+    }
+    if pageUpsert then
+        result.Revision = pageUpsert.Page.Revision
+        result.RevisionId = pageUpsert.Page.RevisionId
+        result.ContextRevisionId = pageUpsert.ContextRevisionId
+        result.PageUpsertPayload = Clone(pageUpsert)
+    end
+    return result
+end
+
+local function IsLocalProposalAuthority(self)
+    if type(self.IsPlayerRaidLeader) ~= "function" then
+        return false
+    end
+    local ok, isLeader = pcall(self.IsPlayerRaidLeader, self)
+    return ok and isLeader == true and CanPublish(self, "pageUpsert")
+end
+
+--- Builds a detached CHANGE_PROPOSE payload for the exact active display tuple.
+-- `desired` is a strict full desired page state containing only `Name`, `Vars`,
+-- and `Contents`. Canonical page storage and revision metadata are never
+-- modified by this operation.
+-- @tparam number pageId Local page identifier currently displayed.
+-- @tparam table desired Full desired synchronized page fields.
+-- @treturn table|nil proposal Detached CHANGE_PROPOSE payload.
+-- @treturn string|nil errorCode
+function AngryEra:BuildActivePageChangeProposal(pageId, desired)
+    if not CanPublish(self, "changeProposal") then
+        return nil, "local-change-proposal-not-authorized"
+    end
+    if not IsPositiveLocalId(pageId) then
+        return nil, "invalid-local-page-id"
+    end
+    local safeDesired, desiredError = ValidateChangeDesired(desired)
+    if not safeDesired then
+        return nil, desiredError
+    end
+
+    local hashCallback, hashError = GetHashCallback(self)
+    if not hashCallback then
+        return nil, hashError
+    end
+    local capture, captureError = CaptureStorage(self)
+    if not capture then
+        return nil, captureError
+    end
+    local page = rawget(capture.Pages, pageId)
+    if not IsPlainTable(page) or rawget(page, "Id") ~= pageId or type(rawget(page, "SyncId")) ~= "string" then
+        return nil, "page-change-unavailable"
+    end
+    local indexed, basePayload, contextError = ActiveProposalContext(capture, page.SyncId, hashCallback)
+    if not indexed or indexed.Id ~= pageId then
+        return nil, contextError or "page-change-unavailable"
+    end
+
+    local proposal = {
+        AuthorityInstallationId = capture.DisplayReference.SenderInstallationId,
+        AuthoritySessionId = capture.DisplayReference.SenderSessionId,
+        SyncId = basePayload.Page.SyncId,
+        BaseRevision = basePayload.Page.Revision,
+        BaseRevisionId = basePayload.Page.RevisionId,
+        BaseContextRevisionId = basePayload.ContextRevisionId,
+        Name = safeDesired.Name,
+        Vars = safeDesired.Vars,
+        Contents = safeDesired.Contents,
+    }
+    local valid, validationError = protocol.ValidatePayload("CHANGE_PROPOSE", proposal)
+    if not valid then
+        return nil, validationError
+    end
+    if not StorageMatches(self, capture) then
+        return nil, "stale-active-page-state"
+    end
+    return proposal
+end
+
+local function ApplyPageChangeProposal(self, auth, proposal)
+    local safeAuth, authError = ValidateAuth(auth)
+    if not safeAuth then
+        return false, authError
+    end
+    if not IsAuthorized(self, safeAuth.Sender, "changeProposal") then
+        return false, "unauthorized-change-proposal"
+    end
+    if not IsLocalProposalAuthority(self) then
+        return false, "not-change-proposal-authority"
+    end
+
+    local valid, validationError = protocol.ValidatePayload("CHANGE_PROPOSE", proposal)
+    if not valid then
+        return false, validationError
+    end
+    local safeProposal = {
+        AuthorityInstallationId = proposal.AuthorityInstallationId,
+        AuthoritySessionId = proposal.AuthoritySessionId,
+        SyncId = proposal.SyncId,
+        BaseRevision = proposal.BaseRevision,
+        BaseRevisionId = proposal.BaseRevisionId,
+        BaseContextRevisionId = proposal.BaseContextRevisionId,
+        Name = proposal.Name,
+        Vars = proposal.Vars,
+        Contents = proposal.Contents,
+    }
+
+    local hashCallback, hashError = GetHashCallback(self)
+    if not hashCallback then
+        return false, hashError
+    end
+    local capture, captureError = CaptureStorage(self)
+    if not capture then
+        return false, captureError
+    end
+    local indexed, currentPayload, contextError =
+        ActiveProposalContext(capture, safeProposal.SyncId, hashCallback)
+    if not indexed then
+        if contextError == "page-change-unavailable" or contextError == "page-change-context-unavailable" then
+            return true, BuildChangeProposalResult("unavailable", safeProposal.SyncId)
+        end
+        return false, contextError
+    end
+    if not StorageMatches(self, capture) then
+        return false, "stale-active-page-state"
+    end
+    if not IsAuthorized(self, safeAuth.Sender, "changeProposal") then
+        return false, "change-proposal-authorization-changed"
+    end
+    if not IsLocalProposalAuthority(self) then
+        return false, "change-proposal-authority-changed"
+    end
+
+    local currentPage = currentPayload.Page
+    local desiredMatches = DesiredMatchesPage(safeProposal, currentPage)
+    local exactBase = safeProposal.BaseRevision == currentPage.Revision
+        and safeProposal.BaseRevisionId == currentPage.RevisionId
+        and safeProposal.BaseContextRevisionId == currentPayload.ContextRevisionId
+    if not exactBase then
+        if desiredMatches then
+            return true, BuildChangeProposalResult("unchanged", safeProposal.SyncId, indexed, currentPayload)
+        end
+        return true, BuildChangeProposalResult("conflict", safeProposal.SyncId, indexed, currentPayload)
+    end
+    if desiredMatches then
+        return true, BuildChangeProposalResult("unchanged", safeProposal.SyncId, indexed, currentPayload)
+    end
+    if capture.SelectedId == indexed.Id and capture.EditorDirty then
+        return true, BuildChangeProposalResult("busy", safeProposal.SyncId, indexed, currentPayload)
+    end
+    if currentPage.Revision >= schema.LIMITS.Revision then
+        return false, "revision-exhausted"
+    end
+
+    local nextWire = Clone(currentPage)
+    nextWire.Revision = currentPage.Revision + 1
+    nextWire.RevisionId = nil
+    nextWire.UpdatedAt = safeAuth.ReceivedAt
+    nextWire.UpdatedBy = safeAuth.Sender
+    nextWire.Name = safeProposal.Name
+    nextWire.Vars = safeProposal.Vars
+    nextWire.Contents = safeProposal.Contents
+    local revisionId, revisionError = schema.BuildEntityRevisionId(nextWire, hashCallback)
+    if not revisionId then
+        return false, revisionError
+    end
+    nextWire.RevisionId = revisionId
+    local nextPayload, payloadError =
+        activePage.BuildPageUpsertPayload(nextWire, currentPayload.AncestorVariableLayers, hashCallback)
+    if not nextPayload then
+        return false, payloadError
+    end
+
+    local existing = indexed.Record
+    local localFields, localFieldsError = BuildLocalFields(existing, indexed.Id, safeAuth, nextWire)
+    if not localFields then
+        return false, localFieldsError
+    end
+    local materialized, materializeError = revisions.WireToLocal(nextWire, localFields, hashCallback)
+    if not materialized then
+        return false, materializeError
+    end
+    local nextPages = ShallowCopy(capture.Pages)
+    nextPages[indexed.Id] = materialized
+    local nextIndexes
+    nextIndexes, _, materializeError = BuildIdentityIndexes(nextPages, capture.Categories)
+    if not nextIndexes then
+        return false, materializeError
+    end
+
+    local localAuth, localAuthError = LocalContextAuth(self, capture.Meta.InstallationId)
+    if not localAuth then
+        return false, localAuthError
+    end
+    local nextContexts, nextContextError =
+        BuildNextContexts(capture.Contexts, localAuth, nextPayload, capture.DisplayReference, capture.PendingDisplay)
+    if not nextContexts then
+        return false, nextContextError
+    end
+    local nextReference = {
+        SyncId = nextPayload.Page.SyncId,
+        Revision = nextPayload.Page.Revision,
+        RevisionId = nextPayload.Page.RevisionId,
+        ContextRevisionId = nextPayload.ContextRevisionId,
+        Sender = localAuth.Sender,
+        SenderInstallationId = localAuth.SenderInstallationId,
+        SenderSessionId = localAuth.SenderSessionId,
+        ReceivedAt = localAuth.ReceivedAt,
+    }
+
+    if not IsAuthorized(self, safeAuth.Sender, "changeProposal") then
+        return false, "change-proposal-authorization-changed"
+    end
+    if not IsLocalProposalAuthority(self) then
+        return false, "change-proposal-authority-changed"
+    end
+    local committed, commitError =
+        CommitProposedPageState(self, capture, nextPages, nextIndexes, nextContexts, nextReference)
+    if not committed then
+        return false, commitError
+    end
+
+    local result = BuildChangeProposalResult("applied", safeProposal.SyncId, indexed, nextPayload)
+    local called, refreshed, refreshWarning = pcall(RefreshAfterDisplay, self, true)
+    result.UIRefreshed = called and refreshed == true
+    if not called then
+        refreshWarning = "ui-refresh-failed"
+    end
+    return true, result, result.UIRefreshed and nil or refreshWarning
+end
+
+--- Validates and canonically commits one assistant CHANGE_PROPOSE.
+-- The exact active base tuple must still be current. The authenticated sender
+-- supplies `UpdatedBy`; the proposal cannot alter ownership, placement, or
+-- inherited ancestor layers. Valid conflicts and busy/unavailable outcomes are
+-- returned as semantic result tables so transport can always send CHANGE_RESULT.
+-- @tparam table auth Authenticated proposal sender.
+-- @tparam table proposal Strict CHANGE_PROPOSE payload.
+-- @treturn boolean accepted
+-- @treturn table|string resultOrError
+-- @treturn string|nil warning
+function AngryEra:ApplyActivePageChangeProposal(auth, proposal)
+    if self._activePageCommitInProgress then
+        return false, "active-page-apply-in-progress"
+    end
+    self._activePageCommitInProgress = true
+    local called, accepted, result, warning = pcall(ApplyPageChangeProposal, self, auth, proposal)
+    self._activePageCommitInProgress = false
+    if not called then
+        return false, "active-page-runtime-error"
+    end
+    return accepted, result, warning
+end
+
 --- Clears all session-local active-page render, display, and pending references.
 -- Persisted pages, metadata, and editor conflict state are intentionally retained.
 function AngryEra:ResetActivePageTransientState()
@@ -1390,11 +1758,12 @@ function AngryEra:ResetActivePageTransientState()
 end
 
 --- Returns a detached exact-match render context.
--- All three identifiers are required; stale or partial references return nil.
-function AngryEra:GetActivePageRenderContext(syncId, revisionId, contextRevisionId)
+-- All four identifiers are required; stale or partial references return nil.
+function AngryEra:GetActivePageRenderContext(syncId, revision, revisionId, contextRevisionId)
     local contexts = self._activePageContexts
     local reference = {
         SyncId = syncId,
+        Revision = revision,
         RevisionId = revisionId,
         ContextRevisionId = contextRevisionId,
     }
@@ -1403,6 +1772,7 @@ function AngryEra:GetActivePageRenderContext(syncId, revisionId, contextRevision
     if
         IsPlainTable(activeReference)
         and activeReference.SyncId == syncId
+        and activeReference.Revision == revision
         and activeReference.RevisionId == revisionId
         and activeReference.ContextRevisionId == contextRevisionId
     then
@@ -1557,6 +1927,7 @@ local function CachedActiveUpsertForPage(self, page)
     local context = FindContext(self._activePageContexts, reference, reference)
     if
         not IsPlainTable(context)
+        or context.Revision ~= reference.Revision
         or context.RevisionId ~= reference.RevisionId
         or context.ContextRevisionId ~= reference.ContextRevisionId
     then
@@ -1600,6 +1971,7 @@ function AngryEra:BuildActiveDisplayPayload(pageId, options)
     return {
         Displayed = true,
         SyncId = upsert.Page.SyncId,
+        Revision = upsert.Page.Revision,
         RevisionId = upsert.Page.RevisionId,
         ContextRevisionId = upsert.ContextRevisionId,
     },
@@ -1645,6 +2017,7 @@ function AngryEra:BuildActiveDisplayRequestResponse(auth, payload, options)
         displayPayload = {
             Displayed = true,
             SyncId = pageUpsertPayload.Page.SyncId,
+            Revision = pageUpsertPayload.Page.Revision,
             RevisionId = pageUpsertPayload.Page.RevisionId,
             ContextRevisionId = pageUpsertPayload.ContextRevisionId,
         }
@@ -1707,6 +2080,7 @@ function AngryEra:BuildActivePageRequestResponse(auth, payload)
     local reference = ReferenceFromUpsert(safeUpsert)
     if
         reference.SyncId ~= payload.SyncId
+        or reference.Revision ~= payload.Revision
         or reference.RevisionId ~= payload.RevisionId
         or reference.ContextRevisionId ~= payload.ContextRevisionId
     then
@@ -1720,8 +2094,119 @@ end
 
 -- A new leader can legitimately select an unchanged page that originated on
 -- this installation. Cache only that leader/session's render context so its
--- following DISPLAY can resolve; never materialize the relay into local data.
-local function AcceptLocalOwnerRelayContext(self, capture, auth, payload)
+-- following DISPLAY can resolve. Any forward canonical revision from that
+-- leader may update the local source while preserving local-only fields and
+-- retained history, including when this client missed intermediate revisions.
+local function AcceptChangedLocalOwnerCommit(self, capture, auth, payload, existingEntry, existing, options)
+    local incoming = payload.Page
+    local comparable, revisionAction = CompareIncomingRevision(existing, incoming)
+    if not comparable then
+        if
+            options.AuthorityBootstrap
+            and (
+                revisionAction == "page-revision-rollback"
+                or (
+                    revisionAction == "page-revision-divergence"
+                    and incoming.Revision == existing.Revision
+                    and incoming.RevisionId ~= existing.RevisionId
+                )
+            )
+        then
+            revisionAction = "replace"
+        else
+            return false, revisionAction
+        end
+    end
+    if revisionAction ~= "replace" then
+        return false, "local-namespace-collision"
+    end
+    local reference = ReferenceFromUpsert(payload)
+    local pendingReady = PendingMatchesReference(capture.PendingDisplay, auth, reference)
+    local nextContexts, contextError =
+        BuildNextContexts(capture.Contexts, auth, payload, capture.DisplayReference, capture.PendingDisplay)
+    if not nextContexts then
+        return false, contextError
+    end
+
+    local historyAuth = {
+        Sender = incoming.UpdatedBy,
+        ReceivedAt = auth.ReceivedAt,
+    }
+    local localFields, localFieldsError = BuildLocalFields(existing, existingEntry.Id, historyAuth, incoming)
+    if not localFields then
+        return false, localFieldsError
+    end
+    local hashCallback, hashError = GetHashCallback(self)
+    if not hashCallback then
+        return false, hashError
+    end
+    local materialized, materializeError = revisions.WireToLocal(incoming, localFields, hashCallback)
+    if not materialized then
+        return false, materializeError
+    end
+    local nextPages = ShallowCopy(capture.Pages)
+    nextPages[existingEntry.Id] = materialized
+    local nextIndexes
+    nextIndexes, _, materializeError = BuildIdentityIndexes(nextPages, capture.Categories)
+    if not nextIndexes then
+        return false, materializeError
+    end
+
+    local existingSnapshot = SnapshotFields(existing)
+    local existingHistorySnapshot = Clone(rawget(existing, "History"))
+    if not IsAuthorized(self, auth.Sender, "pageUpsert") then
+        return false, "page-upsert-authorization-changed"
+    end
+    if not IsCurrentDisplayAuthority(self, auth.Sender) then
+        return false, "display-authority-changed"
+    end
+    if
+        not FieldsMatch(existing, existingSnapshot)
+        or not DeepEqual(rawget(existing, "History"), existingHistorySnapshot)
+    then
+        return false, "stale-active-page-state"
+    end
+    local committed, commitError =
+        CommitPageState(self, capture, nextPages, capture.Meta, nextIndexes, nextContexts)
+    if not committed then
+        return false, commitError
+    end
+
+    local selectedDirtyConflict
+    if capture.SelectedId == existingEntry.Id and capture.EditorDirty then
+        selectedDirtyConflict = {
+            SyncId = incoming.SyncId,
+            LocalRevisionId = existing.RevisionId,
+            IncomingRevisionId = incoming.RevisionId,
+            Sender = auth.Sender,
+            ReceivedAt = auth.ReceivedAt,
+        }
+        self.syncDraftConflict = Clone(selectedDirtyConflict)
+    end
+    local summary = {
+        Applied = true,
+        NoOp = false,
+        Created = false,
+        LocalOwnerCanonical = true,
+        LocalId = existingEntry.Id,
+        SyncId = incoming.SyncId,
+        RevisionId = incoming.RevisionId,
+        ContextRevisionId = payload.ContextRevisionId,
+        ContextUpdated = true,
+        SelectedDirtyConflict = selectedDirtyConflict,
+        PendingDisplayReady = pendingReady,
+        PendingDisplayPayload = pendingReady and Clone(capture.PendingDisplay.Payload) or nil,
+        UIRefreshed = false,
+    }
+    local called, refreshed, warning = pcall(RefreshAfterPageUpsert, self, summary, auth.Sender)
+    summary.UIRefreshed = called and refreshed == true
+    if not called then
+        warning = "ui-refresh-failed"
+    end
+    return true, summary, summary.UIRefreshed and nil or warning
+end
+
+local function AcceptLocalOwnerRelayContext(self, capture, auth, payload, options)
     local incoming = payload.Page
     if not IsCurrentDisplayAuthority(self, auth.Sender) then
         return false, "local-namespace-collision"
@@ -1735,9 +2220,11 @@ local function AcceptLocalOwnerRelayContext(self, capture, auth, payload)
         or rawget(existing, "OwnerId") ~= capture.Meta.InstallationId
         or not IsPlainTable(localState)
         or rawget(localState, "OwnedLocally") ~= true
-        or not StoredPageMatchesWire(existing, incoming)
     then
         return false, "local-namespace-collision"
+    end
+    if not StoredPageMatchesWire(existing, incoming) then
+        return AcceptChangedLocalOwnerCommit(self, capture, auth, payload, existingEntry, existing, options)
     end
 
     local reference = ReferenceFromUpsert(payload)
@@ -1810,7 +2297,7 @@ local function AcceptPageUpsert(self, auth, payload, options)
     end
     local incoming = safePayload.Page
     if incoming.OwnerId == capture.Meta.InstallationId then
-        return AcceptLocalOwnerRelayContext(self, capture, safeAuth, safePayload)
+        return AcceptLocalOwnerRelayContext(self, capture, safeAuth, safePayload, safeOptions)
     end
 
     local existingEntry = capture.Indexed.BySyncId[incoming.SyncId]
@@ -1837,6 +2324,18 @@ local function AcceptPageUpsert(self, auth, payload, options)
         local comparable, actionOrError = CompareIncomingRevision(existing, incoming)
         if not comparable then
             if
+                safeOptions.AuthorityBootstrap
+                and (
+                    actionOrError == "page-revision-rollback"
+                    or (
+                        actionOrError == "page-revision-divergence"
+                        and incoming.Revision == existing.Revision
+                        and incoming.RevisionId ~= existing.RevisionId
+                    )
+                )
+            then
+                revisionAction = "replace"
+            elseif
                 actionOrError == "page-revision-rollback"
                 and safeOptions.CorrelatedReply
                 and existing.Revision == incoming.Revision + 1
@@ -1899,7 +2398,11 @@ local function AcceptPageUpsert(self, auth, payload, options)
     local applied = revisionAction ~= "unchanged"
     local created = existing == nil
     if applied then
-        local localFields, localFieldsError = BuildLocalFields(existing, localId, safeAuth, incoming)
+        local historyAuth = {
+            Sender = incoming.UpdatedBy,
+            ReceivedAt = safeAuth.ReceivedAt,
+        }
+        local localFields, localFieldsError = BuildLocalFields(existing, localId, historyAuth, incoming)
         if not localFields then
             return false, localFieldsError
         end
@@ -2041,6 +2544,7 @@ local function BuildReboundDisplayContexts(self, capture, auth, reference)
     local safeReference = ReferenceFromUpsert(safePayload)
     if
         safeReference.SyncId ~= reference.SyncId
+        or safeReference.Revision ~= reference.Revision
         or safeReference.RevisionId ~= reference.RevisionId
         or safeReference.ContextRevisionId ~= reference.ContextRevisionId
     then
@@ -2081,6 +2585,7 @@ local function ActivatePreparedDisplay(self, displayPayload, pageUpsert)
     local upsertReference = ReferenceFromUpsert(safeUpsert)
     if
         displayReference.SyncId ~= upsertReference.SyncId
+        or displayReference.Revision ~= upsertReference.Revision
         or displayReference.RevisionId ~= upsertReference.RevisionId
         or displayReference.ContextRevisionId ~= upsertReference.ContextRevisionId
     then
@@ -2099,6 +2604,7 @@ local function ActivatePreparedDisplay(self, displayPayload, pageUpsert)
     end
     local nextReference = {
         SyncId = displayReference.SyncId,
+        Revision = displayReference.Revision,
         RevisionId = displayReference.RevisionId,
         ContextRevisionId = displayReference.ContextRevisionId,
         Sender = localAuth.Sender,
@@ -2246,6 +2752,7 @@ local function AcceptDisplay(self, auth, payload)
 
         local nextReference = {
             SyncId = reference.SyncId,
+            Revision = reference.Revision,
             RevisionId = reference.RevisionId,
             ContextRevisionId = reference.ContextRevisionId,
             Sender = safeAuth.Sender,

@@ -113,6 +113,7 @@ end
 
 local authorization = {
     pageUpsert = true,
+    changeProposal = true,
     display = true,
     request = true,
 }
@@ -131,6 +132,7 @@ end
 
 local localPublish = {
     pageUpsert = true,
+    changeProposal = true,
     display = true,
 }
 function AngryEra:CanLocalPlayerPublish(action)
@@ -306,6 +308,7 @@ local function ResetStorage()
     AngryEra:ResetActivePageTransientState()
     authorization = {
         pageUpsert = true,
+        changeProposal = true,
         display = true,
         request = true,
     }
@@ -314,6 +317,7 @@ local function ResetStorage()
     hashHook = nil
     localPublish = {
         pageUpsert = true,
+        changeProposal = true,
         display = true,
     }
     ResetUi()
@@ -409,7 +413,12 @@ Assert(
     "remote ownership is recorded only as receiver-local provenance"
 )
 Assert(AngryEra.entitySyncIndexes.page[remotePageSyncId] == remotePage, "identity index points at replacement")
-local cached = AngryEra:GetActivePageRenderContext(remotePageSyncId, payload.Page.RevisionId, payload.ContextRevisionId)
+local cached = AngryEra:GetActivePageRenderContext(
+    remotePageSyncId,
+    payload.Page.Revision,
+    payload.Page.RevisionId,
+    payload.ContextRevisionId
+)
 Assert(cached ~= nil, "validated render context is cached")
 AssertEqual(cached.SenderInstallationId, remoteInstallationId, "cache binds envelope installation")
 AssertEqual(cached.SenderSessionId, "leader_session", "cache binds envelope session")
@@ -417,11 +426,17 @@ AssertEqual(cached.AncestorVariableLayers[1].Vars, "raid=one", "cache retains an
 payload.AncestorVariableLayers[1].Vars = "packet mutation"
 payload.Page.Contents = "packet mutation"
 AssertEqual(remotePage.Contents, "Tank: One", "stored page is detached from packet")
-cached = AngryEra:GetActivePageRenderContext(remotePageSyncId, remotePage.RevisionId, result.ContextRevisionId)
+cached =
+    AngryEra:GetActivePageRenderContext(remotePageSyncId, remotePage.Revision, remotePage.RevisionId, result.ContextRevisionId)
 AssertEqual(cached.Page.Contents, "Tank: One", "cached page is detached from packet")
 cached.AncestorVariableLayers[1].Vars = "caller mutation"
 AssertEqual(
-    AngryEra:GetActivePageRenderContext(remotePageSyncId, remotePage.RevisionId, result.ContextRevisionId).AncestorVariableLayers[1].Vars,
+    AngryEra:GetActivePageRenderContext(
+        remotePageSyncId,
+        remotePage.Revision,
+        remotePage.RevisionId,
+        result.ContextRevisionId
+    ).AncestorVariableLayers[1].Vars,
     "raid=one",
     "cache getter returns a detached copy"
 )
@@ -577,6 +592,7 @@ AngryEra:ResetActivePageTransientState()
 local displayPayload = {
     Displayed = true,
     SyncId = remotePageSyncId,
+    Revision = matchingPayload.Page.Revision,
     RevisionId = matchingPayload.Page.RevisionId,
     ContextRevisionId = matchingPayload.ContextRevisionId,
 }
@@ -623,6 +639,7 @@ AssertEqual(#AngryAssign_Pages[4].History, 10, "automatic history is capped at t
 AssertEqual(AngryAssign_Pages[4].History[1].content, "Tank: Four", "history records replaced stored content")
 local retainedActive = AngryEra:GetActivePageRenderContext(
     remotePageSyncId,
+    matchingPayload.Page.Revision,
     matchingPayload.Page.RevisionId,
     matchingPayload.ContextRevisionId
 )
@@ -683,6 +700,7 @@ Assert(accepted and result.NoOp, "repeated clear is a no-op")
 Assert(AngryEra:AcceptActiveDisplay(Auth(), displayPayload), "cached exact display is available for response tests")
 local pageRequestPayload = {
     SyncId = displayPayload.SyncId,
+    Revision = displayPayload.Revision,
     RevisionId = displayPayload.RevisionId,
     ContextRevisionId = displayPayload.ContextRevisionId,
 }
@@ -1099,6 +1117,7 @@ AssertEqual(contextCount, 32, "volatile tuple cache stays bounded")
 Assert(
     AngryEra:GetActivePageRenderContext(
         remotePageSyncId,
+        matchingPayload.Page.Revision,
         matchingPayload.Page.RevisionId,
         matchingPayload.ContextRevisionId
     ) ~= nil,
@@ -1107,6 +1126,7 @@ Assert(
 Assert(
     AngryEra:GetActivePageRenderContext(
         boundedPayloads[101].Page.SyncId,
+        boundedPayloads[101].Page.Revision,
         boundedPayloads[101].Page.RevisionId,
         boundedPayloads[101].ContextRevisionId
     ) ~= nil,
@@ -1115,6 +1135,7 @@ Assert(
 Assert(
     AngryEra:GetActivePageRenderContext(
         boundedPayloads[134].Page.SyncId,
+        boundedPayloads[134].Page.Revision,
         boundedPayloads[134].Page.RevisionId,
         boundedPayloads[134].ContextRevisionId
     ) == nil,
@@ -1151,6 +1172,7 @@ Assert(AngryEra:GetPendingActiveDisplayRequest() == nil, "transient reset clears
 Assert(
     AngryEra:GetActivePageRenderContext(
         remotePageSyncId,
+        matchingPayload.Page.Revision,
         matchingPayload.Page.RevisionId,
         matchingPayload.ContextRevisionId
     ) == nil,
@@ -1194,6 +1216,7 @@ do
     local exactDisplay = {
         Displayed = true,
         SyncId = exactPayload.Page.SyncId,
+        Revision = exactPayload.Page.Revision,
         RevisionId = exactPayload.Page.RevisionId,
         ContextRevisionId = exactPayload.ContextRevisionId,
     }
@@ -1270,6 +1293,7 @@ do
     )
     local reboundContext = AngryEra:GetActivePageRenderContext(
         exactPayload.Page.SyncId,
+        exactPayload.Page.Revision,
         exactPayload.Page.RevisionId,
         exactPayload.ContextRevisionId
     )
@@ -1284,6 +1308,7 @@ do
     local changedDisplay = {
         Displayed = true,
         SyncId = changedPayload.Page.SyncId,
+        Revision = changedPayload.Page.Revision,
         RevisionId = changedPayload.Page.RevisionId,
         ContextRevisionId = changedPayload.ContextRevisionId,
     }
@@ -1307,6 +1332,7 @@ do
     local unknownDisplay = {
         Displayed = true,
         SyncId = otherInstallationId .. ":page:99",
+        Revision = 1,
         RevisionId = "fcs32:12345678",
         ContextRevisionId = "fcs32:87654321",
     }
@@ -1354,6 +1380,7 @@ do
         {
             Displayed = true,
             SyncId = exactPayload.Page.SyncId,
+            Revision = exactPayload.Page.Revision,
             RevisionId = exactPayload.Page.RevisionId,
             ContextRevisionId = exactPayload.ContextRevisionId,
         }
@@ -1398,6 +1425,7 @@ local localOwnerPayload = assert(activePage.BuildPageUpsertPayload(localOwnerWir
 local localOwnerDisplay = {
     Displayed = true,
     SyncId = localOwnerWire.SyncId,
+    Revision = localOwnerWire.Revision,
     RevisionId = localOwnerWire.RevisionId,
     ContextRevisionId = localOwnerPayload.ContextRevisionId,
 }
@@ -1424,8 +1452,12 @@ Assert(
     "local-owner relay preserves local provenance"
 )
 Assert(AngryEra.entitySyncIndexes == indexesBeforeLocalOwnerRelay, "local-owner relay does not install new indexes")
-local localOwnerContext =
-    AngryEra:GetActivePageRenderContext(localPageSyncId, localOwnerWire.RevisionId, localOwnerPayload.ContextRevisionId)
+local localOwnerContext = AngryEra:GetActivePageRenderContext(
+    localPageSyncId,
+    localOwnerWire.Revision,
+    localOwnerWire.RevisionId,
+    localOwnerPayload.ContextRevisionId
+)
 Assert(localOwnerContext ~= nil, "local-owner relay caches the exact volatile context")
 AssertEqual(localOwnerContext.Sender, "Leader-Realm", "local-owner relay binds context to the display authority")
 
@@ -1465,7 +1497,7 @@ local changedLocalOwnerPayload = assert(activePage.BuildPageUpsertPayload(change
 }, TestHash))
 local contextsBeforeChangedLocalOwnerRelay = AngryEra._activePageContexts
 accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), changedLocalOwnerPayload)
-AssertError(accepted, result, "local-namespace-collision", "changed local-owner relay")
+AssertError(accepted, result, "page-revision-divergence", "same-revision changed local-owner relay")
 Assert(AngryEra._activePageContexts == contextsBeforeChangedLocalOwnerRelay, "changed relay does not mutate context")
 AssertEqual(localOwnerPage.Contents, "Private", "changed relay does not mutate local-owned content")
 
@@ -1502,5 +1534,403 @@ Assert(
 )
 authorizationHook = nil
 authorization.pageUpsert = true
+
+local nextLocalOwnerWire = DeepCopy(localOwnerWire)
+nextLocalOwnerWire.Revision = localOwnerWire.Revision + 1
+nextLocalOwnerWire.UpdatedAt = currentTime + 1
+nextLocalOwnerWire.UpdatedBy = "OfficerAssist-Realm"
+nextLocalOwnerWire.Contents = "Canonical owner update"
+nextLocalOwnerWire.RevisionId = assert(schema.BuildEntityRevisionId(nextLocalOwnerWire, TestHash))
+local nextLocalOwnerPayload = assert(activePage.BuildPageUpsertPayload(nextLocalOwnerWire, {
+    {
+        SyncId = localCategorySyncId,
+        Vars = "",
+    },
+}, TestHash))
+local localOwnerCategoryId = localOwnerPage.CategoryId
+local localOwnerIndex = localOwnerPage.Index
+accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), nextLocalOwnerPayload)
+Assert(accepted and result.Applied and result.LocalOwnerCanonical, result)
+AssertEqual(AngryAssign_Pages[1].Contents, "Canonical owner update", "leader canonical commit updates local owner")
+AssertEqual(AngryAssign_Pages[1].OwnerId, localInstallationId, "leader commit preserves wire ownership")
+AssertEqual(AngryAssign_Pages[1].CategoryId, localOwnerCategoryId, "leader commit preserves private category placement")
+AssertEqual(AngryAssign_Pages[1].Index, localOwnerIndex, "leader commit preserves private page order")
+Assert(
+    AngryAssign_Meta.EntityLocal[localPageSyncId] == provenanceBeforeLocalOwnerRelay,
+    "leader commit preserves local ownership provenance"
+)
+AssertEqual(
+    AngryAssign_Pages[1].History[1].author,
+    "OfficerAssist-Realm",
+    "local-owner history credits the canonical proposal author"
+)
+
+local missedLocalOwnerWire = DeepCopy(nextLocalOwnerWire)
+missedLocalOwnerWire.Revision = nextLocalOwnerWire.Revision + 3
+missedLocalOwnerWire.UpdatedAt = currentTime + 4
+missedLocalOwnerWire.UpdatedBy = "SecondAssist-Realm"
+missedLocalOwnerWire.Contents = "Canonical owner update after missed revisions"
+missedLocalOwnerWire.RevisionId = assert(schema.BuildEntityRevisionId(missedLocalOwnerWire, TestHash))
+local missedLocalOwnerPayload = assert(activePage.BuildPageUpsertPayload(missedLocalOwnerWire, {
+    {
+        SyncId = localCategorySyncId,
+        Vars = "",
+    },
+}, TestHash))
+AngryAssign_Pages[1].Backup = "receiver-private-backup"
+accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), missedLocalOwnerPayload)
+Assert(accepted and result.Applied and result.LocalOwnerCanonical, result)
+AssertEqual(
+    AngryAssign_Pages[1].Revision,
+    missedLocalOwnerWire.Revision,
+    "current leader forward jump converges after missed local-owner revisions"
+)
+AssertEqual(AngryAssign_Pages[1].CategoryId, localOwnerCategoryId, "forward jump preserves private category placement")
+AssertEqual(AngryAssign_Pages[1].Index, localOwnerIndex, "forward jump preserves private page order")
+AssertEqual(AngryAssign_Pages[1].Backup, "receiver-private-backup", "forward jump preserves local-only fields")
+AssertEqual(
+    AngryAssign_Pages[1].History[1].author,
+    "SecondAssist-Realm",
+    "forward-jump history credits the canonical author"
+)
+AssertEqual(
+    AngryAssign_Pages[1].History[2].author,
+    "OfficerAssist-Realm",
+    "forward jump retains prior canonical history"
+)
+
+-- Qualified writers stage detached desired state against the exact active
+-- tuple. The leader serializes that proposal into one canonical revision while
+-- preserving page ownership, placement, inherited context, and local
+-- provenance.
+do
+    ResetStorage()
+    local canonicalPage = AngryAssign_Pages[1]
+    local canonicalWire = {
+        Kind = "page",
+        SyncId = localPageSyncId,
+        OwnerId = localInstallationId,
+        Revision = 1,
+        UpdatedAt = currentTime,
+        UpdatedBy = "Viewer-Realm",
+        ParentSyncId = localCategorySyncId,
+        Order = 1,
+        Name = canonicalPage.Name,
+        Vars = canonicalPage.Vars,
+        Contents = canonicalPage.Contents,
+    }
+    canonicalWire.RevisionId = assert(schema.BuildEntityRevisionId(canonicalWire, TestHash))
+    canonicalPage.Revision = canonicalWire.Revision
+    canonicalPage.RevisionId = canonicalWire.RevisionId
+    canonicalPage.UpdatedAt = canonicalWire.UpdatedAt
+    canonicalPage.UpdatedBy = canonicalWire.UpdatedBy
+    local canonicalBasePayload = assert(activePage.BuildPageUpsertPayload(canonicalWire, {
+        {
+            SyncId = localCategorySyncId,
+            Vars = "raid=canonical",
+        },
+    }, TestHash))
+    local canonicalDisplay = {
+        Displayed = true,
+        SyncId = canonicalWire.SyncId,
+        Revision = canonicalWire.Revision,
+        RevisionId = canonicalWire.RevisionId,
+        ContextRevisionId = canonicalBasePayload.ContextRevisionId,
+    }
+    accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), canonicalBasePayload)
+    Assert(accepted and result.ContextOnly, result)
+    accepted, result = AngryEra:AcceptActiveDisplay(Auth(), canonicalDisplay)
+    Assert(accepted and result.Applied and not result.RequestNeeded, result)
+
+    local pagesBeforeProposal = AngryAssign_Pages
+    local pageBeforeProposal = AngryAssign_Pages[1]
+    local categoriesBeforeProposal = AngryAssign_Categories
+    local metaBeforeProposal = AngryAssign_Meta
+    local provenanceBeforeProposal = AngryAssign_Meta.EntityLocal[localPageSyncId]
+    local contextsBeforeProposal = AngryEra._activePageContexts
+    local referenceBeforeProposal = AngryEra._activeDisplayReference
+    local desiredA = {
+        Name = "Canonical Assignments",
+        Vars = "page=canonical",
+        Contents = "Tank: Alpha",
+    }
+    local proposalA, proposalError = AngryEra:BuildActivePageChangeProposal(1, desiredA)
+    Assert(proposalA ~= nil, proposalError)
+    AssertEqual(proposalA.SyncId, localPageSyncId, "proposal targets the active page")
+    AssertEqual(proposalA.BaseRevision, 1, "proposal captures the exact numeric base")
+    AssertEqual(proposalA.BaseRevisionId, canonicalWire.RevisionId, "proposal captures the exact revision base")
+    AssertEqual(
+        proposalA.BaseContextRevisionId,
+        canonicalBasePayload.ContextRevisionId,
+        "proposal captures the exact inherited-context base"
+    )
+    Assert(AngryAssign_Pages == pagesBeforeProposal, "proposal staging preserves the pages table")
+    Assert(AngryAssign_Pages[1] == pageBeforeProposal, "proposal staging preserves the canonical page")
+    Assert(AngryAssign_Categories == categoriesBeforeProposal, "proposal staging preserves categories")
+    Assert(AngryAssign_Meta == metaBeforeProposal, "proposal staging preserves metadata")
+    Assert(AngryEra._activePageContexts == contextsBeforeProposal, "proposal staging preserves cached contexts")
+    Assert(AngryEra._activeDisplayReference == referenceBeforeProposal, "proposal staging preserves the active tuple")
+    AssertEqual(pageBeforeProposal.Revision, 1, "proposal staging does not allocate a revision")
+
+    local desiredB = {
+        Name = "Canonical Assignments",
+        Vars = "page=canonical",
+        Contents = "Tank: Beta",
+    }
+    local proposalB
+    proposalB, proposalError = AngryEra:BuildActivePageChangeProposal(1, desiredB)
+    Assert(proposalB ~= nil, proposalError)
+    desiredA.Name = "mutated caller input"
+    desiredA.Vars = "mutated=yes"
+    desiredA.Contents = "mutated caller contents"
+    AssertEqual(proposalA.Name, "Canonical Assignments", "proposal detaches the desired name")
+    AssertEqual(proposalA.Vars, "page=canonical", "proposal detaches desired variables")
+    AssertEqual(proposalA.Contents, "Tank: Alpha", "proposal detaches desired contents")
+
+    local assistantAuth = Auth({
+        Sender = "Assistant",
+        SenderInstallationId = otherInstallationId,
+        SenderSessionId = "assistant_proposal_session",
+    })
+    accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, proposalA)
+    Assert(accepted and result.Status == "applied" and result.Applied, result)
+    AssertEqual(result.LocalId, 1, "canonical proposal retains the local page id")
+    AssertEqual(result.Revision, 2, "canonical proposal allocates exactly one revision")
+    AssertEqual(result.RevisionId, result.PageUpsertPayload.Page.RevisionId, "result identifies canonical content")
+    AssertEqual(
+        result.ContextRevisionId,
+        result.PageUpsertPayload.ContextRevisionId,
+        "result identifies canonical inherited context"
+    )
+    AssertEqual(result.PageUpsertPayload.Page.UpdatedBy, "Assistant-Realm", "authenticated sender supplies UpdatedBy")
+    AssertEqual(result.PageUpsertPayload.Page.UpdatedAt, currentTime, "leader receive time supplies UpdatedAt")
+    AssertEqual(result.PageUpsertPayload.Page.OwnerId, localInstallationId, "canonical commit preserves ownership")
+    AssertEqual(
+        result.PageUpsertPayload.Page.ParentSyncId,
+        localCategorySyncId,
+        "canonical commit preserves wire parent placement"
+    )
+    AssertEqual(result.PageUpsertPayload.Page.Order, 1, "canonical commit preserves wire sibling order")
+    AssertEqual(
+        result.PageUpsertPayload.AncestorVariableLayers[1].Vars,
+        "raid=canonical",
+        "canonical commit preserves inherited ancestor variables"
+    )
+    local validCanonicalResult, canonicalResultError =
+        activePage.ValidatePageUpsertPayload(result.PageUpsertPayload, TestHash)
+    Assert(validCanonicalResult, canonicalResultError)
+    Assert(AngryAssign_Categories == categoriesBeforeProposal, "canonical commit preserves categories")
+    Assert(AngryAssign_Meta == metaBeforeProposal, "canonical commit preserves the metadata table")
+    Assert(
+        AngryAssign_Meta.EntityLocal[localPageSyncId] == provenanceBeforeProposal
+            and provenanceBeforeProposal.OwnedLocally == true,
+        "canonical commit preserves local-owner provenance"
+    )
+    AssertEqual(AngryAssign_Pages[1].OwnerId, localInstallationId, "materialized page remains locally owned")
+    AssertEqual(AngryAssign_Pages[1].CategoryId, 1, "materialized page preserves private parent placement")
+    AssertEqual(AngryAssign_Pages[1].Index, 1, "materialized page preserves private sibling placement")
+    AssertEqual(AngryAssign_Pages[1].Contents, "Tank: Alpha", "canonical content is committed once")
+    AssertEqual(AngryAssign_Pages[1].UpdatedBy, "Assistant-Realm", "canonical storage records authenticated author")
+    local canonicalReference = AngryEra:GetActiveDisplayReference()
+    AssertEqual(canonicalReference.RevisionId, result.RevisionId, "active display advances to canonical revision")
+    AssertEqual(
+        canonicalReference.ContextRevisionId,
+        result.ContextRevisionId,
+        "active display advances to canonical context"
+    )
+    AssertEqual(canonicalReference.Sender, "Viewer-Realm", "canonical active tuple is rebound to the leader")
+    local canonicalContext = AngryEra:GetActivePageRenderContext(
+        localPageSyncId,
+        result.Revision,
+        result.RevisionId,
+        result.ContextRevisionId
+    )
+    AssertEqual(canonicalContext.Page.Contents, "Tank: Alpha", "leader caches the committed canonical payload")
+
+    local pageAfterFirstWriter = AngryAssign_Pages[1]
+    local contextsAfterFirstWriter = AngryEra._activePageContexts
+    accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, proposalB)
+    Assert(accepted and result.Status == "conflict" and not result.Applied, result)
+    AssertEqual(result.Revision, 2, "losing concurrent proposal reports the canonical revision")
+    Assert(AngryAssign_Pages[1] == pageAfterFirstWriter, "losing concurrent proposal does not replace the page")
+    Assert(AngryEra._activePageContexts == contextsAfterFirstWriter, "losing proposal does not alter contexts")
+    AssertEqual(AngryAssign_Pages[1].Contents, "Tank: Alpha", "first writer wins the shared base")
+
+    accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, proposalA)
+    Assert(accepted and result.Status == "unchanged" and not result.Applied, result)
+    AssertEqual(result.Revision, 2, "idempotent retry returns the existing canonical revision")
+    Assert(AngryAssign_Pages[1] == pageAfterFirstWriter, "idempotent retry does not replace canonical storage")
+    Assert(AngryEra._activePageContexts == contextsAfterFirstWriter, "idempotent retry does not alter contexts")
+
+    local busyProposal
+    busyProposal, proposalError = AngryEra:BuildActivePageChangeProposal(1, {
+        Name = "Canonical Assignments",
+        Vars = "page=canonical",
+        Contents = "Tank: Gamma",
+    })
+    Assert(busyProposal ~= nil, proposalError)
+    AngryAssign_State.tree.selected = "1"
+    editorDirty = true
+    local pageBeforeBusy = AngryAssign_Pages[1]
+    accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, busyProposal)
+    Assert(accepted and result.Status == "busy" and not result.Applied, result)
+    Assert(AngryAssign_Pages[1] == pageBeforeBusy, "dirty leader editor prevents canonical replacement")
+    editorDirty = false
+
+    authorization.changeProposal = false
+    accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, busyProposal)
+    AssertError(accepted, result, "unauthorized-change-proposal", "unauthorized canonical proposal")
+    authorization.changeProposal = true
+    Assert(AngryAssign_Pages[1] == pageBeforeBusy, "unauthorized proposal leaves canonical storage intact")
+
+    local unavailableProposal = DeepCopy(busyProposal)
+    unavailableProposal.SyncId = otherInstallationId .. ":page:99"
+    accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, unavailableProposal)
+    Assert(accepted and result.Status == "unavailable" and not result.Applied, result)
+    Assert(result.Revision == nil and result.RevisionId == nil and result.ContextRevisionId == nil,
+        "unavailable result omits an exact reference")
+
+    proposalA, proposalError = AngryEra:BuildActivePageChangeProposal(1, {
+        Name = "Canonical Assignments",
+        Vars = "page=canonical",
+        Contents = "Tank: Alpha",
+        ParentSyncId = otherInstallationId .. ":category:99",
+    })
+    AssertError(proposalA, proposalError, "page-change-desired-unknown-field", "proposal placement injection")
+
+    AngryEra:ClearActiveDisplayReference()
+    proposalA, proposalError = AngryEra:BuildActivePageChangeProposal(1, {
+        Name = "Canonical Assignments",
+        Vars = "page=canonical",
+        Contents = "Tank: Delta",
+    })
+    AssertError(proposalA, proposalError, "page-change-unavailable", "proposal without exact active tuple")
+end
+
+-- Numeric Revision is part of the active tuple even when content-addressed
+-- RevisionId repeats after A -> B -> A.
+do
+    ResetStorage()
+    local repeatedA1 = MakePayload(1, "Repeated A", "raid=repeated")
+    local repeatedB2 = MakePayload(2, "Repeated B", "raid=repeated", {
+        UpdatedBy = "Assistant-Realm",
+    })
+    local repeatedA3 = MakePayload(3, "Repeated A", "raid=repeated")
+    AssertEqual(
+        repeatedA3.Page.RevisionId,
+        repeatedA1.Page.RevisionId,
+        "repeated content intentionally reuses the content revision identity"
+    )
+
+    accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), repeatedA1)
+    Assert(accepted and result.Applied, result)
+    accepted, result = AngryEra:AcceptActiveDisplay(Auth(), {
+        Displayed = true,
+        SyncId = repeatedA1.Page.SyncId,
+        Revision = repeatedA1.Page.Revision,
+        RevisionId = repeatedA1.Page.RevisionId,
+        ContextRevisionId = repeatedA1.ContextRevisionId,
+    })
+    Assert(accepted and result.Applied, result)
+
+    accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), repeatedB2)
+    Assert(accepted and result.Applied, result)
+    AssertEqual(
+        AngryAssign_Pages[result.LocalId].History[1].author,
+        "Assistant-Realm",
+        "follower history credits the canonical UpdatedBy author"
+    )
+    accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), repeatedA3)
+    Assert(accepted and result.Applied, result)
+    accepted, result = AngryEra:AcceptActiveDisplay(Auth(), {
+        Displayed = true,
+        SyncId = repeatedA3.Page.SyncId,
+        Revision = repeatedA3.Page.Revision,
+        RevisionId = repeatedA3.Page.RevisionId,
+        ContextRevisionId = repeatedA3.ContextRevisionId,
+    })
+    Assert(accepted and result.Applied and not result.NoOp, result)
+    AssertEqual(
+        AngryEra:GetActiveDisplayReference().Revision,
+        3,
+        "latest repeated-content numeric revision replaces the old active tuple"
+    )
+    Assert(
+        AngryEra:GetActivePageRenderContext(
+            repeatedA1.Page.SyncId,
+            repeatedA1.Page.Revision,
+            repeatedA1.Page.RevisionId,
+            repeatedA1.ContextRevisionId
+        ) ~= nil,
+        "repeated-content cache retains the older numeric tuple separately"
+    )
+    Assert(
+        AngryEra:GetActivePageRenderContext(
+            repeatedA3.Page.SyncId,
+            repeatedA3.Page.Revision,
+            repeatedA3.Page.RevisionId,
+            repeatedA3.ContextRevisionId
+        ) ~= nil,
+        "repeated-content cache resolves the latest numeric tuple"
+    )
+end
+
+-- A freshly correlated authority bootstrap may roll storage back to the new
+-- leader's older canonical base. The next divergent forward revision must then
+-- apply normally instead of being rejected against the former leader's fork.
+do
+    ResetStorage()
+    local formerN2 = MakePayload(2, "Former leader N+1", "raid=handoff")
+    accepted, result = AngryEra:AcceptActivePageUpsert(Auth({
+        Sender = "FormerLeader",
+        SenderSessionId = "former_tenure",
+    }), formerN2)
+    Assert(accepted and result.Applied, result)
+    local remoteId = result.LocalId
+    AngryAssign_Pages[remoteId].Backup = "receiver-private-backup"
+
+    local newLeaderAuth = Auth({
+        SenderSessionId = "new_tenure",
+    })
+    local newLeaderN1 = MakePayload(1, "New leader older base", "raid=handoff")
+    local olderDisplay = {
+        Displayed = true,
+        SyncId = newLeaderN1.Page.SyncId,
+        Revision = newLeaderN1.Page.Revision,
+        RevisionId = newLeaderN1.Page.RevisionId,
+        ContextRevisionId = newLeaderN1.ContextRevisionId,
+    }
+    accepted, result = AngryEra:AcceptActiveDisplay(newLeaderAuth, olderDisplay)
+    Assert(accepted and result.RequestNeeded, result)
+    accepted, result = AngryEra:AcceptActivePageUpsert(newLeaderAuth, newLeaderN1, {
+        CorrelatedReply = true,
+        AuthorityBootstrap = true,
+    })
+    Assert(accepted and result.Applied and result.PendingDisplayReady, result)
+    AssertEqual(AngryAssign_Pages[remoteId].Revision, 1, "new authority bootstrap replaces the newer former fork")
+    AssertEqual(
+        AngryAssign_Pages[remoteId].Backup,
+        "receiver-private-backup",
+        "authority rollback preserves receiver-local fields"
+    )
+    AssertEqual(
+        AngryAssign_Pages[remoteId].History[1].content,
+        "Former leader N+1",
+        "authority rollback retains the displaced former revision in history"
+    )
+
+    local newLeaderN2 = MakePayload(2, "New leader divergent N+1", "raid=handoff", {
+        UpdatedBy = "NewAssist-Realm",
+    })
+    accepted, result = AngryEra:AcceptActivePageUpsert(newLeaderAuth, newLeaderN2)
+    Assert(accepted and result.Applied, result)
+    AssertEqual(AngryAssign_Pages[remoteId].Revision, 2, "new authority divergent forward revision converges")
+    AssertEqual(AngryAssign_Pages[remoteId].Contents, "New leader divergent N+1", "new authority fork wins")
+    AssertEqual(
+        AngryAssign_Pages[remoteId].History[1].author,
+        "NewAssist-Realm",
+        "post-handoff history credits the canonical assistant author"
+    )
+end
 
 print(string.format("Active-page runtime tests passed (%d assertions).", assertions))

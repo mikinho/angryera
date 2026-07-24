@@ -238,6 +238,7 @@ local function ResolveActiveReference(self, page)
         self.GetActivePageRenderContext,
         self,
         reference.SyncId,
+        reference.Revision,
         reference.RevisionId,
         reference.ContextRevisionId
     )
@@ -303,6 +304,7 @@ local function BuildSnapshot(self, context)
     return {
         LocalId = type(localId) == "number" and localId or nil,
         SyncId = type(page.SyncId) == "string" and page.SyncId or nil,
+        Revision = reference and reference.Revision or nil,
         RevisionId = reference and reference.RevisionId or nil,
         ContextRevisionId = reference and reference.ContextRevisionId or nil,
         Name = type(page.Name) == "string" and page.Name or nil,
@@ -469,7 +471,7 @@ function AngryEra:IsDisplayedNull(value)
 end
 
 --- Returns a detached snapshot of the displayed note, or nil when cleared.
--- Fields: LocalId, SyncId, RevisionId, ContextRevisionId, Name, Category,
+-- Fields: LocalId, SyncId, Revision, RevisionId, ContextRevisionId, Name, Category,
 -- CategorySyncId, Ancestors (root-to-parent `{ SyncId, Name? }`), Raw,
 -- Rendered, UpdatedAt, UpdatedBy, Vars, and Meta.
 -- JSON null values are fresh marker tables recognized by `IsDisplayedNull`.

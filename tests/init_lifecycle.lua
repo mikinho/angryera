@@ -1,5 +1,6 @@
 local calls = {}
 local restoreAsAuthority = false
+local isRaidLeader = false
 
 local function Record(name, value)
     calls[#calls + 1] = {
@@ -76,6 +77,10 @@ function AngryEra:RestoreDisplayAuthority()
         return true, "display-message", true
     end
     return false, "not-display-authority", false
+end
+
+function AngryEra:IsPlayerRaidLeader()
+    return isRaidLeader
 end
 
 function AngryEra:ClearDisplayed(publish)
@@ -224,9 +229,10 @@ assert(registeredPrefixes.AngryEra3P == "ReceiveProtocolMessage", "startup shoul
 assert(#registrationOrder == 4, "startup should register exactly four protocol prefixes")
 assert(
     registeredEvents.PARTY_LEADER_CHANGED
+        and registeredEvents.PARTY_CONVERTED_TO_RAID
         and registeredEvents.GROUP_JOINED
         and registeredEvents.GROUP_ROSTER_UPDATE,
-    "leader and group-boundary handlers must be active before delayed discovery"
+    "leader, party-conversion, and group-boundary handlers must be active before delayed discovery"
 )
 assert(
     sessionIndex < registrationOrder[1].Index
@@ -253,9 +259,14 @@ assert(
 )
 assert(calls[2].Name == "clear-displayed", "group join must clear the prior display before all new-group work")
 assert(calls[3].Name == "reset-protocol-peers", "group join should reset prior-group transport state after clearing")
-assert(calls[4].Name == "version-query", "group discovery should begin only after the local clear")
-assert(calls[#calls].Name == "schedule", "the new leader display request should be scheduled last")
-assert(calls[#calls].Value.Method == "SendRequestDisplay", "group join should request the new leader's display")
+assert(
+    calls[4].Name == "schedule" and calls[4].Value.Method == "SendRequestDisplay",
+    "a follower group join should request the new leader only after clearing prior-group state"
+)
+assert(calls[5].Name == "update-group-display", "group display reconciliation should follow follower bootstrap")
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "version-query", "followers must not broadcast discovery on group join")
+end
 
 calls = {}
 AngryEra:AfterEnable()
@@ -271,7 +282,7 @@ for _, call in ipairs(calls) do
         afterEnableDisplayRequestCount = afterEnableDisplayRequestCount + 1
     end
 end
-assert(afterEnableVersionQueryCount == 1, "delayed startup should perform one explicit discovery query")
+assert(afterEnableVersionQueryCount == 0, "a follower delayed startup must not broadcast discovery")
 assert(afterEnableDisplayRequestCount == 1, "delayed startup should schedule one explicit display request")
 
 calls = {}
@@ -294,26 +305,46 @@ assert(
         and calls[3].Name == "permissions-updated",
     "leader changes must reset ancestor announcements and queued publication state before reevaluating permissions"
 )
-assert(calls[4].Name == "version-query", "leader changes should explicitly rediscover protocol peers")
-assert(calls[5].Name == "restore-display-authority", "leader changes should first try to retain the current display")
-assert(calls[6].Name == "request-display", "followers should explicitly request the new leader's display")
+assert(calls[4].Name == "request-display", "followers should explicitly request the new leader's display")
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "version-query", "a follower leader-change handler must not broadcast discovery")
+    assert(call.Name ~= "restore-display-authority", "followers must not attempt leader publication restore")
+end
 
 calls = {}
+isRaidLeader = true
 restoreAsAuthority = true
 AngryEra:PARTY_LEADER_CHANGED()
 restoreAsAuthority = false
+assert(calls[4].Name == "version-query", "a promoted leader should advertise protocol capabilities")
 assert(calls[5].Name == "restore-display-authority", "a promoted leader should restore its current display anchor")
 for _, call in ipairs(calls) do
     assert(call.Name ~= "request-display", "a promoted leader must not whisper a display request to itself")
 end
 
 calls = {}
+isRaidLeader = false
 AngryEra:PARTY_CONVERTED_TO_RAID()
-assert(calls[1].Name == "version-query", "party conversion should explicitly rediscover protocol peers")
 assert(
-    calls[2].Name == "schedule" and calls[2].Value.Method == "SendRequestDisplay",
-    "party conversion should explicitly schedule a display request"
+    calls[1].Name == "schedule" and calls[1].Value.Method == "SendRequestDisplay",
+    "a follower party conversion should explicitly schedule a targeted display request"
 )
+assert(calls[2].Name == "update-group-display", "party conversion should reconcile the displayed group afterward")
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "version-query", "followers must not broadcast discovery after party conversion")
+end
+
+calls = {}
+isRaidLeader = true
+AngryEra:PARTY_CONVERTED_TO_RAID()
+assert(calls[1].Name == "version-query", "the leader should advertise after party conversion")
+for _, call in ipairs(calls) do
+    assert(
+        call.Name ~= "schedule" or call.Value.Method ~= "SendRequestDisplay",
+        "the leader must not schedule a display request to itself after party conversion"
+    )
+end
+isRaidLeader = false
 
 local totalClearCount = clearCountBeforeJoin + 1
 assert(totalClearCount == 2, "startup and group join should each perform one local-only clear")

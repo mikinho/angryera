@@ -48,6 +48,15 @@ local displayRequestWatchdog
 local displayRequestWatchdogTimer
 local displayRequestWatchdogGeneration = 0
 local displayAuthorityRecoveryPageId
+local sharedPageChangeDraft
+local sharedPageChangeTimer
+local sharedPageChangeTimeoutTimer
+local sharedPageChangeCommitTimer
+local sharedPageChangeGeneration = 0
+local sharedPageChangeDebounce = 0.125
+local sharedPageChangeTimeout = math.max(updateFrequency * 10, 20)
+local sharedPageChangeCommitWait = math.max(updateFrequency * 2.5, 5)
+local sharedPageChangeObservedLimit = 16
 local SamePageTuple
 
 local function PreciseNowMilliseconds()
@@ -95,6 +104,7 @@ local function PageTuple(payload)
     if
         type(page) ~= "table"
         or type(page.SyncId) ~= "string"
+        or type(page.Revision) ~= "number"
         or type(page.RevisionId) ~= "string"
         or type(payload.ContextRevisionId) ~= "string"
     then
@@ -102,6 +112,7 @@ local function PageTuple(payload)
     end
     return {
         SyncId = page.SyncId,
+        Revision = page.Revision,
         RevisionId = page.RevisionId,
         ContextRevisionId = payload.ContextRevisionId,
     }
@@ -111,6 +122,7 @@ local function IsPublishedDisplayTuple(payload)
     local tuple = PageTuple(payload)
     local published = tuple and publishedDisplayTuples[tuple.SyncId] or nil
     return type(published) == "table"
+        and published.Revision == tuple.Revision
         and published.RevisionId == tuple.RevisionId
         and published.ContextRevisionId == tuple.ContextRevisionId
 end
@@ -121,6 +133,7 @@ local function RememberPublishedDisplayTuple(payload)
         return false
     end
     publishedDisplayTuples[tuple.SyncId] = {
+        Revision = tuple.Revision,
         RevisionId = tuple.RevisionId,
         ContextRevisionId = tuple.ContextRevisionId,
     }
@@ -148,6 +161,7 @@ local function ReannounceFailedDisplayPage(state, status)
         or type(active) ~= "table"
         or not tuple
         or active.SyncId ~= tuple.SyncId
+        or active.Revision ~= tuple.Revision
         or active.RevisionId ~= tuple.RevisionId
         or active.ContextRevisionId ~= tuple.ContextRevisionId
     then
@@ -158,6 +172,7 @@ local function ReannounceFailedDisplayPage(state, status)
     local sent, result = state.Self:SendProtocolDisplay({
         Displayed = true,
         SyncId = tuple.SyncId,
+        Revision = tuple.Revision,
         RevisionId = tuple.RevisionId,
         ContextRevisionId = tuple.ContextRevisionId,
     })
@@ -208,6 +223,7 @@ SamePageTuple = function(left, right)
     return leftTuple ~= nil
         and rightTuple ~= nil
         and leftTuple.SyncId == rightTuple.SyncId
+        and leftTuple.Revision == rightTuple.Revision
         and leftTuple.RevisionId == rightTuple.RevisionId
         and leftTuple.ContextRevisionId == rightTuple.ContextRevisionId
 end
@@ -223,6 +239,7 @@ local function ActiveDisplayMatches(self, payload)
     return SamePageTuple(payload, {
         Page = {
             SyncId = reference.SyncId,
+            Revision = reference.Revision,
             RevisionId = reference.RevisionId,
         },
         ContextRevisionId = reference.ContextRevisionId,
@@ -414,12 +431,508 @@ local function PendingRecoveryMatches(record, pending)
         and pending.SenderInstallationId == record.SenderInstallationId
         and pending.SenderSessionId == record.SenderSessionId
         and payload.SyncId == reference.SyncId
+        and payload.Revision == reference.Revision
         and payload.RevisionId == reference.RevisionId
         and payload.ContextRevisionId == reference.ContextRevisionId
 end
 
 local function SamePlayer(left, right)
     return type(left) == "string" and type(right) == "string" and left:lower() == right:lower()
+end
+
+local function CopyDesiredPageState(desired)
+    if type(desired) ~= "table" then
+        return nil
+    end
+    if
+        type(desired.Name) ~= "string"
+        or type(desired.Vars) ~= "string"
+        or type(desired.Contents) ~= "string"
+    then
+        return nil
+    end
+    return {
+        Name = desired.Name,
+        Vars = desired.Vars,
+        Contents = desired.Contents,
+    }
+end
+
+local function CopyChangeReference(reference)
+    if type(reference) ~= "table" then
+        return nil
+    end
+    return {
+        SyncId = reference.SyncId,
+        Revision = reference.Revision,
+        RevisionId = reference.RevisionId,
+        ContextRevisionId = reference.ContextRevisionId,
+    }
+end
+
+local function SameChangeReference(left, right)
+    return type(left) == "table"
+        and type(right) == "table"
+        and left.SyncId == right.SyncId
+        and left.Revision == right.Revision
+        and left.RevisionId == right.RevisionId
+        and left.ContextRevisionId == right.ContextRevisionId
+end
+
+local function ChangeReferenceKey(reference)
+    if
+        type(reference) ~= "table"
+        or type(reference.SyncId) ~= "string"
+        or type(reference.Revision) ~= "number"
+        or type(reference.RevisionId) ~= "string"
+        or type(reference.ContextRevisionId) ~= "string"
+    then
+        return nil
+    end
+    return table.concat({
+        reference.SyncId,
+        tostring(reference.Revision or ""),
+        reference.RevisionId,
+        reference.ContextRevisionId,
+    }, "\0")
+end
+
+local function ClearObservedCanonicalReferences(draft)
+    if type(draft) ~= "table" then
+        return
+    end
+    draft.ObservedCanonicalReferences = nil
+    draft.ObservedCanonicalOrder = nil
+end
+
+local function RememberObservedCanonicalReference(draft, reference)
+    local key = ChangeReferenceKey(reference)
+    if type(draft) ~= "table" or not key then
+        return false
+    end
+    draft.ObservedCanonicalReferences = draft.ObservedCanonicalReferences or {}
+    draft.ObservedCanonicalOrder = draft.ObservedCanonicalOrder or {}
+    if draft.ObservedCanonicalReferences[key] then
+        return true
+    end
+
+    draft.ObservedCanonicalReferences[key] = CopyChangeReference(reference)
+    table.insert(draft.ObservedCanonicalOrder, key)
+    while #draft.ObservedCanonicalOrder > sharedPageChangeObservedLimit do
+        local expired = table.remove(draft.ObservedCanonicalOrder, 1)
+        draft.ObservedCanonicalReferences[expired] = nil
+    end
+    return true
+end
+
+local function HasObservedCanonicalReference(draft, reference)
+    local key = ChangeReferenceKey(reference)
+    return type(draft) == "table"
+        and key ~= nil
+        and type(draft.ObservedCanonicalReferences) == "table"
+        and draft.ObservedCanonicalReferences[key] ~= nil
+end
+
+local function CancelSharedPageChangeTimers(self)
+    CancelTimer(self, sharedPageChangeTimer)
+    CancelTimer(self, sharedPageChangeTimeoutTimer)
+    CancelTimer(self, sharedPageChangeCommitTimer)
+    sharedPageChangeTimer = nil
+    sharedPageChangeTimeoutTimer = nil
+    sharedPageChangeCommitTimer = nil
+end
+
+local function SetSharedPageChangeConflict(self, draft, status, reason, reference)
+    if type(draft) ~= "table" then
+        return
+    end
+    self.syncDraftConflict = {
+        SyncId = draft.SyncId,
+        LocalId = draft.LocalId,
+        Status = status,
+        Reason = reason,
+        Desired = CopyDesiredPageState(draft.Desired),
+        CanonicalReference = CopyChangeReference(reference),
+        ReceivedAt = time(),
+    }
+end
+
+local function CurrentSharedPageReference(self, draft)
+    if type(draft) ~= "table" or type(AngryAssign_Pages) ~= "table" then
+        return nil
+    end
+    local page = rawget(AngryAssign_Pages, draft.LocalId)
+    if
+        type(page) ~= "table"
+        or page.SyncId ~= draft.SyncId
+        or type(page.Revision) ~= "number"
+        or type(page.RevisionId) ~= "string"
+    then
+        return nil
+    end
+    if type(self.GetActiveDisplayReference) ~= "function" then
+        return nil
+    end
+    local queried, active = pcall(self.GetActiveDisplayReference, self)
+    if
+        not queried
+        or type(active) ~= "table"
+        or active.SyncId ~= page.SyncId
+        or active.Revision ~= page.Revision
+        or active.RevisionId ~= page.RevisionId
+        or type(active.ContextRevisionId) ~= "string"
+    then
+        return nil
+    end
+    return {
+        SyncId = page.SyncId,
+        Revision = page.Revision,
+        RevisionId = page.RevisionId,
+        ContextRevisionId = active.ContextRevisionId,
+    }
+end
+
+local function ScheduleSharedPageChangeFlush(self, draft)
+    CancelTimer(self, sharedPageChangeTimer)
+    sharedPageChangeGeneration = sharedPageChangeGeneration + 1
+    draft.FlushGeneration = sharedPageChangeGeneration
+    sharedPageChangeTimer =
+        self:ScheduleTimer("FlushSharedPageChangeProposal", sharedPageChangeDebounce, draft.FlushGeneration)
+    if not sharedPageChangeTimer then
+        return false, "change-proposal-schedule-failed"
+    end
+    return true, "scheduled"
+end
+
+local function FinishAcceptedSharedPageChange(self, draft)
+    local queued = draft.Generation > (draft.SentGeneration or 0)
+    CancelTimer(self, sharedPageChangeCommitTimer)
+    sharedPageChangeCommitTimer = nil
+    draft.InFlightMessageId = nil
+    draft.AcceptedReference = nil
+    ClearObservedCanonicalReferences(draft)
+    draft.Halted = nil
+
+    if queued then
+        local current = CurrentSharedPageReference(self, draft)
+        if not current then
+            SetSharedPageChangeConflict(self, draft, "conflict", "canonical-page-unavailable")
+            draft.Halted = true
+            return false, "canonical-page-unavailable"
+        end
+        draft.BaseRevision = current.Revision
+        draft.BaseRevisionId = current.RevisionId
+        draft.BaseContextRevisionId = current.ContextRevisionId
+        if type(self.RebaseSharedPageChangeDraft) ~= "function" then
+            SetSharedPageChangeConflict(self, draft, "unavailable", "editor-draft-rebase-unavailable", current)
+            draft.Halted = true
+            return false, "editor-draft-rebase-unavailable"
+        end
+        local called, rebased, rebaseError =
+            pcall(self.RebaseSharedPageChangeDraft, self, draft.LocalId, current, draft.Desired)
+        if not called or rebased ~= true then
+            SetSharedPageChangeConflict(
+                self,
+                draft,
+                "unavailable",
+                called and rebaseError or "editor-draft-rebase-failed",
+                current
+            )
+            draft.Halted = true
+            return false, rebaseError or "editor-draft-rebase-failed"
+        end
+        if type(self.UpdateSelected) == "function" then
+            pcall(self.UpdateSelected, self, false)
+        end
+        local scheduled, scheduleResult = ScheduleSharedPageChangeFlush(self, draft)
+        if not scheduled then
+            SetSharedPageChangeConflict(self, draft, "unavailable", scheduleResult, current)
+            draft.Halted = true
+            return false, scheduleResult
+        end
+        return true, scheduleResult
+    end
+
+    sharedPageChangeDraft = nil
+    if type(self.ClearSharedPageChangeDraft) == "function" then
+        pcall(self.ClearSharedPageChangeDraft, self, true)
+    end
+    if type(self.ClearSyncDraftConflict) == "function" then
+        pcall(self.ClearSyncDraftConflict, self)
+    elseif type(self.syncDraftConflict) == "table" and self.syncDraftConflict.SyncId == draft.SyncId then
+        self.syncDraftConflict = nil
+    end
+    if type(self.UpdateSelected) == "function" then
+        pcall(self.UpdateSelected, self, false)
+    end
+    return true, "completed"
+end
+
+--- Clears transport-side proposal state. The editor-owned desired draft is
+-- retained as a visible conflict so a handoff or timeout never loses user text.
+function AngryEra:ResetSharedPageChangeState(reason)
+    local draft = sharedPageChangeDraft
+    CancelSharedPageChangeTimers(self)
+    sharedPageChangeGeneration = sharedPageChangeGeneration + 1
+    sharedPageChangeDraft = nil
+    if draft then
+        SetSharedPageChangeConflict(self, draft, "unavailable", reason or "reset")
+        return true
+    end
+    return false
+end
+
+--- Cancels the current local proposal after an explicit editor revert.
+-- An already delivered proposal may still be committed by the leader, but its
+-- delayed result can no longer revive the discarded local draft.
+function AngryEra:CancelSharedPageChangeProposal(reason)
+    local draft = sharedPageChangeDraft
+    if not draft then
+        return false, "idle"
+    end
+    CancelSharedPageChangeTimers(self)
+    sharedPageChangeGeneration = sharedPageChangeGeneration + 1
+    sharedPageChangeDraft = nil
+    if draft.InFlightMessageId and type(self.CancelProtocolChangeProposal) == "function" then
+        pcall(self.CancelProtocolChangeProposal, self, draft.InFlightMessageId)
+    end
+    return true, reason or "canceled"
+end
+
+--- Queues a full desired-state edit for the exact displayed shared page.
+-- Canonical storage remains untouched until a leader PAGE_UPSERT is accepted.
+function AngryEra:SubmitSharedPageChangeProposal(proposal)
+    if type(proposal) ~= "table" or type(proposal.LocalId) ~= "number" or proposal.LocalId < 1 then
+        return false, "invalid-change-proposal"
+    end
+    local desired = CopyDesiredPageState(proposal.Desired)
+    if
+        not desired
+        or type(proposal.SyncId) ~= "string"
+        or type(proposal.BaseRevision) ~= "number"
+        or type(proposal.BaseRevisionId) ~= "string"
+        or type(proposal.BaseContextRevisionId) ~= "string"
+    then
+        return false, "invalid-change-proposal"
+    end
+    if
+        type(self.CanLocalPlayerPublish) ~= "function"
+        or not self:CanLocalPlayerPublish("changeProposal")
+        or self:CanLocalPlayerPublish("pageUpsert")
+    then
+        return false, "unauthorized"
+    end
+
+    local draft = sharedPageChangeDraft
+    if draft and draft.SyncId ~= proposal.SyncId then
+        SetSharedPageChangeConflict(self, draft, "conflict", "display-changed")
+        CancelSharedPageChangeTimers(self)
+        draft = nil
+    end
+    if not draft then
+        draft = {
+            Generation = 0,
+        }
+        sharedPageChangeDraft = draft
+    end
+
+    draft.LocalId = proposal.LocalId
+    draft.SyncId = proposal.SyncId
+    draft.BaseRevision = proposal.BaseRevision
+    draft.BaseRevisionId = proposal.BaseRevisionId
+    draft.BaseContextRevisionId = proposal.BaseContextRevisionId
+    draft.Desired = desired
+    draft.Generation = draft.Generation + 1
+    draft.Halted = nil
+
+    if draft.InFlightMessageId then
+        return true, "queued"
+    end
+    local scheduled, result = ScheduleSharedPageChangeFlush(self, draft)
+    if not scheduled then
+        SetSharedPageChangeConflict(self, draft, "unavailable", result)
+        return false, result
+    end
+    return true, result
+end
+
+--- Sends the newest debounced desired state to the current leader.
+function AngryEra:FlushSharedPageChangeProposal(generation)
+    local draft = sharedPageChangeDraft
+    if not draft or draft.FlushGeneration ~= generation then
+        return true, "superseded"
+    end
+    sharedPageChangeTimer = nil
+    if draft.InFlightMessageId then
+        return true, "queued"
+    end
+
+    local current = CurrentSharedPageReference(self, draft)
+    local expected = {
+        SyncId = draft.SyncId,
+        Revision = draft.BaseRevision,
+        RevisionId = draft.BaseRevisionId,
+        ContextRevisionId = draft.BaseContextRevisionId,
+    }
+    if not SameChangeReference(current, expected) then
+        draft.Halted = true
+        SetSharedPageChangeConflict(self, draft, "conflict", "stale-change-base", current)
+        return false, "stale-change-base"
+    end
+    if type(self.BuildActivePageChangeProposal) ~= "function" then
+        return false, "active-page-change-runtime-unavailable"
+    end
+    local payload, buildError = self:BuildActivePageChangeProposal(draft.LocalId, draft.Desired)
+    if not payload then
+        draft.Halted = true
+        SetSharedPageChangeConflict(self, draft, "unavailable", buildError, current)
+        return false, buildError
+    end
+
+    local target = self:GetRaidLeader(true)
+    if not target or SamePlayer(target, PlayerFullName()) then
+        draft.Halted = true
+        SetSharedPageChangeConflict(self, draft, "unavailable", "leader-unavailable", current)
+        return false, "leader-unavailable"
+    end
+    local sent, messageId = self:SendProtocolChangeProposal(target, payload)
+    if not sent then
+        draft.Halted = true
+        SetSharedPageChangeConflict(self, draft, "unavailable", messageId, current)
+        return false, messageId
+    end
+
+    draft.InFlightMessageId = messageId
+    draft.SentGeneration = draft.Generation
+    draft.SentDesired = CopyDesiredPageState(draft.Desired)
+    draft.AcceptedReference = nil
+    ClearObservedCanonicalReferences(draft)
+    CancelTimer(self, sharedPageChangeTimeoutTimer)
+    sharedPageChangeTimeoutTimer =
+        self:ScheduleTimer("SharedPageChangeTimedOut", sharedPageChangeTimeout, messageId)
+    if not sharedPageChangeTimeoutTimer then
+        if type(self.CancelProtocolChangeProposal) == "function" then
+            pcall(self.CancelProtocolChangeProposal, self, messageId)
+        end
+        draft.InFlightMessageId = nil
+        draft.Halted = true
+        SetSharedPageChangeConflict(self, draft, "unavailable", "change-result-watchdog-unavailable", current)
+        self:SendRequestDisplay()
+        return false, "change-result-watchdog-unavailable"
+    end
+    return true, messageId
+end
+
+--- Handles the correlated semantic result after protocol-runtime validation.
+function AngryEra:HandleSharedPageChangeResult(_, result, _, messageId)
+    local draft = sharedPageChangeDraft
+    if
+        not draft
+        or draft.InFlightMessageId ~= messageId
+        or type(result) ~= "table"
+        or result.SyncId ~= draft.SyncId
+    then
+        return false, "stale-change-result"
+    end
+    CancelTimer(self, sharedPageChangeTimeoutTimer)
+    sharedPageChangeTimeoutTimer = nil
+
+    if result.Status == "conflict" or result.Status == "busy" or result.Status == "unavailable" then
+        draft.InFlightMessageId = nil
+        draft.AcceptedReference = nil
+        ClearObservedCanonicalReferences(draft)
+        draft.Halted = true
+        local reference = result.Status ~= "unavailable" and result or nil
+        SetSharedPageChangeConflict(self, draft, result.Status, "leader-" .. result.Status, reference)
+        return true, result.Status
+    end
+
+    draft.AcceptedReference = CopyChangeReference(result)
+    if HasObservedCanonicalReference(draft, draft.AcceptedReference)
+        or SameChangeReference(draft.AcceptedReference, CurrentSharedPageReference(self, draft))
+    then
+        return FinishAcceptedSharedPageChange(self, draft)
+    end
+
+    CancelTimer(self, sharedPageChangeCommitTimer)
+    sharedPageChangeCommitTimer =
+        self:ScheduleTimer("SharedPageChangeCommitTimedOut", sharedPageChangeCommitWait, messageId)
+    if not sharedPageChangeCommitTimer then
+        local acceptedReference = CopyChangeReference(draft.AcceptedReference)
+        draft.InFlightMessageId = nil
+        draft.AcceptedReference = nil
+        ClearObservedCanonicalReferences(draft)
+        draft.Halted = true
+        SetSharedPageChangeConflict(
+            self,
+            draft,
+            "unavailable",
+            "canonical-page-watchdog-unavailable",
+            acceptedReference
+        )
+        self:SendRequestDisplay()
+        return true, "canonical-page-watchdog-unavailable"
+    end
+    return true, "awaiting-canonical-page"
+end
+
+--- Observes leader PAGE_UPSERT acceptance so page-before-result and
+-- result-before-page delivery both complete the same proposal safely.
+function AngryEra:ObserveSharedPageCanonicalUpdate(_, payload)
+    local draft = sharedPageChangeDraft
+    local page = type(payload) == "table" and payload.Page or nil
+    if not draft or type(page) ~= "table" or page.SyncId ~= draft.SyncId then
+        return false, "unrelated"
+    end
+    local canonicalReference = {
+        SyncId = page.SyncId,
+        Revision = page.Revision,
+        RevisionId = page.RevisionId,
+        ContextRevisionId = payload.ContextRevisionId,
+    }
+    if draft.InFlightMessageId then
+        RememberObservedCanonicalReference(draft, canonicalReference)
+    end
+    if SameChangeReference(draft.AcceptedReference, canonicalReference) then
+        return FinishAcceptedSharedPageChange(self, draft)
+    end
+    return true, "observed"
+end
+
+--- Retains an unacknowledged desired draft after the bounded interaction TTL.
+function AngryEra:SharedPageChangeTimedOut(messageId)
+    local draft = sharedPageChangeDraft
+    if not draft or draft.InFlightMessageId ~= messageId then
+        return true, "superseded"
+    end
+    sharedPageChangeTimeoutTimer = nil
+    if type(self.CancelProtocolChangeProposal) == "function" then
+        pcall(self.CancelProtocolChangeProposal, self, messageId)
+    end
+    draft.InFlightMessageId = nil
+    draft.AcceptedReference = nil
+    ClearObservedCanonicalReferences(draft)
+    draft.Halted = true
+    SetSharedPageChangeConflict(self, draft, "unavailable", "change-result-timeout")
+    self:SendRequestDisplay()
+    return false, "change-result-timeout"
+end
+
+--- Requests canonical recovery when an accepted result outruns its page.
+function AngryEra:SharedPageChangeCommitTimedOut(messageId)
+    local draft = sharedPageChangeDraft
+    if not draft or draft.InFlightMessageId ~= messageId or not draft.AcceptedReference then
+        return true, "superseded"
+    end
+    sharedPageChangeCommitTimer = nil
+    local acceptedReference = CopyChangeReference(draft.AcceptedReference)
+    draft.InFlightMessageId = nil
+    draft.AcceptedReference = nil
+    ClearObservedCanonicalReferences(draft)
+    draft.Halted = true
+    SetSharedPageChangeConflict(self, draft, "unavailable", "canonical-page-timeout", acceptedReference)
+    self:SendRequestDisplay()
+    return false, "canonical-page-timeout"
 end
 
 local function ValidLocalPageId(id)
@@ -593,6 +1106,7 @@ local function SameRecoveryContext(record, auth, reference)
         and type(current) == "table"
         and type(reference) == "table"
         and current.SyncId == reference.SyncId
+        and current.Revision == reference.Revision
         and current.RevisionId == reference.RevisionId
         and current.ContextRevisionId == reference.ContextRevisionId
 end
@@ -623,6 +1137,7 @@ end
 function AngryEra:ResetDisplayPublicationState()
     self:CancelPendingDisplayRecovery()
     self:CancelDisplayRequestWatchdog()
+    self:ResetSharedPageChangeState("publication-reset")
     CancelPendingDisplayPage(self, "reset")
     CancelPendingDisplayControl(self, "reset")
     for _, timerId in pairs(pageTimerId) do
@@ -684,6 +1199,7 @@ function AngryEra:DeferPendingDisplayRecovery(auth, displayEnvelope, reference, 
         DisplayEnvelope = envelopeCopy,
         Reference = {
             SyncId = reference.SyncId,
+            Revision = reference.Revision,
             RevisionId = reference.RevisionId,
             ContextRevisionId = reference.ContextRevisionId,
         },

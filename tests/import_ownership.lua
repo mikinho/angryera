@@ -3,6 +3,9 @@ local replacedPages = 0
 local replacedCategories = 0
 local deletedCategoryChildren = 0
 local displayHierarchyRefreshes = 0
+local importedPageUpdatedCalls = 0
+local importedProposal
+local allowRemoteCanonicalEdit = false
 
 AngryAssign_Pages = {}
 AngryAssign_Categories = {}
@@ -24,6 +27,10 @@ local AngryEra = {
 }
 
 function AngryEra:CanEditEntityLocally(entity)
+    return entity and (entity.LocallyOwned == true or allowRemoteCanonicalEdit)
+end
+
+function AngryEra:IsLocallyOwned(entity)
     return entity and entity.LocallyOwned == true
 end
 
@@ -101,6 +108,40 @@ function AngryEra:RefreshDisplayedPageAfterHierarchyMutation()
     displayHierarchyRefreshes = displayHierarchyRefreshes + 1
 end
 
+function AngryEra:UpdateContents(id, contents)
+    if allowRemoteCanonicalEdit and AngryAssign_Pages[id] and AngryAssign_Pages[id].LocallyOwned == false then
+        importedProposal = importedProposal or {}
+        importedProposal.Contents = contents
+        return true, "scheduled", true
+    end
+    AngryAssign_Pages[id].Contents = contents
+    return true, nil, false
+end
+
+function AngryEra:UpdatePageVars(id, vars)
+    if allowRemoteCanonicalEdit and AngryAssign_Pages[id] and AngryAssign_Pages[id].LocallyOwned == false then
+        importedProposal = importedProposal or {}
+        importedProposal.Vars = vars
+        return true, "scheduled", true
+    end
+    AngryAssign_Pages[id].Vars = vars
+    return true, nil, false
+end
+
+function AngryEra:RenamePage(id, name)
+    if allowRemoteCanonicalEdit and AngryAssign_Pages[id] and AngryAssign_Pages[id].LocallyOwned == false then
+        importedProposal = importedProposal or {}
+        importedProposal.Name = name
+        return true, "scheduled", true
+    end
+    AngryAssign_Pages[id].Name = name
+    return true, nil, false
+end
+
+function AngryEra:PageUpdated()
+    importedPageUpdatedCalls = importedPageUpdatedCalls + 1
+end
+
 local app = {
     AngryEra = AngryEra,
     libs = {
@@ -144,6 +185,45 @@ local replacedPageId = AngryEra:DoImportPage({
 assert(replacedPageId == 2, "A locally owned page should remain replaceable")
 assert(AngryAssign_Pages[2].Contents == "new", "Local page replacement should apply imported content")
 assert(replacedPages == 1, "Local page replacement should preserve its identity")
+
+AngryAssign_Pages[5] = {
+    Id = 5,
+    Name = "Active Remote Page",
+    Contents = "canonical",
+    Vars = "MT=Leader",
+    Index = 9,
+    SyncId = "remote:page:5",
+    LocallyOwned = false,
+}
+allowRemoteCanonicalEdit = true
+local proposedPageId, proposalResult, proposed = AngryEra:DoImportPage({
+    Name = "Imported Active Page",
+    Contents = "assistant draft",
+    Vars = "MT=Assistant",
+    Index = 1,
+}, nil, 5)
+assert(proposedPageId == 5 and proposalResult == "scheduled" and proposed, "active remote import should propose")
+assert(
+    AngryAssign_Pages[5].Name == "Active Remote Page"
+        and AngryAssign_Pages[5].Contents == "canonical"
+        and AngryAssign_Pages[5].Vars == "MT=Leader"
+        and AngryAssign_Pages[5].Index == 9,
+    "a proposed import must not mutate canonical fields or receiver-private order"
+)
+assert(
+    importedProposal
+        and importedProposal.Name == "Imported Active Page"
+        and importedProposal.Contents == "assistant draft"
+        and importedProposal.Vars == "MT=Assistant",
+    "the active remote import should retain every desired canonical field"
+)
+assert(replacedPages == 1, "a proposed remote import must not replace its canonical record")
+
+local applied, applyResult, updateProposed = AngryEra:ApplyImportedPageUpdate(5, "second draft", 2)
+assert(applied and applyResult == "scheduled" and updateProposed, "legacy import updates should expose proposals")
+assert(AngryAssign_Pages[5].Index == 9, "a proposed legacy import must not mutate Index")
+assert(importedPageUpdatedCalls == 0, "a proposed legacy import must not call PageUpdated")
+allowRemoteCanonicalEdit = false
 
 AngryAssign_Categories[3] = {
     Id = 3,

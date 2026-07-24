@@ -86,6 +86,7 @@ local function MakeVersionPayload()
         Flavor = "ERA",
         Capabilities = {
             activePage = 1,
+            activePageChanges = 1,
             ownership = 2,
         },
         AcceptsCurrentGroup = true,
@@ -125,6 +126,33 @@ local function MakePageUpsertPayload()
         },
         ContextRevisionId = "fcs32:87654321",
     }
+end
+
+local function MakeChangeProposePayload()
+    return {
+        AuthorityInstallationId = activeInstallationId,
+        AuthoritySessionId = "leader_session",
+        SyncId = activePageSyncId,
+        BaseRevision = 4,
+        BaseRevisionId = "fcs32:12345678",
+        BaseContextRevisionId = "fcs32:87654321",
+        Name = "Active Page",
+        Vars = "role=page",
+        Contents = "Updated assignments",
+    }
+end
+
+local function MakeChangeResultPayload(status)
+    local payload = {
+        Status = status or "applied",
+        SyncId = activePageSyncId,
+    }
+    if payload.Status ~= "unavailable" then
+        payload.Revision = 5
+        payload.RevisionId = "fcs32:23456789"
+        payload.ContextRevisionId = "fcs32:98765432"
+    end
+    return payload
 end
 
 local function MakeCodec(overrides)
@@ -341,14 +369,20 @@ AssertEqual(protocol.PREFIX, "AngryEra3", "protocol prefix")
 AssertEqual(protocol.DISPLAY_PREFIX, "AngryEra3D", "display protocol prefix")
 AssertEqual(protocol.PAGE_PREFIX, "AngryEra3C", "compact-page protocol prefix")
 AssertEqual(protocol.ACTIVE_PAGE_PREFIX, "AngryEra3P", "active-page protocol prefix")
+AssertEqual(
+    protocol.ACTIVE_PAGE_CHANGES_CAPABILITY,
+    "activePageChanges",
+    "active-page change capability name"
+)
+AssertEqual(protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION, 1, "active-page change capability version")
 AssertEqual(protocol.WIRE_LIMITS.EncodedBytes, 256 * 1024, "encoded byte limit")
 AssertEqual(protocol.WIRE_LIMITS.CompressedBytes, 256 * 1024, "compressed byte limit")
 AssertEqual(protocol.WIRE_LIMITS.SerializedBytes, 1024 * 1024, "serialized byte limit")
 AssertEqual(protocol.LIMITS.InstallationIdBytes, 40, "compact installation identity bound")
-AssertEqual(protocol.COMPACT_DISPLAY_FORMAT, 1, "compact display format")
+AssertEqual(protocol.COMPACT_DISPLAY_FORMAT, 2, "compact display format")
 AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes, 254, "compact display single-frame bound")
-AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.PackedBytes, 237, "compact display safe-alphabet bound")
-AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.RawBytes, 207, "compact display raw bound")
+AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.PackedBytes, 242, "compact display safe-alphabet bound")
+AssertEqual(protocol.COMPACT_DISPLAY_LIMITS.RawBytes, 211, "compact display raw bound")
 AssertEqual(protocol.COMPACT_PAGE_FORMAT, 2, "compact page format")
 AssertEqual(protocol.COMPACT_PAGE_LIMITS.EncodedBytes, 256 * 1024, "compact page encoded bound")
 AssertEqual(protocol.COMPACT_PAGE_LIMITS.CompressedBytes, 256 * 1024 - 5, "compact page compressed bound")
@@ -546,6 +580,8 @@ Assert(protocol.MESSAGE_TYPES.DISPLAY_REQUEST, "display request message type is 
 Assert(protocol.MESSAGE_TYPES.DISPLAY, "display message type is registered")
 Assert(protocol.MESSAGE_TYPES.PAGE_REQUEST, "page request message type is registered")
 Assert(protocol.MESSAGE_TYPES.PAGE_UPSERT, "page upsert message type is registered")
+Assert(protocol.MESSAGE_TYPES.CHANGE_PROPOSE, "change proposal message type is registered")
+Assert(protocol.MESSAGE_TYPES.CHANGE_RESULT, "change result message type is registered")
 
 payloadValid, payloadError = protocol.ValidatePayload("DISPLAY_REQUEST", {})
 Assert(payloadValid and payloadError == nil, "empty display request payload")
@@ -563,6 +599,7 @@ payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
     Displayed = true,
     PageFollows = true,
     SyncId = activePageSyncId,
+    Revision = 4,
     RevisionId = "fcs32:12345678",
     ContextRevisionId = "fcs32:87654321",
 })
@@ -571,6 +608,7 @@ payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
     Displayed = true,
     PageFollows = false,
     SyncId = activePageSyncId,
+    Revision = 4,
     RevisionId = "fcs32:12345678",
     ContextRevisionId = "fcs32:87654321",
 })
@@ -589,6 +627,7 @@ payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
     Displayed = true,
     PageFollows = "yes",
     SyncId = activePageSyncId,
+    Revision = 4,
     RevisionId = "fcs32:12345678",
     ContextRevisionId = "fcs32:87654321",
 })
@@ -596,6 +635,7 @@ AssertError(payloadValid, payloadError, "invalid-page-follows", "page-follows hi
 payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
     Displayed = true,
     SyncId = activePageSyncId,
+    Revision = 4,
     RevisionId = "fcs32:12345678",
 })
 AssertError(payloadValid, payloadError, "display-missing-ContextRevisionId", "display missing context identity")
@@ -611,6 +651,7 @@ AssertError(payloadValid, payloadError, "display-unknown-field", "unknown displa
 
 local pageReference = {
     SyncId = activePageSyncId,
+    Revision = 4,
     RevisionId = "fcs32:12345678",
     ContextRevisionId = "fcs32:87654321",
 }
@@ -637,9 +678,157 @@ invalidReference.Unknown = true
 payloadValid, payloadError = protocol.ValidatePayload("PAGE_REQUEST", invalidReference)
 AssertError(payloadValid, payloadError, "page-request-unknown-field", "unknown page request field")
 
+local changeProposePayload = MakeChangeProposePayload()
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", changeProposePayload)
+Assert(payloadValid and payloadError == nil, "valid change proposal payload")
+
+local malformedChangePropose = DeepCopy(changeProposePayload)
+malformedChangePropose.OwnerId = activeInstallationId
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
+AssertError(
+    payloadValid,
+    payloadError,
+    "change-propose-unknown-field",
+    "change proposal cannot supply ownership"
+)
+
+malformedChangePropose = DeepCopy(changeProposePayload)
+malformedChangePropose.BaseRevisionId = nil
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
+AssertError(
+    payloadValid,
+    payloadError,
+    "change-propose-missing-BaseRevisionId",
+    "change proposal missing base revision identity"
+)
+
+malformedChangePropose = DeepCopy(changeProposePayload)
+malformedChangePropose.SyncId = activeRootSyncId
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
+AssertError(payloadValid, payloadError, "invalid-change-sync-id", "change proposal category identity")
+
+for _, invalidRevision in ipairs({ 0, protocol.LIMITS.ActivePageRevision }) do
+    malformedChangePropose = DeepCopy(changeProposePayload)
+    malformedChangePropose.BaseRevision = invalidRevision
+    payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
+    AssertError(payloadValid, payloadError, "invalid-change-base-revision", "change proposal base revision bound")
+end
+
+malformedChangePropose = DeepCopy(changeProposePayload)
+malformedChangePropose.BaseRevisionId = "fcs32:ABCDEF12"
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
+AssertError(
+    payloadValid,
+    payloadError,
+    "invalid-change-base-revision-id",
+    "change proposal base revision identity"
+)
+
+malformedChangePropose = DeepCopy(changeProposePayload)
+malformedChangePropose.BaseContextRevisionId = "fcs32:1234567"
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
+AssertError(
+    payloadValid,
+    payloadError,
+    "invalid-change-base-context-revision-id",
+    "change proposal base context identity"
+)
+
+for _, invalidName in ipairs({
+    "",
+    " ",
+    " Leading",
+    "Trailing ",
+    "Control\nName",
+    Repeat("n", protocol.LIMITS.ActivePageNameBytes + 1),
+}) do
+    malformedChangePropose = DeepCopy(changeProposePayload)
+    malformedChangePropose.Name = invalidName
+    payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
+    AssertError(payloadValid, payloadError, "invalid-change-name", "change proposal page name")
+end
+
+malformedChangePropose = DeepCopy(changeProposePayload)
+malformedChangePropose.Vars = Repeat("v", protocol.LIMITS.ActivePageVarsBytes + 1)
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
+AssertError(payloadValid, payloadError, "invalid-change-vars", "change proposal page variables")
+
+malformedChangePropose = DeepCopy(changeProposePayload)
+malformedChangePropose.Contents = Repeat("c", protocol.LIMITS.ActivePageContentsBytes + 1)
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
+AssertError(payloadValid, payloadError, "invalid-change-contents", "change proposal page contents")
+
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", setmetatable({}, {}))
+AssertError(payloadValid, payloadError, "invalid-payload", "metatable-backed change proposal")
+
+for _, status in ipairs({ "applied", "unchanged", "conflict", "busy", "unavailable" }) do
+    local changeResultPayload = MakeChangeResultPayload(status)
+    payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", changeResultPayload)
+    Assert(payloadValid and payloadError == nil, "valid " .. status .. " change result payload")
+    Assert(protocol.CHANGE_RESULT_STATUSES[status], "change result status should be exported")
+end
+
+local malformedChangeResult = MakeChangeResultPayload("applied")
+malformedChangeResult.Status = "rejected"
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", malformedChangeResult)
+AssertError(payloadValid, payloadError, "invalid-change-result-status", "unknown change result status")
+
+malformedChangeResult = MakeChangeResultPayload("applied")
+malformedChangeResult.SyncId = activeRootSyncId
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", malformedChangeResult)
+AssertError(payloadValid, payloadError, "invalid-change-result-sync-id", "change result category identity")
+
+for _, missingField in ipairs({ "Revision", "RevisionId", "ContextRevisionId" }) do
+    malformedChangeResult = MakeChangeResultPayload("applied")
+    malformedChangeResult[missingField] = nil
+    payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", malformedChangeResult)
+    AssertError(
+        payloadValid,
+        payloadError,
+        "change-result-missing-" .. missingField,
+        "change result missing canonical reference"
+    )
+end
+
+malformedChangeResult = MakeChangeResultPayload("applied")
+malformedChangeResult.Revision = 0
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", malformedChangeResult)
+AssertError(payloadValid, payloadError, "invalid-change-result-revision", "change result revision bound")
+
+malformedChangeResult = MakeChangeResultPayload("applied")
+malformedChangeResult.RevisionId = "fcs32:1234567"
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", malformedChangeResult)
+AssertError(payloadValid, payloadError, "invalid-change-result-revision-id", "change result revision identity")
+
+malformedChangeResult = MakeChangeResultPayload("applied")
+malformedChangeResult.ContextRevisionId = "fcs32:ABCDEF12"
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", malformedChangeResult)
+AssertError(
+    payloadValid,
+    payloadError,
+    "invalid-change-result-context-revision-id",
+    "change result context identity"
+)
+
+malformedChangeResult = MakeChangeResultPayload("unavailable")
+malformedChangeResult.Revision = 4
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", malformedChangeResult)
+AssertError(
+    payloadValid,
+    payloadError,
+    "change-result-unavailable-has-reference",
+    "unavailable change result cannot carry a partial reference"
+)
+
+malformedChangeResult = MakeChangeResultPayload("applied")
+malformedChangeResult.Error = "internal"
+payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", malformedChangeResult)
+AssertError(payloadValid, payloadError, "change-result-unknown-field", "change result unknown field")
+
 payloadValid, payloadError = protocol.ValidatePayload("DISPLAY", {
     Displayed = true,
     SyncId = activeInstallationId .. ":page:2147483648",
+    Revision = 4,
     RevisionId = pageReference.RevisionId,
     ContextRevisionId = pageReference.ContextRevisionId,
 })
@@ -1868,6 +2057,7 @@ local compactDisplayEnvelope = assert(protocol.BuildEnvelope(compactSession, "DI
     Displayed = true,
     PageFollows = true,
     SyncId = activePageSyncId,
+    Revision = 4,
     RevisionId = "fcs32:12345678",
     ContextRevisionId = "fcs32:87654321",
 }, {
@@ -1912,6 +2102,7 @@ local groupDisplayEnvelope = assert(protocol.BuildEnvelope(compactSession, "DISP
     Displayed = true,
     PageFollows = true,
     SyncId = activePageSyncId,
+    Revision = 4,
     RevisionId = "fcs32:12345678",
     ContextRevisionId = "fcs32:87654321",
 }, {
@@ -1947,6 +2138,7 @@ local maximumCompactEnvelope = assert(protocol.BuildEnvelope(maximumCompactSessi
     Displayed = true,
     PageFollows = true,
     SyncId = maximumInstallationId .. ":page:" .. protocol.LIMITS.ActivePageRevision,
+    Revision = protocol.LIMITS.ActivePageRevision,
     RevisionId = "fcs32:ffffffff",
     ContextRevisionId = "fcs32:00000000",
 }, {
@@ -1978,7 +2170,8 @@ AssertEqual(compactDecoded.MessageId, maximumCompactEnvelope.MessageId, "maximum
 AssertEqual(compactDecoded.ReplyTo, maximumCompactEnvelope.ReplyTo, "maximum compact reply identity")
 AssertEqual(compactDecoded.SentAt, maximumCompactEnvelope.SentAt, "maximum compact safe timestamp")
 AssertEqual(compactDecoded.Payload.SyncId, maximumCompactEnvelope.Payload.SyncId, "maximum compact page identity")
-AssertEqual(compactDecoded.Payload.RevisionId, "fcs32:ffffffff", "maximum compact revision")
+AssertEqual(compactDecoded.Payload.Revision, protocol.LIMITS.ActivePageRevision, "maximum compact numeric revision")
+AssertEqual(compactDecoded.Payload.RevisionId, "fcs32:ffffffff", "maximum compact revision identity")
 AssertEqual(compactDecoded.Payload.ContextRevisionId, "fcs32:00000000", "zero compact context revision")
 
 local faithfulSawUnsafeByte = false
@@ -1987,7 +2180,7 @@ local faithfulAddonCodec = MakeFaithfulAddonCodec(function(packed)
 end)
 local faithfulCompact = assert(protocol.EncodeCompactDisplayEnvelope(maximumCompactEnvelope, faithfulAddonCodec))
 Assert(not faithfulSawUnsafeByte, "maximum compact display avoids bytes escaped by the addon-channel codec")
-AssertEqual(#faithfulCompact, 237, "maximum compact display remains bounded through addon-channel encoding")
+AssertEqual(#faithfulCompact, 242, "maximum compact display remains bounded through addon-channel encoding")
 Assert(
     #faithfulCompact < protocol.COMPACT_DISPLAY_LIMITS.EncodedBytes,
     "maximum encoded compact display leaves AceComm escape room"
@@ -2091,10 +2284,10 @@ AssertError(
 )
 
 compactValue, compactError =
-    protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(ReplaceByte(compactRaw, 1, 2)), compactCodec)
+    protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(ReplaceByte(compactRaw, 1, 1)), compactCodec)
 AssertError(compactValue, compactError, "unsupported-compact-display-format", "compact display format mismatch")
 compactValue, compactError =
-    protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(ReplaceByte(compactRaw, 2, 8)), compactCodec)
+    protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(ReplaceByte(compactRaw, 2, 16)), compactCodec)
 AssertError(compactValue, compactError, "invalid-compact-display-flags", "compact display unknown flag")
 compactValue, compactError =
     protocol.DecodeCompactDisplayEnvelope(PackCompactForTest(ReplaceByte(clearDisplayRaw, 2, 4)), compactCodec)
@@ -2132,6 +2325,7 @@ for byte = 0, 255 do
     local everyByteEnvelope = assert(protocol.BuildEnvelope(everyByteSession, "DISPLAY", {
         Displayed = true,
         SyncId = activePageSyncId,
+        Revision = byte + 1,
         RevisionId = revisionId,
         ContextRevisionId = "fcs32:00000000",
     }, {

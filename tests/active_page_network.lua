@@ -66,6 +66,7 @@ local failPageSend = false
 local failPageRequest = false
 local canPublishDisplay = true
 local canPublishPage = true
+local canPublishChangeProposal = true
 local completeActiveTransfersImmediately = true
 local activePageTransfer
 local canceledActiveTransfers = 0
@@ -74,15 +75,26 @@ local pageRevisionIds = {
     [5] = "fcs32:12345678",
     [6] = "fcs32:22345678",
 }
+local pageRevisions = {
+    [5] = 1,
+    [6] = 1,
+}
 local contextRevisionIds = {
     [5] = "fcs32:87654321",
     [6] = "fcs32:97654321",
 }
 local pendingDisplayRequest
+local sentChangeProposals = {}
+local clearedSharedPageDrafts = 0
+local clearedSyncDraftConflicts = 0
+local rebasedSharedPageDrafts = {}
+local canceledProtocolChangeProposals = {}
 
 function AngryEra:CanLocalPlayerPublish(action)
     if action == "display" then
         return canPublishDisplay
+    elseif action == "changeProposal" then
+        return canPublishChangeProposal
     end
     return action == "pageUpsert" and canPublishPage
 end
@@ -91,6 +103,7 @@ local function Upsert(id)
     return {
         Page = {
             SyncId = "ae3i:1:2:3:4:page:" .. tostring(id),
+            Revision = pageRevisions[id],
             RevisionId = pageRevisionIds[id],
         },
         AncestorVariableLayers = {},
@@ -120,6 +133,7 @@ function AngryEra:BuildActiveDisplayPayload(id, options)
     return {
         Displayed = true,
         SyncId = upsert.Page.SyncId,
+        Revision = upsert.Page.Revision,
         RevisionId = upsert.Page.RevisionId,
         ContextRevisionId = upsert.ContextRevisionId,
     },
@@ -139,6 +153,7 @@ function AngryEra:ActivatePreparedActiveDisplay(displayPayload, pagePayload)
     end
     activeDisplayReference = {
         SyncId = displayPayload.SyncId,
+        Revision = displayPayload.Revision,
         RevisionId = displayPayload.RevisionId,
         ContextRevisionId = displayPayload.ContextRevisionId,
     }
@@ -155,6 +170,60 @@ end
 
 function AngryEra:GetActiveDisplayReference()
     return activeDisplayReference
+end
+
+function AngryEra:BuildActivePageChangeProposal(id, desired)
+    local page = AngryAssign_Pages[id]
+    assert(page and activeDisplayReference, "change proposal should bind the active page")
+    return {
+        SyncId = page.SyncId,
+        BaseRevision = page.Revision,
+        BaseRevisionId = activeDisplayReference.RevisionId,
+        BaseContextRevisionId = activeDisplayReference.ContextRevisionId,
+        Name = desired.Name,
+        Vars = desired.Vars,
+        Contents = desired.Contents,
+    }
+end
+
+function AngryEra:SendProtocolChangeProposal(target, payload)
+    sentChangeProposals[#sentChangeProposals + 1] = {
+        Target = target,
+        Payload = payload,
+    }
+    return true, "change-message-" .. tostring(#sentChangeProposals)
+end
+
+function AngryEra:ClearSharedPageChangeDraft()
+    clearedSharedPageDrafts = clearedSharedPageDrafts + 1
+    return true
+end
+
+function AngryEra:RebaseSharedPageChangeDraft(id, reference, desired)
+    rebasedSharedPageDrafts[#rebasedSharedPageDrafts + 1] = {
+        Id = id,
+        Reference = reference,
+        Desired = desired,
+    }
+    return true
+end
+
+function AngryEra:CancelProtocolChangeProposal(messageId)
+    canceledProtocolChangeProposals[#canceledProtocolChangeProposals + 1] = messageId
+    return true
+end
+
+function AngryEra:ClearSyncDraftConflict()
+    clearedSyncDraftConflicts = clearedSyncDraftConflicts + 1
+    self.syncDraftConflict = nil
+    return true
+end
+
+function AngryEra:UpdateSelected(destructive)
+    calls[#calls + 1] = {
+        Type = "UPDATE_SELECTED",
+        Destructive = destructive,
+    }
 end
 
 function AngryEra:SendProtocolPageUpsert(payload)
@@ -293,6 +362,7 @@ assert(AngryEra.SendOutMessage == nil, "protocol-1 send entrypoint must not exis
 local function CopyReference(payload)
     return {
         SyncId = payload.Page.SyncId,
+        Revision = payload.Page.Revision,
         RevisionId = payload.Page.RevisionId,
         ContextRevisionId = payload.ContextRevisionId,
     }
@@ -759,6 +829,7 @@ local recoveryAuth = {
 }
 local recoveryReference = {
     SyncId = "ae3i:1:2:3:4:page:7",
+    Revision = 7,
     RevisionId = "fcs32:33333333",
     ContextRevisionId = "fcs32:44444444",
 }
@@ -768,6 +839,7 @@ local recoveryEnvelope = {
     Payload = {
         Displayed = true,
         SyncId = recoveryReference.SyncId,
+        Revision = recoveryReference.Revision,
         RevisionId = recoveryReference.RevisionId,
         ContextRevisionId = recoveryReference.ContextRevisionId,
     },
@@ -778,6 +850,7 @@ pendingDisplayRequest = {
     SenderSessionId = recoveryAuth.SenderSessionId,
     Payload = {
         SyncId = recoveryReference.SyncId,
+        Revision = recoveryReference.Revision,
         RevisionId = recoveryReference.RevisionId,
         ContextRevisionId = recoveryReference.ContextRevisionId,
     },
@@ -833,6 +906,7 @@ pendingDisplayRequest = {
     SenderSessionId = recoveryAuth.SenderSessionId,
     Payload = {
         SyncId = recoveryReference.SyncId,
+        Revision = recoveryReference.Revision,
         RevisionId = recoveryReference.RevisionId,
         ContextRevisionId = recoveryReference.ContextRevisionId,
     },
@@ -841,7 +915,9 @@ recoveryScheduled, recoveryStatus =
     AngryEra:DeferPendingDisplayRecovery(recoveryAuth, recoveryEnvelope, recoveryReference)
 assert(recoveryScheduled and recoveryStatus == "scheduled", "exact recovery should schedule")
 local exactRecoveryTimer = timers[#timers]
+recoveryReference.Revision = 70
 recoveryReference.RevisionId = "mutated-reference"
+recoveryEnvelope.Payload.Revision = 71
 recoveryEnvelope.Payload.RevisionId = "mutated-envelope"
 sent, result = AngryEra:RecoverPendingDisplay(exactRecoveryTimer.Argument)
 assert(sent and result == "page-request-message", "first recovery should request only the exact missing page")
@@ -849,7 +925,9 @@ local exactPageRequest = calls[#calls]
 assert(exactPageRequest.Type == "PAGE_REQUEST", "first recovery should use PAGE_REQUEST")
 assert(exactPageRequest.Target == recoveryAuth.Sender, "exact recovery should target the authenticated publisher")
 assert(
-    exactPageRequest.Reference.RevisionId == "fcs32:33333333"
+    exactPageRequest.Reference.Revision == 7
+        and exactPageRequest.Reference.RevisionId == "fcs32:33333333"
+        and exactPageRequest.DisplayEnvelope.Payload.Revision == 7
         and exactPageRequest.DisplayEnvelope.Payload.RevisionId == "fcs32:33333333",
     "recovery should retain detached envelope and reference snapshots"
 )
@@ -874,6 +952,7 @@ assert(#calls == callsAfterRecoveryBudget, "an exhausted recovery must not retry
 
 local exhaustedReference = {
     SyncId = "ae3i:1:2:3:4:page:7",
+    Revision = 7,
     RevisionId = "fcs32:33333333",
     ContextRevisionId = "fcs32:44444444",
 }
@@ -883,6 +962,7 @@ local exhaustedEnvelope = {
     Payload = {
         Displayed = true,
         SyncId = exhaustedReference.SyncId,
+        Revision = exhaustedReference.Revision,
         RevisionId = exhaustedReference.RevisionId,
         ContextRevisionId = exhaustedReference.ContextRevisionId,
     },
@@ -905,6 +985,7 @@ local reloadedRecoveryEnvelope = {
     Payload = {
         Displayed = true,
         SyncId = exhaustedReference.SyncId,
+        Revision = exhaustedReference.Revision,
         RevisionId = exhaustedReference.RevisionId,
         ContextRevisionId = exhaustedReference.ContextRevisionId,
     },
@@ -915,6 +996,7 @@ pendingDisplayRequest = {
     SenderSessionId = reloadedRecoveryAuth.SenderSessionId,
     Payload = {
         SyncId = exhaustedReference.SyncId,
+        Revision = exhaustedReference.Revision,
         RevisionId = exhaustedReference.RevisionId,
         ContextRevisionId = exhaustedReference.ContextRevisionId,
     },
@@ -932,6 +1014,7 @@ local formerLeaderAuth = {
 }
 local formerLeaderReference = {
     SyncId = "ae3i:1:2:3:4:page:9",
+    Revision = 9,
     RevisionId = "fcs32:77777777",
     ContextRevisionId = "fcs32:88888888",
 }
@@ -941,6 +1024,7 @@ local formerLeaderEnvelope = {
     Payload = {
         Displayed = true,
         SyncId = formerLeaderReference.SyncId,
+        Revision = formerLeaderReference.Revision,
         RevisionId = formerLeaderReference.RevisionId,
         ContextRevisionId = formerLeaderReference.ContextRevisionId,
     },
@@ -951,6 +1035,7 @@ pendingDisplayRequest = {
     SenderSessionId = formerLeaderAuth.SenderSessionId,
     Payload = {
         SyncId = formerLeaderReference.SyncId,
+        Revision = formerLeaderReference.Revision,
         RevisionId = formerLeaderReference.RevisionId,
         ContextRevisionId = formerLeaderReference.ContextRevisionId,
     },
@@ -975,6 +1060,7 @@ assert(
 
 recoveryReference = {
     SyncId = "ae3i:1:2:3:4:page:8",
+    Revision = 8,
     RevisionId = "fcs32:55555555",
     ContextRevisionId = "fcs32:66666666",
 }
@@ -984,6 +1070,7 @@ recoveryEnvelope = {
     Payload = {
         Displayed = true,
         SyncId = recoveryReference.SyncId,
+        Revision = recoveryReference.Revision,
         RevisionId = recoveryReference.RevisionId,
         ContextRevisionId = recoveryReference.ContextRevisionId,
     },
@@ -994,6 +1081,7 @@ pendingDisplayRequest = {
     SenderSessionId = recoveryAuth.SenderSessionId,
     Payload = {
         SyncId = recoveryReference.SyncId,
+        Revision = recoveryReference.Revision,
         RevisionId = recoveryReference.RevisionId,
         ContextRevisionId = recoveryReference.ContextRevisionId,
     },
@@ -1046,6 +1134,375 @@ sent, result = AngryEra:SendDisplayPageMessage(postResetPageTimer.Argument)
 assert(sent and result == "page-message", "the reset display should resend its page snapshot")
 assert(calls[#calls].Type == "PAGE_UPSERT", "reset should require a fresh page publication")
 pendingDisplayRequest = nil
+
+do
+    currentPlayer = "Publisher-Realm"
+    canPublishDisplay = false
+    canPublishPage = false
+    canPublishChangeProposal = true
+    AngryAssign_State.displayed = 5
+    AngryAssign_Pages[5].SyncId = "ae3i:5:6:7:8:page:5"
+    AngryAssign_Pages[5].Revision = 1
+    AngryAssign_Pages[5].RevisionId = "fcs32:31000001"
+    activeDisplayReference = {
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = AngryAssign_Pages[5].Revision,
+        RevisionId = AngryAssign_Pages[5].RevisionId,
+        ContextRevisionId = "fcs32:41000001",
+    }
+
+    local function Draft(contents, name)
+        return {
+            LocalId = 5,
+            SyncId = AngryAssign_Pages[5].SyncId,
+            BaseRevision = AngryAssign_Pages[5].Revision,
+            BaseRevisionId = activeDisplayReference.RevisionId,
+            BaseContextRevisionId = activeDisplayReference.ContextRevisionId,
+            Desired = {
+                Name = name or "Assignments",
+                Vars = "",
+                Contents = contents,
+            },
+            ChangedField = "Contents",
+        }
+    end
+
+    local submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("First"))
+    assert(submitted and submitStatus == "scheduled", "a shared edit should enter the trailing debounce")
+    local firstProposalTimer = timers[#timers]
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("Latest"))
+    assert(submitted and submitStatus == "scheduled", "a newer draft should replace the debounce")
+    local latestProposalTimer = timers[#timers]
+    assert(canceled[firstProposalTimer], "a newer desired state should cancel the prior proposal timer")
+    local sentBeforeStaleProposal = #sentChangeProposals
+    sent, result = AngryEra:FlushSharedPageChangeProposal(firstProposalTimer.Argument)
+    assert(sent and result == "superseded", "a replaced proposal generation should be inert")
+    assert(#sentChangeProposals == sentBeforeStaleProposal, "a stale proposal must not send")
+    sent, result = AngryEra:FlushSharedPageChangeProposal(latestProposalTimer.Argument)
+    assert(sent and result == "change-message-1", "the final desired state should send once")
+    assert(
+        #sentChangeProposals == 1
+            and sentChangeProposals[1].Target == "Leader-Realm"
+            and sentChangeProposals[1].Payload.Contents == "Latest",
+        "proposal debounce should whisper only the newest full desired state"
+    )
+
+    local appliedResult = {
+        Status = "applied",
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = 2,
+        RevisionId = "fcs32:31000002",
+        ContextRevisionId = "fcs32:41000002",
+    }
+    sent, result =
+        AngryEra:HandleSharedPageChangeResult(nil, appliedResult, sentChangeProposals[1].Payload, "change-message-1")
+    assert(sent and result == "awaiting-canonical-page", "result-before-page should wait for canonical storage")
+    local resultFirstCommitTimer = timers[#timers]
+    assert(
+        resultFirstCommitTimer.Method == "SharedPageChangeCommitTimedOut",
+        "an accepted result should install a bounded canonical-page watchdog"
+    )
+
+    AngryAssign_Pages[5].Revision = appliedResult.Revision
+    AngryAssign_Pages[5].RevisionId = appliedResult.RevisionId
+    activeDisplayReference.Revision = appliedResult.Revision
+    activeDisplayReference.RevisionId = appliedResult.RevisionId
+    activeDisplayReference.ContextRevisionId = appliedResult.ContextRevisionId
+    sent, result = AngryEra:ObserveSharedPageCanonicalUpdate(nil, {
+        Page = {
+            SyncId = appliedResult.SyncId,
+            Revision = appliedResult.Revision,
+            RevisionId = appliedResult.RevisionId,
+        },
+        ContextRevisionId = appliedResult.ContextRevisionId,
+    })
+    assert(sent and result == "completed", "the later matching page should complete the accepted draft")
+    assert(canceled[resultFirstCommitTimer], "canonical arrival should cancel the result-first watchdog")
+    assert(clearedSharedPageDrafts == 1, "completed canonical storage should clear the editor draft")
+    assert(clearedSyncDraftConflicts == 1, "completed own proposal should clear its dirty-editor conflict")
+    assert(
+        calls[#calls].Type == "UPDATE_SELECTED" and calls[#calls].Destructive == false,
+        "proposal completion should refresh clean controls without clobbering newer unsaved editor text"
+    )
+
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("Page first"))
+    assert(submitted and submitStatus == "scheduled", "a second proposal should schedule")
+    local pageFirstProposalTimer = timers[#timers]
+    sent, result = AngryEra:FlushSharedPageChangeProposal(pageFirstProposalTimer.Argument)
+    assert(sent and result == "change-message-2", "the second proposal should enter flight")
+    local pageFirstResult = {
+        Status = "applied",
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = 3,
+        RevisionId = "fcs32:31000003",
+        ContextRevisionId = "fcs32:41000003",
+    }
+    AngryAssign_Pages[5].Revision = pageFirstResult.Revision
+    AngryAssign_Pages[5].RevisionId = pageFirstResult.RevisionId
+    activeDisplayReference.Revision = pageFirstResult.Revision
+    activeDisplayReference.RevisionId = pageFirstResult.RevisionId
+    activeDisplayReference.ContextRevisionId = pageFirstResult.ContextRevisionId
+    sent, result = AngryEra:ObserveSharedPageCanonicalUpdate(nil, {
+        Page = {
+            SyncId = pageFirstResult.SyncId,
+            Revision = pageFirstResult.Revision,
+            RevisionId = pageFirstResult.RevisionId,
+        },
+        ContextRevisionId = pageFirstResult.ContextRevisionId,
+    })
+    assert(sent and result == "observed", "page-before-result should retain the observed canonical reference")
+    sent, result = AngryEra:HandleSharedPageChangeResult(
+        nil,
+        pageFirstResult,
+        sentChangeProposals[2].Payload,
+        "change-message-2"
+    )
+    assert(sent and result == "completed", "the later matching result should complete page-first delivery")
+    assert(clearedSharedPageDrafts == 2, "page-first completion should clear its editor draft")
+
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("Conflicting draft"))
+    assert(submitted and submitStatus == "scheduled", "a conflict candidate should schedule")
+    local conflictProposalTimer = timers[#timers]
+    sent, result = AngryEra:FlushSharedPageChangeProposal(conflictProposalTimer.Argument)
+    assert(sent and result == "change-message-3", "the conflict candidate should enter flight")
+    sent, result = AngryEra:HandleSharedPageChangeResult(nil, {
+        Status = "conflict",
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = 3,
+        RevisionId = AngryAssign_Pages[5].RevisionId,
+        ContextRevisionId = activeDisplayReference.ContextRevisionId,
+    }, sentChangeProposals[3].Payload, "change-message-3")
+    assert(sent and result == "conflict", "a semantic conflict should be handled without canonical mutation")
+    assert(
+        AngryEra.syncDraftConflict
+            and AngryEra.syncDraftConflict.Status == "conflict"
+            and AngryEra.syncDraftConflict.Desired.Contents == "Conflicting draft",
+        "a rejected proposal should retain the exact desired draft"
+    )
+    assert(clearedSharedPageDrafts == 2, "a conflict must not clear user text")
+
+    AngryEra:ResetSharedPageChangeState("test-cleanup")
+    canPublishDisplay = true
+    canPublishPage = true
+end
+
+do
+    currentPlayer = "Publisher-Realm"
+    canPublishDisplay = false
+    canPublishPage = false
+    canPublishChangeProposal = true
+    AngryAssign_State.displayed = 5
+    AngryAssign_Pages[5].SyncId = "ae3i:5:6:7:8:page:5"
+    AngryAssign_Pages[5].Revision = 3
+    AngryAssign_Pages[5].RevisionId = "fcs32:31000003"
+    activeDisplayReference = {
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = AngryAssign_Pages[5].Revision,
+        RevisionId = AngryAssign_Pages[5].RevisionId,
+        ContextRevisionId = "fcs32:41000003",
+    }
+
+    local function Draft(contents, name)
+        return {
+            LocalId = 5,
+            SyncId = AngryAssign_Pages[5].SyncId,
+            BaseRevision = AngryAssign_Pages[5].Revision,
+            BaseRevisionId = activeDisplayReference.RevisionId,
+            BaseContextRevisionId = activeDisplayReference.ContextRevisionId,
+            Desired = {
+                Name = name or "Assignments",
+                Vars = "",
+                Contents = contents,
+            },
+            ChangedField = "Contents",
+        }
+    end
+
+    local function ApplyReference(reference)
+        AngryAssign_Pages[5].Revision = reference.Revision
+        AngryAssign_Pages[5].RevisionId = reference.RevisionId
+        activeDisplayReference.Revision = reference.Revision
+        activeDisplayReference.RevisionId = reference.RevisionId
+        activeDisplayReference.ContextRevisionId = reference.ContextRevisionId
+    end
+
+    local submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("First generation"))
+    assert(submitted and submitStatus == "scheduled", "the first queued-rebase generation should schedule")
+    local firstGenerationTimer = timers[#timers]
+    local sent, messageId = AngryEra:FlushSharedPageChangeProposal(firstGenerationTimer.Argument)
+    assert(sent, "the first queued-rebase generation should enter flight")
+
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("Latest generation", "Latest name"))
+    assert(submitted and submitStatus == "queued", "one in-flight proposal should retain only the newest desired state")
+
+    local firstGenerationResult = {
+        Status = "applied",
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = 4,
+        RevisionId = "fcs32:31000004",
+        ContextRevisionId = "fcs32:41000004",
+    }
+    ApplyReference(firstGenerationResult)
+    sent, result = AngryEra:ObserveSharedPageCanonicalUpdate(nil, {
+        Page = {
+            SyncId = firstGenerationResult.SyncId,
+            Revision = firstGenerationResult.Revision,
+            RevisionId = firstGenerationResult.RevisionId,
+        },
+        ContextRevisionId = firstGenerationResult.ContextRevisionId,
+    })
+    assert(sent and result == "observed", "the first generation page may arrive before its result")
+    local rebasesBeforeResult = #rebasedSharedPageDrafts
+    sent, result =
+        AngryEra:HandleSharedPageChangeResult(nil, firstGenerationResult, sentChangeProposals[#sentChangeProposals].Payload, messageId)
+    assert(sent and result == "scheduled", "accepting an older generation should schedule the queued desired state")
+    assert(
+        #rebasedSharedPageDrafts == rebasesBeforeResult + 1
+            and rebasedSharedPageDrafts[#rebasedSharedPageDrafts].Reference.Revision == 4
+            and rebasedSharedPageDrafts[#rebasedSharedPageDrafts].Desired.Name == "Latest name"
+            and rebasedSharedPageDrafts[#rebasedSharedPageDrafts].Desired.Contents == "Latest generation",
+        "queued content and name edits should rebase together onto the accepted canonical tuple"
+    )
+    local rebasedGenerationTimer = timers[#timers]
+    assert(
+        rebasedGenerationTimer.Method == "FlushSharedPageChangeProposal",
+        "a successful queued rebase must leave a live debounce instead of stalling"
+    )
+    sent, messageId = AngryEra:FlushSharedPageChangeProposal(rebasedGenerationTimer.Argument)
+    assert(
+        sent
+            and sentChangeProposals[#sentChangeProposals].Payload.BaseRevision == 4
+            and sentChangeProposals[#sentChangeProposals].Payload.Name == "Latest name"
+            and sentChangeProposals[#sentChangeProposals].Payload.Contents == "Latest generation",
+        "the rebased generation should send its complete newest desired state from the new base"
+    )
+
+    local rebasedGenerationResult = {
+        Status = "applied",
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = 5,
+        RevisionId = "fcs32:31000005",
+        ContextRevisionId = "fcs32:41000005",
+    }
+    sent, result = AngryEra:HandleSharedPageChangeResult(
+        nil,
+        rebasedGenerationResult,
+        sentChangeProposals[#sentChangeProposals].Payload,
+        messageId
+    )
+    assert(sent and result == "awaiting-canonical-page", "the rebased generation should wait for canonical storage")
+    ApplyReference(rebasedGenerationResult)
+    sent, result = AngryEra:ObserveSharedPageCanonicalUpdate(nil, {
+        Page = {
+            SyncId = rebasedGenerationResult.SyncId,
+            Revision = rebasedGenerationResult.Revision,
+            RevisionId = rebasedGenerationResult.RevisionId,
+        },
+        ContextRevisionId = rebasedGenerationResult.ContextRevisionId,
+    })
+    assert(sent and result == "completed", "the rebased generation should complete normally")
+
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("Reordered canonical evidence"))
+    assert(submitted and submitStatus == "scheduled", "the reordered-evidence proposal should schedule")
+    local reorderedTimer = timers[#timers]
+    sent, messageId = AngryEra:FlushSharedPageChangeProposal(reorderedTimer.Argument)
+    assert(sent, "the reordered-evidence proposal should enter flight")
+    local reorderedResult = {
+        Status = "applied",
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = 6,
+        RevisionId = "fcs32:31000006",
+        ContextRevisionId = "fcs32:41000006",
+    }
+    ApplyReference(reorderedResult)
+    AngryEra:ObserveSharedPageCanonicalUpdate(nil, {
+        Page = {
+            SyncId = reorderedResult.SyncId,
+            Revision = reorderedResult.Revision,
+            RevisionId = reorderedResult.RevisionId,
+        },
+        ContextRevisionId = reorderedResult.ContextRevisionId,
+    })
+    local newerCanonical = {
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = 7,
+        RevisionId = "fcs32:31000007",
+        ContextRevisionId = "fcs32:41000007",
+    }
+    ApplyReference(newerCanonical)
+    AngryEra:ObserveSharedPageCanonicalUpdate(nil, {
+        Page = {
+            SyncId = newerCanonical.SyncId,
+            Revision = newerCanonical.Revision,
+            RevisionId = newerCanonical.RevisionId,
+        },
+        ContextRevisionId = newerCanonical.ContextRevisionId,
+    })
+    sent, result =
+        AngryEra:HandleSharedPageChangeResult(nil, reorderedResult, sentChangeProposals[#sentChangeProposals].Payload, messageId)
+    assert(
+        sent and result == "completed",
+        "a newer same-page upsert must not erase earlier canonical evidence before its result arrives"
+    )
+
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("Commit timeout draft"))
+    assert(submitted and submitStatus == "scheduled", "the commit-timeout proposal should schedule")
+    local commitTimeoutProposalTimer = timers[#timers]
+    sent, messageId = AngryEra:FlushSharedPageChangeProposal(commitTimeoutProposalTimer.Argument)
+    assert(sent, "the commit-timeout proposal should enter flight")
+    local missingCanonicalResult = {
+        Status = "applied",
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = 8,
+        RevisionId = "fcs32:31000008",
+        ContextRevisionId = "fcs32:41000008",
+    }
+    sent, result = AngryEra:HandleSharedPageChangeResult(
+        nil,
+        missingCanonicalResult,
+        sentChangeProposals[#sentChangeProposals].Payload,
+        messageId
+    )
+    assert(sent and result == "awaiting-canonical-page", "missing canonical storage should arm the commit timeout")
+    sent, result = AngryEra:SharedPageChangeCommitTimedOut(messageId)
+    assert(not sent and result == "canonical-page-timeout", "the commit timeout should become an explicit conflict")
+    assert(
+        AngryEra.syncDraftConflict
+            and AngryEra.syncDraftConflict.Reason == "canonical-page-timeout"
+            and AngryEra.syncDraftConflict.Desired.Contents == "Commit timeout draft",
+        "the commit timeout should retain the exact latest desired state"
+    )
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("After commit timeout"))
+    assert(
+        submitted and submitStatus == "scheduled",
+        "a canonical-page timeout must clear in-flight state so a later edit cannot remain queued forever"
+    )
+    assert(AngryEra:CancelSharedPageChangeProposal("test-cleanup"), "the post-timeout debounce should be cancelable")
+
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("Result timeout draft"))
+    assert(submitted and submitStatus == "scheduled", "the result-timeout proposal should schedule")
+    local resultTimeoutProposalTimer = timers[#timers]
+    sent, messageId = AngryEra:FlushSharedPageChangeProposal(resultTimeoutProposalTimer.Argument)
+    assert(sent, "the result-timeout proposal should enter flight")
+    local canceledCorrelationsBeforeTimeout = #canceledProtocolChangeProposals
+    sent, result = AngryEra:SharedPageChangeTimedOut(messageId)
+    assert(not sent and result == "change-result-timeout", "the result timeout should become an explicit conflict")
+    assert(
+        #canceledProtocolChangeProposals == canceledCorrelationsBeforeTimeout + 1
+            and canceledProtocolChangeProposals[#canceledProtocolChangeProposals] == messageId,
+        "a result timeout should forget its now-stale protocol correlation"
+    )
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("After result timeout"))
+    assert(
+        submitted and submitStatus == "scheduled",
+        "a result timeout must clear in-flight state so a later edit schedules normally"
+    )
+    assert(AngryEra:CancelSharedPageChangeProposal("test-cleanup"), "the post-result-timeout debounce should cancel")
+
+    AngryEra:ResetSharedPageChangeState("test-cleanup")
+    canPublishDisplay = true
+    canPublishPage = true
+end
 
 local originalPrint = print
 local versionOutput = {}

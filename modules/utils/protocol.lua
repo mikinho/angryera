@@ -32,11 +32,11 @@ protocol.WIRE_LIMITS = {
 -- AceComm reserves one byte when a single-frame payload starts with one of its
 -- control markers. Keeping compact DISPLAY below 255 bytes guarantees that
 -- even the escaped representation remains one physical addon-message frame.
-protocol.COMPACT_DISPLAY_FORMAT = 1
+protocol.COMPACT_DISPLAY_FORMAT = 2
 protocol.COMPACT_DISPLAY_LIMITS = {
     EncodedBytes = 254,
-    PackedBytes = 237,
-    RawBytes = 207,
+    PackedBytes = 242,
+    RawBytes = 211,
 }
 
 -- Compact PAGE_UPSERT keeps the binary payload below the generic serializer
@@ -84,17 +84,33 @@ local MESSAGE_TYPES = {
     DISPLAY = true,
     PAGE_REQUEST = true,
     PAGE_UPSERT = true,
+    CHANGE_PROPOSE = true,
+    CHANGE_RESULT = true,
 }
 protocol.MESSAGE_TYPES = MESSAGE_TYPES
+
+protocol.ACTIVE_PAGE_CHANGES_CAPABILITY = "activePageChanges"
+protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION = 1
+
+local CHANGE_RESULT_STATUSES = {
+    applied = true,
+    unchanged = true,
+    conflict = true,
+    busy = true,
+    unavailable = true,
+}
+protocol.CHANGE_RESULT_STATUSES = CHANGE_RESULT_STATUSES
 
 local UINT32_MAXIMUM = 4294967295
 local MAX_SAFE_INTEGER = 9007199254740991
 local COMPACT_DISPLAY_FLAG_DISPLAYED = 1
 local COMPACT_DISPLAY_FLAG_REPLY_TO = 2
 local COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS = 4
+local COMPACT_DISPLAY_FLAG_ACTIVE_PAGE_CHANGES = 8
 local COMPACT_DISPLAY_KNOWN_FLAGS = COMPACT_DISPLAY_FLAG_DISPLAYED
     + COMPACT_DISPLAY_FLAG_REPLY_TO
     + COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS
+    + COMPACT_DISPLAY_FLAG_ACTIVE_PAGE_CHANGES
 local COMPACT_PAGE_FLAG_REPLY_TO = 1
 local COMPACT_PAGE_FLAG_ANCESTOR_CONTEXT_INCLUDED = 2
 local COMPACT_PAGE_KNOWN_FLAGS = COMPACT_PAGE_FLAG_REPLY_TO + COMPACT_PAGE_FLAG_ANCESTOR_CONTEXT_INCLUDED
@@ -118,6 +134,16 @@ end
 
 local function IsBoundedString(value, maximum, allowEmpty)
     return type(value) == "string" and (allowEmpty or value ~= "") and #value <= maximum
+end
+
+local function ContainsControlByte(value)
+    for index = 1, #value do
+        local byte = value:byte(index)
+        if byte < 32 or byte == 127 then
+            return true
+        end
+    end
+    return false
 end
 
 local function IsIdentifier(value, maximum)
@@ -272,12 +298,14 @@ end
 
 local ACTIVE_REFERENCE_FIELDS = {
     SyncId = true,
+    Revision = true,
     RevisionId = true,
     ContextRevisionId = true,
 }
 
 local ACTIVE_REFERENCE_REQUIRED_FIELDS = {
     "SyncId",
+    "Revision",
     "RevisionId",
     "ContextRevisionId",
 }
@@ -285,7 +313,9 @@ local ACTIVE_REFERENCE_REQUIRED_FIELDS = {
 local DISPLAY_FIELDS = {
     Displayed = true,
     PageFollows = true,
+    ActivePageChanges = true,
     SyncId = true,
+    Revision = true,
     RevisionId = true,
     ContextRevisionId = true,
 }
@@ -300,6 +330,43 @@ local PAGE_UPSERT_REQUIRED_FIELDS = {
     "Page",
     "AncestorVariableLayers",
     "ContextRevisionId",
+}
+
+local CHANGE_PROPOSE_FIELDS = {
+    AuthorityInstallationId = true,
+    AuthoritySessionId = true,
+    SyncId = true,
+    BaseRevision = true,
+    BaseRevisionId = true,
+    BaseContextRevisionId = true,
+    Name = true,
+    Vars = true,
+    Contents = true,
+}
+
+local CHANGE_PROPOSE_REQUIRED_FIELDS = {
+    "AuthorityInstallationId",
+    "AuthoritySessionId",
+    "SyncId",
+    "BaseRevision",
+    "BaseRevisionId",
+    "BaseContextRevisionId",
+    "Name",
+    "Vars",
+    "Contents",
+}
+
+local CHANGE_RESULT_FIELDS = {
+    Status = true,
+    SyncId = true,
+    Revision = true,
+    RevisionId = true,
+    ContextRevisionId = true,
+}
+
+local CHANGE_RESULT_REQUIRED_FIELDS = {
+    "Status",
+    "SyncId",
 }
 
 local PAGE_FIELDS = {
@@ -357,6 +424,9 @@ local function ValidateActiveReference(payload, prefix)
     if not IsSyncId(payload.SyncId, "page") then
         return false, "invalid-sync-id"
     end
+    if not IsInteger(payload.Revision, 1, protocol.LIMITS.ActivePageRevision) then
+        return false, "invalid-revision"
+    end
     if not IsRevisionId(payload.RevisionId) then
         return false, "invalid-revision-id"
     end
@@ -377,9 +447,17 @@ local function ValidateDisplayPayload(payload)
     if payload.PageFollows ~= nil and type(payload.PageFollows) ~= "boolean" then
         return false, "invalid-page-follows"
     end
+    if payload.ActivePageChanges ~= nil and type(payload.ActivePageChanges) ~= "boolean" then
+        return false, "invalid-active-page-changes"
+    end
 
     if not payload.Displayed then
-        if payload.SyncId ~= nil or payload.RevisionId ~= nil or payload.ContextRevisionId ~= nil then
+        if
+            payload.SyncId ~= nil
+            or payload.Revision ~= nil
+            or payload.RevisionId ~= nil
+            or payload.ContextRevisionId ~= nil
+        then
             return false, "display-clear-has-page"
         end
         if payload.PageFollows == true then
@@ -390,6 +468,7 @@ local function ValidateDisplayPayload(payload)
 
     local reference = {
         SyncId = payload.SyncId,
+        Revision = payload.Revision,
         RevisionId = payload.RevisionId,
         ContextRevisionId = payload.ContextRevisionId,
     }
@@ -494,6 +573,91 @@ local function ValidatePageUpsertPayload(payload)
     return true
 end
 
+local function ValidateChangeProposePayload(payload)
+    local known, knownError =
+        ValidateKnownFields(payload, CHANGE_PROPOSE_FIELDS, CHANGE_PROPOSE_REQUIRED_FIELDS, "change-propose")
+    if not known then
+        return false, knownError
+    end
+    if not IsInstallationId(payload.AuthorityInstallationId) then
+        return false, "invalid-authority-installation-id"
+    end
+    if not IsIdentifier(payload.AuthoritySessionId, protocol.LIMITS.SessionIdBytes) then
+        return false, "invalid-authority-session-id"
+    end
+    if not IsSyncId(payload.SyncId, "page") then
+        return false, "invalid-change-sync-id"
+    end
+    if not IsInteger(payload.BaseRevision, 1, protocol.LIMITS.ActivePageRevision - 1) then
+        return false, "invalid-change-base-revision"
+    end
+    if not IsRevisionId(payload.BaseRevisionId) then
+        return false, "invalid-change-base-revision-id"
+    end
+    if not IsRevisionId(payload.BaseContextRevisionId) then
+        return false, "invalid-change-base-context-revision-id"
+    end
+    if
+        not IsBoundedString(payload.Name, protocol.LIMITS.ActivePageNameBytes, false)
+        or payload.Name:match("^%s*$")
+        or payload.Name ~= payload.Name:match("^%s*(.-)%s*$")
+        or ContainsControlByte(payload.Name)
+    then
+        return false, "invalid-change-name"
+    end
+    if not IsBoundedString(payload.Vars, protocol.LIMITS.ActivePageVarsBytes, true) then
+        return false, "invalid-change-vars"
+    end
+    if not IsBoundedString(payload.Contents, protocol.LIMITS.ActivePageContentsBytes, true) then
+        return false, "invalid-change-contents"
+    end
+    return true
+end
+
+local function ValidateChangeResultPayload(payload)
+    local known, knownError =
+        ValidateKnownFields(payload, CHANGE_RESULT_FIELDS, CHANGE_RESULT_REQUIRED_FIELDS, "change-result")
+    if not known then
+        return false, knownError
+    end
+    if not CHANGE_RESULT_STATUSES[payload.Status] then
+        return false, "invalid-change-result-status"
+    end
+    if not IsSyncId(payload.SyncId, "page") then
+        return false, "invalid-change-result-sync-id"
+    end
+
+    local unavailable = payload.Status == "unavailable"
+    local hasRevision = rawget(payload, "Revision") ~= nil
+    local hasRevisionId = rawget(payload, "RevisionId") ~= nil
+    local hasContextRevisionId = rawget(payload, "ContextRevisionId") ~= nil
+    if unavailable then
+        if hasRevision or hasRevisionId or hasContextRevisionId then
+            return false, "change-result-unavailable-has-reference"
+        end
+        return true
+    end
+    if not hasRevision then
+        return false, "change-result-missing-Revision"
+    end
+    if not hasRevisionId then
+        return false, "change-result-missing-RevisionId"
+    end
+    if not hasContextRevisionId then
+        return false, "change-result-missing-ContextRevisionId"
+    end
+    if not IsInteger(payload.Revision, 1, protocol.LIMITS.ActivePageRevision) then
+        return false, "invalid-change-result-revision"
+    end
+    if not IsRevisionId(payload.RevisionId) then
+        return false, "invalid-change-result-revision-id"
+    end
+    if not IsRevisionId(payload.ContextRevisionId) then
+        return false, "invalid-change-result-context-revision-id"
+    end
+    return true
+end
+
 --- Validates a capability-version map.
 -- @tparam table capabilities Capability names mapped to positive integer schema versions.
 -- @treturn boolean valid
@@ -548,6 +712,10 @@ function protocol.ValidatePayload(messageType, payload)
         return ValidateActiveReference(payload, "page-request")
     elseif messageType == "PAGE_UPSERT" then
         return ValidatePageUpsertPayload(payload)
+    elseif messageType == "CHANGE_PROPOSE" then
+        return ValidateChangeProposePayload(payload)
+    elseif messageType == "CHANGE_RESULT" then
+        return ValidateChangeResultPayload(payload)
     end
 
     if not IsBoundedString(payload.AddonVersion, protocol.LIMITS.AddonVersionBytes, false) then
@@ -1077,6 +1245,7 @@ local function AppendCompactDisplayReference(parts, payload)
     return kind == "page"
         and AppendCompactInstallationId(parts, installationId)
         and AppendUnsigned(parts, sequence, 4, UINT32_MAXIMUM)
+        and AppendUnsigned(parts, payload.Revision, 4, protocol.LIMITS.ActivePageRevision)
         and AppendUnsigned(parts, revision, 4, UINT32_MAXIMUM)
         and AppendUnsigned(parts, contextRevision, 4, UINT32_MAXIMUM)
 end
@@ -1092,6 +1261,11 @@ local function ReadCompactDisplayReference(raw, cursor)
     if sequence == nil then
         return nil
     end
+    local pageRevision
+    pageRevision, cursor = ReadUnsigned(raw, cursor, 4, protocol.LIMITS.ActivePageRevision)
+    if pageRevision == nil then
+        return nil
+    end
     local revision
     revision, cursor = ReadUnsigned(raw, cursor, 4, UINT32_MAXIMUM)
     if revision == nil then
@@ -1105,6 +1279,7 @@ local function ReadCompactDisplayReference(raw, cursor)
     return {
         Displayed = true,
         SyncId = installationId .. ":page:" .. tostring(sequence),
+        Revision = pageRevision,
         RevisionId = "fcs32:" .. EncodeHexInteger(revision, 8),
         ContextRevisionId = "fcs32:" .. EncodeHexInteger(contextRevision, 8),
     },
@@ -1189,6 +1364,9 @@ function protocol.EncodeCompactDisplayEnvelope(envelope, codec)
     if envelope.Payload.PageFollows == true then
         flags = flags + COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS
     end
+    if envelope.Payload.ActivePageChanges == true then
+        flags = flags + COMPACT_DISPLAY_FLAG_ACTIVE_PAGE_CHANGES
+    end
     local parts = {
         string.char(protocol.COMPACT_DISPLAY_FORMAT),
         string.char(flags),
@@ -1264,6 +1442,7 @@ function protocol.DecodeCompactDisplayEnvelope(encoded, codec)
     local displayed = flags % 2 == COMPACT_DISPLAY_FLAG_DISPLAYED
     local hasReplyTo = math.floor(flags / COMPACT_DISPLAY_FLAG_REPLY_TO) % 2 == 1
     local pageFollows = math.floor(flags / COMPACT_DISPLAY_FLAG_PAGE_FOLLOWS) % 2 == 1
+    local activePageChanges = math.floor(flags / COMPACT_DISPLAY_FLAG_ACTIVE_PAGE_CHANGES) % 2 == 1
     if pageFollows and not displayed then
         return nil, "invalid-compact-display-flags"
     end
@@ -1311,6 +1490,9 @@ function protocol.DecodeCompactDisplayEnvelope(encoded, codec)
         payload = {
             Displayed = false,
         }
+    end
+    if activePageChanges then
+        payload.ActivePageChanges = true
     end
     if cursor ~= #raw + 1 then
         return nil, "compact-display-trailing-data"
@@ -1411,6 +1593,7 @@ local function BuildCompactPageMetadata(envelope, ancestorContextId, ancestorCon
         ReplyTo = envelope.ReplyTo,
         Reference = {
             SyncId = envelope.Payload.Page.SyncId,
+            Revision = envelope.Payload.Page.Revision,
             RevisionId = envelope.Payload.Page.RevisionId,
             ContextRevisionId = envelope.Payload.ContextRevisionId,
         },

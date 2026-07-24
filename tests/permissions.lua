@@ -8,6 +8,7 @@ local authoritativePageContextAvailable = true
 local selectedUpdateCalls = 0
 local displayRequestCalls = 0
 local versionQueryCalls = 0
+local activeDisplayReference
 
 local function EnsureUnitFullName(name)
     if name and not name:find("-", 1, true) then
@@ -72,6 +73,10 @@ function AngryEra:HasAuthoritativePageContext()
     return authoritativePageContextAvailable
 end
 
+function AngryEra:GetActiveDisplayReference()
+    return activeDisplayReference
+end
+
 function AngryEra:UpdateSelected()
     selectedUpdateCalls = selectedUpdateCalls + 1
 end
@@ -121,6 +126,17 @@ assert(
     AngryEra.permissionActions.leaderOnly.display and not AngryEra.permissionActions.normal.display,
     "shared display selection should be classified as leader-only"
 )
+assert(
+    AngryEra.permissionActions.leaderOnly.pageUpsert
+        and AngryEra.permissionActions.leaderOnly.changeResult
+        and not AngryEra.permissionActions.normal.pageUpsert,
+    "canonical page commits and proposal results should be classified as leader-only"
+)
+assert(
+    AngryEra.permissionActions.normal.changeProposal
+        and not AngryEra.permissionActions.leaderOnly.changeProposal,
+    "assistant change proposals should remain a normal qualified action"
+)
 
 local function SetRoster(entries, isRaid)
     groupRoster = entries
@@ -140,6 +156,7 @@ SetRoster({
 })
 assert(AngryEra:CanReceiveFrom("PugLeader-Realm", "pageUpsert"), "A non-officer group leader should be trusted")
 assert(AngryEra:CanReceiveFrom("PugLeader-Realm", "display"), "The current group leader should control display")
+assert(AngryEra:CanReceiveFrom("PugLeader-Realm", "changeResult"), "The current group leader should return results")
 assert(AngryEra:CanReceiveFrom("PugLeader-Realm", "delete"), "The group leader should pass leader-only actions")
 
 SetGuild({
@@ -161,10 +178,12 @@ SetGuild({
     { name = "Officer-Realm", role = 3 },
     { name = "OfficerMember-Realm", role = 3 },
 })
-assert(AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "An officer assistant should be trusted")
+assert(AngryEra:CanReceiveFrom("Officer-Realm", "changeProposal"), "An officer assistant should be trusted")
+assert(not AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "An officer assistant must not commit pages")
+assert(not AngryEra:CanReceiveFrom("Officer-Realm", "changeResult"), "An officer assistant must not return results")
 assert(not AngryEra:CanReceiveFrom("Officer-Realm", "display"), "An officer assistant must not control display")
-assert(not AngryEra:CanReceiveFrom("OrdinaryAssist-Realm", "pageUpsert"), "An ordinary assistant should be rejected")
-assert(not AngryEra:CanReceiveFrom("OfficerMember-Realm", "pageUpsert"), "An officer without assist should be rejected")
+assert(not AngryEra:CanReceiveFrom("OrdinaryAssist-Realm", "changeProposal"), "An ordinary assistant should be rejected")
+assert(not AngryEra:CanReceiveFrom("OfficerMember-Realm", "changeProposal"), "An officer without assist should be rejected")
 
 config.trustedPublishers = "DirectAssist-Realm"
 SetRoster({
@@ -172,10 +191,11 @@ SetRoster({
     { name = "DirectAssist-Realm", rank = 1 },
     { name = "DirectMember-Realm", rank = 0 },
 })
-assert(AngryEra:CanReceiveFrom("DirectAssist-Realm", "pageUpsert"), "A directly trusted assistant should qualify")
+assert(AngryEra:CanReceiveFrom("DirectAssist-Realm", "changeProposal"), "A directly trusted assistant should qualify")
+assert(not AngryEra:CanReceiveFrom("DirectAssist-Realm", "pageUpsert"), "Direct trust must not grant commit authority")
 assert(not AngryEra:CanReceiveFrom("DirectAssist-Realm", "display"), "Direct trust must not grant display control")
 config.trustedPublishers = "DirectMember-Realm"
-assert(not AngryEra:CanReceiveFrom("DirectMember-Realm", "pageUpsert"), "Allowlisting must not grant assist rank")
+assert(not AngryEra:CanReceiveFrom("DirectMember-Realm", "changeProposal"), "Allowlisting must not grant assist rank")
 
 config.trustedPublishers = ""
 config.allowAllAssistants = true
@@ -184,20 +204,21 @@ SetRoster({
     { name = "AnyAssist-Realm", rank = 1 },
     { name = "AnyMember-Realm", rank = 0 },
 })
-assert(AngryEra:CanReceiveFrom("AnyAssist-Realm", "pageUpsert"), "The explicit override should trust assistants")
+assert(AngryEra:CanReceiveFrom("AnyAssist-Realm", "changeProposal"), "The explicit override should trust assistants")
+assert(not AngryEra:CanReceiveFrom("AnyAssist-Realm", "pageUpsert"), "The override must not grant commit authority")
 assert(
     not AngryEra:CanReceiveFrom("AnyAssist-Realm", "display"),
     "The assistant override must not grant display control"
 )
-assert(not AngryEra:CanReceiveFrom("AnyMember-Realm", "pageUpsert"), "The assistant override should reject members")
+assert(not AngryEra:CanReceiveFrom("AnyMember-Realm", "changeProposal"), "The assistant override should reject members")
 assert(not AngryEra:CanReceiveFrom("AnyAssist-Realm", "delete"), "Assistants must never pass destructive actions")
 
 config.receiveMode = "leaderOnly"
-assert(not AngryEra:CanReceiveFrom("AnyAssist-Realm", "pageUpsert"), "Leader-only mode should reject assistants")
+assert(not AngryEra:CanReceiveFrom("AnyAssist-Realm", "changeProposal"), "Leader-only mode should reject assistants")
 assert(AngryEra:CanReceiveFrom("PugLeader-Realm", "pageUpsert"), "Leader-only mode should retain the leader")
 
 config.receiveMode = "invalid"
-assert(not AngryEra:CanReceiveFrom("AnyAssist-Realm", "pageUpsert"), "Unknown receiver modes should fail closed")
+assert(not AngryEra:CanReceiveFrom("AnyAssist-Realm", "changeProposal"), "Unknown receiver modes should fail closed")
 assert(AngryEra:CanReceiveFrom("PugLeader-Realm", "pageUpsert"), "Unknown receiver modes should retain the leader")
 
 config.receiveMode = "ignoreShared"
@@ -207,7 +228,7 @@ assert(AngryEra:CanEditEntityLocally({ LocallyOwned = true }), "Ignore mode must
 
 config.receiveMode = "standard"
 config.allowAllAssistants = false
-assert(not AngryEra:CanReceiveFrom("Absent-Realm", "pageUpsert"), "Players outside the group should be rejected")
+assert(not AngryEra:CanReceiveFrom("Absent-Realm", "changeProposal"), "Players outside the group should be rejected")
 
 config.trustedPublishers = "TRUSTED"
 SetRoster({
@@ -215,11 +236,11 @@ SetRoster({
     { name = "Trusted-Realm", rank = 1 },
     { name = "Cross-Other", rank = 1 },
 })
-assert(AngryEra:CanReceiveFrom("trusted-realm", "pageUpsert"), "Local-realm names should normalize")
+assert(AngryEra:CanReceiveFrom("trusted-realm", "changeProposal"), "Local-realm names should normalize")
 config.trustedPublishers = "Cross"
-assert(not AngryEra:CanReceiveFrom("Cross-Other", "pageUpsert"), "Cross-realm trust should require the realm")
+assert(not AngryEra:CanReceiveFrom("Cross-Other", "changeProposal"), "Cross-realm trust should require the realm")
 config.trustedPublishers = "cross-other"
-assert(AngryEra:CanReceiveFrom("Cross-Other", "pageUpsert"), "Explicit cross-realm trust should normalize case")
+assert(AngryEra:CanReceiveFrom("Cross-Other", "changeProposal"), "Explicit cross-realm trust should normalize case")
 
 config.trustedPublishers = ""
 local savedClub = C_Club
@@ -231,16 +252,16 @@ SetRoster({
     { name = "PugLeader-Realm", rank = 2 },
     { name = "Officer-Realm", rank = 1 },
 })
-assert(not AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "Unavailable guild APIs should fail closed")
+assert(not AngryEra:CanReceiveFrom("Officer-Realm", "changeProposal"), "Unavailable guild APIs should fail closed")
 _G.C_Club = savedClub
 _G.CommunitiesUtil = savedCommunities
 
 SetGuild({})
-assert(not AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "An uncached ordinary assistant should fail")
+assert(not AngryEra:CanReceiveFrom("Officer-Realm", "changeProposal"), "An uncached ordinary assistant should fail")
 SetGuild({
     { name = "Officer-Realm", role = 3 },
 })
-assert(AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "A roster refresh should update officer authority")
+assert(AngryEra:CanReceiveFrom("Officer-Realm", "changeProposal"), "A roster refresh should update officer authority")
 
 SetGuild({
     { name = "GuildLeader-Realm", role = 3 },
@@ -250,7 +271,7 @@ SetRoster({
     { name = "RandomAssist-Realm", rank = 1 },
 })
 assert(
-    not AngryEra:CanReceiveFrom("RandomAssist-Realm", "pageUpsert"),
+    not AngryEra:CanReceiveFrom("RandomAssist-Realm", "changeProposal"),
     "A trusted leader must not implicitly trust every assistant"
 )
 
@@ -269,34 +290,73 @@ SetRoster({
     { name = "PugLeader-Realm", rank = 2 },
     { name = "Officer-Realm", rank = 1 },
 })
-assert(AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "Officer assistant should initially qualify")
+assert(AngryEra:CanReceiveFrom("Officer-Realm", "changeProposal"), "Officer assistant should initially qualify")
 groupRoster[2].rank = 0
-assert(not AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "Authorization should follow current group rank")
+assert(not AngryEra:CanReceiveFrom("Officer-Realm", "changeProposal"), "Authorization should follow current group rank")
+
+currentPlayer = "PugLeader-Realm"
+assert(AngryEra:CanLocalPlayerPublish("pageUpsert"), "The local leader should publish canonical pages")
+assert(AngryEra:CanLocalPlayerPublish("changeResult"), "The local leader should return proposal results")
 
 currentPlayer = "Officer-Realm"
 groupRoster[2].rank = 1
-assert(AngryEra:CanLocalPlayerPublish("pageUpsert"), "A local officer assistant should publish normal changes")
+assert(AngryEra:CanLocalPlayerPublish("changeProposal"), "A local officer assistant should propose normal changes")
+assert(not AngryEra:CanLocalPlayerPublish("pageUpsert"), "A local assistant must not publish canonical pages")
+assert(not AngryEra:CanLocalPlayerPublish("changeResult"), "A local assistant must not return proposal results")
 assert(not AngryEra:CanLocalPlayerPublish("display"), "A local assistant must not publish display changes")
 assert(AngryEra:CanLocalPlayerOutput(), "A local raid assistant should retain group-chat output authority")
 assert(not AngryEra:CanLocalPlayerPublish("delete"), "A local assistant should not publish destructive changes")
+local activeRemotePage = {
+    Id = 70,
+    SyncId = "remote-page",
+    RevisionId = "fcs32:70707070",
+    LocallyOwned = false,
+    Contents = "",
+}
+AngryAssign_State = {
+    displayed = activeRemotePage.Id,
+}
+activeDisplayReference = {
+    SyncId = activeRemotePage.SyncId,
+    RevisionId = activeRemotePage.RevisionId,
+    ContextRevisionId = "fcs32:71717171",
+}
 assert(
-    AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
-    "A qualified publisher should edit managed remote entities while grouped"
+    AngryEra:CanEditEntityLocally(activeRemotePage),
+    "A qualified publisher should edit the exact active remote page while grouped"
 )
+AngryAssign_State.displayed = nil
+assert(
+    not AngryEra:CanEditEntityLocally(activeRemotePage),
+    "A cached background remote page must remain read-only"
+)
+currentPlayer = "PugLeader-Realm"
+assert(
+    AngryEra:CanEditEntityLocally(activeRemotePage),
+    "the canonical leader may edit a background remote page with authoritative context"
+)
+currentPlayer = "Officer-Realm"
+AngryAssign_State.displayed = activeRemotePage.Id
+activeDisplayReference.RevisionId = "fcs32:72727272"
+assert(
+    not AngryEra:CanEditEntityLocally(activeRemotePage),
+    "A remote page whose active tuple changed must fail closed"
+)
+activeDisplayReference.RevisionId = activeRemotePage.RevisionId
 authoritativePageContextAvailable = false
 assert(
-    not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
+    not AngryEra:CanEditEntityLocally(activeRemotePage),
     "A remote page without its authoritative base context must fail closed"
 )
 assert(
-    AngryEra:CanEditEntityLocally({ SyncId = "remote-category", LocallyOwned = false }),
-    "Remote category editing should remain governed by hierarchy publish authority"
+    not AngryEra:CanEditEntityLocally({ SyncId = "remote-category", LocallyOwned = false }),
+    "Remote category name and variable fields need a hierarchy proposal before editing"
 )
 authoritativePageContextAvailable = true
 local savedContextCheck = AngryEra.HasAuthoritativePageContext
 AngryEra.HasAuthoritativePageContext = nil
 assert(
-    not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
+    not AngryEra:CanEditEntityLocally(activeRemotePage),
     "A missing authoritative-context helper must fail closed for remote pages"
 )
 assert(
@@ -311,7 +371,7 @@ AngryEra.HasAuthoritativePageContext = function()
     error("malformed transient context")
 end
 assert(
-    not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),
+    not AngryEra:CanEditEntityLocally(activeRemotePage),
     "Authoritative-context lookup failures must fail closed"
 )
 AngryEra.HasAuthoritativePageContext = savedContextCheck
@@ -326,17 +386,19 @@ config.receiveMode = "ignoreShared"
 config.allowAllAssistants = false
 config.trustedPublishers = ""
 assert(
-    AngryEra:CanLocalPlayerPublish("pageUpsert"),
+    AngryEra:CanLocalPlayerPublish("changeProposal"),
     "Any current assistant may attempt a normal change for receivers to authorize"
 )
+assert(not AngryEra:CanLocalPlayerPublish("pageUpsert"), "An ordinary assistant must not commit page changes")
 assert(not AngryEra:CanLocalPlayerPublish("display"), "An ordinary assistant must not attempt display changes")
 assert(AngryEra:CanLocalPlayerOutput(), "Guild trust must not be required for a raid assistant to output")
 config.allowAllAssistants = true
 config.trustedPublishers = "OrdinaryAssist-Realm"
 assert(
-    AngryEra:CanLocalPlayerPublish("pageUpsert"),
+    AngryEra:CanLocalPlayerPublish("changeProposal"),
     "Receiver preferences must not grant or revoke outbound attempt authority"
 )
+assert(not AngryEra:CanLocalPlayerPublish("changeResult"), "Receiver overrides must not grant result authority")
 assert(not AngryEra:CanLocalPlayerPublish("display"), "Receiver overrides must not grant outbound display authority")
 AngryEra._protocolStarted = true
 AngryEra:PermissionsUpdated()
@@ -357,7 +419,8 @@ requested, requestResult = AngryEra:ReceiveModeUpdated("ignoreShared")
 assert(not requested and requestResult == "not-needed", "A disabled protocol cannot request shared state")
 assert(displayRequestCalls == 1, "Disabled protocol state must suppress receive-mode recovery traffic")
 currentPlayer = "OrdinaryMember-Realm"
-assert(not AngryEra:CanLocalPlayerPublish("pageUpsert"), "An ordinary member may not attempt shared changes")
+assert(not AngryEra:CanLocalPlayerPublish("changeProposal"), "An ordinary member may not attempt shared changes")
+assert(not AngryEra:CanLocalPlayerPublish("pageUpsert"), "An ordinary member may not commit shared changes")
 assert(not AngryEra:CanLocalPlayerOutput(), "An ordinary member must not output assignments to group chat")
 
 grouped = false
@@ -440,14 +503,22 @@ SetRoster({
     { name = "OrdinaryMember-Realm", rank = 2 },
 })
 AngryAssign_State = {
+    displayed = 777,
     tree = {},
 }
 AngryAssign_Pages = {
     [777] = {
+        Id = 777,
         SyncId = "remote-page",
+        RevisionId = "fcs32:77777777",
         Contents = "Remote",
         LocallyOwned = false,
     },
+}
+activeDisplayReference = {
+    SyncId = "remote-page",
+    RevisionId = "fcs32:77777777",
+    ContextRevisionId = "fcs32:78787878",
 }
 authoritativePageContextAvailable = false
 AngryEra:UpdateSelected()

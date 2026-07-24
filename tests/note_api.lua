@@ -30,6 +30,7 @@ local scanEvents = {}
 local messages = {}
 local reference = {
     SyncId = pageSyncId,
+    Revision = 1,
     RevisionId = "rev-1",
     ContextRevisionId = "ctx-1",
 }
@@ -60,8 +61,9 @@ function AngryEra:GetActiveDisplayReference()
     return reference
 end
 
-function AngryEra:GetActivePageRenderContext(syncId, revisionId, contextRevisionId)
+function AngryEra:GetActivePageRenderContext(syncId, revision, revisionId, contextRevisionId)
     assert(syncId == reference.SyncId, "The render context should be requested by reference tuple")
+    assert(revision == reference.Revision, "The numeric reference revision should be requested")
     assert(revisionId == reference.RevisionId, "The reference revision should be requested")
     assert(contextRevisionId == reference.ContextRevisionId, "The reference context revision should be requested")
     return renderContext
@@ -73,6 +75,7 @@ end
 
 local wirePage = {
     SyncId = pageSyncId,
+    Revision = 1,
     ParentSyncId = parentSyncId,
     Name = "Patchwerk",
     Contents = "## {page}\n\nMT: {{MT}}",
@@ -122,6 +125,7 @@ local note = AngryEra:GetDisplayedNote()
 assert(note, "A displayed note should be available")
 assert(note.LocalId == 12, "The local display id should be exposed")
 assert(note.SyncId == pageSyncId, "The page sync id should be exposed")
+assert(note.Revision == 1, "The active numeric revision should be exposed")
 assert(note.RevisionId == "rev-1", "The active revision should be exposed")
 assert(note.ContextRevisionId == "ctx-1", "The active context revision should be exposed")
 assert(note.Name == "Patchwerk", "The page name should be exposed")
@@ -312,7 +316,10 @@ announced = AngryEra:NotifyDisplayedNoteChanged({
 })
 assert(announced == true, "A locally rendered page should announce")
 local localNote = AngryEra:GetDisplayedNote()
-assert(localNote.RevisionId == nil and localNote.ContextRevisionId == nil, "Mismatched references should be ignored")
+assert(
+    localNote.Revision == nil and localNote.RevisionId == nil and localNote.ContextRevisionId == nil,
+    "Mismatched references should be ignored"
+)
 assert(#localNote.Ancestors == 0, "Mismatched references should expose no ancestors")
 assert(localNote.Category == "Local Folder", "Local categories should resolve through CategoryId")
 assert(localNote.CategorySyncId == nil, "Local categories without sync ids should expose none")
@@ -342,7 +349,9 @@ announced = AngryEra:NotifyDisplayedNoteChanged({
 assert(announced == true, "A local fallback after an exact-context miss should announce")
 local fallbackIdentityNote = AngryEra:GetDisplayedNote()
 assert(
-    fallbackIdentityNote.RevisionId == nil and fallbackIdentityNote.ContextRevisionId == nil,
+    fallbackIdentityNote.Revision == nil
+        and fallbackIdentityNote.RevisionId == nil
+        and fallbackIdentityNote.ContextRevisionId == nil,
     "A local fallback should not retain stale exact-revision identifiers"
 )
 renderContext = exactRenderContext

@@ -84,10 +84,12 @@ assert(localVariables.target == "page", "Page variables should win")
 local chain = assert(variableHelpers.CollectCategoryChain(AngryAssign_Categories, 3))
 local wireLayers = assert(variableHelpers.BuildAncestorVariableLayers(chain))
 local activePageSyncId = "ae3i:1:2:3:4:page:4"
+local activeRevision = 4
 local activeRevisionId = "fcs32:12345678"
 local activeContextRevisionId = "fcs32:87654321"
 local wirePage = {
     SyncId = activePageSyncId,
+    Revision = activeRevision,
     RevisionId = activeRevisionId,
     Contents = localPage.Contents,
     ParentSyncId = parentSyncId,
@@ -104,12 +106,14 @@ local storedWirePage = {
 AngryEra.GetActiveDisplayReference = function()
     return {
         SyncId = activePageSyncId,
+        Revision = activeRevision,
         RevisionId = activeRevisionId,
         ContextRevisionId = activeContextRevisionId,
     }
 end
-AngryEra.GetActivePageRenderContext = function(_, syncId, revisionId, contextRevisionId)
+AngryEra.GetActivePageRenderContext = function(_, syncId, revision, revisionId, contextRevisionId)
     assert(syncId == activePageSyncId, "active context should use the displayed SyncId")
+    assert(revision == activeRevision, "active context should use the displayed numeric revision")
     assert(revisionId == activeRevisionId, "active context should use the displayed revision")
     assert(contextRevisionId == activeContextRevisionId, "active context should use the displayed context revision")
     return {
@@ -130,6 +134,7 @@ assert(renderedWirePage == wirePage, "Active rendering should use the exact cach
 AngryEra.GetActiveDisplayReference = function()
     return {
         SyncId = "ae3i:1:2:3:4:page:999",
+        Revision = activeRevision,
         RevisionId = activeRevisionId,
         ContextRevisionId = activeContextRevisionId,
     }
@@ -145,6 +150,7 @@ assert(failedError == "active-display-reference-mismatch", "Mismatched active re
 AngryEra.GetActiveDisplayReference = function()
     return {
         SyncId = activePageSyncId,
+        Revision = activeRevision,
         RevisionId = activeRevisionId,
         ContextRevisionId = activeContextRevisionId,
     }
@@ -254,6 +260,7 @@ AngryAssign_Pages[1] = renderedPage
 AngryEra.GetActiveDisplayReference = function()
     return {
         SyncId = activePageSyncId,
+        Revision = activeRevision,
         RevisionId = activeRevisionId,
         ContextRevisionId = activeContextRevisionId,
     }

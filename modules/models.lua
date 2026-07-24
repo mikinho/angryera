@@ -34,6 +34,319 @@ local function ReportFailedDisplayPublish(self, id, published, publishResult, ac
     self:Print(RED_FONT_COLOR_CODE .. "Unable to publish the displayed page: " .. tostring(publishResult) .. "|r")
 end
 
+local pendingSharedPageDraft
+
+local function SharedPageDraftMatches(draft, page, reference)
+    return type(draft) == "table"
+        and draft.SyncId == page.SyncId
+        and draft.BaseRevision == page.Revision
+        and draft.BaseRevisionId == reference.RevisionId
+        and draft.BaseContextRevisionId == reference.ContextRevisionId
+end
+
+local function DesiredPageState(page)
+    return {
+        Name = type(page.Name) == "string" and page.Name or "",
+        Vars = type(page.Vars) == "string" and page.Vars or "",
+        Contents = type(page.Contents) == "string" and page.Contents or "",
+    }
+end
+
+local function CopyDesiredPageState(desired)
+    if
+        type(desired) ~= "table"
+        or type(desired.Name) ~= "string"
+        or type(desired.Vars) ~= "string"
+        or type(desired.Contents) ~= "string"
+    then
+        return nil
+    end
+    return {
+        Name = desired.Name,
+        Vars = desired.Vars,
+        Contents = desired.Contents,
+    }
+end
+
+local function RecoverableConflictDesired(self, page)
+    local conflict = type(self) == "table" and rawget(self, "syncDraftConflict") or nil
+    if type(conflict) ~= "table" or conflict.SyncId ~= page.SyncId then
+        return nil
+    end
+    return CopyDesiredPageState(conflict.Desired)
+end
+
+local function PendingDesiredForPage(page)
+    if type(pendingSharedPageDraft) ~= "table" or pendingSharedPageDraft.SyncId ~= page.SyncId then
+        return nil
+    end
+    return CopyDesiredPageState(pendingSharedPageDraft.Desired)
+end
+
+local function ExactDisplayedPageReference(self, id, page)
+    local state = type(AngryAssign_State) == "table" and AngryAssign_State or nil
+    if not state or rawget(state, "displayed") ~= id or type(page.SyncId) ~= "string" then
+        return nil, "shared-page-not-active"
+    end
+    if type(self.GetActiveDisplayReference) ~= "function" then
+        return nil, "active-display-reference-unavailable"
+    end
+
+    local referenceChecked, reference = pcall(self.GetActiveDisplayReference, self)
+    if
+        not referenceChecked
+        or type(reference) ~= "table"
+        or reference.SyncId ~= page.SyncId
+        or reference.Revision ~= page.Revision
+        or reference.RevisionId ~= page.RevisionId
+        or type(reference.ContextRevisionId) ~= "string"
+    then
+        return nil, "shared-page-display-reference-mismatch"
+    end
+    return reference
+end
+
+local function RetainedDesiredForDirectMutation(self, id, page)
+    local reference = ExactDisplayedPageReference(self, id, page)
+    if reference and SharedPageDraftMatches(pendingSharedPageDraft, page, reference) then
+        return CopyDesiredPageState(pendingSharedPageDraft.Desired)
+    end
+    return RecoverableConflictDesired(self, page) or PendingDesiredForPage(page)
+end
+
+local function IsLocallyOwnedPage(self, page)
+    if type(self.IsLocallyOwned) ~= "function" then
+        return false
+    end
+    local checked, locallyOwned = pcall(self.IsLocallyOwned, self, page)
+    return checked and locallyOwned == true
+end
+
+local function IsGrouped()
+    local inRaid = type(IsInRaid) == "function" and IsInRaid()
+    local inGroup = type(IsInGroup) == "function" and IsInGroup()
+    return inRaid == true or inGroup == true
+end
+
+local function SubmitSharedPageMutation(self, id, page, changedField, changedValue)
+    if type(page.SyncId) ~= "string" then
+        return nil, nil, false
+    end
+
+    if type(self.CanLocalPlayerPublish) ~= "function" then
+        return false, "page-commit-authority-unavailable", true
+    end
+    local authorityChecked, canCommitPage = pcall(self.CanLocalPlayerPublish, self, "pageUpsert")
+    if not authorityChecked then
+        return false, "page-commit-authority-check-failed", true
+    end
+    if canCommitPage == true and IsGrouped() then
+        local desired = RetainedDesiredForDirectMutation(self, id, page)
+        if desired then
+            desired[changedField] = changedValue or ""
+        end
+        return nil, nil, false, desired
+    end
+
+    local reference, routeError = ExactDisplayedPageReference(self, id, page)
+    if not reference then
+        -- Locally owned background pages remain ordinary local library edits.
+        -- Remote cached pages, and any active synchronized page whose exact
+        -- tuple is unavailable, must never fall through to in-place mutation.
+        if
+            IsLocallyOwnedPage(self, page)
+            and (
+                type(AngryAssign_State) ~= "table"
+                or rawget(AngryAssign_State, "displayed") ~= id
+            )
+        then
+            return nil, nil, false
+        end
+        return false, routeError, true
+    end
+
+    if type(self.SubmitSharedPageChangeProposal) ~= "function" then
+        return false, "shared-page-change-proposal-unavailable", true
+    end
+
+    local desired
+    if SharedPageDraftMatches(pendingSharedPageDraft, page, reference) then
+        desired = CopyDesiredPageState(pendingSharedPageDraft.Desired)
+    end
+    -- A rejected or losing proposal remains recoverable after the canonical
+    -- tuple advances. Merge the retained editor state onto the new exact base
+    -- instead of silently replacing untouched fields with canonical values.
+    desired = desired or RecoverableConflictDesired(self, page) or DesiredPageState(page)
+    desired[changedField] = changedValue or ""
+
+    local proposal = {
+        LocalId = id,
+        SyncId = page.SyncId,
+        BaseRevision = page.Revision,
+        BaseRevisionId = reference.RevisionId,
+        BaseContextRevisionId = reference.ContextRevisionId,
+        Desired = {
+            Name = desired.Name,
+            Vars = desired.Vars,
+            Contents = desired.Contents,
+        },
+        ChangedField = changedField,
+    }
+    local called, submitted, result = pcall(self.SubmitSharedPageChangeProposal, self, proposal)
+    if not called then
+        return false, "shared-page-change-proposal-error", true
+    end
+    if submitted ~= true then
+        return false, result or "shared-page-change-proposal-failed", true
+    end
+
+    pendingSharedPageDraft = {
+        SyncId = proposal.SyncId,
+        BaseRevision = proposal.BaseRevision,
+        BaseRevisionId = proposal.BaseRevisionId,
+        BaseContextRevisionId = proposal.BaseContextRevisionId,
+        Desired = {
+            Name = desired.Name,
+            Vars = desired.Vars,
+            Contents = desired.Contents,
+        },
+    }
+    return true, result, true
+end
+
+local function CanonicalPageMatchesDesired(page, desired)
+    local canonical = DesiredPageState(page)
+    return canonical.Name == desired.Name
+        and canonical.Vars == desired.Vars
+        and canonical.Contents == desired.Contents
+end
+
+local function ClearMatchingRetainedDesired(self, syncId)
+    if type(pendingSharedPageDraft) == "table" and pendingSharedPageDraft.SyncId == syncId then
+        pendingSharedPageDraft = nil
+    end
+    local conflict = type(self) == "table" and rawget(self, "syncDraftConflict") or nil
+    if type(conflict) ~= "table" or conflict.SyncId ~= syncId then
+        return
+    end
+    if type(self.ClearSyncDraftConflict) == "function" then
+        pcall(self.ClearSyncDraftConflict, self, syncId)
+    end
+    if type(rawget(self, "syncDraftConflict")) == "table" and self.syncDraftConflict.SyncId == syncId then
+        self.syncDraftConflict = nil
+    end
+end
+
+local function PreserveRetainedDesiredAfterDirectMutation(self, id, page, desired)
+    desired = CopyDesiredPageState(desired)
+    if not desired then
+        return false
+    end
+    if CanonicalPageMatchesDesired(page, desired) then
+        ClearMatchingRetainedDesired(self, page.SyncId)
+        return false
+    end
+
+    local conflict = type(self) == "table" and rawget(self, "syncDraftConflict") or nil
+    if type(conflict) == "table" and conflict.SyncId == page.SyncId then
+        conflict.Desired = CopyDesiredPageState(desired)
+    end
+
+    local reference = ExactDisplayedPageReference(self, id, page)
+    if reference then
+        pendingSharedPageDraft = {
+            SyncId = page.SyncId,
+            BaseRevision = page.Revision,
+            BaseRevisionId = reference.RevisionId,
+            BaseContextRevisionId = reference.ContextRevisionId,
+            Desired = CopyDesiredPageState(desired),
+        }
+    elseif type(pendingSharedPageDraft) == "table" and pendingSharedPageDraft.SyncId == page.SyncId then
+        pendingSharedPageDraft.Desired = CopyDesiredPageState(desired)
+    end
+    return true
+end
+
+--- Returns a detached desired-state draft for the exact displayed shared page.
+-- Pending drafts are tuple-bound. A same-page conflict may carry the losing
+-- desired state across a canonical advance and is rebound to the current exact
+-- reference so the editor can recover it without reviving a stale base.
+-- @tparam number id Local page id.
+-- @treturn table|nil draft
+function AngryEra:GetSharedPageChangeDraft(id)
+    local page = type(AngryAssign_Pages) == "table" and AngryAssign_Pages[id] or nil
+    if type(page) ~= "table" then
+        return nil
+    end
+    -- Draft visibility is not role-bound. Exact pending state survives a
+    -- promotion; same-SyncId conflict state survives a canonical tuple advance.
+    local reference = ExactDisplayedPageReference(self, id, page)
+    if not reference then
+        return nil
+    end
+    local desired
+    if SharedPageDraftMatches(pendingSharedPageDraft, page, reference) then
+        desired = CopyDesiredPageState(pendingSharedPageDraft.Desired)
+    end
+    desired = desired or RecoverableConflictDesired(self, page)
+    if not desired then
+        return nil
+    end
+    return {
+        SyncId = page.SyncId,
+        BaseRevision = page.Revision,
+        BaseRevisionId = reference.RevisionId,
+        BaseContextRevisionId = reference.ContextRevisionId,
+        Desired = desired,
+    }
+end
+
+--- Rebinds a queued desired-state draft after an earlier proposal advances the
+-- same canonical page. This keeps later content/name/vars edits merged while
+-- the next proposal waits for its debounce.
+function AngryEra:RebaseSharedPageChangeDraft(id, reference, desired)
+    local page = type(AngryAssign_Pages) == "table" and AngryAssign_Pages[id] or nil
+    if
+        type(page) ~= "table"
+        or type(reference) ~= "table"
+        or type(desired) ~= "table"
+        or page.SyncId ~= reference.SyncId
+        or page.Revision ~= reference.Revision
+        or page.RevisionId ~= reference.RevisionId
+        or type(reference.ContextRevisionId) ~= "string"
+        or type(desired.Name) ~= "string"
+        or type(desired.Vars) ~= "string"
+        or type(desired.Contents) ~= "string"
+    then
+        return false, "invalid-shared-page-draft-rebase"
+    end
+    pendingSharedPageDraft = {
+        SyncId = reference.SyncId,
+        BaseRevision = reference.Revision,
+        BaseRevisionId = reference.RevisionId,
+        BaseContextRevisionId = reference.ContextRevisionId,
+        Desired = {
+            Name = desired.Name,
+            Vars = desired.Vars,
+            Contents = desired.Contents,
+        },
+    }
+    return true
+end
+
+--- Clears the local desired-state editor draft without changing canonical data.
+-- User-driven clears also cancel any unsent transport-side debounce.
+-- @tparam[opt=false] boolean suppressTransportCancel Internal completion path.
+-- @treturn boolean cleared
+function AngryEra:ClearSharedPageChangeDraft(suppressTransportCancel)
+    local cleared = pendingSharedPageDraft ~= nil
+    pendingSharedPageDraft = nil
+    if suppressTransportCancel ~= true and type(self.CancelSharedPageChangeProposal) == "function" then
+        pcall(self.CancelSharedPageChangeProposal, self, "editor-draft-cleared")
+    end
+    return cleared
+end
+
 --- Republishes the displayed page after a hierarchy mutation may have changed
 -- its canonical mixed-sibling order, parent, or inherited variable layers.
 -- Private organization changes by unauthorized viewers leave the exact shared
@@ -493,26 +806,34 @@ end
 -- @tparam string|table nameOrFrame New name text or popup/editbox frame.
 -- @treturn boolean ok
 -- @treturn string|nil err Error message when rename fails.
+-- @treturn boolean proposed Whether the desired state was submitted without mutating the canonical page.
 function AngryEra:RenamePage(id, nameOrFrame)
     -- Check Existence
     local page = self:Get(id)
     if not page then
-        return false, "Page not found."
+        return false, "Page not found.", false
     end
 
     if not self:CanEditEntityLocally(page) then
-        return false, "Permission denied."
+        return false, "Permission denied.", false
     end
 
     -- Validate and Clean Input
     local name, err = ExtractAndValidateName(nameOrFrame)
     if not name then
-        return false, err
+        return false, err, false
     end
 
-    -- Optimization: Skip if name hasn't changed
+    local submitted, submitResult, proposed, retainedDesired =
+        SubmitSharedPageMutation(self, id, page, "Name", name)
+    if proposed then
+        return submitted, submitResult, true
+    end
+
+    -- Optimization: Skip if a directly editable name has not changed.
     if page.Name == name then
-        return true
+        PreserveRetainedDesiredAfterDirectMutation(self, id, page, retainedDesired)
+        return true, nil, false
     end
 
     -- Original Business Logic
@@ -533,8 +854,9 @@ function AngryEra:RenamePage(id, nameOrFrame)
         end
     end
     ReportFailedDisplayPublish(self, id, published, publishResult, activatedLocally)
+    PreserveRetainedDesiredAfterDirectMutation(self, id, page, retainedDesired)
 
-    return true
+    return true, nil, false
 end
 
 --- Deletes a page from local storage and selection state.
@@ -722,17 +1044,26 @@ end
 --- Updates a page's contents, history, hash, and sync state.
 -- @tparam number id Page id.
 -- @tparam string value New page content.
+-- @treturn boolean ok
+-- @treturn string|nil resultOrError
+-- @treturn boolean proposed Whether the desired state was submitted without mutating the canonical page.
 function AngryEra:UpdateContents(id, value)
     local page = self:Get(id)
     if not page then
-        return
+        return false, "Page not found.", false
     end
     if not self:CanEditEntityLocally(page) then
-        return
+        return false, "Permission denied.", false
     end
 
     local new_content = value:gsub("^%s+", ""):gsub("%s+$", "")
     local contents_updated = new_content ~= page.Contents
+
+    local submitted, submitResult, proposed, retainedDesired =
+        SubmitSharedPageMutation(self, id, page, "Contents", new_content)
+    if proposed then
+        return submitted, submitResult, true
+    end
 
     if contents_updated then
         self:PushHistory(page, page.Contents, "Local")
@@ -745,7 +1076,8 @@ function AngryEra:UpdateContents(id, value)
 
     local published, publishResult, activatedLocally = PublishPageRevision(self, id)
     ReportFailedDisplayPublish(self, id, published, publishResult, activatedLocally)
-    self:UpdateSelected(true)
+    local desiredRemains = PreserveRetainedDesiredAfterDirectMutation(self, id, page, retainedDesired)
+    self:UpdateSelected(not desiredRemains)
     if AngryAssign_State.displayed == id then
         self:UpdateDisplayed()
         if activatedLocally == true then
@@ -755,6 +1087,36 @@ function AngryEra:UpdateContents(id, value)
             end
         end
     end
+    return true, nil, false
+end
+
+--- Updates page variables or submits a desired-state proposal for the exact
+-- displayed shared page. Category-variable editing remains local hierarchy
+-- behavior and does not use this page-specific path.
+-- @tparam number id Page id.
+-- @tparam string|nil value New page variable text.
+-- @treturn boolean ok
+-- @treturn string|nil resultOrError
+-- @treturn boolean proposed Whether the desired state was submitted without mutating the canonical page.
+function AngryEra:UpdatePageVars(id, value)
+    local page = self:Get(id)
+    if not page then
+        return false, "Page not found.", false
+    end
+    if not self:CanEditEntityLocally(page) then
+        return false, "Permission denied.", false
+    end
+
+    local submitted, submitResult, proposed, retainedDesired =
+        SubmitSharedPageMutation(self, id, page, "Vars", value)
+    if proposed then
+        return submitted, submitResult, true
+    end
+
+    page.Vars = value
+    self:PageUpdated(id)
+    PreserveRetainedDesiredAfterDirectMutation(self, id, page, retainedDesired)
+    return true, nil, false
 end
 
 function AngryEra:PushHistory(page, content, author)

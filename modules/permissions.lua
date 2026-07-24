@@ -16,7 +16,6 @@ local guildOfficerNames
 local warnedPermission = false
 
 local NORMAL_ACTIONS = {
-    pageUpsert = true,
     categoryUpsert = true,
     reorder = true,
     changeProposal = true,
@@ -24,6 +23,8 @@ local NORMAL_ACTIONS = {
 
 local LEADER_ONLY_ACTIONS = {
     display = true,
+    pageUpsert = true,
+    changeResult = true,
     manifest = true,
     delete = true,
     tombstone = true,
@@ -269,10 +270,13 @@ function AngryEra:CanLocalPlayerOutput()
     return role == "leader" or role == "assistant"
 end
 
---- Returns whether an entity may be edited in place.
--- Local entities are always editable. Remote pages additionally require the
--- exact authoritative base context that will be used to publish their revision.
--- Remote category proposal editing is a separate hierarchy-sync path.
+--- Returns whether an entity may be edited locally or proposed to the leader.
+-- Unsynchronized and locally owned entities remain locally editable. A
+-- remote-owned page is editable only while its exact canonical tuple is the
+-- active shared display; cached background pages fail closed. Remote category
+-- name/variable editing waits for the future hierarchy-proposal protocol, while
+-- receiver-private CategoryId/Index placement remains a separate local action.
+-- Only the leader publishes the resulting canonical page revision.
 function AngryEra:CanEditEntityLocally(entity)
     if not entity then
         return false
@@ -280,16 +284,50 @@ function AngryEra:CanEditEntityLocally(entity)
     if not entity.SyncId or self:IsLocallyOwned(entity) then
         return true
     end
-    if rawget(entity, "Contents") ~= nil then
-        if type(self.HasAuthoritativePageContext) ~= "function" then
-            return false
-        end
-        local checked, contextAvailable = pcall(self.HasAuthoritativePageContext, self, entity)
-        if not checked or contextAvailable ~= true then
-            return false
-        end
+
+    -- CHANGE_PROPOSE currently carries page fields only. Treat synchronized
+    -- remote categories as read-only until hierarchy proposals have their own
+    -- schema rather than mutating canonical-looking fields receiver-locally.
+    if rawget(entity, "Contents") == nil then
+        return false
     end
-    return IsGrouped() and self:CanLocalPlayerPublish("pageUpsert")
+    if type(self.HasAuthoritativePageContext) ~= "function" then
+        return false
+    end
+
+    local contextChecked, contextAvailable = pcall(self.HasAuthoritativePageContext, self, entity)
+    if not contextChecked or contextAvailable ~= true then
+        return false
+    end
+
+    -- The current leader may canonically edit a cached background page using
+    -- its retained authoritative wire hierarchy. Non-canonical publishers are
+    -- limited to proposals for the exact active tuple.
+    local commitChecked, canCommitPage = pcall(self.CanLocalPlayerPublish, self, "pageUpsert")
+    if commitChecked and canCommitPage == true and IsGrouped() then
+        return true
+    end
+    if
+        type(rawget(entity, "Id")) ~= "number"
+        or type(AngryAssign_State) ~= "table"
+        or rawget(AngryAssign_State, "displayed") ~= entity.Id
+        or type(self.GetActiveDisplayReference) ~= "function"
+    then
+        return false
+    end
+
+    local referenceChecked, reference = pcall(self.GetActiveDisplayReference, self)
+    if
+        not referenceChecked
+        or type(reference) ~= "table"
+        or reference.SyncId ~= entity.SyncId
+        or reference.Revision ~= rawget(entity, "Revision")
+        or reference.RevisionId ~= rawget(entity, "RevisionId")
+        or type(reference.ContextRevisionId) ~= "string"
+    then
+        return false
+    end
+    return IsGrouped() and self:CanLocalPlayerPublish("changeProposal")
 end
 
 function AngryEra:IsPlayerRaidLeader()

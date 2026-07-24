@@ -672,6 +672,7 @@ function AngryEra:OnEnable()
     self:RegisterEvent("GUILD_ROSTER_UPDATE")
     self:RegisterEvent("ENCOUNTER_END")
     self:RegisterEvent("PARTY_LEADER_CHANGED")
+    self:RegisterEvent("PARTY_CONVERTED_TO_RAID")
     self:RegisterEvent("GROUP_JOINED")
     self:RegisterEvent("GROUP_ROSTER_UPDATE")
 
@@ -688,6 +689,13 @@ function AngryEra:OnEnable()
 end
 
 function AngryEra:PARTY_LEADER_CHANGED()
+    local tenure
+    if self._protocolStarted and type(self.RefreshProtocolLeadershipTenure) == "function" then
+        local refreshed, result = self:RefreshProtocolLeadershipTenure()
+        if refreshed and type(result) == "table" then
+            tenure = result
+        end
+    end
     if type(self.ResetProtocolAncestorAnnouncements) == "function" then
         self:ResetProtocolAncestorAnnouncements()
     end
@@ -696,9 +704,16 @@ function AngryEra:PARTY_LEADER_CHANGED()
     end
     self:PermissionsUpdated()
     if self._protocolStarted then
-        self:SendProtocolVersionQuery()
         local localAuthority = false
-        if type(self.RestoreDisplayAuthority) == "function" then
+        if tenure then
+            localAuthority = tenure.LocalAuthority == true
+        elseif type(self.IsPlayerRaidLeader) == "function" then
+            localAuthority = self:IsPlayerRaidLeader() == true
+        end
+        if localAuthority then
+            self:SendProtocolVersionQuery(tenure and tenure.Rotated == true)
+        end
+        if localAuthority and type(self.RestoreDisplayAuthority) == "function" then
             local _, _, isLocalAuthority = self:RestoreDisplayAuthority()
             localAuthority = isLocalAuthority == true
         end
@@ -709,8 +724,18 @@ function AngryEra:PARTY_LEADER_CHANGED()
 end
 
 function AngryEra:PARTY_CONVERTED_TO_RAID()
-    self:SendProtocolVersionQuery(true)
-    self:ScheduleTimer("SendRequestDisplay", 0.5)
+    local localAuthority = type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
+    if self._protocolStarted and type(self.RefreshProtocolLeadershipTenure) == "function" then
+        local refreshed, result = self:RefreshProtocolLeadershipTenure()
+        if refreshed and type(result) == "table" then
+            localAuthority = result.LocalAuthority == true
+        end
+    end
+    if self._protocolStarted and localAuthority then
+        self:SendProtocolVersionQuery(true)
+    elseif self._protocolStarted then
+        self:ScheduleTimer("SendRequestDisplay", 0.5)
+    end
     self:UpdateDisplayedIfNewGroup()
 end
 
@@ -721,10 +746,20 @@ function AngryEra:GROUP_JOINED()
     self:ClearDisplayed()
     self:ResetProtocolPeers()
     if self._protocolStarted then
-        self:SendProtocolVersionQuery(true)
+        local localAuthority = type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
+        if type(self.RefreshProtocolLeadershipTenure) == "function" then
+            local refreshed, result = self:RefreshProtocolLeadershipTenure()
+            if refreshed and type(result) == "table" then
+                localAuthority = result.LocalAuthority == true
+            end
+        end
+        if localAuthority then
+            self:SendProtocolVersionQuery(true)
+        else
+            self:ScheduleTimer("SendRequestDisplay", 0.5)
+        end
     end
     self:UpdateDisplayedIfNewGroup()
-    self:ScheduleTimer("SendRequestDisplay", 0.5)
 end
 
 function AngryEra:PLAYER_REGEN_DISABLED()
@@ -779,10 +814,13 @@ end
 
 --- Post-enable delayed setup hook for group discovery and event wiring.
 function AngryEra:AfterEnable()
-    --self:RegisterEvent("PARTY_CONVERTED_TO_RAID")
     self:UpdateDisplayedIfNewGroup()
     if self._protocolStarted then
-        self:SendProtocolVersionQuery(true)
-        self:ScheduleTimer("SendRequestDisplay", 0.5)
+        local localAuthority = type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
+        if localAuthority then
+            self:SendProtocolVersionQuery(true)
+        else
+            self:ScheduleTimer("SendRequestDisplay", 0.5)
+        end
     end
 end

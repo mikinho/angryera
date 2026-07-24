@@ -516,7 +516,12 @@ function AngryEra:RenderPageContent(page, ctx, options)
         if not referenceCallOk or type(reference) ~= "table" then
             return "", {}, "missing-active-display-reference", renderedPage, {}
         end
-        if reference.SyncId ~= page.SyncId or not reference.RevisionId or not reference.ContextRevisionId then
+        if
+            reference.SyncId ~= page.SyncId
+            or type(reference.Revision) ~= "number"
+            or not reference.RevisionId
+            or not reference.ContextRevisionId
+        then
             return "", {}, "active-display-reference-mismatch", renderedPage, {}
         end
 
@@ -524,6 +529,7 @@ function AngryEra:RenderPageContent(page, ctx, options)
             self.GetActivePageRenderContext,
             self,
             reference.SyncId,
+            reference.Revision,
             reference.RevisionId,
             reference.ContextRevisionId
         )
