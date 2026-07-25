@@ -9,6 +9,7 @@ local AngryEra = app.AngryEra
 local identity = AngryEra.identity
 
 local ENTITY_SCHEMA_VERSION = 2
+local MAX_DELETED_LOCAL_TOMBSTONES = 4096
 local IDENTITY_FIELDS = {
     "SyncId",
     "OwnerId",
@@ -568,6 +569,67 @@ function AngryEra:SetPinned(entityOrSyncId, pinned)
     return true
 end
 
+local function NextTombstoneOrdinal(meta)
+    local ordinal = (meta.EntityLocalTombstoneSequence or 0) + 1
+    meta.EntityLocalTombstoneSequence = ordinal
+    return ordinal
+end
+
+-- A retired local id is prunable only when nothing else depends on it: it must
+-- carry no pin or managed-scope membership, and its own installation prefix must
+-- already block reuse, so dropping the tombstone cannot weaken collision safety.
+local function TombstoneIsPrunable(meta, syncId, state)
+    if type(state) ~= "table" or not state.DeletedLocally then
+        return false
+    end
+    if state.Pinned then
+        return false
+    end
+    if type(state.ManagedScopes) == "table" and next(state.ManagedScopes) ~= nil then
+        return false
+    end
+    return identity.ParseSyncId(syncId) == meta.InstallationId
+end
+
+--- Evicts the oldest disposable deleted-local tombstones beyond the bound.
+-- @tparam table meta Installation metadata holding EntityLocal.
+-- @treturn number pruned Count of removed tombstones.
+local function PruneDeletedLocalTombstones(meta)
+    if type(meta) ~= "table" or type(meta.EntityLocal) ~= "table" then
+        return 0
+    end
+    local prunable = {}
+    for syncId, state in pairs(meta.EntityLocal) do
+        if TombstoneIsPrunable(meta, syncId, state) then
+            prunable[#prunable + 1] = { SyncId = syncId, Ordinal = state.DeletedOrdinal or 0 }
+        end
+    end
+    local excess = #prunable - MAX_DELETED_LOCAL_TOMBSTONES
+    if excess <= 0 then
+        return 0
+    end
+    table.sort(prunable, function(left, right)
+        if left.Ordinal ~= right.Ordinal then
+            return left.Ordinal < right.Ordinal
+        end
+        return left.SyncId < right.SyncId
+    end)
+    for index = 1, excess do
+        meta.EntityLocal[prunable[index].SyncId] = nil
+    end
+    return excess
+end
+
+--- Bounds retained deleted-local identity tombstones.
+-- @treturn number pruned Count of removed tombstones.
+function AngryEra:PruneDeletedLocalIdentities()
+    local meta = AngryAssign_Meta
+    if type(meta) ~= "table" then
+        return 0
+    end
+    return PruneDeletedLocalTombstones(meta)
+end
+
 --- Removes runtime identity registration while retaining retired local ownership.
 function AngryEra:ForgetEntityIdentity(entityOrSyncId, kind)
     local syncId = EntitySyncId(entityOrSyncId)
@@ -584,6 +646,8 @@ function AngryEra:ForgetEntityIdentity(entityOrSyncId, kind)
     local state = AngryAssign_Meta.EntityLocal[syncId]
     if state and state.OwnedLocally then
         state.DeletedLocally = true
+        state.DeletedOrdinal = NextTombstoneOrdinal(AngryAssign_Meta)
+        PruneDeletedLocalTombstones(AngryAssign_Meta)
     else
         AngryAssign_Meta.EntityLocal[syncId] = nil
     end

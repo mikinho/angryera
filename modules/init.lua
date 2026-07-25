@@ -117,6 +117,7 @@ function AngryEra:OnInitialize()
     self:MigratePermissionConfig()
     self:MigrateEntityIdentities()
     self:MigrateLegacyLocalIds()
+    self:PruneDeletedLocalIdentities()
     local syncRuntimeReady, syncRuntimeResult = self:InitializeSyncRuntimeStorage()
     if not syncRuntimeReady then
         self.syncRuntimeStartupWarning = "Synchronization v3 is disabled because its saved state could not be initialized: "

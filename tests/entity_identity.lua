@@ -212,4 +212,43 @@ assert(
     "identity migration should complete after invalid records are removed"
 )
 
+do
+    local retained = {}
+    for index = 1, 4200 do
+        local id = installationId .. ":page:" .. (100000 + index)
+        AngryAssign_Meta.EntityLocal[id] = {
+            OwnedLocally = true,
+            DeletedLocally = true,
+            DeletedOrdinal = index,
+            ManagedScopes = {},
+        }
+        retained[index] = id
+    end
+    local pinnedTombstone = installationId .. ":page:1"
+    AngryAssign_Meta.EntityLocal[pinnedTombstone] =
+        { OwnedLocally = true, DeletedLocally = true, DeletedOrdinal = 0, Pinned = true, ManagedScopes = {} }
+    local scopedTombstone = installationId .. ":page:2"
+    AngryAssign_Meta.EntityLocal[scopedTombstone] =
+        { OwnedLocally = true, DeletedLocally = true, DeletedOrdinal = 0, ManagedScopes = { ["scope:1"] = true } }
+
+    local pruned = AngryEra:PruneDeletedLocalIdentities()
+    assert(pruned >= 104, "pruning should evict the tombstones beyond the bound")
+
+    local remaining = 0
+    for _, state in pairs(AngryAssign_Meta.EntityLocal) do
+        if type(state) == "table" and state.DeletedLocally and not state.Pinned then
+            local managed = type(state.ManagedScopes) == "table" and next(state.ManagedScopes) ~= nil
+            if not managed then
+                remaining = remaining + 1
+            end
+        end
+    end
+    assert(remaining == 4096, "disposable tombstones must be bounded to the cap")
+    assert(AngryAssign_Meta.EntityLocal[retained[1]] == nil, "the oldest tombstone should be evicted first")
+    assert(AngryAssign_Meta.EntityLocal[retained[4200]] ~= nil, "the newest tombstone should be retained")
+    assert(AngryAssign_Meta.EntityLocal[pinnedTombstone] ~= nil, "a pinned tombstone must never be pruned")
+    assert(AngryAssign_Meta.EntityLocal[scopedTombstone] ~= nil, "a scope-managed tombstone must never be pruned")
+    assert(AngryEra:PruneDeletedLocalIdentities() == 0, "pruning at the bound should be a no-op")
+end
+
 print("Entity identity tests passed.")
