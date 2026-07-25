@@ -1,8 +1,8 @@
-## v3.1.0-BETA
+## v3.1.1
 
-* **BREAKING CHANGE**: Rebuilt shared assignments for the current group. This beta cannot share assignments or displayed pages with earlier AngryEra or AngryAssignments versions. Everyone who participates in shared assignments must update before the raid.
+* **BREAKING CHANGE**: Rebuilt shared assignments for the current group. This release cannot share assignments or displayed pages with earlier AngryEra or AngryAssignments versions. Everyone who participates in shared assignments must update before the raid.
 * **BREAKING CHANGE**: The current party or raid leader is now the only player who can select or clear the shared display. AngryEra shares the active page and the variable context needed to render it instead of mirroring entire page libraries through the guild.
-* Improvement: Existing pages, categories, settings, and legacy permission choices migrate automatically. Downgrading after opening this beta requires restoring a pre-upgrade SavedVariables backup.
+* Improvement: Existing pages, categories, settings, and legacy permission choices migrate automatically. Downgrading after opening this release requires restoring a pre-upgrade SavedVariables backup.
 * New Feature: Added inherited variables across nested categories. Values merge from the outermost category through nested categories to the page, with the nearest value winning.
 * New Feature: Added inherited `$` metadata for assignment automation and addon integrations.
 * New Feature: Added automatic raid-marker assignments using `$STAR`, `$CIRCLE`, `$DIAMOND`, `$TRIANGLE`, `$MOON`, `$SQUARE`, `$X`/`$CROSS`, and `$SKULL` page metadata.
@@ -16,14 +16,21 @@
 * Improvement: Late joiners, reloaded clients, dropped display responses, and raid-leader changes automatically recover the leader's current page.
 * Improvement: Received-page revisions preserve each player's local category placement and ordering. Replacing read-only received data during import creates a uniquely named local copy.
 * Improvement: Restore loads an older content version as an unsaved draft; the page changes only after **Save**.
-* Improvement: Version checks now focus on the current party or raid and report same or different versions, clients not accepting shared changes, and clients without the addon.
-* Improvement: Strengthened validation and size limits for encoded imports and shared data.
+* Improvement: Version checks now focus on the current party or raid and report same or different versions, clients not accepting shared changes, and clients without the addon. The current leader and raid assistants can run the check, while automatic version discovery stays leader-driven.
+* Improvement: Strengthened validation and size limits for encoded imports and shared data, including tighter decompression bounds for data received on the general sharing channel.
 * Fix: Stopped unnecessary idle sharing requests and stale responses that could cause repeated background traffic.
 * Fix: Prevented page jumping, stale leader state, and updates from a former leader after group leadership changes.
 * Fix: Hardened automatic marker cleanup so AngryEra does not fight manual marker changes.
 * Fix: Hardened auto-advance against wipes, ambiguous encounter bindings, missing next pages, and temporary send failures.
 * Fix: Removed the invalid `PARTY_CONVERTED_TO_RAID` event registration that caused an error on Classic clients.
+* Fix: Saving a shared page that has no effective changes no longer reports a false page-update conflict.
+* Fix: Corrupt or hand-edited saved data no longer prevents the addon from loading. Invalid page or category records are dropped with a notice so migration and synchronization still start.
+* Fix: A malformed trusted-publisher setting is ignored safely instead of silently rejecting every assistant edit.
+* Fix: Retained bookkeeping for deleted local pages and categories is now bounded, so saved data does not grow without limit for players who create and remove many templates.
+* Fix: Guild roster updates refresh the display through a cancelable timer that stops cleanly when the addon is disabled.
 * Developer: Added broad regression coverage for permissions, leader handoffs, active-page delivery, variables, metadata, automatic markers, auto-advance, imports, migrations, and the public API.
+* Developer: Auto-advance reports its decisions, including why a kill did not advance, through `/aa debug`.
+* Developer: Corrected the protocol-3 synchronization contract notes, removed unused permission helpers, and restored formatter conformance.
 
 ## v3.0.1
 
