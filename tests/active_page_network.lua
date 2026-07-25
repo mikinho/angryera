@@ -1859,6 +1859,33 @@ do
     )
     assert(AngryEra:CancelSharedPageChangeProposal("test-cleanup"), "the post-result-timeout debounce should cancel")
 
+    AngryAssign_Pages[5].Revision = 6
+    AngryAssign_Pages[5].RevisionId = "fcs32:31000006"
+    AngryAssign_Pages[5].Name = "Assignments"
+    AngryAssign_Pages[5].Vars = nil
+    AngryAssign_Pages[5].Contents = "Nil vars canonical"
+    activeDisplayReference.Revision = 6
+    activeDisplayReference.RevisionId = "fcs32:31000006"
+    activeDisplayReference.ContextRevisionId = "fcs32:41000006"
+
+    submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("Nil vars canonical"))
+    assert(submitted and submitStatus == "scheduled", "a no-op save of a nil-vars page should schedule")
+    local nilVarsProposalTimer = timers[#timers]
+    sent, result = AngryEra:FlushSharedPageChangeProposal(nilVarsProposalTimer.Argument)
+    assert(sent, "the nil-vars proposal should enter flight")
+    local nilVarsMessageId = result
+    sent, result = AngryEra:HandleSharedPageChangeResult(nil, {
+        Status = "unchanged",
+        SyncId = AngryAssign_Pages[5].SyncId,
+        Revision = AngryAssign_Pages[5].Revision,
+        RevisionId = AngryAssign_Pages[5].RevisionId,
+        ContextRevisionId = activeDisplayReference.ContextRevisionId,
+    }, sentChangeProposals[#sentChangeProposals].Payload, nilVarsMessageId)
+    assert(
+        sent and result == "completed",
+        "an unchanged result must complete against stored nil text fields via wire defaulting"
+    )
+
     AngryEra:ResetSharedPageChangeState("test-cleanup")
     canPublishDisplay = true
     canPublishPage = true

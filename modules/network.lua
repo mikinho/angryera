@@ -467,12 +467,16 @@ local function CopyDesiredPageState(desired)
     }
 end
 
+local function WireDefaultedText(value)
+    return type(value) == "string" and value or ""
+end
+
 local function PageMatchesDesiredState(page, desired)
     return type(page) == "table"
         and type(desired) == "table"
-        and page.Name == desired.Name
-        and page.Vars == desired.Vars
-        and page.Contents == desired.Contents
+        and WireDefaultedText(page.Name) == desired.Name
+        and WireDefaultedText(page.Vars) == desired.Vars
+        and WireDefaultedText(page.Contents) == desired.Contents
 end
 
 local function CopyChangeReference(reference)
