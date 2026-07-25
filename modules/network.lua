@@ -457,11 +457,7 @@ local function CopyDesiredPageState(desired)
     if type(desired) ~= "table" then
         return nil
     end
-    if
-        type(desired.Name) ~= "string"
-        or type(desired.Vars) ~= "string"
-        or type(desired.Contents) ~= "string"
-    then
+    if type(desired.Name) ~= "string" or type(desired.Vars) ~= "string" or type(desired.Contents) ~= "string" then
         return nil
     end
     return {
@@ -848,8 +844,7 @@ function AngryEra:FlushSharedPageChangeProposal(generation)
     draft.AcceptedReference = nil
     ClearObservedCanonicalReferences(draft)
     CancelTimer(self, sharedPageChangeTimeoutTimer)
-    sharedPageChangeTimeoutTimer =
-        self:ScheduleTimer("SharedPageChangeTimedOut", sharedPageChangeTimeout, messageId)
+    sharedPageChangeTimeoutTimer = self:ScheduleTimer("SharedPageChangeTimedOut", sharedPageChangeTimeout, messageId)
     if not sharedPageChangeTimeoutTimer then
         if type(self.CancelProtocolChangeProposal) == "function" then
             pcall(self.CancelProtocolChangeProposal, self, messageId)
@@ -906,8 +901,7 @@ function AngryEra:HandleSharedPageChangeResult(_, result, _, messageId)
         (
             HasObservedCanonicalReference(draft, draft.AcceptedReference)
             or SameChangeReference(draft.AcceptedReference, CurrentSharedPageReference(self, draft))
-        )
-        and CurrentSharedPageMatchesDesired(self, draft, draft.AcceptedReference, draft.SentDesired)
+        ) and CurrentSharedPageMatchesDesired(self, draft, draft.AcceptedReference, draft.SentDesired)
     then
         return FinishAcceptedSharedPageChange(self, draft)
     end
@@ -948,8 +942,7 @@ function AngryEra:ObserveSharedPageCanonicalUpdate(_, payload, applyResult)
         RevisionId = page.RevisionId,
         ContextRevisionId = payload.ContextRevisionId,
     }
-    local installed =
-        type(applyResult) == "table"
+    local installed = type(applyResult) == "table"
         and applyResult.ContextOnly ~= true
         and (applyResult.Applied == true or applyResult.NoOp == true)
         and applyResult.LocalId == draft.LocalId
@@ -958,13 +951,8 @@ function AngryEra:ObserveSharedPageCanonicalUpdate(_, payload, applyResult)
     if not installed then
         return true, "observed"
     end
-    local canonicalMatchesDesired =
-        CurrentSharedPageMatchesDesired(self, draft, canonicalReference, draft.SentDesired)
-    if
-        draft.InFlightMessageId
-        and canonicalMatchesDesired
-        and PageMatchesDesiredState(page, draft.SentDesired)
-    then
+    local canonicalMatchesDesired = CurrentSharedPageMatchesDesired(self, draft, canonicalReference, draft.SentDesired)
+    if draft.InFlightMessageId and canonicalMatchesDesired and PageMatchesDesiredState(page, draft.SentDesired) then
         return FinishAcceptedSharedPageChange(self, draft)
     end
     if draft.InFlightMessageId then

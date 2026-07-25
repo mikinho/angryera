@@ -1131,9 +1131,7 @@ local function ActivePageChangeHandlersLive()
             return false
         end
     end
-    return HANDLERS ~= nil
-        and HANDLERS.CHANGE_PROPOSE ~= nil
-        and HANDLERS.CHANGE_RESULT ~= nil
+    return HANDLERS ~= nil and HANDLERS.CHANGE_PROPOSE ~= nil and HANDLERS.CHANGE_RESULT ~= nil
 end
 
 local function LocalCapabilities()
@@ -1142,8 +1140,7 @@ local function LocalCapabilities()
             activePage = 1,
         }
         if ActivePageChangeHandlersLive() then
-            capabilities[protocol.ACTIVE_PAGE_CHANGES_CAPABILITY] =
-                protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION
+            capabilities[protocol.ACTIVE_PAGE_CHANGES_CAPABILITY] = protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION
         end
         return capabilities
     end
@@ -1308,9 +1305,7 @@ local function HasControlZlibHeader(encoded)
         return false
     end
     local compression, flags = compressed:byte(1, 2)
-    return compression % 16 == 8
-        and math.floor(compression / 16) <= 7
-        and (compression * 256 + flags) % 31 == 0
+    return compression % 16 == 8 and math.floor(compression / 16) <= 7 and (compression * 256 + flags) % 31 == 0
 end
 
 local function GroupChannel()
@@ -1815,10 +1810,7 @@ local function PendingDisplayAuthorityBootstraps(auth, now)
         then
             preserved[messageId] = pending
             exactSession = true
-        elseif
-            pending.TargetKey == senderKey
-            and pending.SenderInstallationId == nil
-        then
+        elseif pending.TargetKey == senderKey and pending.SenderInstallationId == nil then
             preserved[messageId] = pending
             targetOnly = true
         end
@@ -1834,11 +1826,11 @@ local function PendingCurrentLeaderBootstraps(self, now, excludedAuthority)
     for messageId, pending in pairs(pendingDisplayRequests) do
         local target = pending.Target or pending.TargetKey
         local pendingAuthority = pending.SenderInstallationId ~= nil
-            and {
-                Sender = target,
-                SenderInstallationId = pending.SenderInstallationId,
-                SenderSessionId = pending.SenderSessionId,
-            }
+                and {
+                    Sender = target,
+                    SenderInstallationId = pending.SenderInstallationId,
+                    SenderSessionId = pending.SenderSessionId,
+                }
             or nil
         local retired = pendingAuthority and IsRetiredDisplayAuthority(pendingAuthority)
         local excluded = pendingAuthority
@@ -1937,10 +1929,7 @@ local function ValidateDisplayAuthorityTenure(self, auth, envelope, correlationK
     if IsRetiredDisplayAuthority(auth) then
         return false, "stale-display-authority"
     end
-    if
-        correlationKind == "display-request"
-        and (envelope.Type == "DISPLAY" or envelope.Type == "PAGE_UPSERT")
-    then
+    if correlationKind == "display-request" and (envelope.Type == "DISPLAY" or envelope.Type == "PAGE_UPSERT") then
         return true, nil, true
     end
     if boundDisplayAuthority ~= nil then
@@ -2181,11 +2170,7 @@ local function InvalidatePendingDisplayRequestsForAuthority(auth, reference)
             elseif
                 pending.SenderInstallationId == auth.SenderInstallationId
                 and pending.SenderSessionId == auth.SenderSessionId
-                and (
-                    pending.SyncId == nil
-                    or reference == nil
-                    or not SameReference(pending, reference)
-                )
+                and (pending.SyncId == nil or reference == nil or not SameReference(pending, reference))
             then
                 pendingDisplayRequests[messageId] = nil
             end
@@ -2331,13 +2316,14 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
         and isLocalAuthority == localLeadershipTenureActive
         and (isLocalAuthority or boundAuthorityCurrent)
     then
-        return true, {
-            Changed = false,
-            LocalAuthority = isLocalAuthority,
-            PendingDisplayBootstrap = false,
-            Rotated = false,
-            SessionId = protocolSession.SessionId,
-        }
+        return true,
+            {
+                Changed = false,
+                LocalAuthority = isLocalAuthority,
+                PendingDisplayBootstrap = false,
+                Rotated = false,
+                SessionId = protocolSession.SessionId,
+            }
     end
     if
         not isLocalAuthority
@@ -2350,13 +2336,14 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
             CancelActivePageTransfer("leadership-lost")
         end
         localLeadershipTenureActive = false
-        return true, {
-            AlreadyBound = true,
-            Changed = false,
-            LocalAuthority = false,
-            PendingDisplayBootstrap = true,
-            Rotated = false,
-        }
+        return true,
+            {
+                AlreadyBound = true,
+                Changed = false,
+                LocalAuthority = false,
+                PendingDisplayBootstrap = true,
+                Rotated = false,
+            }
     end
     local preservedDisplayRequests = {}
     local preservedDisplayRequestCount = 0
@@ -2366,10 +2353,7 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
             PendingCurrentLeaderBootstraps(self, Now(), excludedAuthority)
     end
     local retireBoundAuthority = boundDisplayAuthority ~= nil
-        and (
-            forceLocalRotation == true
-            or not SafeCanReceive(self, boundDisplayAuthority.Sender, "display")
-        )
+        and (forceLocalRotation == true or not SafeCanReceive(self, boundDisplayAuthority.Sender, "display"))
     ResetLeaderBoundInteractions(preservedDisplayRequests, retireBoundAuthority)
     if not isLocalAuthority then
         ResetSharedProposalForAuthorityChange(self)
@@ -2377,20 +2361,22 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
             CancelActivePageTransfer("leadership-lost")
         end
         localLeadershipTenureActive = false
-        return true, {
-            Changed = true,
-            LocalAuthority = false,
-            Rotated = false,
-            PendingDisplayBootstrap = preservedDisplayRequestCount > 0,
-        }
+        return true,
+            {
+                Changed = true,
+                LocalAuthority = false,
+                Rotated = false,
+                PendingDisplayBootstrap = preservedDisplayRequestCount > 0,
+            }
     end
     if localLeadershipTenureActive and forceLocalRotation ~= true then
-        return true, {
-            Changed = false,
-            LocalAuthority = true,
-            Rotated = false,
-            SessionId = protocolSession.SessionId,
-        }
+        return true,
+            {
+                Changed = false,
+                LocalAuthority = true,
+                Rotated = false,
+                SessionId = protocolSession.SessionId,
+            }
     end
 
     local nextSession, sessionError =
@@ -2407,12 +2393,13 @@ function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
         end
     end
     localLeadershipTenureActive = true
-    return true, {
-        Changed = true,
-        LocalAuthority = true,
-        Rotated = true,
-        SessionId = protocolSession.SessionId,
-    }
+    return true,
+        {
+            Changed = true,
+            LocalAuthority = true,
+            Rotated = true,
+            SessionId = protocolSession.SessionId,
+        }
 end
 
 --- Clears discovery, replay, correlation, and active-page state while retaining
@@ -3375,8 +3362,7 @@ local function RememberDisplayCapabilities(auth, payload, now)
 
     local capabilities = existing and CopyMap(existing.Capabilities) or {}
     if payload.ActivePageChanges == true then
-        capabilities[protocol.ACTIVE_PAGE_CHANGES_CAPABILITY] =
-            protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION
+        capabilities[protocol.ACTIVE_PAGE_CHANGES_CAPABILITY] = protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION
     end
     peers[senderKey] = {
         Sender = auth.Sender,
@@ -3463,10 +3449,7 @@ function AngryEra:HandleProtocolDisplay(auth, _, envelope)
         return false, result
     end
     if envelope.ReplyTo == nil then
-        InvalidatePendingDisplayRequestsForAuthority(
-            auth,
-            ReferenceFromPayload("DISPLAY", envelope.Payload)
-        )
+        InvalidatePendingDisplayRequestsForAuthority(auth, ReferenceFromPayload("DISPLAY", envelope.Payload))
     end
     RememberDisplayCapabilities(auth, envelope.Payload, Now())
     -- An authenticated, authorized DISPLAY resolves discovery even when its
@@ -3621,10 +3604,7 @@ function AngryEra:HandleProtocolPageUpsert(auth, channel, envelope, correlationK
         return false, result
     end
     if channel ~= "WHISPER" then
-        InvalidatePendingDisplayRequestsForAuthority(
-            auth,
-            ReferenceFromPayload("PAGE_UPSERT", envelope.Payload)
-        )
+        InvalidatePendingDisplayRequestsForAuthority(auth, ReferenceFromPayload("PAGE_UPSERT", envelope.Payload))
     end
     if debugEnabled then
         Trace(
@@ -3744,11 +3724,8 @@ local function CompleteProposalPagePublication(context, succeeded, status, messa
     end
 
     if succeeded then
-        local sent, sendError = context.Self:SendProtocolChangeResult(
-            context.Target,
-            context.ReplyTo,
-            context.ResultPayload
-        )
+        local sent, sendError =
+            context.Self:SendProtocolChangeResult(context.Target, context.ReplyTo, context.ResultPayload)
         if not sent then
             context.Result.PublicationSucceeded = false
             context.Result.PublicationError = sendError
@@ -3803,8 +3780,7 @@ local function PublishCanonicalProposalResult(self, auth, envelope, result, resu
     end
 
     local activeOptions = ValidateActiveSendOptions(nil)
-    local reusingPublication = activeOptions
-        and ActivePageTransferMatches(activePageTransfer, reference, activeOptions)
+    local reusingPublication = activeOptions and ActivePageTransferMatches(activePageTransfer, reference, activeOptions)
     if not reusingPublication then
         local displaySent, displayResult = self:SendProtocolDisplay({
             Displayed = true,
@@ -3848,17 +3824,18 @@ local function RejectChangeProposalUnavailable(self, auth, envelope, reason)
         Status = "unavailable",
         SyncId = envelope.Payload.SyncId,
     }
-    local sent, sendResult =
-        self:SendProtocolChangeResult(auth.Sender, envelope.MessageId, payload)
+    local sent, sendResult = self:SendProtocolChangeResult(auth.Sender, envelope.MessageId, payload)
     if not sent then
         return false, sendResult
     end
-    return true, {
-        PublicationSkipped = true,
-        Rejection = reason,
-        Status = "unavailable",
-        SyncId = payload.SyncId,
-    }, reason
+    return true,
+        {
+            PublicationSkipped = true,
+            Rejection = reason,
+            Status = "unavailable",
+            SyncId = payload.SyncId,
+        },
+        reason
 end
 
 --- Applies one authorized assistant proposal and returns the leader's
@@ -3875,8 +3852,7 @@ function AngryEra:HandleProtocolChangePropose(auth, _, envelope)
     then
         return RejectChangeProposalUnavailable(self, auth, envelope, "stale-change-authority")
     end
-    local called, accepted, result, warning =
-        pcall(self.ApplyActivePageChangeProposal, self, auth, envelope.Payload)
+    local called, accepted, result, warning = pcall(self.ApplyActivePageChangeProposal, self, auth, envelope.Payload)
     if not called then
         return RejectChangeProposalUnavailable(self, auth, envelope, "change-proposal-apply-failed")
     end
@@ -3894,8 +3870,7 @@ function AngryEra:HandleProtocolChangePropose(auth, _, envelope)
     end
 
     if result.Status == "conflict" or result.Status == "busy" or result.Status == "unavailable" then
-        local sent, sendResult =
-            self:SendProtocolChangeResult(auth.Sender, envelope.MessageId, resultPayload)
+        local sent, sendResult = self:SendProtocolChangeResult(auth.Sender, envelope.MessageId, resultPayload)
         if not sent then
             return false, sendResult
         end
@@ -3903,8 +3878,7 @@ function AngryEra:HandleProtocolChangePropose(auth, _, envelope)
         return true, result, warning
     end
 
-    local published, publicationError =
-        PublishCanonicalProposalResult(self, auth, envelope, result, resultPayload)
+    local published, publicationError = PublishCanonicalProposalResult(self, auth, envelope, result, resultPayload)
     if not published then
         result.PublicationSucceeded = false
         result.PublicationError = publicationError
@@ -3923,14 +3897,8 @@ function AngryEra:HandleProtocolChangeResult(auth, _, envelope)
 
     local callbackResult
     if type(self.HandleSharedPageChangeResult) == "function" then
-        local called, handled, result = pcall(
-            self.HandleSharedPageChangeResult,
-            self,
-            auth,
-            envelope.Payload,
-            pending.Payload,
-            envelope.ReplyTo
-        )
+        local called, handled, result =
+            pcall(self.HandleSharedPageChangeResult, self, auth, envelope.Payload, pending.Payload, envelope.ReplyTo)
         if not called then
             return false, "change-result-handler-failed"
         end
@@ -3960,14 +3928,7 @@ function AngryEra:DispatchProtocolMessage(auth, channel, envelope, correlationKi
     if not handler then
         return false, "unknown-message-type"
     end
-    return handler(
-        self,
-        BuildHandlerAuth(auth),
-        channel,
-        envelope,
-        correlationKind,
-        authorityBootstrap
-    )
+    return handler(self, BuildHandlerAuth(auth), channel, envelope, correlationKind, authorityBootstrap)
 end
 
 --- Receives, authenticates, correlates, deduplicates, and dispatches protocol v3.
@@ -4004,10 +3965,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         or (prefix == protocol.PAGE_PREFIX and not SafeCanReceive(self, sender, "pageUpsert"))
         or (
             prefix == protocol.ACTIVE_PAGE_PREFIX
-            and (
-                not SafeCanReceive(self, sender, "pageUpsert")
-                or not SafeCanReceive(self, sender, "display")
-            )
+            and (not SafeCanReceive(self, sender, "pageUpsert") or not SafeCanReceive(self, sender, "display"))
         )
     then
         return false, "unauthorized"
@@ -4034,13 +3992,8 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         end
     else
         envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec)
-        if
-            not envelope
-            and decodeError == "decompress-failed"
-            and HasControlZlibHeader(data)
-        then
-            local controlEnvelope, controlDecodeError =
-                protocol.DecodeEnvelope(data, controlCodec, CONTROL_WIRE_LIMITS)
+        if not envelope and decodeError == "decompress-failed" and HasControlZlibHeader(data) then
+            local controlEnvelope, controlDecodeError = protocol.DecodeEnvelope(data, controlCodec, CONTROL_WIRE_LIMITS)
             if controlEnvelope then
                 if CONTROL_MESSAGE_TYPES[controlEnvelope.Type] then
                     envelope = controlEnvelope
@@ -4144,11 +4097,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     if envelope.Type == "VERSION_QUERY" and role ~= "leader" then
         return false, "unauthorized"
     end
-    if
-        envelope.Type == "VERSION_QUERY"
-        and not IsLocalDisplayAuthority(self)
-        and IsRetiredDisplayAuthority(auth)
-    then
+    if envelope.Type == "VERSION_QUERY" and not IsLocalDisplayAuthority(self) and IsRetiredDisplayAuthority(auth) then
         return false, "stale-display-authority"
     end
     if

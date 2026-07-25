@@ -133,8 +133,7 @@ assert(
     "canonical page commits and proposal results should be classified as leader-only"
 )
 assert(
-    AngryEra.permissionActions.normal.changeProposal
-        and not AngryEra.permissionActions.leaderOnly.changeProposal,
+    AngryEra.permissionActions.normal.changeProposal and not AngryEra.permissionActions.leaderOnly.changeProposal,
     "assistant change proposals should remain a normal qualified action"
 )
 
@@ -182,8 +181,14 @@ assert(AngryEra:CanReceiveFrom("Officer-Realm", "changeProposal"), "An officer a
 assert(not AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "An officer assistant must not commit pages")
 assert(not AngryEra:CanReceiveFrom("Officer-Realm", "changeResult"), "An officer assistant must not return results")
 assert(not AngryEra:CanReceiveFrom("Officer-Realm", "display"), "An officer assistant must not control display")
-assert(not AngryEra:CanReceiveFrom("OrdinaryAssist-Realm", "changeProposal"), "An ordinary assistant should be rejected")
-assert(not AngryEra:CanReceiveFrom("OfficerMember-Realm", "changeProposal"), "An officer without assist should be rejected")
+assert(
+    not AngryEra:CanReceiveFrom("OrdinaryAssist-Realm", "changeProposal"),
+    "An ordinary assistant should be rejected"
+)
+assert(
+    not AngryEra:CanReceiveFrom("OfficerMember-Realm", "changeProposal"),
+    "An officer without assist should be rejected"
+)
 
 config.trustedPublishers = "DirectAssist-Realm"
 SetRoster({
@@ -326,10 +331,7 @@ assert(
     "A qualified publisher should edit the exact active remote page while grouped"
 )
 AngryAssign_State.displayed = nil
-assert(
-    not AngryEra:CanEditEntityLocally(activeRemotePage),
-    "A cached background remote page must remain read-only"
-)
+assert(not AngryEra:CanEditEntityLocally(activeRemotePage), "A cached background remote page must remain read-only")
 currentPlayer = "PugLeader-Realm"
 assert(
     AngryEra:CanEditEntityLocally(activeRemotePage),
@@ -338,10 +340,7 @@ assert(
 currentPlayer = "Officer-Realm"
 AngryAssign_State.displayed = activeRemotePage.Id
 activeDisplayReference.RevisionId = "fcs32:72727272"
-assert(
-    not AngryEra:CanEditEntityLocally(activeRemotePage),
-    "A remote page whose active tuple changed must fail closed"
-)
+assert(not AngryEra:CanEditEntityLocally(activeRemotePage), "A remote page whose active tuple changed must fail closed")
 activeDisplayReference.RevisionId = activeRemotePage.RevisionId
 authoritativePageContextAvailable = false
 assert(
@@ -370,10 +369,7 @@ assert(
 AngryEra.HasAuthoritativePageContext = function()
     error("malformed transient context")
 end
-assert(
-    not AngryEra:CanEditEntityLocally(activeRemotePage),
-    "Authoritative-context lookup failures must fail closed"
-)
+assert(not AngryEra:CanEditEntityLocally(activeRemotePage), "Authoritative-context lookup failures must fail closed")
 AngryEra.HasAuthoritativePageContext = savedContextCheck
 
 currentPlayer = "OrdinaryAssist-Realm"

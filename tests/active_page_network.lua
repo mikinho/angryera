@@ -853,7 +853,10 @@ assert(AngryEra:CaptureDisplayAuthorityRecovery(), "startup should capture a val
 AngryAssign_State.displayed = nil
 local callsBeforeAuthorityRestore = #calls
 local restored, restoreResult, isLocalAuthority = AngryEra:RestoreDisplayAuthority()
-assert(restored and restoreResult == "display-message" and isLocalAuthority, "a promoted leader should restore its anchor")
+assert(
+    restored and restoreResult == "display-message" and isLocalAuthority,
+    "a promoted leader should restore its anchor"
+)
 assert(AngryAssign_State.displayed == 5, "authority restore should reinstate the captured displayed page")
 assert(
     #calls == callsBeforeAuthorityRestore + 4
@@ -1791,8 +1794,12 @@ do
         SyncId = newerCanonical.SyncId,
     })
     assert(not sent and result == "unrelated", "newer canonical state must not revive a completed draft")
-    sent, result =
-        AngryEra:HandleSharedPageChangeResult(nil, reorderedResult, sentChangeProposals[#sentChangeProposals].Payload, messageId)
+    sent, result = AngryEra:HandleSharedPageChangeResult(
+        nil,
+        reorderedResult,
+        sentChangeProposals[#sentChangeProposals].Payload,
+        messageId
+    )
     assert(
         not sent and result == "stale-change-result",
         "a delayed result must not revive a proposal already acknowledged by canonical storage"

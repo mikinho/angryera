@@ -369,11 +369,7 @@ AssertEqual(protocol.PREFIX, "AngryEra3", "protocol prefix")
 AssertEqual(protocol.DISPLAY_PREFIX, "AngryEra3D", "display protocol prefix")
 AssertEqual(protocol.PAGE_PREFIX, "AngryEra3C", "compact-page protocol prefix")
 AssertEqual(protocol.ACTIVE_PAGE_PREFIX, "AngryEra3P", "active-page protocol prefix")
-AssertEqual(
-    protocol.ACTIVE_PAGE_CHANGES_CAPABILITY,
-    "activePageChanges",
-    "active-page change capability name"
-)
+AssertEqual(protocol.ACTIVE_PAGE_CHANGES_CAPABILITY, "activePageChanges", "active-page change capability name")
 AssertEqual(protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION, 1, "active-page change capability version")
 AssertEqual(protocol.WIRE_LIMITS.EncodedBytes, 256 * 1024, "encoded byte limit")
 AssertEqual(protocol.WIRE_LIMITS.CompressedBytes, 256 * 1024, "compressed byte limit")
@@ -685,12 +681,7 @@ Assert(payloadValid and payloadError == nil, "valid change proposal payload")
 local malformedChangePropose = DeepCopy(changeProposePayload)
 malformedChangePropose.OwnerId = activeInstallationId
 payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
-AssertError(
-    payloadValid,
-    payloadError,
-    "change-propose-unknown-field",
-    "change proposal cannot supply ownership"
-)
+AssertError(payloadValid, payloadError, "change-propose-unknown-field", "change proposal cannot supply ownership")
 
 malformedChangePropose = DeepCopy(changeProposePayload)
 malformedChangePropose.BaseRevisionId = nil
@@ -717,12 +708,7 @@ end
 malformedChangePropose = DeepCopy(changeProposePayload)
 malformedChangePropose.BaseRevisionId = "fcs32:ABCDEF12"
 payloadValid, payloadError = protocol.ValidatePayload("CHANGE_PROPOSE", malformedChangePropose)
-AssertError(
-    payloadValid,
-    payloadError,
-    "invalid-change-base-revision-id",
-    "change proposal base revision identity"
-)
+AssertError(payloadValid, payloadError, "invalid-change-base-revision-id", "change proposal base revision identity")
 
 malformedChangePropose = DeepCopy(changeProposePayload)
 malformedChangePropose.BaseContextRevisionId = "fcs32:1234567"
@@ -803,12 +789,7 @@ AssertError(payloadValid, payloadError, "invalid-change-result-revision-id", "ch
 malformedChangeResult = MakeChangeResultPayload("applied")
 malformedChangeResult.ContextRevisionId = "fcs32:ABCDEF12"
 payloadValid, payloadError = protocol.ValidatePayload("CHANGE_RESULT", malformedChangeResult)
-AssertError(
-    payloadValid,
-    payloadError,
-    "invalid-change-result-context-revision-id",
-    "change result context identity"
-)
+AssertError(payloadValid, payloadError, "invalid-change-result-context-revision-id", "change result context identity")
 
 malformedChangeResult = MakeChangeResultPayload("unavailable")
 malformedChangeResult.Revision = 4

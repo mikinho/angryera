@@ -653,8 +653,7 @@ end
 -- @treturn boolean canceled Whether a timer was pending.
 function AngryEra:CancelProtocolLeadershipRosterReconcile()
     local canceled = CancelLeadershipRosterReconcileTimer(self)
-    self._leadershipRosterReconcileGeneration =
-        (self._leadershipRosterReconcileGeneration or 0) + 1
+    self._leadershipRosterReconcileGeneration = (self._leadershipRosterReconcileGeneration or 0) + 1
     self._leadershipRosterReconcilePending = false
     self._leadershipRosterReconcileAttempts = 0
     return canceled
@@ -670,15 +669,10 @@ local function ScheduleLeadershipRosterReconcile(self)
     end
 
     CancelLeadershipRosterReconcileTimer(self)
-    self._leadershipRosterReconcileGeneration =
-        (self._leadershipRosterReconcileGeneration or 0) + 1
+    self._leadershipRosterReconcileGeneration = (self._leadershipRosterReconcileGeneration or 0) + 1
     local generation = self._leadershipRosterReconcileGeneration
     local timer =
-        self:ScheduleTimer(
-            "RetryProtocolLeadershipRosterReconcile",
-            leadershipRosterReconcileDelay,
-            generation
-        )
+        self:ScheduleTimer("RetryProtocolLeadershipRosterReconcile", leadershipRosterReconcileDelay, generation)
     if not timer then
         return false, "leadership-reconcile-schedule-failed"
     end
@@ -710,10 +704,7 @@ end
 -- @treturn table|string resultOrStatus
 -- @treturn string|nil schedulingError
 function AngryEra:RunProtocolLeadershipRosterReconcile(generation, timerDriven)
-    if
-        self._leadershipRosterReconcilePending ~= true
-        or generation ~= self._leadershipRosterReconcileGeneration
-    then
+    if self._leadershipRosterReconcilePending ~= true or generation ~= self._leadershipRosterReconcileGeneration then
         return true, "superseded"
     end
 
@@ -724,10 +715,7 @@ function AngryEra:RunProtocolLeadershipRosterReconcile(generation, timerDriven)
     end
 
     local completedAttempts = self._leadershipRosterReconcileAttempts or 0
-    if
-        timerDriven ~= true
-        and completedAttempts >= leadershipRosterReconcileMaxAttempts - 1
-    then
+    if timerDriven ~= true and completedAttempts >= leadershipRosterReconcileMaxAttempts - 1 then
         local scheduled, scheduleResult = ScheduleLeadershipRosterReconcile(self)
         return true, "awaiting-timer", scheduled and nil or scheduleResult
     end
@@ -783,8 +771,7 @@ function AngryEra:OnEnable()
         self:RegisterComm(pageProtocolPrefix, "ReceiveProtocolMessage")
         self:RegisterComm(activePageProtocolPrefix, "ReceiveProtocolMessage")
         AngryEra._protocolStarted = true
-        local localAuthority =
-            type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
+        local localAuthority = type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
         local discoverySent
         local discoveryResult
         if localAuthority then
@@ -796,8 +783,7 @@ function AngryEra:OnEnable()
         if not localAuthority and type(self.SendRequestDisplay) == "function" then
             discoverySent, discoveryResult = self:SendRequestDisplay()
         end
-        AngryEra._startupDiscoveryRetryNeeded =
-            discoverySent ~= true and discoveryResult ~= "shared-display-disabled"
+        AngryEra._startupDiscoveryRetryNeeded = discoverySent ~= true and discoveryResult ~= "shared-display-disabled"
     end
 
     self:ScheduleTimer("AfterEnable", 4)
@@ -865,8 +851,7 @@ end
 
 function AngryEra:GROUP_JOINED()
     local preserveLeadershipReconcile = self._leadershipRosterReconcilePending == true
-    local preservedLeadershipReconcileAttempts =
-        self._leadershipRosterReconcileAttempts or 0
+    local preservedLeadershipReconcileAttempts = self._leadershipRosterReconcileAttempts or 0
     self:CancelProtocolLeadershipRosterReconcile()
     if type(self.DiscardDisplayAuthorityRecovery) == "function" then
         self:DiscardDisplayAuthorityRecovery()
@@ -890,8 +875,7 @@ function AngryEra:GROUP_JOINED()
     self:UpdateDisplayedIfNewGroup()
     if preserveLeadershipReconcile and self._protocolStarted then
         self:StartProtocolLeadershipRosterReconcile()
-        self._leadershipRosterReconcileAttempts =
-            preservedLeadershipReconcileAttempts
+        self._leadershipRosterReconcileAttempts = preservedLeadershipReconcileAttempts
     end
 end
 
@@ -979,9 +963,7 @@ function AngryEra:GROUP_ROSTER_UPDATE()
     else
         self:PruneProtocolPeers()
         if reconcileLeadership then
-            self:RunProtocolLeadershipRosterReconcile(
-                self._leadershipRosterReconcileGeneration
-            )
+            self:RunProtocolLeadershipRosterReconcile(self._leadershipRosterReconcileGeneration)
         end
         self:UpdateDisplayedIfNewGroup()
         if type(self.RetryDisplayedNoteMarkers) == "function" then

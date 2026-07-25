@@ -426,8 +426,12 @@ AssertEqual(cached.AncestorVariableLayers[1].Vars, "raid=one", "cache retains an
 payload.AncestorVariableLayers[1].Vars = "packet mutation"
 payload.Page.Contents = "packet mutation"
 AssertEqual(remotePage.Contents, "Tank: One", "stored page is detached from packet")
-cached =
-    AngryEra:GetActivePageRenderContext(remotePageSyncId, remotePage.Revision, remotePage.RevisionId, result.ContextRevisionId)
+cached = AngryEra:GetActivePageRenderContext(
+    remotePageSyncId,
+    remotePage.Revision,
+    remotePage.RevisionId,
+    result.ContextRevisionId
+)
 AssertEqual(cached.Page.Contents, "Tank: One", "cached page is detached from packet")
 cached.AncestorVariableLayers[1].Vars = "caller mutation"
 AssertEqual(
@@ -1787,8 +1791,10 @@ do
     unavailableProposal.SyncId = otherInstallationId .. ":page:99"
     accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, unavailableProposal)
     Assert(accepted and result.Status == "unavailable" and not result.Applied, result)
-    Assert(result.Revision == nil and result.RevisionId == nil and result.ContextRevisionId == nil,
-        "unavailable result omits an exact reference")
+    Assert(
+        result.Revision == nil and result.RevisionId == nil and result.ContextRevisionId == nil,
+        "unavailable result omits an exact reference"
+    )
 
     proposalA, proposalError = AngryEra:BuildActivePageChangeProposal(1, {
         Name = "Canonical Assignments",
@@ -1881,10 +1887,13 @@ end
 do
     ResetStorage()
     local formerN2 = MakePayload(2, "Former leader N+1", "raid=handoff")
-    accepted, result = AngryEra:AcceptActivePageUpsert(Auth({
-        Sender = "FormerLeader",
-        SenderSessionId = "former_tenure",
-    }), formerN2)
+    accepted, result = AngryEra:AcceptActivePageUpsert(
+        Auth({
+            Sender = "FormerLeader",
+            SenderSessionId = "former_tenure",
+        }),
+        formerN2
+    )
     Assert(accepted and result.Applied, result)
     local remoteId = result.LocalId
     AngryAssign_Pages[remoteId].Backup = "receiver-private-backup"

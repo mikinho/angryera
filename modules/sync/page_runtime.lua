@@ -1609,8 +1609,7 @@ local function ApplyPageChangeProposal(self, auth, proposal)
     if not capture then
         return false, captureError
     end
-    local indexed, currentPayload, contextError =
-        ActiveProposalContext(capture, safeProposal.SyncId, hashCallback)
+    local indexed, currentPayload, contextError = ActiveProposalContext(capture, safeProposal.SyncId, hashCallback)
     if not indexed then
         if contextError == "page-change-unavailable" or contextError == "page-change-context-unavailable" then
             return true, BuildChangeProposalResult("unavailable", safeProposal.SyncId)
@@ -2166,8 +2165,7 @@ local function AcceptChangedLocalOwnerCommit(self, capture, auth, payload, exist
     then
         return false, "stale-active-page-state"
     end
-    local committed, commitError =
-        CommitPageState(self, capture, nextPages, capture.Meta, nextIndexes, nextContexts)
+    local committed, commitError = CommitPageState(self, capture, nextPages, capture.Meta, nextIndexes, nextContexts)
     if not committed then
         return false, commitError
     end

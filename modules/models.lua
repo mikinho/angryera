@@ -155,10 +155,7 @@ local function SubmitSharedPageMutation(self, id, page, changedField, changedVal
         -- tuple is unavailable, must never fall through to in-place mutation.
         if
             IsLocallyOwnedPage(self, page)
-            and (
-                type(AngryAssign_State) ~= "table"
-                or rawget(AngryAssign_State, "displayed") ~= id
-            )
+            and (type(AngryAssign_State) ~= "table" or rawget(AngryAssign_State, "displayed") ~= id)
         then
             return nil, nil, false
         end
@@ -216,9 +213,7 @@ end
 
 local function CanonicalPageMatchesDesired(page, desired)
     local canonical = DesiredPageState(page)
-    return canonical.Name == desired.Name
-        and canonical.Vars == desired.Vars
-        and canonical.Contents == desired.Contents
+    return canonical.Name == desired.Name and canonical.Vars == desired.Vars and canonical.Contents == desired.Contents
 end
 
 local function ClearMatchingRetainedDesired(self, syncId)
@@ -824,8 +819,7 @@ function AngryEra:RenamePage(id, nameOrFrame)
         return false, err, false
     end
 
-    local submitted, submitResult, proposed, retainedDesired =
-        SubmitSharedPageMutation(self, id, page, "Name", name)
+    local submitted, submitResult, proposed, retainedDesired = SubmitSharedPageMutation(self, id, page, "Name", name)
     if proposed then
         return submitted, submitResult, true
     end
@@ -1107,8 +1101,7 @@ function AngryEra:UpdatePageVars(id, value)
         return false, "Permission denied.", false
     end
 
-    local submitted, submitResult, proposed, retainedDesired =
-        SubmitSharedPageMutation(self, id, page, "Vars", value)
+    local submitted, submitResult, proposed, retainedDesired = SubmitSharedPageMutation(self, id, page, "Vars", value)
     if proposed then
         return submitted, submitResult, true
     end

@@ -187,12 +187,13 @@ function AngryEra:RefreshProtocolLeadershipTenure(_, force)
         tenureRotationCount = tenureRotationCount + 1
     end
     tenureLocalAuthority = isRaidLeader
-    return true, {
-        Changed = changed or force == true,
-        LocalAuthority = isRaidLeader,
-        PendingDisplayBootstrap = not isRaidLeader and refreshPendingDisplayBootstrap,
-        Rotated = rotated,
-    }
+    return true,
+        {
+            Changed = changed or force == true,
+            LocalAuthority = isRaidLeader,
+            PendingDisplayBootstrap = not isRaidLeader and refreshPendingDisplayBootstrap,
+            Rotated = rotated,
+        }
 end
 
 function AngryEra:UpdateDisplayedIfNewGroup()
@@ -330,9 +331,7 @@ assert(
     "startup should capture display continuity, clear follower state, start protocol, and attempt authority restore"
 )
 assert(
-    startupRequestIndex
-        and not startupQueryIndex
-        and restoreIndex < startupRequestIndex,
+    startupRequestIndex and not startupQueryIndex and restoreIndex < startupRequestIndex,
     "a follower should request the current display immediately after registered startup restore"
 )
 assert(
@@ -447,10 +446,7 @@ calls = {}
 protocolDisplayAuthority = nil
 local lifecycleSent, lifecycleMessageId = AngryEra:SendRequestDisplayIfUnbound()
 assert(
-    lifecycleSent
-        and lifecycleMessageId == "display-request-id"
-        and #calls == 1
-        and calls[1].Name == "request-display",
+    lifecycleSent and lifecycleMessageId == "display-request-id" and #calls == 1 and calls[1].Name == "request-display",
     "an unbound delayed lifecycle callback should issue exactly one request"
 )
 
@@ -482,16 +478,14 @@ for _, call in ipairs(calls) do
     )
 end
 assert(
-    tenureRotationCount == rotationsBeforeSettledPromotion
-        and AngryEra._leadershipRosterReconcilePending == true,
+    tenureRotationCount == rotationsBeforeSettledPromotion and AngryEra._leadershipRosterReconcilePending == true,
     "the stale leader event should defer one settled-roster reconciliation without rotating"
 )
 
 calls = {}
 AngryEra:GROUP_ROSTER_UPDATE()
 assert(
-    tenureRotationCount == rotationsBeforeSettledPromotion
-        and AngryEra._leadershipRosterReconcilePending == true,
+    tenureRotationCount == rotationsBeforeSettledPromotion and AngryEra._leadershipRosterReconcilePending == true,
     "a still-stale first roster callback should retain the bounded reconciliation"
 )
 
@@ -538,8 +532,7 @@ calls = {}
 local rotationsBeforeSettledDemotion = tenureRotationCount
 AngryEra:PARTY_LEADER_CHANGED()
 assert(
-    tenureRotationCount == rotationsBeforeSettledDemotion + 1
-        and AngryEra._leadershipRosterReconcilePending == true,
+    tenureRotationCount == rotationsBeforeSettledDemotion + 1 and AngryEra._leadershipRosterReconcilePending == true,
     "a stale local-leader demotion event should retain a settled-roster correction"
 )
 calls = {}
@@ -582,10 +575,7 @@ for _, call in ipairs(calls) do
         settledFollowerRequests = settledFollowerRequests + 1
     end
 end
-assert(
-    settledFollowerRequests == 1,
-    "an unbound follower should re-resolve the leader once after roster roles settle"
-)
+assert(settledFollowerRequests == 1, "an unbound follower should re-resolve the leader once after roster roles settle")
 assert(
     AngryEra._leadershipRosterReconcilePending == true,
     "an unresolved first follower bootstrap should retain one bounded settled-roster check"
@@ -608,8 +598,7 @@ for _, call in ipairs(calls) do
     assert(call.Name ~= "request-display", "a bound follower must remain quiet through the final bounded check")
 end
 assert(
-    AngryEra._leadershipRosterReconcilePending == true
-        and AngryEra._leadershipRosterReconcileAttempts == 2,
+    AngryEra._leadershipRosterReconcilePending == true and AngryEra._leadershipRosterReconcileAttempts == 2,
     "roster evidence should reserve the terminal reconciliation for its trailing timer"
 )
 local settledFollowerTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
@@ -693,9 +682,7 @@ calls = {}
 AngryEra:GROUP_ROSTER_UPDATE()
 local demotionFallbackTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
 assert(
-    demotionEventTimer.Active == false
-        and demotionFallbackTimer ~= demotionEventTimer
-        and demotionFallbackTimer.Active,
+    demotionEventTimer.Active == false and demotionFallbackTimer ~= demotionEventTimer and demotionFallbackTimer.Active,
     "a stale leader roster should re-arm the demotion correction"
 )
 isRaidLeader = false
@@ -772,9 +759,7 @@ assert(
 AngryEra:GROUP_JOINED()
 local postJoinTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
 assert(
-    preJoinTimer.Active == false
-        and postJoinTimer.Active
-        and postJoinTimer.Arguments[1] ~= preJoinGeneration,
+    preJoinTimer.Active == false and postJoinTimer.Active and postJoinTimer.Arguments[1] ~= preJoinGeneration,
     "GROUP_JOINED should preserve the boundary under a fresh timer generation"
 )
 assert(
@@ -819,10 +804,7 @@ assert(
 )
 calls = {}
 FireTimer(preEnableTimer)
-assert(
-    CountCalls("refresh-tenure") == 0,
-    "a callback captured before OnEnable must not enter the new protocol session"
-)
+assert(CountCalls("refresh-tenure") == 0, "a callback captured before OnEnable must not enter the new protocol session")
 
 -- Stable evidence is bounded to exactly three total attempts, regardless of
 -- whether those attempts are event-driven or timer-driven.
@@ -900,8 +882,7 @@ assert(
     "leader changes must force an epoch boundary and narrowly reset queued authority publication"
 )
 assert(
-    calls[5].Name == "cancel-display-request-watchdog"
-        and calls[6].Name == "request-display",
+    calls[5].Name == "cancel-display-request-watchdog" and calls[6].Name == "request-display",
     "a hard follower boundary should discard stale watchdog state before requesting the new leader"
 )
 for _, call in ipairs(calls) do
@@ -947,9 +928,7 @@ for _, call in ipairs(calls) do
     end
 end
 assert(
-    AngryEra._protocolStarted
-        and AngryEra._startupDiscoveryRetryNeeded == false
-        and disabledStartupRequests == 1,
+    AngryEra._protocolStarted and AngryEra._startupDiscoveryRetryNeeded == false and disabledStartupRequests == 1,
     "ignoreShared startup should make one gated check without arming delayed discovery"
 )
 calls = {}
