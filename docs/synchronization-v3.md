@@ -98,8 +98,9 @@ Additional rules:
   capabilities are untrusted lifecycle metadata, never credentials.
 - Authorization is checked when a message arrives and again immediately before
   an atomic manifest or delta commits.
-- Receiver trust modes are `standard` (leader plus qualified assistants),
-  `leader-only`, and `ignore`. `Allow All Assistants` is a separate override.
+- The receiver trust mode is stored as `receiveMode`, one of `standard`
+  (leader plus qualified assistants), `leaderOnly`, or `ignoreShared`.
+  `Allow All Assistants` is a separate override.
 
 Assistants may add, edit, rename, and reorder only inside a leader-established
 synchronization scope. Moving an entity out of scope, moving it across scopes,
@@ -168,7 +169,8 @@ variables.
 
 The protocol version is independent from the addon release version. This
 contract introduces protocol version `3`, the `AngryEra3` data prefix, and the
-`AngryEra3D` display-control prefix. Proactive active-page snapshots use the
+`AngryEra3D` display-control prefix. Correlated and whispered page transfers use
+the `AngryEra3C` compact page prefix, and proactive active-page snapshots use the
 `AngryEra3P` replaceable page prefix.
 
 All messages use a named envelope. Each addon enable creates an in-memory
@@ -246,9 +248,10 @@ types carry the current millisecond stamp without consuming the display-order
 counter.
 
 `DISPLAY` is the only message type allowed on `AngryEra3D`. `AngryEra3P`
-accepts only an uncorrelated group `PAGE_UPSERT`; correlated replies and other
-data remain on `AngryEra3`. Prefix/type mismatches are rejected before
-dispatch. Display control and proactive active-page frames use `ALERT`, while
+accepts only an uncorrelated group `PAGE_UPSERT`, while every correlated or
+whispered `PAGE_UPSERT` uses `AngryEra3C`; all other data remains on `AngryEra3`,
+and a `PAGE_UPSERT` on the generic prefix is rejected. Prefix/type mismatches are
+rejected before dispatch. Display control and proactive active-page frames use `ALERT`, while
 ordinary data remains `NORMAL`. Keeping each multipart stream on its own prefix
 prevents page data from blocking or interleaving with display selection
 messages, and compact display control never becomes multipart.
@@ -277,10 +280,11 @@ that session's active-page edit support even before a separate discovery reply.
 Automatic group discovery is leader-driven. At startup and whenever leadership
 rotates, only the current leader broadcasts `VERSION_QUERY`; each other client
 whispers at most one `VERSION` response. This keeps automatic discovery O(N)
-rather than having every member broadcast a query. A promoted leader starts a
-fresh protocol session for its leadership tenure. Demotion retires queued
-leader publication, and followers discard leader-bound correlations before
-binding traffic from the new tenure.
+rather than having every member broadcast a query. Automatic discovery is
+leader-only, but a manual version check invoked from the interface may also be
+run by a raid assistant. A promoted leader starts a fresh protocol session for
+its leadership tenure. Demotion retires queued leader publication, and followers
+discard leader-bound correlations before binding traffic from the new tenure.
 
 The initial message families are:
 
@@ -293,10 +297,15 @@ The initial message families are:
 - shared changes: `CHANGE_PROPOSE`, `CHANGE_RESULT`, `DELTA`,
   `DELTA_REQUEST`.
 
+Discovery, active display, and shared-change proposal families are implemented
+in this release. The scope-discovery, manifest-transfer, and `DELTA` families
+are reserved for later synchronization phases and are rejected as unknown types
+until then.
+
 The hard cutover registers and sends only the protocol-3 `AngryEra3`,
-`AngryEra3D`, and `AngryEra3P` prefixes. There is no positional protocol-1
-fallback. All three receive prefixes are registered immediately after the
-protocol session starts so a freshly loaded client has no delayed receive
+`AngryEra3C`, `AngryEra3D`, and `AngryEra3P` prefixes. There is no positional
+protocol-1 fallback. All four receive prefixes are registered immediately after
+the protocol session starts so a freshly loaded client has no delayed receive
 window.
 
 The current leader is the canonical authority. For the implemented active-page
