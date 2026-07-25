@@ -68,6 +68,13 @@ function AngryEra:ResetOfficerRank()
     Record("reset-officer-rank")
 end
 
+local guildDisplayRefreshes = 0
+function AngryEra:UpdateDisplayed()
+    guildDisplayRefreshes = guildDisplayRefreshes + 1
+end
+
+function AngryEra:UpdateGuildColors() end
+
 function AngryEra:CreateDisplay()
     Record("create-display")
 end
@@ -966,5 +973,32 @@ for _, call in ipairs(calls) do
     )
 end
 AngryEra.StartProtocolSession = successfulStartProtocolSession
+
+do
+    AngryEra._guildDisplayRefreshTimer = nil
+    guildDisplayRefreshes = 0
+    local scheduledBefore = #scheduledTimers
+    AngryEra:GUILD_ROSTER_UPDATE(false)
+    local refreshTimer = scheduledTimers[#scheduledTimers]
+    assert(
+        #scheduledTimers == scheduledBefore + 1 and refreshTimer.Method == "GuildDisplayRefresh",
+        "a roster update should schedule one cancelable display refresh"
+    )
+    AngryEra:GUILD_ROSTER_UPDATE(false)
+    assert(#scheduledTimers == scheduledBefore + 1, "a pending refresh must not reschedule")
+    assert(AngryEra._guildDisplayRefreshTimer == refreshTimer, "the pending refresh token should be retained")
+
+    AngryEra:GuildDisplayRefresh()
+    assert(guildDisplayRefreshes == 1, "firing the refresh should redraw once")
+    assert(AngryEra._guildDisplayRefreshTimer == nil, "firing should clear the refresh token")
+
+    AngryEra:GUILD_ROSTER_UPDATE(false)
+    assert(
+        #scheduledTimers == scheduledBefore + 2,
+        "a settled refresh should allow the next roster update to reschedule"
+    )
+    assert(AngryEra:CancelTimer(AngryEra._guildDisplayRefreshTimer), "the refresh timer must be cancelable on disable")
+    AngryEra._guildDisplayRefreshTimer = nil
+end
 
 print("Initialization lifecycle tests passed.")

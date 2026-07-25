@@ -980,19 +980,22 @@ function AngryEra:PLAYER_GUILD_UPDATE()
     self:PermissionsUpdated()
 end
 
-local guildUpdatePending = false
+--- Coalesced guild-roster display refresh.
+-- Scheduled through AceTimer so a disable cancels it; a pending refresh is not
+-- rescheduled, collapsing a burst of roster updates into one redraw.
+function AngryEra:GuildDisplayRefresh()
+    self._guildDisplayRefreshTimer = nil
+    self:UpdateDisplayed()
+end
+
 function AngryEra:GUILD_ROSTER_UPDATE(...)
     local canRequestRosterUpdate = ...
     self:ResetOfficerRank()
     self:PermissionsUpdated()
     self:UpdateGuildColors()
 
-    if not guildUpdatePending then
-        guildUpdatePending = true
-        C_Timer.After(2, function()
-            guildUpdatePending = false
-            self:UpdateDisplayed()
-        end)
+    if not self._guildDisplayRefreshTimer and type(self.ScheduleTimer) == "function" then
+        self._guildDisplayRefreshTimer = self:ScheduleTimer("GuildDisplayRefresh", 2)
     end
 
     if canRequestRosterUpdate and isClassic then
