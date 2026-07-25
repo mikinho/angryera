@@ -97,6 +97,18 @@ function AngryEra:Print(message)
     printedMessages[#printedMessages + 1] = message
 end
 
+local syncTraces = {}
+local syncDebugEnabled = false
+function AngryEra:IsSyncDebugEnabled()
+    return syncDebugEnabled
+end
+function AngryEra:SyncDebug(stage, formatText, ...)
+    if not syncDebugEnabled then
+        return
+    end
+    syncTraces[#syncTraces + 1] = { Stage = stage, Text = string.format(formatText, ...) }
+end
+
 _G.AngryAssign_Meta = {
     InstallationId = localInstallationId,
     EntityLocal = {},
@@ -491,5 +503,23 @@ displayLocalSuccess = false
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
 assert(advanced == false and result == "display-failed", "local display failures should be reported")
 assert(#timers == 0, "local activation failure must not schedule publication retries")
+
+-- Auto-advance decisions are visible through sync debug tracing.
+Reset(10, { AUTOADVANCE = true })
+syncDebugEnabled = true
+syncTraces = {}
+advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 0)
+assert(advanced == false and result == "encounter-not-defeated", "a wipe must not advance")
+assert(#syncTraces == 1 and syncTraces[1].Text:find("encounter%-not%-defeated"), "a wipe outcome should be traced")
+
+syncTraces = {}
+advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
+assert(advanced == true, "a kill should advance")
+assert(#syncTraces == 1 and syncTraces[1].Text:find("advanced=true"), "a successful advance should be traced")
+
+syncDebugEnabled = false
+syncTraces = {}
+advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 0)
+assert(#syncTraces == 0, "tracing must stay silent when debug is disabled")
 
 print("Auto advance tests passed.")

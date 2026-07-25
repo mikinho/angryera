@@ -27,6 +27,12 @@ local function IsPlainTable(value)
     return type(value) == "table"
 end
 
+local function TraceAutoAdvance(self, stage, formatText, ...)
+    if type(self.SyncDebug) == "function" then
+        self:SyncDebug(stage, formatText, ...)
+    end
+end
+
 local function GetMetaValue(meta, canonicalKey)
     if not IsPlainTable(meta) then
         return nil
@@ -501,10 +507,34 @@ end
 -- their own display while previewing.
 function AngryEra:ENCOUNTER_END(_, encounterId, encounterName, _, _, success)
     if success ~= 1 and success ~= true then
+        TraceAutoAdvance(
+            self,
+            "auto-advance",
+            "encounter=%s id=%s reason=encounter-not-defeated",
+            tostring(encounterName),
+            tostring(encounterId)
+        )
         return false, "encounter-not-defeated"
     end
     if (IsInRaid() or IsInGroup()) and not self:IsPlayerRaidLeader() then
+        TraceAutoAdvance(
+            self,
+            "auto-advance",
+            "encounter=%s id=%s reason=not-raid-leader",
+            tostring(encounterName),
+            tostring(encounterId)
+        )
         return false, "not-raid-leader"
     end
-    return self:AdvanceDisplayedPageAfterEncounter(encounterId, encounterName)
+    local advanced, result = self:AdvanceDisplayedPageAfterEncounter(encounterId, encounterName)
+    TraceAutoAdvance(
+        self,
+        "auto-advance",
+        "encounter=%s id=%s advanced=%s result=%s",
+        tostring(encounterName),
+        tostring(encounterId),
+        tostring(advanced == true),
+        tostring(result)
+    )
+    return advanced, result
 end
