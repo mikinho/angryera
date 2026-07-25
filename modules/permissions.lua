@@ -188,7 +188,10 @@ function AngryEra:IsDirectlyAllowlisted(player)
         return false
     end
 
-    local configured = self:GetConfig("trustedPublishers") or ""
+    local configured = self:GetConfig("trustedPublishers")
+    if type(configured) ~= "string" then
+        return false
+    end
     for token in configured:gmatch("[^,%s;]+") do
         if NormalizePlayerName(token) == normalizedName then
             return true

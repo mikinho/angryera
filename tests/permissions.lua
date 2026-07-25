@@ -197,6 +197,12 @@ SetRoster({
     { name = "DirectMember-Realm", rank = 0 },
 })
 assert(AngryEra:CanReceiveFrom("DirectAssist-Realm", "changeProposal"), "A directly trusted assistant should qualify")
+config.trustedPublishers = 12345
+assert(
+    not AngryEra:CanReceiveFrom("DirectAssist-Realm", "changeProposal"),
+    "A non-string trusted-publisher config must deny rather than error"
+)
+config.trustedPublishers = "DirectAssist-Realm"
 assert(not AngryEra:CanReceiveFrom("DirectAssist-Realm", "pageUpsert"), "Direct trust must not grant commit authority")
 assert(not AngryEra:CanReceiveFrom("DirectAssist-Realm", "display"), "Direct trust must not grant display control")
 config.trustedPublishers = "DirectMember-Realm"
