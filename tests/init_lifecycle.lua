@@ -159,10 +159,6 @@ function AngryEra:ResetCurrentGroup()
     Record("reset-current-group")
 end
 
-function AngryEra:ResetPermissionWarning()
-    Record("reset-permission-warning")
-end
-
 function AngryEra:SendProtocolVersionQuery(force)
     Record("version-query", force)
     return versionQuerySucceeds, versionQuerySucceeds and "query-id" or "query-failed"

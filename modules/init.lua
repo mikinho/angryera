@@ -961,7 +961,6 @@ function AngryEra:GROUP_ROSTER_UPDATE()
         end
         self:ClearDisplayed()
         self:ResetCurrentGroup()
-        self:ResetPermissionWarning()
         self:ResetProtocolPeers()
     else
         self:PruneProtocolPeers()

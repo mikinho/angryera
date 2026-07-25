@@ -13,7 +13,6 @@ local IterateGroupMembers = helpers.IterateGroupMembers
 
 local PERMISSION_POLICY_VERSION = 1
 local guildOfficerNames
-local warnedPermission = false
 
 local NORMAL_ACTIONS = {
     categoryUpsert = true,
@@ -58,25 +57,6 @@ end
 
 local function IsKnownAction(action)
     return NORMAL_ACTIONS[action] or LEADER_ONLY_ACTIONS[action] or NON_MUTATING_ACTIONS[action]
-end
-
---- Resets the one-time permission warning flag.
-function AngryEra:ResetPermissionWarning()
-    warnedPermission = false
-end
-
---- Prints a one-time warning when an inbound update fails permission checks.
--- @tparam string sender Sender unit name.
-function AngryEra:PermissionCheckFailError(sender)
-    if not warnedPermission then
-        self:Print(
-            RED_FONT_COLOR_CODE
-                .. "You have received a shared update from "
-                .. Ambiguate(sender, "none")
-                .. " that was rejected due to insufficient permissions. If you wish to see this page, please adjust your permission settings.|r"
-        )
-        warnedPermission = true
-    end
 end
 
 --- Rebuilds the receiver-local set of guild officers and higher roles.
@@ -347,11 +327,6 @@ function AngryEra:IsPlayerRaidLeader()
     return self:GetGroupRole(PlayerFullName()) == "leader"
 end
 
-function AngryEra:IsGuildRaid()
-    local leader = self:GetRaidLeader()
-    return leader and self:IsGuildOfficer(leader) or false
-end
-
 --- Returns whether this receiver accepts shared display/page state from its leader.
 function AngryEra:IsValidRaid()
     if not IsGrouped() then
@@ -359,14 +334,6 @@ function AngryEra:IsValidRaid()
     end
     local leader = self:GetRaidLeader()
     return leader and self:CanReceiveFrom(leader, "display") or false
-end
-
---- Legacy compatibility wrapper for existing local and inbound call sites.
-function AngryEra:PermissionCheck(sender)
-    if sender then
-        return self:CanReceiveFrom(sender, "pageUpsert")
-    end
-    return self:CanLocalPlayerPublish("pageUpsert")
 end
 
 --- Migrates legacy permission settings to sender-specific policy.
