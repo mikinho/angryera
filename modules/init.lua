@@ -84,33 +84,33 @@ _G.AngryAssign_Meta = _G.AngryAssign_Meta
 --- Addon initialization hook.
 -- Creates saved variable tables, migrates legacy category data, and registers options.
 function AngryEra:OnInitialize()
-    if AngryAssign_State == nil then
+    if type(AngryAssign_State) ~= "table" then
         AngryAssign_State =
             { tree = {}, window = {}, display = {}, displayed = nil, locked = false, directionUp = false }
     end
-    if AngryAssign_Pages == nil then
+    if type(AngryAssign_Pages) ~= "table" then
         AngryAssign_Pages = {}
     end
-    if AngryAssign_Config == nil then
+    if type(AngryAssign_Config) ~= "table" then
         AngryAssign_Config = {}
     end
-    if AngryAssign_Templates == nil then
+    if type(AngryAssign_Templates) ~= "table" then
         AngryAssign_Templates = {}
     end
-    if AngryAssign_Categories == nil then
+    if type(AngryAssign_Categories) ~= "table" then
         AngryAssign_Categories = {}
-    else
-        for _, cat in pairs(AngryAssign_Categories) do
-            if cat.Children then
-                for _, pageId in ipairs(cat.Children) do
-                    local page = AngryAssign_Pages[pageId]
-                    if page then
-                        page.CategoryId = cat.Id
-                    end
+    end
+    self:RemoveInvalidEntityRecords()
+    for _, cat in pairs(AngryAssign_Categories) do
+        if type(cat.Children) == "table" then
+            for _, pageId in ipairs(cat.Children) do
+                local page = AngryAssign_Pages[pageId]
+                if page then
+                    page.CategoryId = cat.Id
                 end
-                cat.Children = nil
             end
         end
+        cat.Children = nil
     end
 
     self:InitializeIdentityStorage()

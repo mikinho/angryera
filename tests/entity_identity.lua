@@ -192,4 +192,24 @@ local retiredSyncId = replacement.SyncId
 AngryEra:RemovePageRecord(replacement.Id)
 assert(AngryAssign_Meta.EntityLocal[retiredSyncId].DeletedLocally, "Removed local identity should remain retired")
 
+AngryAssign_Pages[9001] = 42
+AngryAssign_Pages[9002] = "corrupt"
+AngryAssign_Categories[9003] = false
+local removed = AngryEra:RemoveInvalidEntityRecords()
+assert(removed == 3, "invalid saved records should be dropped before migrations run")
+assert(
+    AngryAssign_Pages[9001] == nil and AngryAssign_Pages[9002] == nil and AngryAssign_Categories[9003] == nil,
+    "dropped records must not remain in storage"
+)
+assert(AngryEra:RemoveInvalidEntityRecords() == 0, "record cleanup should be idempotent")
+
+AngryAssign_Pages[9004] = 7
+AngryAssign_Meta.Migrations.EntityIdentity = nil
+AngryEra:RemoveInvalidEntityRecords()
+AngryEra:MigrateEntityIdentities()
+assert(
+    AngryAssign_Meta.Migrations.EntityIdentity ~= nil,
+    "identity migration should complete after invalid records are removed"
+)
+
 print("Entity identity tests passed.")

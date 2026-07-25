@@ -589,6 +589,31 @@ function AngryEra:ForgetEntityIdentity(entityOrSyncId, kind)
     end
 end
 
+--- Removes saved entity records that are not tables.
+-- Corrupt or hand-edited SavedVariables must not abort initialization, so
+-- invalid records are dropped before any migration dereferences them.
+-- @treturn number removed Count of dropped records.
+function AngryEra:RemoveInvalidEntityRecords()
+    local removed = 0
+    for _, kind in ipairs({ "category", "page" }) do
+        local records = GetRecords(kind)
+        if type(records) == "table" then
+            for id, record in pairs(records) do
+                if type(record) ~= "table" then
+                    records[id] = nil
+                    removed = removed + 1
+                end
+            end
+        end
+    end
+    if removed > 0 and type(self.Print) == "function" then
+        local red = type(RED_FONT_COLOR_CODE) == "string" and RED_FONT_COLOR_CODE or ""
+        local reset = red ~= "" and "|r" or ""
+        self:Print(red .. "Removed " .. removed .. " invalid saved records." .. reset)
+    end
+    return removed
+end
+
 --- Removes a page record and its identity registration.
 function AngryEra:RemovePageRecord(id)
     local page = AngryAssign_Pages[id]
