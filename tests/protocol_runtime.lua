@@ -986,6 +986,18 @@ currentTime = currentTime + 2
 sent, result = AngryEra:SendProtocolVersionQuery(true)
 assert(sent, result)
 local queryMessageId = result
+
+do
+    local genericLimits = AngryEra:GetProtocolGenericWireLimits()
+    assert(
+        genericLimits.SerializedBytes <= genericLimits.CompressedBytes,
+        "untrusted generic traffic must not decompress beyond the accepted compressed ceiling"
+    )
+    assert(
+        genericLimits.SerializedBytes < protocol.WIRE_LIMITS.SerializedBytes,
+        "the generic decode ceiling must be tighter than the absolute wire ceiling"
+    )
+end
 local queryTransport, localQueryEnvelope = DecodeSent()
 assert(queryTransport.Channel == "RAID", "A raid query should broadcast to RAID")
 assert(queryTransport.Priority == "ALERT", "leader discovery control should bypass queued page data")

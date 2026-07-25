@@ -1296,6 +1296,16 @@ local CONTROL_WIRE_LIMITS = {
     SerializedBytes = 1024,
 }
 
+-- Untrusted generic-prefix traffic is authorized by type only after decoding.
+-- Bounding the decompressed size to the accepted compressed ceiling removes the
+-- amplification headroom while still admitting the largest legitimate payload
+-- (a full-page CHANGE_PROPOSE/CHANGE_RESULT, far below this cap).
+local GENERIC_WIRE_LIMITS = {
+    EncodedBytes = protocol.WIRE_LIMITS.EncodedBytes,
+    CompressedBytes = protocol.WIRE_LIMITS.CompressedBytes,
+    SerializedBytes = protocol.WIRE_LIMITS.CompressedBytes,
+}
+
 local function HasControlZlibHeader(encoded)
     if type(encoded) ~= "string" or #encoded > CONTROL_WIRE_LIMITS.EncodedBytes then
         return false
@@ -2258,6 +2268,12 @@ end
 --- Returns a detached copy of the authority-control wire limits.
 function AngryEra:GetProtocolControlWireLimits()
     return CopyMap(CONTROL_WIRE_LIMITS)
+end
+
+--- Returns the decode limits applied to untrusted generic-prefix traffic.
+-- @treturn table limits Encoded, compressed, and serialized byte ceilings.
+function AngryEra:GetProtocolGenericWireLimits()
+    return CopyMap(GENERIC_WIRE_LIMITS)
 end
 
 --- Starts a fresh ephemeral protocol session and clears transport-bound state.
@@ -3991,7 +4007,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
             decodeError = "invalid-transport-message-type"
         end
     else
-        envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec)
+        envelope, decodeError = protocol.DecodeEnvelope(data, protocolCodec, GENERIC_WIRE_LIMITS)
         if not envelope and decodeError == "decompress-failed" and HasControlZlibHeader(data) then
             local controlEnvelope, controlDecodeError = protocol.DecodeEnvelope(data, controlCodec, CONTROL_WIRE_LIMITS)
             if controlEnvelope then
