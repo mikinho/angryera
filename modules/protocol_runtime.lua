@@ -2962,8 +2962,8 @@ end
 
 --- Broadcasts a correlated protocol-v3 version query.
 function AngryEra:SendProtocolVersionQuery(force)
-    if not IsLocalDisplayAuthority(self) then
-        return false, "not-raid-leader"
+    if not self:CanLocalPlayerQueryVersions() then
+        return false, "insufficient-role"
     end
     local now = Now()
     CleanupPendingQueries(now)
@@ -4094,15 +4094,19 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     if not action or not SafeCanReceive(self, sender, action) then
         return false, "unauthorized"
     end
-    if envelope.Type == "VERSION_QUERY" and role ~= "leader" then
+    if envelope.Type == "VERSION_QUERY" and role ~= "leader" and role ~= "assistant" then
         return false, "unauthorized"
     end
-    if envelope.Type == "VERSION_QUERY" and not IsLocalDisplayAuthority(self) and IsRetiredDisplayAuthority(auth) then
+    -- An assistant may run version discovery, but only a leader-role query is a
+    -- display-authority signal. Assistant queries are pure diagnostics and never
+    -- rebind, retire, or advance tenure state.
+    local versionQueryFromLeader = envelope.Type == "VERSION_QUERY" and role == "leader"
+    if versionQueryFromLeader and not IsLocalDisplayAuthority(self) and IsRetiredDisplayAuthority(auth) then
         return false, "stale-display-authority"
     end
     if
         not IsLocalDisplayAuthority(self)
-        and (envelope.Type == "VERSION_QUERY" or LEADER_TENURE_MESSAGE_TYPES[envelope.Type])
+        and (versionQueryFromLeader or LEADER_TENURE_MESSAGE_TYPES[envelope.Type])
         and IsStaleDisplayAuthoritySignal(auth)
     then
         return false, "stale-display-authority"
@@ -4187,7 +4191,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         return false, "duplicate"
     end
 
-    if envelope.Type == "VERSION_QUERY" then
+    if versionQueryFromLeader then
         ObserveDisplayAuthoritySignal(auth)
     end
     local traceActivePage = debugEnabled and IsActivePageMessage(envelope.Type)

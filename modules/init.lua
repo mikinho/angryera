@@ -302,6 +302,8 @@ function AngryEra:OnInitialize()
                         if sent then
                             self:ScheduleTimer("VersionCheckOutput", 3, queryIdOrError)
                             self:Print("Version check running...")
+                        elseif queryIdOrError == "insufficient-role" then
+                            self:Print("Only the raid leader or a raid assistant can run the version check.")
                         else
                             self:Print("Unable to start version check: " .. tostring(queryIdOrError))
                         end

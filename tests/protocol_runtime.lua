@@ -255,6 +255,10 @@ function AngryEra:IsPlayerRaidLeader()
     return localDisplayAuthority
 end
 
+function AngryEra:CanLocalPlayerQueryVersions()
+    return localDisplayAuthority
+end
+
 function AngryEra:SendCommMessage(prefix, data, channel, target, priority, callback, callbackArg)
     sentMessages[#sentMessages + 1] = {
         Callback = callback,
@@ -3131,6 +3135,21 @@ local afterPruneQuery = BuildRemoteEnvelope("remote-query-after-prune", "VERSION
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, afterPruneQuery, "RAID", "Alpha-Realm")
 assert(accepted, result)
 members["alpha-realm"] = "assistant"
+
+members["delta-realm"] = "assistant"
+afterPruneQuery = BuildRemoteEnvelope(
+    "remote-assistant-query",
+    "VERSION_QUERY",
+    {},
+    { InstallationId = "ae3i:d:d:d:d" }
+)
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, afterPruneQuery, "RAID", "Delta-Realm")
+assert(accepted, "a raid assistant should be allowed to run a version query")
+members["delta-realm"] = "member"
+afterPruneQuery = BuildRemoteEnvelope("remote-member-query", "VERSION_QUERY", {}, { InstallationId = "ae3i:d:d:d:d" })
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, afterPruneQuery, "RAID", "Delta-Realm")
+AssertError(accepted, result, "unauthorized", "an ordinary member must not run a version query")
+members["delta-realm"] = nil
 
 sentMessages = {}
 instanceGroup = true

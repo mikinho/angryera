@@ -259,6 +259,16 @@ function AngryEra:CanLocalPlayerPublish(action)
     return role == "assistant"
 end
 
+--- Returns whether the local player may broadcast a version-check query.
+-- Version discovery is diagnostic. Raid/party leaders and raid assistants may
+-- run it; it never selects or mutates the shared display. Solo players resolve
+-- to the leader role, so the send later fails on channel selection instead.
+-- @treturn boolean allowed
+function AngryEra:CanLocalPlayerQueryVersions()
+    local role = self:GetGroupRole(PlayerFullName())
+    return role == "leader" or role == "assistant"
+end
+
 --- Returns whether the local player may output assignments to group chat.
 -- Chat output does not select the shared display. Raid/party leaders and raid
 -- assistants may output; ordinary members may not.

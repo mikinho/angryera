@@ -390,7 +390,7 @@ Adding `Group` to **Highlight** emphasizes your current group token, such as `G2
 | `/aa clear` | Clear the shared display as leader, or the local display otherwise. |
 | `/aa first` | Toggle to or from the first page in the active category. |
 | `/aa output` | Output the actively displayed page to group chat. |
-| `/aa version` | Check AngryEra versions in the current party or raid. |
+| `/aa version` | Check AngryEra versions in the current party or raid. Available to the leader and raid assistants. |
 | `/aa resetposition` | Reset the assignment display position and size. |
 | `/aa defaults` | Restore configuration defaults after confirmation. |
 | `/aa deleteall` | Permanently delete the local page library after confirmation. |
@@ -405,7 +405,7 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 1. Confirm every client is running this release; prior versions are incompatible.
 2. Confirm the sender is the current party or raid leader.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
-4. Run `/aa version` in the group.
+4. Have the leader or a raid assistant run `/aa version` in the group.
 5. Reload the affected client. It should request the active page automatically.
 6. If needed, enable `/aa debug on`, reproduce one page change, then disable it with `/aa debug off`.
 
