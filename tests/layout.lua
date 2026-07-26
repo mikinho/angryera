@@ -80,4 +80,36 @@ assert(single == "G2: [C]", "a named placeholder renders only that group")
 local untouched, none = layout.Expand("no tag", "G1: A", providers)
 assert(untouched == "no tag" and none == false, "text without a placeholder is unchanged")
 
+-- Auto-fill rules: class counts, subgroup references, and fill dedupe.
+present = {}
+classMembers = { MAGE = { "Mage1-Realm", "Mage2-Realm", "Mage3-Realm" } }
+local subgroups = { [2] = { "GroupTwoA-Realm", "GroupTwoB-Realm" } }
+providers.SubgroupMembers = function(n)
+    return subgroups[n] or {}
+end
+
+local counted = layout.Resolve(layout.Parse("G: *MAGE x2"), providers)
+assert(#counted.groups[1].members == 2, "a class count fills up to N members")
+assert(
+    counted.groups[1].members[1] == "Mage1-Realm" and counted.groups[1].members[2] == "Mage2-Realm",
+    "the count takes successive class members"
+)
+
+local ref = layout.Resolve(layout.Parse("Resist: group:2"), providers)
+assert(
+    #ref.groups[1].members == 2 and ref.groups[1].members[1] == "GroupTwoA-Realm",
+    "group:N references the live subgroup members"
+)
+
+-- A class fill skips an already-placed explicit name; explicit listings still honor the user.
+classMembers = { MAGE = { "Dup-Realm", "Mage2-Realm" } }
+local dedup = layout.Resolve(layout.Parse("G1: Dup-Realm, *MAGE; G2: Dup-Realm"), providers)
+assert(#dedup.groups[1].members == 2, "explicit name plus one distinct class fill")
+assert(dedup.groups[1].members[1] == "Dup-Realm", "the explicit name is placed")
+assert(dedup.groups[1].members[2] == "Mage2-Realm", "the class fill skips the already-placed member")
+assert(
+    #dedup.groups[2].members == 1 and dedup.groups[2].members[1] == "Dup-Realm",
+    "an explicit name may still be listed again by choice"
+)
+
 print("Layout tests passed.")

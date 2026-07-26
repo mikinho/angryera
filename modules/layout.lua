@@ -67,31 +67,55 @@ function layout.Parse(text)
     return model
 end
 
--- Resolves one slot string to a player name, or nil when nothing is available.
--- Marks the chosen name in `placed` so class fills never double-assign.
-local function ResolveSlot(slot, providers, placed)
-    local class, count = slot:match("^%*(%a+)%s*[xX]?%s*(%d*)$")
-    if class then
-        local members = type(providers.ClassMembers) == "function" and providers.ClassMembers(class:upper()) or nil
-        if type(members) ~= "table" then
-            return nil
-        end
-        for _, name in ipairs(members) do
-            if type(name) == "string" and not placed[name:lower()] then
-                return name
+-- Takes up to `count` present-and-alive, not-yet-placed names from a list.
+local function TakeAvailable(source, count, placed)
+    local taken = {}
+    if type(source) ~= "table" then
+        return taken
+    end
+    for _, name in ipairs(source) do
+        if type(name) == "string" and name ~= "" and not placed[name:lower()] then
+            taken[#taken + 1] = name
+            if #taken >= count then
+                break
             end
         end
-        return nil
+    end
+    return taken
+end
+
+-- Resolves one slot string to zero or more player names.
+-- A name or priority list yields one; `*CLASS`/`*CLASS xN`/`group:N` may yield
+-- several. `placed` (names already assigned this resolve) is honored for fills.
+local function ResolveSlotNames(slot, providers, placed)
+    local subgroupRef = slot:match("^[Gg][Rr][Oo][Uu][Pp]%s*:%s*([1-8])$")
+    if subgroupRef then
+        local members = type(providers.SubgroupMembers) == "function"
+                and providers.SubgroupMembers(tonumber(subgroupRef))
+            or nil
+        return TakeAvailable(members, math.huge, placed)
+    end
+
+    local class = slot:match("^%*(%a+)$")
+    local classN, countText = slot:match("^%*(%a+)%s+[xX]%s*(%d+)$")
+    if classN then
+        class = classN
+    end
+    if class then
+        local members = type(providers.ClassMembers) == "function" and providers.ClassMembers(class:upper()) or nil
+        return TakeAvailable(members, tonumber(countText) or 1, placed)
     end
 
     if slot:find(">", 1, true) then
-        if type(providers.ResolvePriorityValue) == "function" then
-            return (providers.ResolvePriorityValue(slot))
+        local resolved = type(providers.ResolvePriorityValue) == "function" and (providers.ResolvePriorityValue(slot))
+            or slot
+        if type(resolved) == "string" and resolved ~= "" then
+            return { resolved }
         end
-        return slot
+        return {}
     end
 
-    return slot
+    return { slot }
 end
 
 --- Resolves a layout model against the roster into groups of member names.
@@ -108,8 +132,10 @@ function layout.Resolve(model, providers)
     for _, group in ipairs(model.groups) do
         local members = {}
         for _, slot in ipairs(group.slots or {}) do
-            local name = ResolveSlot(slot, providers, placed)
-            if type(name) == "string" and name ~= "" then
+            -- Fills (class/subgroup) skip already-placed members via TakeAvailable;
+            -- explicit names and priority lists are always honored, and everything
+            -- marks `placed` so later fills never re-pick the same member.
+            for _, name in ipairs(ResolveSlotNames(slot, providers, placed)) do
                 members[#members + 1] = name
                 placed[name:lower()] = true
             end

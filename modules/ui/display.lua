@@ -499,7 +499,8 @@ end
 local function BuildLayoutProviders()
     local classByName = {}
     local classMembers = {}
-    IterateGroupMembers(function(_, fullName, _, _, memberClass, online, isDead)
+    local subgroupMembers = {}
+    IterateGroupMembers(function(_, fullName, _, subgroup, memberClass, online, isDead)
         if type(fullName) ~= "string" or type(memberClass) ~= "string" then
             return false
         end
@@ -513,6 +514,10 @@ local function BuildLayoutProviders()
         if online and not isDead then
             classMembers[class] = classMembers[class] or {}
             classMembers[class][#classMembers[class] + 1] = fullName
+            if type(subgroup) == "number" then
+                subgroupMembers[subgroup] = subgroupMembers[subgroup] or {}
+                subgroupMembers[subgroup][#subgroupMembers[subgroup] + 1] = fullName
+            end
         end
         return false
     end)
@@ -537,6 +542,9 @@ local function BuildLayoutProviders()
         ResolvePriorityValue = rosterHelpers and rosterHelpers.ResolvePriorityValue,
         ClassMembers = function(class)
             return classMembers[class] or {}
+        end,
+        SubgroupMembers = function(subgroup)
+            return subgroupMembers[subgroup] or {}
         end,
         Colorize = Colorize,
     }
