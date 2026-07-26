@@ -15,4 +15,5 @@
   <Include file="libs\LibCompress\lib.xml"/>
   <Script file="libs\LibWindow-1.1\LibWindow-1.1\LibWindow-1.1.lua"/>
   <Script file="modules\ui\components\angry_tree_group.lua"/>
+  <Script file="modules\ui\components\angry_layout_grid.lua"/>
 </Ui>
