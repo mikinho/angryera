@@ -1101,9 +1101,24 @@ local function AngryEra_EditVariables(id, type)
     end)
 end
 
+--- Collects the short names of the current group, in roster order.
+-- @treturn table Array of short names.
+local function CollectRosterNames()
+    local names = {}
+    IterateGroupMembers(function(rawName, fullName)
+        local shortName = (rawName or EnsureUnitShortName(fullName) or ""):match("([^-]+)")
+        if shortName and shortName ~= "" then
+            names[#names + 1] = shortName
+        end
+        return false
+    end)
+    return names
+end
+
 --- Opens a dedicated editor for a page's `$LAYOUT` group layout.
--- Groups are edited one per line; a roster palette inserts names at the cursor,
--- Save writes the layout, and Apply rearranges the actual raid subgroups.
+-- The visual view drags members between raid subgroup boxes, free-form group
+-- boxes, and the roster palette; the text view edits the same layout one group
+-- per line. Save writes the layout, and Apply rearranges the actual raid.
 -- @tparam number id Page id.
 function AngryEra:ShowGroupLayoutEditor(id)
     local page = AngryAssign_Pages[id]
@@ -1111,14 +1126,16 @@ function AngryEra:ShowGroupLayoutEditor(id)
         return
     end
 
-    local source = layout.ExtractSource(page.Vars) or ""
-    local editable = source:gsub("%s*;%s*", "\n")
+    local roster = CollectRosterNames()
+    local model = layout.Parse(layout.ExtractSource(page.Vars) or "")
+    local textMode = false
+    local editBox, grid
 
     local frame = AceGUI:Create("Window")
     frame:SetTitle("Group Layout")
     frame:SetLayout("Flow")
     frame:SetWidth(470)
-    frame:SetHeight(440)
+    frame:SetHeight(500)
     frame:EnableResize(true)
     _G["AngryEra_LayoutEditor_Window"] = frame.frame
     table.insert(UISpecialFrames, "AngryEra_LayoutEditor_Window")
@@ -1126,17 +1143,21 @@ function AngryEra:ShowGroupLayoutEditor(id)
         AceGUI:Release(widget)
     end)
 
-    local editBox = AceGUI:Create("MultiLineEditBox")
-    editBox:SetLabel("Groups, one per line:  Label/N: name, A > B, *MAGE x2, group:2")
-    editBox:SetNumLines(10)
-    editBox:SetText(editable)
-    editBox:SetFullWidth(true)
-    editBox:DisableButton(false)
+    -- Whichever view is showing owns the layout; the other is rebuilt from it
+    -- on every switch so the two never drift apart.
+    local function CurrentSource()
+        if not textMode then
+            return layout.Serialize(model)
+        end
+        local text = editBox and editBox:GetText() or ""
+        return (text:gsub("[\r\n]+", ";"):gsub("%s*;%s*", ";"):gsub("^;+", ""):gsub(";+$", ""))
+    end
 
+    -- A group nobody filled is kept while editing so its box stays draggable,
+    -- but dropped on save rather than persisted as an empty line.
     local function SaveLayout()
-        local text = editBox:GetText() or ""
-        local single = text:gsub("[\r\n]+", ";"):gsub("%s*;%s*", ";"):gsub("^;+", ""):gsub(";+$", "")
-        local newVars = layout.UpsertSource(page.Vars, single)
+        local source = layout.Serialize(layout.Compact(layout.Parse(CurrentSource())))
+        local newVars = layout.UpsertSource(page.Vars, source)
         local saved, saveError = self:UpdatePageVars(id, newVars)
         if not saved and saveError then
             print(saveError)
@@ -1146,51 +1167,110 @@ function AngryEra:ShowGroupLayoutEditor(id)
         return true
     end
 
-    editBox:SetCallback("OnEnterPressed", function()
-        SaveLayout()
-    end)
-    frame:AddChild(editBox)
+    local body = AceGUI:Create("ScrollFrame")
+    body:SetLayout("Flow")
+    body:SetFullWidth(true)
+    body:SetHeight(360)
 
-    local heading = AceGUI:Create("Heading")
-    heading:SetText("Roster (click to insert)")
-    heading:SetFullWidth(true)
-    frame:AddChild(heading)
-
-    local palette = AceGUI:Create("SimpleGroup")
-    palette:SetLayout("Flow")
-    palette:SetFullWidth(true)
-    frame:AddChild(palette)
-
-    local rosterCount = 0
-    IterateGroupMembers(function(rawName, fullName)
-        local shortName = (rawName or EnsureUnitShortName(fullName) or ""):match("([^-]+)")
-        if not shortName or shortName == "" then
-            return false
-        end
-        rosterCount = rosterCount + 1
-        local button = AceGUI:Create("Button")
-        button:SetText(shortName)
-        button:SetWidth(96)
-        button:SetCallback("OnClick", function()
-            local inner = editBox.editBox
-            local position = inner and inner:GetCursorPosition() or 0
-            local text = editBox:GetText() or ""
-            if position and position > 0 then
-                editBox:SetText(text:sub(1, position) .. shortName .. text:sub(position + 1))
-                inner:SetCursorPosition(position + #shortName)
-            else
-                editBox:SetText(text .. shortName)
-            end
+    local function BuildTextView()
+        editBox = AceGUI:Create("MultiLineEditBox")
+        editBox:SetLabel("Groups, one per line:  Label/N: name, A > B, *MAGE x2, group:2")
+        editBox:SetNumLines(10)
+        editBox:SetText((layout.Serialize(model):gsub("%s*;%s*", "\n")))
+        editBox:SetFullWidth(true)
+        editBox:DisableButton(false)
+        editBox:SetCallback("OnEnterPressed", function()
+            SaveLayout()
         end)
-        palette:AddChild(button)
-        return false
-    end)
-    if rosterCount == 0 then
-        local hint = AceGUI:Create("Label")
-        hint:SetText("Join a group to insert roster names here.")
-        hint:SetFullWidth(true)
-        palette:AddChild(hint)
+        body:AddChild(editBox)
+
+        local heading = AceGUI:Create("Heading")
+        heading:SetText("Roster (click to insert)")
+        heading:SetFullWidth(true)
+        body:AddChild(heading)
+
+        local palette = AceGUI:Create("SimpleGroup")
+        palette:SetLayout("Flow")
+        palette:SetFullWidth(true)
+        body:AddChild(palette)
+
+        for _, shortName in ipairs(roster) do
+            local button = AceGUI:Create("Button")
+            button:SetText(shortName)
+            button:SetWidth(96)
+            button:SetCallback("OnClick", function()
+                local inner = editBox.editBox
+                local position = inner and inner:GetCursorPosition() or 0
+                local text = editBox:GetText() or ""
+                if position and position > 0 then
+                    editBox:SetText(text:sub(1, position) .. shortName .. text:sub(position + 1))
+                    inner:SetCursorPosition(position + #shortName)
+                    return
+                end
+                editBox:SetText(text .. shortName)
+            end)
+            palette:AddChild(button)
+        end
+
+        if #roster == 0 then
+            local hint = AceGUI:Create("Label")
+            hint:SetText("Join a group to insert roster names here.")
+            hint:SetFullWidth(true)
+            palette:AddChild(hint)
+        end
     end
+
+    local function BuildVisualView()
+        grid = AceGUI:Create("AngryLayoutGrid")
+        grid:SetFullWidth(true)
+        grid:SetLayoutEngine(layout)
+        grid:SetRoster(roster)
+        grid:SetCallback("OnLayoutDrop", function(widget, drag, drop)
+            local applied, updated = layout.ApplyDrop(model, drag, drop)
+            if not applied then
+                return
+            end
+            model = updated
+            widget:SetLayoutModel(model)
+        end)
+        grid:SetCallback("OnSlotClick", function(widget, group, slot, button)
+            if button ~= "RightButton" then
+                return
+            end
+            local drag = { kind = "slot", group = group, slot = slot }
+            local removed, updated = layout.ApplyDrop(model, drag, { kind = "remove" })
+            if not removed then
+                return
+            end
+            model = updated
+            widget:SetLayoutModel(model)
+        end)
+        body:AddChild(grid)
+        grid:SetLayoutModel(model)
+    end
+
+    local function BuildBody()
+        body:ReleaseChildren()
+        editBox, grid = nil, nil
+        if textMode then
+            BuildTextView()
+            return
+        end
+        BuildVisualView()
+    end
+
+    local toggle = AceGUI:Create("CheckBox")
+    toggle:SetLabel("Edit as text")
+    toggle:SetValue(false)
+    toggle:SetWidth(140)
+    toggle:SetCallback("OnValueChanged", function(_, _, value)
+        model = layout.Parse(CurrentSource())
+        textMode = value and true or false
+        BuildBody()
+    end)
+    frame:AddChild(toggle)
+    frame:AddChild(body)
+    BuildBody()
 
     local saveButton = AceGUI:Create("Button")
     saveButton:SetText("Save")

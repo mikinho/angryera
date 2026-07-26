@@ -392,6 +392,7 @@ local methods = {
         self.dragging = nil
         self.dropTarget = nil
         self.drawing = nil
+        self.drawnWidth = nil
         self.frame:SetScript("OnUpdate", nil)
         self.dropMarker:Hide()
         self:SetWidth(400)
@@ -407,6 +408,7 @@ local methods = {
         self.dragging = nil
         self.dropTarget = nil
         self.drawing = nil
+        self.drawnWidth = nil
         for _, box in ipairs(self.boxes) do
             box:Hide()
         end
@@ -432,7 +434,12 @@ local methods = {
         self:Refresh()
     end,
 
-    ["OnWidthSet"] = function(self)
+    -- A redraw asks the container to re-flow, and the container answers by
+    -- re-applying our width. Redrawing only on a real change settles that loop.
+    ["OnWidthSet"] = function(self, width)
+        if width and width == self.drawnWidth then
+            return
+        end
         self:Refresh()
     end,
 
@@ -486,6 +493,7 @@ local methods = {
         local total = top + rowHeight
         self.frame.height = total
         self.frame:SetHeight(total)
+        self.drawnWidth = width
         self.drawing = nil
         if self.parent and self.parent.DoLayout then
             self.parent:DoLayout()

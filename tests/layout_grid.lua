@@ -172,6 +172,23 @@ assert(unclaimed.layoutTarget.subgroup == 2, "an unclaimed box targets its subgr
 local paletteTarget = grid.boxes[10].rows[1].layoutTarget
 assert(paletteTarget.kind == "palette" and paletteTarget.text == "Vhez", "the palette carries names")
 
+-- Clicks report their position so the host can act on a row without a drag.
+local clicked
+grid:SetCallback("OnSlotClick", function(_, group, slot, button)
+    clicked = { group = group, slot = slot, button = button }
+end)
+filled:GetScript("OnClick")(filled, "RightButton")
+assert(clicked.group == 1 and clicked.slot == 1, "a slot click reports its position")
+assert(clicked.button == "RightButton", "a slot click reports the mouse button")
+
+local headerClicked
+grid:SetCallback("OnGroupClick", function(_, group, subgroup)
+    headerClicked = { group = group, subgroup = subgroup }
+end)
+local header = grid.boxes[2].header
+header:GetScript("OnClick")(header, "LeftButton")
+assert(headerClicked.group == nil and headerClicked.subgroup == 2, "a header click reports its subgroup")
+
 -- Drives one drag gesture and returns the descriptors the widget reported.
 local function Drag(source, target, mouseOver)
     local drag, drop
@@ -226,6 +243,21 @@ assert(drop and drop.kind == "remove", "a release away from the grid removes the
 
 drag, drop = Drag(grid.boxes[10].rows[1], nil, false)
 assert(drag == nil, "a palette entry released over nothing is not a removal")
+
+-- A container that re-applies the width after every redraw, the way AceGUI's
+-- flow layout does, must settle rather than recurse.
+local passes = 0
+grid.parent = {
+    DoLayout = function()
+        passes = passes + 1
+        assert(passes < 10, "redrawing the grid settles instead of recursing")
+        grid:SetWidth(passes == 1 and 360 or grid.frame:GetWidth())
+    end,
+}
+grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
+assert(passes == 2, "a width change redraws once more and then settles")
+assert(grid.frame:GetWidth() == 360, "the grid keeps the width its container assigned")
+grid.parent = nil
 
 -- Release clears the drag state so a stale gesture cannot fire later.
 grid:OnRelease()
