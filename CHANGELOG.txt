@@ -1,3 +1,10 @@
+## v3.3.0-BETA
+
+* New Feature: Added raid group layouts. A page's `$LAYOUT` metadata defines named groups of player slots (resist groups, spore rotations, chains, trash groups) that render wherever a `{layout}` tag appears and update as the roster changes.
+* New Feature: Layout slots fill from the live roster: a name, a priority list `A > B > C`, a class fill `*MAGE`/`*MAGE x2`, or `group:2`. Auto-fill picks present-and-alive members and never assigns anyone twice.
+* New Feature: Added a Group Layout editor on the page right-click menu, with a roster palette that inserts names and a Save action.
+* New Feature: The raid leader or an assistant can apply a layout to the raid out of combat, moving members into the subgroups bound with `Label/N`. Unbound groups are display-only.
+
 ## v3.2.0-BETA
 
 * New Feature: Added priority assignments. A variable or `$` marker value written as `Name > Name > Name` resolves to the first listed player who is present and alive, so raid markers and displayed text follow whoever is available. Assignments re-resolve when the group roster changes.

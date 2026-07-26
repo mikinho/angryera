@@ -274,6 +274,25 @@ To advance assignments after boss kills:
 
 Only the current group leader advances the shared display. Successful kills advance; wipes do not. Auto-advance uses locally owned sibling pages inside one category; it does not infer a sequence from root-level, unfiled, or received remote-owned pages. Advancement stops when there is no next page. Duplicate encounter names or IDs are treated as ambiguous and do not advance.
 
+### Group layouts
+
+A page's `$LAYOUT` metadata describes named groups of player slots — resist groups, spore rotations, chains, trash groups. It renders wherever you place a `{layout}` tag, updates as the roster changes, and can rearrange the actual raid.
+
+`$LAYOUT` is a single line. Groups are separated by `;`; each group is `Label: slot, slot, ...`, and `Label/N` binds the group to raid subgroup N. A slot is a name, a priority list `A > B > C` (first present-and-alive), a class fill `*MAGE` or `*MAGE x2`, or `group:2` (the current members of subgroup 2). Auto-fill never assigns the same player twice.
+
+```text
+$LAYOUT=Tanks/1: MT, OT1; Spores: Lock1 > Lock2, *WARLOCK x2; Kite: group:3
+```
+
+Show it in the note with `{layout}` (all groups) or `{layout Spores}` (one group):
+
+```text
+Spore soakers:
+{layout Spores}
+```
+
+Edit it from the page's right-click menu → **Edit Group Layout**: type the groups one per line, click roster names to insert them, **Save**, and — as the raid leader or an assistant, out of combat — **Apply to Raid** to move everyone into their bound subgroups. Only groups bound with `Label/N` move; unbound groups are display-only.
+
 ### Custom metadata
 
 Any other `$` key is available to WeakAuras and addons:
