@@ -11,6 +11,7 @@ local colors = AngryEra.utils.colors
 local tags = AngryEra.utils.tags
 local variableHelpers = AngryEra.utils.variables
 local rosterHelpers = AngryEra.utils.roster
+local layoutHelpers = AngryEra.utils.layout
 
 local EnsureUnitShortName = helpers.EnsureUnitShortName
 local IterateGroupMembers = helpers.IterateGroupMembers
@@ -492,6 +493,55 @@ function AngryEra:GetTemplateContext()
     return ctx
 end
 
+-- Builds the roster accessors a `{layout}` expansion needs: present-and-alive
+-- class members for `*CLASS` fills, priority resolution, and class coloring.
+-- The roster is walked once and cached for this render.
+local function BuildLayoutProviders()
+    local classByName = {}
+    local classMembers = {}
+    IterateGroupMembers(function(_, fullName, _, _, memberClass, online, isDead)
+        if type(fullName) ~= "string" or type(memberClass) ~= "string" then
+            return false
+        end
+        local class = memberClass:upper()
+        local fullLower = fullName:lower()
+        local shortLower = fullLower:match("^([^-]+)")
+        classByName[fullLower] = class
+        if shortLower and classByName[shortLower] == nil then
+            classByName[shortLower] = class
+        end
+        if online and not isDead then
+            classMembers[class] = classMembers[class] or {}
+            classMembers[class][#classMembers[class] + 1] = fullName
+        end
+        return false
+    end)
+
+    local function Colorize(name)
+        if type(name) ~= "string" then
+            return name
+        end
+        local class = classByName[name:lower()] or classByName[name:lower():match("^([^-]+)") or ""]
+        local palette = _G.RAID_CLASS_COLORS
+        local color = class and palette and palette[class] or nil
+        if color and color.colorStr then
+            return "|c" .. color.colorStr .. name .. "|r"
+        end
+        if color and color.r then
+            return string.format("|cff%02x%02x%02x%s|r", color.r * 255, color.g * 255, color.b * 255, name)
+        end
+        return name
+    end
+
+    return {
+        ResolvePriorityValue = rosterHelpers and rosterHelpers.ResolvePriorityValue,
+        ClassMembers = function(class)
+            return classMembers[class] or {}
+        end,
+        Colorize = Colorize,
+    }
+end
+
 --- Renders a page with merged category/page variables and Mustache.
 -- @tparam table page Page table.
 -- @tparam table ctx Template context table.
@@ -501,6 +551,7 @@ end
 -- @treturn string|nil variableError
 -- @treturn table renderedPage Exact page record used for rendering.
 -- @treturn table ancestorVariableLayers Exact root-to-parent variable layers used for rendering.
+-- @treturn boolean rosterReactive Whether the render depends on live roster state.
 function AngryEra:RenderPageContent(page, ctx, options)
     local renderedPage = page
     local layers
@@ -573,6 +624,14 @@ function AngryEra:RenderPageContent(page, ctx, options)
         hadPriority = rosterHelpers.ApplyPriorityAssignments(mergedVars)
     end
 
+    local hadLayout = false
+    if layoutHelpers and type(layoutHelpers.SourceFromVars) == "function" then
+        local layoutSource = layoutHelpers.SourceFromVars(mergedVars)
+        if layoutSource then
+            text, hadLayout = layoutHelpers.Expand(text, layoutSource, BuildLayoutProviders())
+        end
+    end
+
     if LibMustache then
         ctx = ctx or {}
         for k, v in pairs(mergedVars) do
@@ -585,7 +644,7 @@ function AngryEra:RenderPageContent(page, ctx, options)
         end
     end
 
-    return text, mergedVars, variableError, renderedPage, layers, hadPriority
+    return text, mergedVars, variableError, renderedPage, layers, hadPriority or hadLayout
 end
 
 local ACTIVE_CONTEXT_UNAVAILABLE = {

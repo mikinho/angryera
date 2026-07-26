@@ -13,6 +13,7 @@
 	<Script file="sync\apply.lua"/>
 	<Script file="entities.lua"/>
 	<Script file="smart_markers.lua"/>
+	<Script file="layout.lua"/>
 	<Script file="permissions.lua"/>
 	<Script file="sync\runtime.lua"/>
 	<Script file="protocol_runtime.lua"/>
