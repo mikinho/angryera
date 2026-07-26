@@ -1,10 +1,11 @@
 --- Custom AceGUI widget that edits a raid group layout by dragging members.
 -- Renders the eight raid subgroup boxes plus any free-form groups and a roster
 -- palette, and reports every gesture as a drag/drop descriptor pair for
--- `AngryEra.utils.layout.ApplyDrop` to resolve.
+-- `AngryEra.utils.layout.ApplyDrop` to resolve. Clicks report their position
+-- instead, separately for a box title, a filled slot, and an unused row.
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 1
+local Type, Version = "AngryLayoutGrid", 2
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -174,6 +175,12 @@ local function Slot_OnClick(frame, button)
         self:Fire("OnSlotClick", target.group, target.slot, button)
         return
     end
+    -- A box's title acts on the group itself; its unused rows act on their
+    -- contents, so clicking blank space never renames or deletes anything.
+    if target.kind == "empty" then
+        self:Fire("OnEmptyClick", target.group, target.subgroup, button)
+        return
+    end
     if target.kind == "header" then
         self:Fire("OnGroupClick", target.group, target.subgroup, button)
     end
@@ -333,10 +340,11 @@ end
 -- Lays a group box out as one vertical column of slots.
 local function DrawBox(self, box, entry)
     local rows = entry.rows
-    local empty = { kind = "header", group = entry.group, subgroup = entry.subgroup }
+    local header = { kind = "header", group = entry.group, subgroup = entry.subgroup }
+    local empty = { kind = "empty", group = entry.group, subgroup = entry.subgroup }
 
     box.header.label:SetText(entry.title)
-    box.header.layoutTarget = empty
+    box.header.layoutTarget = header
 
     for index = 1, rows do
         local row = AcquireRow(self, box, index)

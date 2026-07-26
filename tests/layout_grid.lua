@@ -161,7 +161,7 @@ assert(filled.layoutTarget.group == 1 and filled.layoutTarget.slot == 1, "a fill
 assert(#filled.dragButtons == 1, "a filled row can start a drag")
 
 local blank = grid.boxes[1].rows[3]
-assert(blank.label:GetText() == "" and blank.layoutTarget.kind == "header", "an empty row targets its group")
+assert(blank.label:GetText() == "" and blank.layoutTarget.kind == "empty", "an empty row targets its group")
 assert(blank.layoutTarget.group == 1, "an empty row in a claimed box appends to that group")
 assert(#blank.dragButtons == 0, "an empty row cannot start a drag")
 
@@ -188,6 +188,15 @@ end)
 local header = grid.boxes[2].header
 header:GetScript("OnClick")(header, "LeftButton")
 assert(headerClicked.group == nil and headerClicked.subgroup == 2, "a header click reports its subgroup")
+
+local emptyClicked
+grid:SetCallback("OnEmptyClick", function(_, group, subgroup)
+    emptyClicked = { group = group, subgroup = subgroup }
+end)
+headerClicked = nil
+blank:GetScript("OnClick")(blank, "LeftButton")
+assert(emptyClicked.group == 1 and emptyClicked.subgroup == 1, "an empty row click reports its box")
+assert(not headerClicked, "clicking blank space does not act on the group itself")
 
 -- Drives one drag gesture and returns the descriptors the widget reported.
 local function Drag(source, target, mouseOver)
