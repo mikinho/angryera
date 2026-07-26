@@ -1193,7 +1193,7 @@ function AngryEra:ShowGroupLayoutEditor(id)
     local roster = CollectRosterNames()
     local model = layout.Parse(layout.ExtractSource(page.Vars) or "")
     local textMode = false
-    local editBox, grid
+    local editBox, grid, closed
 
     local frame = AceGUI:Create("Window")
     frame:SetTitle("Group Layout")
@@ -1203,7 +1203,11 @@ function AngryEra:ShowGroupLayoutEditor(id)
     frame:EnableResize(true)
     _G["AngryEra_LayoutEditor_Window"] = frame.frame
     table.insert(UISpecialFrames, "AngryEra_LayoutEditor_Window")
+    -- A prompt outlives the window it was opened from, so closing the editor
+    -- marks the views dead rather than letting a late answer touch a widget
+    -- AceGUI has already recycled.
     frame:SetCallback("OnClose", function(widget)
+        closed = true
         AceGUI:Release(widget)
     end)
 
@@ -1291,13 +1295,29 @@ function AngryEra:ShowGroupLayoutEditor(id)
         grid:SetRoster(roster)
         -- Every visual edit runs the same pure mutator the drag path uses and
         -- redraws from the model it returns, so typed and dragged edits cannot
-        -- drift apart.
+        -- drift apart. An edit confirmed after the grid was rebuilt belongs to
+        -- a layout that no longer exists, so it is dropped.
+        local widget = grid
         local function Commit(applied, updated)
-            if not applied then
+            if not applied or closed or grid ~= widget then
                 return
             end
             model = updated
-            grid:SetLayoutModel(model)
+            widget:SetLayoutModel(model)
+        end
+
+        -- A prompt does not block the grid, so an index taken when it opened can
+        -- point at something else by the time it is answered. Each one re-reads
+        -- what it named and gives up if that moved.
+        local function StillHolds(group, slot, expression)
+            local current = model.groups[group]
+            if not current then
+                return false
+            end
+            if slot then
+                return current.slots[slot] == expression
+            end
+            return current.name == expression
         end
 
         grid:SetCallback("OnLayoutDrop", function(_, drag, drop)
@@ -1313,10 +1333,14 @@ function AngryEra:ShowGroupLayoutEditor(id)
                 Commit(layout.ApplyDrop(model, { kind = "slot", group = group, slot = slot }, { kind = "remove" }))
                 return
             end
+            local expression = target.slots[slot]
             AngryEra_LayoutTextPopup({
                 Prompt = "Slot in " .. target.name .. ":",
-                Text = target.slots[slot],
+                Text = expression,
                 OnAccept = function(text)
+                    if not StillHolds(group, slot, expression) then
+                        return
+                    end
                     Commit(layout.SetSlot(model, group, slot, text))
                 end,
             })
@@ -1339,13 +1363,17 @@ function AngryEra:ShowGroupLayoutEditor(id)
 
         grid:SetCallback("OnGroupClick", function(_, group, subgroup, button)
             local existing = group and model.groups[group]
+            local label = existing and existing.name
             if button == "RightButton" then
                 if not existing then
                     return
                 end
                 AngryEra_LayoutConfirmPopup({
-                    Prompt = ("Remove the group %s?"):format(existing.name),
+                    Prompt = ("Remove the group %s?"):format(label),
                     OnAccept = function()
+                        if not StillHolds(group, nil, label) then
+                            return
+                        end
                         Commit(layout.RemoveGroup(model, group))
                     end,
                 })
@@ -1353,13 +1381,16 @@ function AngryEra:ShowGroupLayoutEditor(id)
             end
             AngryEra_LayoutTextPopup({
                 Prompt = "Group name:",
-                Text = existing and existing.name,
+                Text = label,
                 OnAccept = function(text)
-                    if existing then
-                        Commit(layout.SetGroupName(model, group, text))
+                    if not existing then
+                        Commit(layout.AddGroup(model, text, subgroup))
                         return
                     end
-                    Commit(layout.AddGroup(model, text, subgroup))
+                    if not StillHolds(group, nil, label) then
+                        return
+                    end
+                    Commit(layout.SetGroupName(model, group, text))
                 end,
             })
         end)
@@ -1398,6 +1429,9 @@ function AngryEra:ShowGroupLayoutEditor(id)
         AngryEra_LayoutTextPopup({
             Prompt = "Group name:",
             OnAccept = function(text)
+                if closed then
+                    return
+                end
                 model = layout.Parse(CurrentSource())
                 local added, updated = layout.AddGroup(model, text)
                 if not added then
