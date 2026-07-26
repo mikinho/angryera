@@ -14,6 +14,7 @@
 	<Script file="entities.lua"/>
 	<Script file="smart_markers.lua"/>
 	<Script file="layout.lua"/>
+	<Script file="raid_layout.lua"/>
 	<Script file="permissions.lua"/>
 	<Script file="sync\runtime.lua"/>
 	<Script file="protocol_runtime.lua"/>

@@ -205,6 +205,36 @@ function AngryEra:OnInitialize()
                     self:Print("All pages have been deleted.")
                 end,
             },
+            applylayout = {
+                type = "execute",
+                name = "Apply Group Layout to Raid",
+                desc = "Move raid members into the subgroups bound by the displayed page's $LAYOUT",
+                order = 4.5,
+                hidden = true,
+                cmdHidden = false,
+                confirm = function()
+                    return "Rearrange raid subgroups to match the displayed layout? Only groups bound with \"Label/N\" move, and this cannot be done in combat."
+                end,
+                func = function()
+                    local applied, result = self:ApplyGroupLayoutToRaid()
+                    if applied then
+                        self:Print(
+                            ("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s")
+                        )
+                        return
+                    end
+                    local reasons = {
+                        ["not-in-raid"] = "You must be in a raid to rearrange groups.",
+                        ["not-raid-leader"] = "Only the raid leader or an assistant can rearrange groups.",
+                        ["in-combat"] = "Groups cannot be rearranged during combat.",
+                        ["no-layout"] = "The displayed page has no $LAYOUT.",
+                        ["no-bound-groups"] = "No layout groups are bound to a subgroup (use \"Label/N:\").",
+                        ["subgroup-oversubscribed"] = "A subgroup is assigned more than five members.",
+                        ["subgroup-blocked"] = "The layout could not be arranged with the current raid.",
+                    }
+                    self:Print(reasons[result] or ("Could not rearrange the raid: " .. tostring(result)))
+                end,
+            },
             defaults = {
                 type = "execute",
                 name = "Restore Defaults",
