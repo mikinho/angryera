@@ -1,5 +1,6 @@
 <Ui>
 	<Script file="helpers.lua"/>
+	<Script file="roster.lua"/>
 	<Script file="bounded_deflate.lua"/>
 	<Script file="colors.lua"/>
 	<Script file="tags.lua"/>

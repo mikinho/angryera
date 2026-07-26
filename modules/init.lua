@@ -1038,7 +1038,30 @@ function AngryEra:GROUP_ROSTER_UPDATE()
         if type(self.RetryDisplayedNoteMarkers) == "function" then
             self:RetryDisplayedNoteMarkers()
         end
+        self:RefreshDisplayedPriorityAssignments()
     end
+end
+
+--- Coalesced re-render when the displayed note uses priority assignments.
+-- A roster change can promote a higher-priority member or drop an absent one, so
+-- a displayed note containing a `Name > Name` value is re-resolved. Scheduled
+-- through AceTimer so a burst of roster updates collapses into one redraw and a
+-- disable cancels it. Deaths are not yet a trigger; those re-resolve on the next
+-- roster change or page display.
+function AngryEra:RefreshDisplayedPriorityAssignments()
+    if not self._displayedHasPriority or self._priorityRefreshTimer then
+        return
+    end
+    if type(self.ScheduleTimer) ~= "function" then
+        return
+    end
+    self._priorityRefreshTimer = self:ScheduleTimer("RunDisplayedPriorityRefresh", 0.5)
+end
+
+--- Timer callback that re-renders the displayed priority assignments once.
+function AngryEra:RunDisplayedPriorityRefresh()
+    self._priorityRefreshTimer = nil
+    self:UpdateDisplayed()
 end
 
 function AngryEra:PLAYER_GUILD_UPDATE()

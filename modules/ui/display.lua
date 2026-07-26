@@ -10,6 +10,7 @@ local helpers = AngryEra.utils.helpers
 local colors = AngryEra.utils.colors
 local tags = AngryEra.utils.tags
 local variableHelpers = AngryEra.utils.variables
+local rosterHelpers = AngryEra.utils.roster
 
 local EnsureUnitShortName = helpers.EnsureUnitShortName
 local IterateGroupMembers = helpers.IterateGroupMembers
@@ -567,6 +568,11 @@ function AngryEra:RenderPageContent(page, ctx, options)
         mergedVars = variableHelpers.MergeVariableLayers({}, renderedPage.Vars) or {}
     end
 
+    local hadPriority = false
+    if rosterHelpers and type(rosterHelpers.ApplyPriorityAssignments) == "function" then
+        hadPriority = rosterHelpers.ApplyPriorityAssignments(mergedVars)
+    end
+
     if LibMustache then
         ctx = ctx or {}
         for k, v in pairs(mergedVars) do
@@ -579,7 +585,7 @@ function AngryEra:RenderPageContent(page, ctx, options)
         end
     end
 
-    return text, mergedVars, variableError, renderedPage, layers
+    return text, mergedVars, variableError, renderedPage, layers, hadPriority
 end
 
 local ACTIVE_CONTEXT_UNAVAILABLE = {
@@ -618,12 +624,12 @@ end
 -- @treturn table renderedPage Exact page record used for rendering.
 -- @treturn table ancestorVariableLayers Exact root-to-parent variable layers used for rendering.
 function AngryEra:RenderPageWithActiveFallback(page, ctx)
-    local renderedText, mergedVars, variableError, renderedPage, ancestorVariableLayers =
+    local renderedText, mergedVars, variableError, renderedPage, ancestorVariableLayers, hadPriority =
         self:RenderPageContent(page, ctx, { UseActiveDisplayContext = true })
     if ACTIVE_CONTEXT_UNAVAILABLE[variableError] and CanRenderPageLocally(self, page) then
         return self:RenderPageContent(page, ctx)
     end
-    return renderedText, mergedVars, variableError, renderedPage, ancestorVariableLayers
+    return renderedText, mergedVars, variableError, renderedPage, ancestorVariableLayers, hadPriority
 end
 
 --- Applies lightweight markdown transformations used by the display layer.
@@ -660,6 +666,7 @@ end
 function AngryEra:UpdateDisplayed()
     local page = AngryAssign_Pages[AngryAssign_State.displayed]
     if not page then
+        self._displayedHasPriority = false
         self.display_text:Clear()
         self:UpdateBackdrop()
         if type(self.NotifyDisplayedNoteChanged) == "function" then
@@ -699,8 +706,9 @@ function AngryEra:UpdateDisplayed()
     local highlightHex = self:GetConfig("highlightColor")
 
     -- Mustache Templating & Merging
-    local renderedText, mergedVars, variableError, renderedPage, ancestorVariableLayers =
+    local renderedText, mergedVars, variableError, renderedPage, ancestorVariableLayers, hadPriority =
         self:RenderPageWithActiveFallback(page, ctx)
+    self._displayedHasPriority = hadPriority == true
     local text = renderedText or page.Contents or ""
 
     local hasHighlight = next(highlightSet) ~= nil
