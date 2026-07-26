@@ -20,12 +20,92 @@ local layout = AngryEra.utils.layout
 
 local MAX_GROUPS = 32
 local MAX_SLOTS_PER_GROUP = 40
+local MAX_SUBGROUPS = 8
+local MAX_SUBGROUP_SLOTS = 5
+
+layout.MAX_GROUPS = MAX_GROUPS
+layout.MAX_SLOTS_PER_GROUP = MAX_SLOTS_PER_GROUP
+layout.MAX_SUBGROUPS = MAX_SUBGROUPS
+layout.MAX_SUBGROUP_SLOTS = MAX_SUBGROUP_SLOTS
 
 local function Trim(value)
     if type(value) ~= "string" then
         return ""
     end
     return value:match("^%s*(.-)%s*$")
+end
+
+--- Classifies one slot expression for display and capacity math.
+-- @tparam string slot Slot expression.
+-- @treturn table info `{ kind = "name"|"priority"|"class"|"subgroup", label, name?, class?, count?, subgroup? }`.
+function layout.DescribeSlot(slot)
+    local text = Trim(slot)
+    if text == "" then
+        return { kind = "name", label = "", name = "" }
+    end
+
+    local subgroup = text:match("^[Gg][Rr][Oo][Uu][Pp]%s*:%s*([1-8])$")
+    if subgroup then
+        return { kind = "subgroup", label = text, subgroup = tonumber(subgroup) }
+    end
+
+    local class, countText = text:match("^%*(%a+)%s+[xX]%s*(%d+)$")
+    if not class then
+        class = text:match("^%*(%a+)$")
+    end
+    if class then
+        return { kind = "class", label = text, class = class:upper(), count = tonumber(countText) or 1 }
+    end
+
+    if text:find(">", 1, true) then
+        return { kind = "priority", label = text, name = Trim(text:match("^([^>]+)") or text) }
+    end
+
+    return { kind = "name", label = text, name = text }
+end
+
+--- Returns how many raid slots a slot expression can consume.
+-- @tparam string slot Slot expression.
+-- @treturn number weight
+function layout.SlotWeight(slot)
+    local info = layout.DescribeSlot(slot)
+    if info.kind == "class" then
+        return info.count or 1
+    end
+    if info.kind == "subgroup" then
+        return MAX_SUBGROUP_SLOTS
+    end
+    return 1
+end
+
+-- Sums slot weights for a group, optionally ignoring one slot index.
+local function GroupWeight(group, skipIndex)
+    local total = 0
+    for index, slot in ipairs((type(group) == "table" and group.slots) or {}) do
+        if index ~= skipIndex then
+            total = total + layout.SlotWeight(slot)
+        end
+    end
+    return total
+end
+
+--- Returns the total slot weight a group currently holds.
+-- @tparam table group Group entry.
+-- @treturn number weight
+function layout.GroupWeight(group)
+    return GroupWeight(group)
+end
+
+-- Subgroup-bound groups are capped by the five-per-subgroup raid limit.
+local function GroupCapacity(group)
+    if type(group) == "table" and group.subgroup then
+        return MAX_SUBGROUP_SLOTS
+    end
+    return MAX_SLOTS_PER_GROUP
+end
+
+local function CanHold(group, addedWeight, skipIndex)
+    return GroupWeight(group, skipIndex) + addedWeight <= GroupCapacity(group)
 end
 
 --- Parses the compact `$LAYOUT` syntax into a model table.
@@ -88,25 +168,20 @@ end
 -- A name or priority list yields one; `*CLASS`/`*CLASS xN`/`group:N` may yield
 -- several. `placed` (names already assigned this resolve) is honored for fills.
 local function ResolveSlotNames(slot, providers, placed)
-    local subgroupRef = slot:match("^[Gg][Rr][Oo][Uu][Pp]%s*:%s*([1-8])$")
-    if subgroupRef then
-        local members = type(providers.SubgroupMembers) == "function"
-                and providers.SubgroupMembers(tonumber(subgroupRef))
+    local info = layout.DescribeSlot(slot)
+
+    if info.kind == "subgroup" then
+        local members = type(providers.SubgroupMembers) == "function" and providers.SubgroupMembers(info.subgroup)
             or nil
         return TakeAvailable(members, math.huge, placed)
     end
 
-    local class = slot:match("^%*(%a+)$")
-    local classN, countText = slot:match("^%*(%a+)%s+[xX]%s*(%d+)$")
-    if classN then
-        class = classN
-    end
-    if class then
-        local members = type(providers.ClassMembers) == "function" and providers.ClassMembers(class:upper()) or nil
-        return TakeAvailable(members, tonumber(countText) or 1, placed)
+    if info.kind == "class" then
+        local members = type(providers.ClassMembers) == "function" and providers.ClassMembers(info.class) or nil
+        return TakeAvailable(members, info.count, placed)
     end
 
-    if slot:find(">", 1, true) then
+    if info.kind == "priority" then
         local resolved = type(providers.ResolvePriorityValue) == "function" and (providers.ResolvePriorityValue(slot))
             or slot
         if type(resolved) == "string" and resolved ~= "" then
@@ -273,4 +348,326 @@ function layout.Expand(text, source, providers)
         return layout.RenderText(resolved, providers)
     end)
     return text, expanded
+end
+
+-- -------------------------------------------------------------------------------
+-- Editing model
+--
+-- The visual editor drags slot *expressions* (not resolved players), so class
+-- fills and priority lists survive a rearrangement. Every mutator is pure: it
+-- returns `ok, model` on success and `ok, reason` on failure, leaving the input
+-- untouched so the caller can keep the previous model on a rejected drop.
+-- -------------------------------------------------------------------------------
+
+--- Returns an independent copy of a layout model.
+-- @tparam table model Layout model.
+-- @treturn table copy
+function layout.CopyModel(model)
+    local copy = { groups = {} }
+    if type(model) ~= "table" or type(model.groups) ~= "table" then
+        return copy
+    end
+    for _, group in ipairs(model.groups) do
+        local slots = {}
+        for _, slot in ipairs(group.slots or {}) do
+            slots[#slots + 1] = slot
+        end
+        copy.groups[#copy.groups + 1] = { name = group.name, subgroup = group.subgroup, slots = slots }
+    end
+    return copy
+end
+
+-- Group labels and slots are stored in a one-line delimited syntax, so the
+-- delimiters themselves can never appear inside a value.
+local function SanitizeName(name)
+    return Trim((tostring(name or ""):gsub("[;:,\r\n]", " ")))
+end
+
+local function SanitizeSlot(slot)
+    return Trim((tostring(slot or ""):gsub("[;,\r\n]", " ")))
+end
+
+local function NormalizeSubgroup(value)
+    local number = tonumber(value)
+    if not number or number ~= math.floor(number) or number < 1 or number > MAX_SUBGROUPS then
+        return nil
+    end
+    return number
+end
+
+--- Serializes a layout model back to the compact `$LAYOUT` syntax.
+-- Round-trips `layout.Parse`.
+-- @tparam table model Layout model.
+-- @treturn string source
+function layout.Serialize(model)
+    local parts = {}
+    for _, group in ipairs((type(model) == "table" and model.groups) or {}) do
+        local label = SanitizeName(group.name)
+        if label == "" then
+            label = "Group " .. (#parts + 1)
+        end
+        if group.subgroup then
+            label = label .. "/" .. tostring(group.subgroup)
+        end
+        parts[#parts + 1] = label .. ": " .. table.concat(group.slots or {}, ", ")
+    end
+    return table.concat(parts, "; ")
+end
+
+--- Returns a copy of the model with empty groups dropped.
+-- Dragging a member out of a subgroup box can leave the box behind; saving a
+-- layout should not persist boxes nobody filled.
+-- @tparam table model Layout model.
+-- @treturn table model
+function layout.Compact(model)
+    local compact = { groups = {} }
+    for _, group in ipairs(layout.CopyModel(model).groups) do
+        if #group.slots > 0 then
+            compact.groups[#compact.groups + 1] = group
+        end
+    end
+    return compact
+end
+
+--- Splits a model into the eight raid subgroup boxes plus free-form groups.
+-- A second group claiming an already-bound subgroup is listed as free so it
+-- stays visible and editable rather than silently hidden.
+-- @tparam table model Layout model.
+-- @treturn table view `{ subgroups = { [1..8] = groupIndex }, free = { groupIndex, ... } }`.
+function layout.GridView(model)
+    local view = { subgroups = {}, free = {} }
+    for index, group in ipairs((type(model) == "table" and model.groups) or {}) do
+        local bound = group.subgroup
+        if bound and view.subgroups[bound] == nil then
+            view.subgroups[bound] = index
+        else
+            view.free[#view.free + 1] = index
+        end
+    end
+    return view
+end
+
+--- Appends a group.
+-- @tparam table model Layout model.
+-- @tparam[opt] string name Group label; defaults to `Group N`.
+-- @tparam[opt] number subgroup Raid subgroup to bind (1-8).
+-- @treturn boolean ok
+-- @treturn table|string model on success, reason on failure
+function layout.AddGroup(model, name, subgroup)
+    local updated = layout.CopyModel(model)
+    if #updated.groups >= MAX_GROUPS then
+        return false, "group-limit"
+    end
+    local bound = NormalizeSubgroup(subgroup)
+    if subgroup ~= nil and not bound then
+        return false, "unknown-subgroup"
+    end
+    local label = SanitizeName(name)
+    if label == "" then
+        label = "Group " .. (bound or (#updated.groups + 1))
+    end
+    updated.groups[#updated.groups + 1] = { name = label, subgroup = bound, slots = {} }
+    return true, updated
+end
+
+--- Removes a group by index.
+-- @tparam table model Layout model.
+-- @tparam number index Group index.
+-- @treturn boolean ok
+-- @treturn table|string model on success, reason on failure
+function layout.RemoveGroup(model, index)
+    local updated = layout.CopyModel(model)
+    if not updated.groups[index] then
+        return false, "unknown-group"
+    end
+    table.remove(updated.groups, index)
+    return true, updated
+end
+
+--- Renames a group.
+-- @tparam table model Layout model.
+-- @tparam number index Group index.
+-- @tparam string name New label.
+-- @treturn boolean ok
+-- @treturn table|string model on success, reason on failure
+function layout.SetGroupName(model, index, name)
+    local updated = layout.CopyModel(model)
+    local group = updated.groups[index]
+    if not group then
+        return false, "unknown-group"
+    end
+    local label = SanitizeName(name)
+    if label == "" then
+        return false, "empty-name"
+    end
+    group.name = label
+    return true, updated
+end
+
+--- Binds a group to a raid subgroup, or unbinds it when `subgroup` is nil.
+-- @tparam table model Layout model.
+-- @tparam number index Group index.
+-- @tparam[opt] number subgroup Raid subgroup (1-8).
+-- @treturn boolean ok
+-- @treturn table|string model on success, reason on failure
+function layout.SetGroupSubgroup(model, index, subgroup)
+    local updated = layout.CopyModel(model)
+    local group = updated.groups[index]
+    if not group then
+        return false, "unknown-group"
+    end
+    local bound = NormalizeSubgroup(subgroup)
+    if subgroup ~= nil and not bound then
+        return false, "unknown-subgroup"
+    end
+    if bound then
+        for other, candidate in ipairs(updated.groups) do
+            if other ~= index and candidate.subgroup == bound then
+                return false, "subgroup-taken"
+            end
+        end
+        if GroupWeight(group) > MAX_SUBGROUP_SLOTS then
+            return false, "group-full"
+        end
+    end
+    group.subgroup = bound
+    return true, updated
+end
+
+-- Reads the slot expression a drag carries: either an existing slot or the raw
+-- text of a roster palette entry.
+local function ResolveDragText(model, drag)
+    if drag.kind == "text" then
+        local text = SanitizeSlot(drag.text)
+        if text == "" then
+            return nil, "empty-slot"
+        end
+        return text
+    end
+
+    if drag.kind == "slot" then
+        local group = model.groups[drag.group]
+        if not group then
+            return nil, "unknown-group"
+        end
+        local slot = group.slots[drag.slot]
+        if not slot then
+            return nil, "unknown-slot"
+        end
+        return slot
+    end
+
+    return nil, "unknown-drag"
+end
+
+-- Resolves the destination group index, creating a bound group when a drop
+-- lands in an empty subgroup box.
+local function ResolveDropGroup(model, drop)
+    if drop.kind == "group" or drop.kind == "slot" then
+        if type(drop.group) ~= "number" or not model.groups[drop.group] then
+            return nil, "unknown-group"
+        end
+        return drop.group
+    end
+
+    if drop.kind == "subgroup" then
+        local bound = NormalizeSubgroup(drop.subgroup)
+        if not bound then
+            return nil, "unknown-subgroup"
+        end
+        for index, group in ipairs(model.groups) do
+            if group.subgroup == bound then
+                return index
+            end
+        end
+        if #model.groups >= MAX_GROUPS then
+            return nil, "group-limit"
+        end
+        model.groups[#model.groups + 1] = { name = "Group " .. bound, subgroup = bound, slots = {} }
+        return #model.groups
+    end
+
+    return nil, "unknown-drop"
+end
+
+-- Trades two slots when a member is dropped onto an occupant of a full group.
+local function SwapSlots(model, dragIndex, dragSlot, targetIndex, targetSlot, text, occupant)
+    local source = model.groups[dragIndex]
+    local target = model.groups[targetIndex]
+    if not CanHold(target, layout.SlotWeight(text), targetSlot) then
+        return false, "group-full"
+    end
+    if not CanHold(source, layout.SlotWeight(occupant), dragSlot) then
+        return false, "group-full"
+    end
+    source.slots[dragSlot] = occupant
+    target.slots[targetSlot] = text
+    return true, model
+end
+
+--- Applies a drag-and-drop gesture to a layout model.
+-- Drags are `{ kind = "slot", group, slot }` or `{ kind = "text", text }`.
+-- Drops are `{ kind = "slot", group, slot }` (insert before, or swap when the
+-- destination is full), `{ kind = "group", group }` and
+-- `{ kind = "subgroup", subgroup }` (append), or `{ kind = "remove" }`.
+-- @tparam table model Layout model.
+-- @tparam table drag Drag descriptor.
+-- @tparam table drop Drop descriptor.
+-- @treturn boolean ok
+-- @treturn table|string model on success, reason on failure
+function layout.ApplyDrop(model, drag, drop)
+    if type(drag) ~= "table" or type(drop) ~= "table" then
+        return false, "unknown-drag"
+    end
+
+    local updated = layout.CopyModel(model)
+    local text, dragError = ResolveDragText(updated, drag)
+    if not text then
+        return false, dragError
+    end
+    local isMove = drag.kind == "slot"
+
+    if drop.kind == "remove" then
+        if not isMove then
+            return false, "unknown-drop"
+        end
+        table.remove(updated.groups[drag.group].slots, drag.slot)
+        return true, updated
+    end
+
+    local targetIndex, targetError = ResolveDropGroup(updated, drop)
+    if not targetIndex then
+        return false, targetError
+    end
+    local target = updated.groups[targetIndex]
+
+    if isMove and drop.kind == "slot" and targetIndex ~= drag.group then
+        local occupant = target.slots[drop.slot]
+        if occupant and not CanHold(target, layout.SlotWeight(text)) then
+            return SwapSlots(updated, drag.group, drag.slot, targetIndex, drop.slot, text, occupant)
+        end
+    end
+
+    if isMove then
+        table.remove(updated.groups[drag.group].slots, drag.slot)
+    end
+    if not CanHold(target, layout.SlotWeight(text)) or #target.slots >= MAX_SLOTS_PER_GROUP then
+        return false, "group-full"
+    end
+
+    local position = #target.slots + 1
+    if drop.kind == "slot" then
+        position = drop.slot
+        if isMove and targetIndex == drag.group and drop.slot > drag.slot then
+            position = position - 1
+        end
+        if position < 1 then
+            position = 1
+        end
+        if position > #target.slots + 1 then
+            position = #target.slots + 1
+        end
+    end
+    table.insert(target.slots, position, text)
+    return true, updated
 end
