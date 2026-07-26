@@ -1,3 +1,9 @@
+## v3.2.0-BETA
+
+* New Feature: Added priority assignments. A variable or `$` marker value written as `Name > Name > Name` resolves to the first listed player who is present and alive, so raid markers and displayed text follow whoever is available. Assignments re-resolve when the group roster changes.
+* New Feature: Mouseover marker keybindings now mark a hostile unit under the cursor and fall back to your current target when there is no valid unit. A new Smart Markers setting can relax the restriction to mark any live unit, including friendly players.
+* New Feature: Added optional cleanup of pages received from others. A Page Library setting removes them automatically at login, and a Clean Received Pages button removes them on demand. Pinned pages and the current display are always kept, and pages you created or imported are never removed.
+
 ## v3.1.1
 
 * **BREAKING CHANGE**: Rebuilt shared assignments for the current group. This release cannot share assignments or displayed pages with earlier AngryEra or AngryAssignments versions. Everyone who participates in shared assignments must update before the raid.
