@@ -603,6 +603,26 @@ function AngryEra:OnInitialize()
                     },
                 },
             },
+            smartmarkers = {
+                type = "group",
+                order = 8,
+                name = "Smart Markers",
+                inline = true,
+                args = {
+                    mouseoverHostileOnly = {
+                        type = "toggle",
+                        order = 1,
+                        name = "Mouseover Marks Hostile Only",
+                        desc = "Restrict mouseover marker keybindings to hostile units. When off, hovering any live unit (including a friendly player) marks it. With no valid mouseover unit, both modes fall back to your current target.",
+                        get = function(info)
+                            return self:GetConfig("mouseoverHostileOnly")
+                        end,
+                        set = function(info, val)
+                            self:SetConfig("mouseoverHostileOnly", val)
+                        end,
+                    },
+                },
+            },
         },
     }
 

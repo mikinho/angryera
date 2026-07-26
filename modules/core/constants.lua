@@ -43,4 +43,5 @@ core.configDefaults = {
     glowColor = "FF0000",
     editBoxFont = false,
     chatoutput = "Acronym",
+    mouseoverHostileOnly = true,
 }

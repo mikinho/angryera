@@ -42,6 +42,25 @@ function AngryEra_ClearAllRaidTargets()
     end
 end
 
+--- Marks the mouseover unit when it is a live, permitted target, else the current target.
+-- Mouseover marking is restricted to hostile units by default; the
+-- `mouseoverHostileOnly` setting can relax it to any live unit so friendly
+-- players can be marked on hover. The target binding is left untouched.
+-- @tparam number index Raid target icon index (1-8).
+-- @treturn boolean assigned Whether the icon was applied.
+function AngryEra_MarkMouseover(index)
+    local hostileOnly = true
+    if AngryEra and type(AngryEra.GetConfig) == "function" then
+        hostileOnly = AngryEra:GetConfig("mouseoverHostileOnly") ~= false
+    end
+    if UnitExists("mouseover") and not UnitIsDead("mouseover") then
+        if not hostileOnly or UnitCanAttack("player", "mouseover") then
+            return AngryEra_SetRaidTarget("mouseover", index)
+        end
+    end
+    return AngryEra_SetRaidTarget("target", index)
+end
+
 -- -------------------------
 -- Metadata auto-markers
 -- -------------------------

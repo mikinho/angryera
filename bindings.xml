@@ -54,27 +54,27 @@
 		AngryEra_SetRaidTarget("target", 1)
 	</Binding>
 	<Binding name="AngryEra_MARK_MOUSEOVER_8" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
-		AngryEra_SetRaidTarget("mouseover", 8)
+		AngryEra_MarkMouseover(8)
 	</Binding>
 	<Binding name="AngryEra_MARK_MOUSEOVER_7" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
-		AngryEra_SetRaidTarget("mouseover", 7)
+		AngryEra_MarkMouseover(7)
 	</Binding>
 	<Binding name="AngryEra_MARK_MOUSEOVER_6" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
-		AngryEra_SetRaidTarget("mouseover", 6)
+		AngryEra_MarkMouseover(6)
 	</Binding>
 	<Binding name="AngryEra_MARK_MOUSEOVER_5" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
-		AngryEra_SetRaidTarget("mouseover", 5)
+		AngryEra_MarkMouseover(5)
 	</Binding>
 	<Binding name="AngryEra_MARK_MOUSEOVER_4" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
-		AngryEra_SetRaidTarget("mouseover", 4)
+		AngryEra_MarkMouseover(4)
 	</Binding>
 	<Binding name="AngryEra_MARK_MOUSEOVER_3" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
-		AngryEra_SetRaidTarget("mouseover", 3)
+		AngryEra_MarkMouseover(3)
 	</Binding>
 	<Binding name="AngryEra_MARK_MOUSEOVER_2" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
-		AngryEra_SetRaidTarget("mouseover", 2)
+		AngryEra_MarkMouseover(2)
 	</Binding>
 	<Binding name="AngryEra_MARK_MOUSEOVER_1" category="BINDING_HEADER_AngryEra_SMART_MARKERS">
-		AngryEra_SetRaidTarget("mouseover", 1)
+		AngryEra_MarkMouseover(1)
 	</Binding>
 </Bindings>
