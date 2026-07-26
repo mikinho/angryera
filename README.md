@@ -293,7 +293,9 @@ Spore soakers:
 
 Edit it from the page's right-click menu → **Edit Group Layout**. The editor opens on a visual grid: the eight raid subgroup boxes, a box for each unbound group, and the roster below. Drag a name from the roster into a box to place it, drag between boxes to move it, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the roster, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone. Dropping into an empty subgroup box creates the bound group for you.
 
-Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` keep auto-filling after you rearrange the grid. Tick **Edit as text** to switch the same layout to one group per line — that view is where you name an unbound group like `Spores` and where roster names insert at the cursor. Both views write the same `$LAYOUT`, and groups left empty are dropped when you save.
+You can also type instead of drag. Click a box title to name that group, click a member to edit their slot expression, and click an empty row to add one — so a layout can be built solo, before there is any roster to drag from. **New Group** adds an unbound group like `Spores`, and right-clicking a box title removes the group after a confirmation.
+
+Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` keep auto-filling after you rearrange the grid. Tick **Edit as text** to switch the same layout to one group per line, which is also where roster names insert at the cursor. Both views write the same `$LAYOUT`, and groups left empty are dropped when you save.
 
 **Save** writes the layout. As the raid leader or an assistant, out of combat, **Apply to Raid** moves everyone into their bound subgroups. Only groups bound with `Label/N` move; unbound groups are display-only.
 
