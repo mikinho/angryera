@@ -183,6 +183,16 @@ assert(select(2, layout.SetGroupSubgroup(base, 1, nil)).groups[1].subgroup == ni
 local wide = layout.Parse("Bench: A, B, C, D, E, F")
 assert(select(2, layout.SetGroupSubgroup(wide, 1, 2)) == "group-full", "an oversized group cannot bind to a subgroup")
 
+-- SetSlot retypes one slot under the same capacity rules a drop obeys.
+assert(select(2, layout.SetSlot(base, 1, 1, " C:D ")).groups[1].slots[1] == "C:D", "a typed slot is trimmed")
+assert(base.groups[1].slots[1] == "A", "the input model is left untouched")
+assert(select(2, layout.SetSlot(base, 9, 1, "C")) == "unknown-group", "typing into a missing group is refused")
+assert(select(2, layout.SetSlot(base, 1, 4, "C")) == "unknown-slot", "typing into a missing slot is refused")
+assert(select(2, layout.SetSlot(base, 1, 1, "  ")) == "empty-slot", "a blank slot is refused")
+local packed = layout.Parse("Main/1: A, B, C, D, E")
+assert(select(2, layout.SetSlot(packed, 1, 1, "*MAGE x2")) == "group-full", "a retype cannot exceed the subgroup cap")
+assert(select(2, layout.SetSlot(packed, 1, 1, "*MAGE")).groups[1].slots[1] == "*MAGE", "a same-weight retype fits")
+
 -- ApplyDrop: moving a slot between groups appends to the destination.
 local roster = layout.Parse("Main/1: A, B; Spores: C")
 local moved

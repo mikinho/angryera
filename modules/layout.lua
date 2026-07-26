@@ -534,6 +534,35 @@ function layout.SetGroupSubgroup(model, index, subgroup)
     return true, updated
 end
 
+--- Replaces one slot expression in place.
+-- Typing a slot is the keyboard path into the model dragging already edits, so
+-- it honors the destination's capacity exactly as a drop does.
+-- @tparam table model Layout model.
+-- @tparam number index Group index.
+-- @tparam number slot Slot index.
+-- @tparam string text Slot expression.
+-- @treturn boolean ok
+-- @treturn table|string model on success, reason on failure
+function layout.SetSlot(model, index, slot, text)
+    local updated = layout.CopyModel(model)
+    local group = updated.groups[index]
+    if not group then
+        return false, "unknown-group"
+    end
+    if not group.slots[slot] then
+        return false, "unknown-slot"
+    end
+    local expression = SanitizeSlot(text)
+    if expression == "" then
+        return false, "empty-slot"
+    end
+    if not CanHold(group, layout.SlotWeight(expression), slot) then
+        return false, "group-full"
+    end
+    group.slots[slot] = expression
+    return true, updated
+end
+
 -- Reads the slot expression a drag carries: either an existing slot or the raw
 -- text of a roster palette entry.
 local function ResolveDragText(model, drag)
