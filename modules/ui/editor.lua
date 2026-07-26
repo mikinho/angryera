@@ -8,6 +8,7 @@ local AceGUI = app.libs.AceGUI
 local DDM = app.libs.DDM
 local helpers = AngryEra.utils.helpers
 local colors = AngryEra.utils.colors
+local layout = AngryEra.utils.layout
 local EnsureUnitShortName = helpers.EnsureUnitShortName
 local IterateGroupMembers = helpers.IterateGroupMembers
 local IsCategoryDescendant = helpers.IsCategoryDescendant
@@ -1100,6 +1101,122 @@ local function AngryEra_EditVariables(id, type)
     end)
 end
 
+--- Opens a dedicated editor for a page's `$LAYOUT` group layout.
+-- Groups are edited one per line; a roster palette inserts names at the cursor,
+-- Save writes the layout, and Apply rearranges the actual raid subgroups.
+-- @tparam number id Page id.
+function AngryEra:ShowGroupLayoutEditor(id)
+    local page = AngryAssign_Pages[id]
+    if not page or not self:CanEditEntityLocally(page) then
+        return
+    end
+
+    local source = layout.ExtractSource(page.Vars) or ""
+    local editable = source:gsub("%s*;%s*", "\n")
+
+    local frame = AceGUI:Create("Window")
+    frame:SetTitle("Group Layout")
+    frame:SetLayout("Flow")
+    frame:SetWidth(470)
+    frame:SetHeight(440)
+    frame:EnableResize(true)
+    _G["AngryEra_LayoutEditor_Window"] = frame.frame
+    table.insert(UISpecialFrames, "AngryEra_LayoutEditor_Window")
+    frame:SetCallback("OnClose", function(widget)
+        AceGUI:Release(widget)
+    end)
+
+    local editBox = AceGUI:Create("MultiLineEditBox")
+    editBox:SetLabel("Groups, one per line:  Label/N: name, A > B, *MAGE x2, group:2")
+    editBox:SetNumLines(10)
+    editBox:SetText(editable)
+    editBox:SetFullWidth(true)
+    editBox:DisableButton(false)
+
+    local function SaveLayout()
+        local text = editBox:GetText() or ""
+        local single = text:gsub("[\r\n]+", ";"):gsub("%s*;%s*", ";"):gsub("^;+", ""):gsub(";+$", "")
+        local newVars = layout.UpsertSource(page.Vars, single)
+        local saved, saveError = self:UpdatePageVars(id, newVars)
+        if not saved and saveError then
+            print(saveError)
+            return false
+        end
+        self:UpdateDisplayed()
+        return true
+    end
+
+    editBox:SetCallback("OnEnterPressed", function()
+        SaveLayout()
+    end)
+    frame:AddChild(editBox)
+
+    local heading = AceGUI:Create("Heading")
+    heading:SetText("Roster (click to insert)")
+    heading:SetFullWidth(true)
+    frame:AddChild(heading)
+
+    local palette = AceGUI:Create("SimpleGroup")
+    palette:SetLayout("Flow")
+    palette:SetFullWidth(true)
+    frame:AddChild(palette)
+
+    local rosterCount = 0
+    IterateGroupMembers(function(rawName, fullName)
+        local shortName = (rawName or EnsureUnitShortName(fullName) or ""):match("([^-]+)")
+        if not shortName or shortName == "" then
+            return false
+        end
+        rosterCount = rosterCount + 1
+        local button = AceGUI:Create("Button")
+        button:SetText(shortName)
+        button:SetWidth(96)
+        button:SetCallback("OnClick", function()
+            local inner = editBox.editBox
+            local position = inner and inner:GetCursorPosition() or 0
+            local text = editBox:GetText() or ""
+            if position and position > 0 then
+                editBox:SetText(text:sub(1, position) .. shortName .. text:sub(position + 1))
+                inner:SetCursorPosition(position + #shortName)
+            else
+                editBox:SetText(text .. shortName)
+            end
+        end)
+        palette:AddChild(button)
+        return false
+    end)
+    if rosterCount == 0 then
+        local hint = AceGUI:Create("Label")
+        hint:SetText("Join a group to insert roster names here.")
+        hint:SetFullWidth(true)
+        palette:AddChild(hint)
+    end
+
+    local saveButton = AceGUI:Create("Button")
+    saveButton:SetText("Save")
+    saveButton:SetWidth(120)
+    saveButton:SetCallback("OnClick", function()
+        SaveLayout()
+    end)
+    frame:AddChild(saveButton)
+
+    local applyButton = AceGUI:Create("Button")
+    applyButton:SetText("Apply to Raid")
+    applyButton:SetWidth(150)
+    applyButton:SetCallback("OnClick", function()
+        if not SaveLayout() then
+            return
+        end
+        local applied, result = self:ApplyGroupLayoutToRaid()
+        if applied then
+            self:Print(("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s"))
+        else
+            self:Print("Could not apply the layout: " .. tostring(result))
+        end
+    end)
+    frame:AddChild(applyButton)
+end
+
 -- ── Context Menus and Tree ──────────────────────────────────────────────────
 
 local PagesDropDownList
@@ -1131,6 +1248,13 @@ function AngryEra_PageMenu(pageId)
                 notCheckable = true,
                 func = function(_, clickedPageId)
                     AngryEra_EditVariables(clickedPageId, "page")
+                end,
+            },
+            {
+                text = "Edit Group Layout",
+                notCheckable = true,
+                func = function(_, clickedPageId)
+                    AngryEra:ShowGroupLayoutEditor(clickedPageId)
                 end,
             },
             {

@@ -112,4 +112,22 @@ assert(
     "an explicit name may still be listed again by choice"
 )
 
+-- Vars source round-trip: extract, upsert (replace, append, preserve, remove).
+assert(layout.ExtractSource("MT=Vn\n$LAYOUT=G1: A, B\nOT=Zed") == "G1: A, B", "extracts the layout line")
+assert(layout.ExtractSource("MT=Vn") == nil, "no layout line yields nil")
+
+local replaced = layout.UpsertSource("MT=Vn\n$LAYOUT=old\nOT=Zed", "G1: A")
+assert(replaced == "MT=Vn\n$LAYOUT=G1: A\nOT=Zed", "upsert replaces in place and preserves other vars")
+
+local appended = layout.UpsertSource("MT=Vn", "G1: A")
+assert(appended == "MT=Vn\n$LAYOUT=G1: A", "upsert appends when absent")
+
+local removed = layout.UpsertSource("MT=Vn\n$LAYOUT=old\nOT=Zed", "")
+assert(removed == "MT=Vn\nOT=Zed", "an empty source removes the layout line")
+
+assert(
+    layout.ExtractSource(layout.UpsertSource("", "G1: A, B; G2: C")) == "G1: A, B; G2: C",
+    "extract round-trips upsert"
+)
+
 print("Layout tests passed.")

@@ -204,6 +204,53 @@ function layout.SourceFromVars(vars)
     return nil
 end
 
+--- Reads the `$LAYOUT` value from a raw Key=Value variable string.
+-- @tparam string vars Raw page/category Vars string.
+-- @treturn string|nil source
+function layout.ExtractSource(vars)
+    if type(vars) ~= "string" then
+        return nil
+    end
+    for line in (vars .. "\n"):gmatch("([^\n]*)\n") do
+        local key, value = line:match("^%s*([^=]-)%s*=%s*(.-)%s*$")
+        if key and key:upper() == "$LAYOUT" then
+            return value
+        end
+    end
+    return nil
+end
+
+--- Returns a Vars string with the `$LAYOUT` line set (or removed when empty).
+-- Every other variable line is preserved in order. The layout source is stored
+-- on a single line, so callers must join multi-line editing with ";" first.
+-- @tparam string vars Existing Vars string.
+-- @tparam string source Compact layout syntax (empty removes the key).
+-- @treturn string vars
+function layout.UpsertSource(vars, source)
+    vars = type(vars) == "string" and vars or ""
+    source = type(source) == "string" and source or ""
+    local out = {}
+    local replaced = false
+    for line in (vars .. "\n"):gmatch("([^\n]*)\n") do
+        local key = line:match("^%s*([^=]-)%s*=")
+        if key and key:upper() == "$LAYOUT" then
+            if source ~= "" and not replaced then
+                out[#out + 1] = "$LAYOUT=" .. source
+                replaced = true
+            end
+        else
+            out[#out + 1] = line
+        end
+    end
+    while #out > 0 and out[#out]:match("^%s*$") do
+        out[#out] = nil
+    end
+    if source ~= "" and not replaced then
+        out[#out + 1] = "$LAYOUT=" .. source
+    end
+    return table.concat(out, "\n")
+end
+
 --- Expands `{layout}` and `{layout GroupName}` placeholders in text.
 -- Resolves the layout once and substitutes every placeholder from that result.
 -- @tparam string text Note text containing placeholders.
