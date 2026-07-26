@@ -691,6 +691,59 @@ function AngryEra:RemovePageRecord(id)
     AngryAssign_Pages[id] = nil
 end
 
+-- Collects the ids of pages received from others that are safe to remove.
+-- Pinned pages and the currently displayed page are always excluded; pages this
+-- installation created or imported are locally owned and never returned.
+local function CollectReceivedPageIds(self)
+    local ids = {}
+    if type(AngryAssign_Pages) ~= "table" then
+        return ids
+    end
+    local displayedId = type(AngryAssign_State) == "table" and AngryAssign_State.displayed or nil
+    for id, page in pairs(AngryAssign_Pages) do
+        if
+            type(page) == "table"
+            and id ~= displayedId
+            and not self:IsLocallyOwned(page)
+            and not self:IsPinned(page)
+        then
+            ids[#ids + 1] = id
+        end
+    end
+    return ids
+end
+
+--- Returns how many received (not locally owned) pages are eligible for cleanup.
+-- @treturn number count
+function AngryEra:CountReceivedPages()
+    return #CollectReceivedPageIds(self)
+end
+
+--- Removes received (not locally owned) pages, keeping pinned and displayed ones.
+-- Received pages leave no tombstone, so a later re-receive re-registers cleanly.
+-- @treturn number removed Count of pages removed.
+function AngryEra:CleanReceivedPages()
+    local ids = CollectReceivedPageIds(self)
+    for _, id in ipairs(ids) do
+        self:RemovePageRecord(id)
+    end
+    return #ids
+end
+
+--- Runs the opt-in received-page cleanup once during load.
+-- No-op unless the autoCleanReceivedPages config is enabled.
+-- @treturn number removed
+function AngryEra:AutoCleanReceivedPagesOnLoad()
+    if type(self.GetConfig) ~= "function" or not self:GetConfig("autoCleanReceivedPages") then
+        return 0
+    end
+    local removed = self:CleanReceivedPages()
+    if removed > 0 and type(self.Print) == "function" then
+        self:Print(("Removed %d received %s not owned by you."):format(removed, removed == 1 and "page" or "pages"))
+    end
+    return removed
+end
+
 --- Removes a category record and its identity registration.
 function AngryEra:RemoveCategoryRecord(id)
     local category = AngryAssign_Categories[id]

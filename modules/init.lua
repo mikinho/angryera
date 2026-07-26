@@ -118,6 +118,7 @@ function AngryEra:OnInitialize()
     self:MigrateEntityIdentities()
     self:MigrateLegacyLocalIds()
     self:PruneDeletedLocalIdentities()
+    self:AutoCleanReceivedPagesOnLoad()
     local syncRuntimeReady, syncRuntimeResult = self:InitializeSyncRuntimeStorage()
     if not syncRuntimeReady then
         self.syncRuntimeStartupWarning = "Synchronization v3 is disabled because its saved state could not be initialized: "
@@ -619,6 +620,52 @@ function AngryEra:OnInitialize()
                         end,
                         set = function(info, val)
                             self:SetConfig("mouseoverHostileOnly", val)
+                        end,
+                    },
+                },
+            },
+            library = {
+                type = "group",
+                order = 9,
+                name = "Page Library",
+                inline = true,
+                args = {
+                    autoCleanReceivedPages = {
+                        type = "toggle",
+                        order = 1,
+                        name = "Auto-Clean Received Pages on Login",
+                        desc = "At login, remove pages received from others. Pinned pages and the current display are always kept; pages you created or imported are never removed.",
+                        get = function(info)
+                            return self:GetConfig("autoCleanReceivedPages")
+                        end,
+                        set = function(info, val)
+                            self:SetConfig("autoCleanReceivedPages", val)
+                        end,
+                    },
+                    cleanreceived = {
+                        type = "execute",
+                        order = 2,
+                        name = "Clean Received Pages Now",
+                        desc = "Remove pages received from others, keeping pinned pages and the current display",
+                        confirm = function()
+                            local count = self:CountReceivedPages()
+                            if count == 0 then
+                                return "There are no received pages to remove."
+                            end
+                            return ("Remove %d received %s? Pinned pages and the current display are kept."):format(
+                                count,
+                                count == 1 and "page" or "pages"
+                            )
+                        end,
+                        func = function()
+                            local removed = self:CleanReceivedPages()
+                            if self:SelectedId() and not AngryAssign_Pages[self:SelectedId()] then
+                                self:SetSelectedId(nil)
+                            end
+                            self:UpdateTree()
+                            self:UpdateSelected()
+                            self:UpdateDisplayed()
+                            self:Print(("Removed %d received %s."):format(removed, removed == 1 and "page" or "pages"))
                         end,
                     },
                 },
