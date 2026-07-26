@@ -1115,6 +1115,70 @@ local function CollectRosterNames()
     return names
 end
 
+--- Prompts for one line of layout text and hands the answer back.
+-- @tparam table data Prompt, optional seed Text, and an OnAccept(text) callback.
+local function AngryEra_LayoutTextPopup(data)
+    local popup_name = "AngryEra_LayoutText"
+    if StaticPopupDialogs[popup_name] == nil then
+        StaticPopupDialogs[popup_name] = {
+            text = "",
+            button1 = OKAY,
+            button2 = CANCEL,
+            hasEditBox = true,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnShow = function(self)
+                local editBox = self.editBox or self.wideEditBox or self.EditBox
+                if editBox then
+                    editBox:SetText(self.data.Text or "")
+                    editBox:HighlightText()
+                end
+            end,
+            OnAccept = function(self)
+                local editBox = self.editBox or self.wideEditBox or self.EditBox
+                if editBox then
+                    self.data.OnAccept(editBox:GetText())
+                end
+            end,
+            EditBoxOnEnterPressed = function(self)
+                local parent = self:GetParent()
+                local editBox = parent.editBox or parent.wideEditBox or parent.EditBox
+                if editBox then
+                    parent.data.OnAccept(editBox:GetText())
+                    parent:Hide()
+                end
+            end,
+            EditBoxOnEscapePressed = function(self)
+                self:GetParent():Hide()
+            end,
+        }
+    end
+    StaticPopupDialogs[popup_name].text = data.Prompt
+    StaticPopup_Show(popup_name, nil, nil, data)
+end
+
+--- Confirms a layout edit that throws work away before running it.
+-- @tparam table data Prompt and an OnAccept() callback.
+local function AngryEra_LayoutConfirmPopup(data)
+    local popup_name = "AngryEra_LayoutConfirm"
+    if StaticPopupDialogs[popup_name] == nil then
+        StaticPopupDialogs[popup_name] = {
+            text = "",
+            button1 = YES,
+            button2 = NO,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnAccept = function(self)
+                self.data.OnAccept()
+            end,
+        }
+    end
+    StaticPopupDialogs[popup_name].text = data.Prompt
+    StaticPopup_Show(popup_name, nil, nil, data)
+end
+
 --- Opens a dedicated editor for a page's `$LAYOUT` group layout.
 -- The visual view drags members between raid subgroup boxes, free-form group
 -- boxes, and the roster palette; the text view edits the same layout one group
@@ -1225,26 +1289,81 @@ function AngryEra:ShowGroupLayoutEditor(id)
         grid:SetFullWidth(true)
         grid:SetLayoutEngine(layout)
         grid:SetRoster(roster)
-        grid:SetCallback("OnLayoutDrop", function(widget, drag, drop)
-            local applied, updated = layout.ApplyDrop(model, drag, drop)
+        -- Every visual edit runs the same pure mutator the drag path uses and
+        -- redraws from the model it returns, so typed and dragged edits cannot
+        -- drift apart.
+        local function Commit(applied, updated)
             if not applied then
                 return
             end
             model = updated
-            widget:SetLayoutModel(model)
+            grid:SetLayoutModel(model)
+        end
+
+        grid:SetCallback("OnLayoutDrop", function(_, drag, drop)
+            Commit(layout.ApplyDrop(model, drag, drop))
         end)
-        grid:SetCallback("OnSlotClick", function(widget, group, slot, button)
-            if button ~= "RightButton" then
+
+        grid:SetCallback("OnSlotClick", function(_, group, slot, button)
+            local target = model.groups[group]
+            if not target then
                 return
             end
-            local drag = { kind = "slot", group = group, slot = slot }
-            local removed, updated = layout.ApplyDrop(model, drag, { kind = "remove" })
-            if not removed then
+            if button == "RightButton" then
+                Commit(layout.ApplyDrop(model, { kind = "slot", group = group, slot = slot }, { kind = "remove" }))
                 return
             end
-            model = updated
-            widget:SetLayoutModel(model)
+            AngryEra_LayoutTextPopup({
+                Prompt = "Slot in " .. target.name .. ":",
+                Text = target.slots[slot],
+                OnAccept = function(text)
+                    Commit(layout.SetSlot(model, group, slot, text))
+                end,
+            })
         end)
+
+        -- An unused row types into its box, which is the only way to fill a
+        -- layout while solo since the palette needs a live roster.
+        grid:SetCallback("OnEmptyClick", function(_, group, subgroup, button)
+            if button ~= "LeftButton" then
+                return
+            end
+            local drop = group and { kind = "group", group = group } or { kind = "subgroup", subgroup = subgroup }
+            AngryEra_LayoutTextPopup({
+                Prompt = "Add a slot:",
+                OnAccept = function(text)
+                    Commit(layout.ApplyDrop(model, { kind = "text", text = text }, drop))
+                end,
+            })
+        end)
+
+        grid:SetCallback("OnGroupClick", function(_, group, subgroup, button)
+            local existing = group and model.groups[group]
+            if button == "RightButton" then
+                if not existing then
+                    return
+                end
+                AngryEra_LayoutConfirmPopup({
+                    Prompt = ("Remove the group %s?"):format(existing.name),
+                    OnAccept = function()
+                        Commit(layout.RemoveGroup(model, group))
+                    end,
+                })
+                return
+            end
+            AngryEra_LayoutTextPopup({
+                Prompt = "Group name:",
+                Text = existing and existing.name,
+                OnAccept = function(text)
+                    if existing then
+                        Commit(layout.SetGroupName(model, group, text))
+                        return
+                    end
+                    Commit(layout.AddGroup(model, text, subgroup))
+                end,
+            })
+        end)
+
         body:AddChild(grid)
         grid:SetLayoutModel(model)
     end
@@ -1269,6 +1388,28 @@ function AngryEra:ShowGroupLayoutEditor(id)
         BuildBody()
     end)
     frame:AddChild(toggle)
+
+    -- Reads the view back first so a group added from the text view lands after
+    -- whatever is already typed there rather than replacing it.
+    local newGroup = AceGUI:Create("Button")
+    newGroup:SetText("New Group")
+    newGroup:SetWidth(120)
+    newGroup:SetCallback("OnClick", function()
+        AngryEra_LayoutTextPopup({
+            Prompt = "Group name:",
+            OnAccept = function(text)
+                model = layout.Parse(CurrentSource())
+                local added, updated = layout.AddGroup(model, text)
+                if not added then
+                    return
+                end
+                model = updated
+                BuildBody()
+            end,
+        })
+    end)
+    frame:AddChild(newGroup)
+
     frame:AddChild(body)
     BuildBody()
 
