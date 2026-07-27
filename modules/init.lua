@@ -256,9 +256,14 @@ function AngryEra:OnInitialize()
                             self:Print("Started applying the displayed page's raid layout.")
                             return
                         end
-                        self:Print(
-                            ("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s")
-                        )
+                        if result > 0 then
+                            self:Print(
+                                ("Rearranged the raid to the layout (%d move%s)."):format(
+                                    result,
+                                    result == 1 and "" or "s"
+                                )
+                            )
+                        end
                         return
                     end
                     self:Print(raidLayoutApplyErrors[result] or ("Could not rearrange the raid: " .. tostring(result)))
@@ -1042,7 +1047,9 @@ end
 -- @tparam number|string result Move count or stable error code.
 function AngryEra:OnGroupLayoutApplyFinished(success, result)
     if success and type(result) == "number" then
-        self:Print(("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s"))
+        if result > 0 then
+            self:Print(("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s"))
+        end
         return
     end
     if quietRaidLayoutApplyResults[result] then

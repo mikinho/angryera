@@ -2501,7 +2501,9 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                 self:Print("Started applying the displayed page's raid layout.")
                 return
             end
-            self:Print(("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s"))
+            if result > 0 then
+                self:Print(("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s"))
+            end
         else
             self:Print(RAID_LAYOUT_APPLY_ERRORS[result] or ("Could not rearrange the raid: " .. tostring(result)))
         end

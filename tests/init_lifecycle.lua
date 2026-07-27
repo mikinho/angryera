@@ -420,6 +420,9 @@ assert(
     "leaving combat should report a completed queued layout exactly once"
 )
 calls = {}
+AngryEra:OnGroupLayoutApplyFinished(true, 0)
+assert(#calls == 0, "an already-satisfied raid layout should not print a zero-move success")
+calls = {}
 layoutFlushApplied = false
 layoutFlushResult = "no-pending-layout"
 AngryEra:PLAYER_REGEN_ENABLED()
