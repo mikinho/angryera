@@ -1115,10 +1115,12 @@ end
 
 -- The text view is a fixed ten-line box, so it sizes to a constant; the visual
 -- view sizes to the grid, floored so an empty layout is still workable and
--- capped so a tall one never runs off the screen.
+-- capped so a tall one never runs off the screen. The margin is only what keeps
+-- the window off the very edge of the screen: a full raid of eight groups needs
+-- most of a tall layout's height, so anything more generous crops the last row.
 local LAYOUT_TEXT_BODY_HEIGHT = 360
 local LAYOUT_MIN_BODY_HEIGHT = 200
-local LAYOUT_SCREEN_MARGIN = 80
+local LAYOUT_SCREEN_MARGIN = 24
 
 --- Collects the short names of the current group, in roster order.
 -- @treturn table Array of short names.
@@ -1281,27 +1283,24 @@ function AngryEra:ShowGroupLayoutEditor(id)
     -- Grows the window to the view inside it so the whole raid is in front of
     -- someone at once. The scroll pane stays behind it, since a short screen
     -- still has to reach the bottom of a tall layout.
-    local chrome
-
     local function FitBodyHeight(wanted)
         if closed or not wanted or wanted < 1 then
             return
         end
-        -- What surrounds the body is measured rather than assumed, so the
-        -- toggle, the buttons and the border keep the room they were built
-        -- with. It is read once, while the window still stands at that size: a
-        -- later reading folds in a hand resize, and shrinking the window by
-        -- hand would then leave the body hanging out of the bottom of it.
+        -- The window gains exactly what the body gains, so whatever surrounds
+        -- the body keeps the room it already holds without anyone having to
+        -- name a figure for it. Growing by the difference also carries a hand
+        -- resize forward instead of undoing it.
         local current = body.frame:GetHeight()
-        chrome = chrome or (frame.frame:GetHeight() - current)
+        local window = frame.frame:GetHeight()
+        local room = UIParent:GetHeight() - LAYOUT_SCREEN_MARGIN - window
 
-        local ceiling = UIParent:GetHeight() - LAYOUT_SCREEN_MARGIN - chrome
-        local height = math.max(LAYOUT_MIN_BODY_HEIGHT, math.min(wanted, ceiling))
+        local height = math.max(LAYOUT_MIN_BODY_HEIGHT, math.min(wanted, current + room))
         if math.abs(height - current) < 1 then
             return
         end
         body:SetHeight(height)
-        frame:SetHeight(chrome + height)
+        frame:SetHeight(window + (height - current))
         frame:DoLayout()
     end
 
