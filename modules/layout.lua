@@ -8,8 +8,8 @@
 -- Compact syntax (stored as the `$LAYOUT` variable value):
 --   Group 1/1: Vhez, Mage1 > Mage2, *MAGE; Spores: Lock1, Lock2, Lock3
 -- Groups are separated by ";" or newlines; "Label/N" binds raid subgroup N;
--- slots are comma-separated and may be a name, a priority list "A > B", or a
--- class fill "*CLASS".
+-- slots are comma-separated and may be a name, a priority list "A > B", a
+-- class fill "*CLASS", or a "{{Variable}}" standing in for any of those.
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
@@ -33,6 +33,34 @@ local function Trim(value)
         return ""
     end
     return value:match("^%s*(.-)%s*$")
+end
+
+--- Substitutes `{{Name}}` tokens in a slot expression from a variable map.
+-- Substitution is a single pass: values arrive already cross-resolved from the
+-- variable merge, so one is taken literally rather than rescanned. An unset
+-- variable yields nothing, so its slot disappears instead of naming a player
+-- who does not exist. What a set one expands to is classified afterwards, which
+-- is what lets a variable stand in for a priority list or a class fill.
+-- @tparam string slot Slot expression.
+-- @tparam[opt] table variables Resolved variable map, keyed without the `$` prefix.
+-- @treturn string expanded
+function layout.ExpandSlotVariables(slot, variables)
+    local text = Trim(slot)
+    if text == "" or not text:find("{{", 1, true) then
+        return text
+    end
+
+    local expanded = text:gsub("{{%s*([^{}]-)%s*}}", function(name)
+        local value = type(variables) == "table" and variables[name] or nil
+        if type(value) == "number" then
+            return tostring(value)
+        end
+        if type(value) ~= "string" then
+            return ""
+        end
+        return value
+    end)
+    return Trim(expanded)
 end
 
 --- Classifies one slot expression for display and capacity math.
@@ -167,8 +195,14 @@ end
 -- Resolves one slot string to zero or more player names.
 -- A name or priority list yields one; `*CLASS`/`*CLASS xN`/`group:N` may yield
 -- several. `placed` (names already assigned this resolve) is honored for fills.
+-- Variables expand first so a slot holding one behaves as whatever it names.
 local function ResolveSlotNames(slot, providers, placed)
-    local info = layout.DescribeSlot(slot)
+    local text = layout.ExpandSlotVariables(slot, providers.Variables)
+    if text == "" then
+        return {}
+    end
+
+    local info = layout.DescribeSlot(text)
 
     if info.kind == "subgroup" then
         local members = type(providers.SubgroupMembers) == "function" and providers.SubgroupMembers(info.subgroup)
@@ -182,20 +216,20 @@ local function ResolveSlotNames(slot, providers, placed)
     end
 
     if info.kind == "priority" then
-        local resolved = type(providers.ResolvePriorityValue) == "function" and (providers.ResolvePriorityValue(slot))
-            or slot
+        local resolved = type(providers.ResolvePriorityValue) == "function" and (providers.ResolvePriorityValue(text))
+            or text
         if type(resolved) == "string" and resolved ~= "" then
             return { resolved }
         end
         return {}
     end
 
-    return { slot }
+    return { text }
 end
 
 --- Resolves a layout model against the roster into groups of member names.
 -- @tparam table model Parsed layout model.
--- @tparam table providers `{ ResolvePriorityValue, ClassMembers }` roster accessors.
+-- @tparam table providers `{ ResolvePriorityValue, ClassMembers, SubgroupMembers, Variables }`.
 -- @treturn table resolved `{ groups = { { name, subgroup?, members = {name,...} }, ... } }`.
 function layout.Resolve(model, providers)
     local resolved = { groups = {} }

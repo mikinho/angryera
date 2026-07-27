@@ -495,8 +495,9 @@ end
 
 -- Builds the roster accessors a `{layout}` expansion needs: present-and-alive
 -- class members for `*CLASS` fills, priority resolution, and class coloring.
--- The roster is walked once and cached for this render.
-local function BuildLayoutProviders()
+-- The roster is walked once and cached for this render. `vars` is the merged
+-- variable map a `{{Variable}}` slot reads.
+local function BuildLayoutProviders(vars)
     local classByName = {}
     local classMembers = {}
     local subgroupMembers = {}
@@ -546,6 +547,7 @@ local function BuildLayoutProviders()
         SubgroupMembers = function(subgroup)
             return subgroupMembers[subgroup] or {}
         end,
+        Variables = type(vars) == "table" and vars or nil,
         Colorize = Colorize,
     }
 end
@@ -636,7 +638,7 @@ function AngryEra:RenderPageContent(page, ctx, options)
     if layoutHelpers and type(layoutHelpers.SourceFromVars) == "function" then
         local layoutSource = layoutHelpers.SourceFromVars(mergedVars)
         if layoutSource then
-            text, hadLayout = layoutHelpers.Expand(text, layoutSource, BuildLayoutProviders())
+            text, hadLayout = layoutHelpers.Expand(text, layoutSource, BuildLayoutProviders(mergedVars))
         end
     end
 

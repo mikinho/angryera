@@ -178,6 +178,19 @@ local function DisplayedLayoutSource(self)
     return nil
 end
 
+-- The displayed page's template variables, so a `{{Variable}}` slot rearranges
+-- the raid to the same member it names on the display.
+local function DisplayedVariables(self)
+    if type(self.GetDisplayedVars) ~= "function" then
+        return nil
+    end
+    local ok, vars = pcall(self.GetDisplayedVars, self)
+    if not ok or type(vars) ~= "table" then
+        return nil
+    end
+    return vars
+end
+
 --- Rearranges the raid subgroups to match the displayed page's `$LAYOUT`.
 -- Leader/assist and out-of-combat only, and never automatic. Groups bound with
 -- `/N` map to raid subgroup N; unbound groups are display-only and ignored here.
@@ -200,6 +213,7 @@ function AngryEra:ApplyGroupLayoutToRaid()
     end
 
     local subgroupByIndex, indexByName, providers = BuildRaidState()
+    providers.Variables = DisplayedVariables(self)
     local resolved = layout.Resolve(layout.Parse(source), providers)
 
     local want = {}

@@ -112,6 +112,39 @@ assert(
     "an explicit name may still be listed again by choice"
 )
 
+-- A slot may hold a {{Variable}}, which is classified after it expands so the
+-- variable can stand in for a name, a priority list, or a class fill.
+present = { backup = true }
+classMembers = { MAGE = { "Mage1-Realm", "Mage2-Realm" } }
+providers.Variables = {
+    MT = "Vhez",
+    Healers = "*MAGE x2",
+    Backup = "Missing > Backup",
+    Count = 2,
+}
+
+local named = layout.Resolve(layout.Parse("G: {{MT}}"), providers)
+assert(named.groups[1].members[1] == "Vhez", "a variable slot resolves to the name it holds")
+
+local viaFill = layout.Resolve(layout.Parse("G: {{Healers}}"), providers)
+assert(#viaFill.groups[1].members == 2, "a variable holding a class fill fills like one")
+
+local viaPriority = layout.Resolve(layout.Parse("G: {{ Backup }}"), providers)
+assert(viaPriority.groups[1].members[1] == "Backup", "a variable holding a priority list resolves through it")
+
+local mixed = layout.Resolve(layout.Parse("G: *MAGE x{{Count}}"), providers)
+assert(#mixed.groups[1].members == 2, "a variable substitutes inside a larger expression")
+
+local unset = layout.Resolve(layout.Parse("G: {{Nobody}}, Vhez"), providers)
+assert(
+    #unset.groups[1].members == 1 and unset.groups[1].members[1] == "Vhez",
+    "an unset variable drops its slot rather than naming a missing player"
+)
+
+assert(layout.ExpandSlotVariables("{{MT}}", nil) == "", "no variable map leaves nothing to place")
+assert(layout.ExpandSlotVariables("Vhez", providers.Variables) == "Vhez", "a slot without a token is untouched")
+providers.Variables = nil
+
 -- Vars source round-trip: extract, upsert (replace, append, preserve, remove).
 assert(layout.ExtractSource("MT=Vn\n$LAYOUT=G1: A, B\nOT=Zed") == "G1: A, B", "extracts the layout line")
 assert(layout.ExtractSource("MT=Vn") == nil, "no layout line yields nil")
