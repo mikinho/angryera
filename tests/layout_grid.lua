@@ -83,6 +83,7 @@ local function NewRegion(parent)
         frameLevel = parent and (parent.frameLevel or 0) + 1 or 0,
         points = {},
         scripts = {},
+        dragButtons = {},
     }
 
     -- SetPoint(point) / (point, x, y) / (point, relativeTo, relativePoint[, x, y]).
@@ -122,7 +123,10 @@ local function NewRegion(parent)
         self.frameLevel = level
     end
     function region:GetFrameLevel()
-        return self.frameLevel
+        return self.frameLevel or 0
+    end
+    function region:EnableMouse(enabled)
+        self.mouseEnabled = enabled and true or false
     end
     function region:SetJustifyH() end
     function region:SetBackdrop() end
@@ -172,6 +176,9 @@ local function NewRegion(parent)
     function region:GetScript(name)
         return self.scripts[name]
     end
+    function region:RegisterForDrag(...)
+        self.dragButtons = { ... }
+    end
     function region:CreateFontString()
         return NewRegion(self)
     end
@@ -192,13 +199,9 @@ function _G.SetCursor() end
 function _G.CloseDropDownMenus() end
 
 local cursorX, cursorY = 0, 0
-local mouseDown = false
 
 function _G.GetCursorPosition()
     return cursorX, cursorY
-end
-function _G.IsMouseButtonDown()
-    return mouseDown
 end
 
 -- Stubbed AceGUI: capture the constructor and provide the widget base methods
@@ -312,14 +315,11 @@ local function CentreOf(region)
     return (region:GetLeft() + region:GetRight()) / 2, (region:GetTop() + region:GetBottom()) / 2
 end
 
--- Presses and releases without moving, which is what separates a click from a
--- drag now that both arrive on the same two handlers.
+-- The client fires OnClick only for a press that did not become a drag, so a
+-- click is that handler on its own.
 local function Click(target, button)
     cursorX, cursorY = CentreOf(target)
-    mouseDown = true
-    target:GetScript("OnMouseDown")(target, button)
-    mouseDown = false
-    target:GetScript("OnMouseUp")(target, button)
+    target:GetScript("OnClick")(target, button)
 end
 
 -- Clicks report their position so the host can act on a row without a drag.
@@ -333,7 +333,15 @@ assert(clicked.button == "RightButton", "a slot click reports the mouse button")
 
 clicked = nil
 Click(filled, "LeftButton")
-assert(clicked and clicked.button == "LeftButton", "a press and release that stays put is a click")
+assert(clicked and clicked.button == "LeftButton", "a left click reaches the same handler")
+
+-- Only a row holding something registers for dragging, so the client starts a
+-- gesture on a filled row and a click on an unused one.
+assert(#filled.dragButtons == 1, "a filled row can start a drag")
+assert(#grid.boxes[1].rows[3].dragButtons == 0, "an empty row cannot start a drag")
+assert(#palette.rows[1].dragButtons == 1, "a palette name can start a drag")
+assert(filled.mouseEnabled, "rows take mouse input")
+assert(grid.boxes[1].header.mouseEnabled, "box titles take mouse input")
 
 local headerClicked
 grid:SetCallback("OnGroupClick", function(_, group, subgroup)
@@ -351,7 +359,7 @@ Click(blank, "LeftButton")
 assert(emptyClicked.group == 1 and emptyClicked.subgroup == 1, "an empty row click reports its box")
 assert(not headerClicked, "clicking blank space does not act on the group itself")
 
--- Drives one press-drag-release gesture to a point and returns what it reported.
+-- Drives one drag gesture to a point and returns what it reported.
 local function GestureTo(source, x, y)
     local drag, drop
     grid:SetCallback("OnLayoutDrop", function(_, firedDrag, firedDrop)
@@ -359,8 +367,7 @@ local function GestureTo(source, x, y)
     end)
 
     cursorX, cursorY = CentreOf(source)
-    mouseDown = true
-    source:GetScript("OnMouseDown")(source, "LeftButton")
+    source:GetScript("OnDragStart")(source)
 
     cursorX, cursorY = x, y
     local update = grid.frame:GetScript("OnUpdate")
@@ -368,8 +375,7 @@ local function GestureTo(source, x, y)
         update(grid.frame)
     end
 
-    mouseDown = false
-    source:GetScript("OnMouseUp")(source, "LeftButton")
+    source:GetScript("OnDragStop")(source)
     return drag, drop
 end
 
@@ -381,17 +387,15 @@ end
 -- widget frame's own draw layer, which a child frame always covers, so a drag
 -- gave no feedback at all.
 local marked = grid.boxes[1].rows[2]
-cursorX, cursorY = CentreOf(grid.boxes[9].rows[1])
-mouseDown = true
-grid.boxes[9].rows[1]:GetScript("OnMouseDown")(grid.boxes[9].rows[1], "LeftButton")
-assert(not grid.dropMarker:IsShown(), "a press on its own marks nothing")
+local source = grid.boxes[9].rows[1]
+cursorX, cursorY = CentreOf(source)
+source:GetScript("OnDragStart")(source)
+assert(not grid.dropMarker:IsShown(), "a gesture that has not moved yet marks nothing")
 cursorX, cursorY = CentreOf(marked)
 grid.frame:GetScript("OnUpdate")(grid.frame)
 assert(grid.dropMarker:IsShown(), "a drag marks where a release would land")
 assert(grid.dropMarker:GetTop() == marked:GetTop(), "the marker covers the row under the cursor")
-assert(grid.dropMarker:GetFrameLevel() > grid.boxes[1].rows[2]:GetFrameLevel(), "the marker draws above the rows")
-mouseDown = false
-grid.boxes[9].rows[1]:GetScript("OnMouseUp")(grid.boxes[9].rows[1], "LeftButton")
+source:GetScript("OnDragStop")(source)
 assert(not grid.dropMarker:IsShown(), "the marker clears when the gesture ends")
 
 -- Dragging a member onto another group's slot reports a slot-to-slot move.

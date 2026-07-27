@@ -6,7 +6,7 @@
 -- a filled slot, and an unused row.
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 3
+local Type, Version = "AngryLayoutGrid", 4
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -21,7 +21,7 @@ local CreateFrame, UIParent = CreateFrame, UIParent
 
 -- Global vars/functions that we don't upvalue since they might get hooked, or upgraded
 -- List them here for Mikk's FindGlobals script
--- GLOBALS: GetCursorPosition, IsMouseButtonDown, SetCursor, CloseDropDownMenus, BackdropTemplateMixin
+-- GLOBALS: GetCursorPosition, SetCursor, CloseDropDownMenus, BackdropTemplateMixin
 
 local MAX_SUBGROUPS = 8
 local MAX_SUBGROUP_SLOTS = 5
@@ -30,7 +30,6 @@ local ROW_HEIGHT = 15
 local HEADER_HEIGHT = 16
 local BOX_PADDING = 6
 local BOX_SPACING = 4
-local DRAG_THRESHOLD = 4
 local MARKER_LEVEL = 20
 
 local PaneBackdrop = {
@@ -122,8 +121,8 @@ local function DropFromTarget(target)
     return nil
 end
 
--- Translates a pressed frame's target into a drag descriptor for ApplyDrop.
--- Titles, unused rows, and unused palette space have nothing to pick up.
+-- Translates a row's target into a drag descriptor for ApplyDrop. Titles, unused
+-- rows, and unused palette space have nothing to pick up.
 local function DragFromTarget(target)
     if target.kind == "slot" then
         return { kind = "slot", group = target.group, slot = target.slot }
@@ -169,36 +168,19 @@ local function UpdateMarker(self, x, y)
     self.dropMarker:Show()
 end
 
--- Travel past a few pixels is what separates a drag from a click on the row it
--- started over.
-local function Travelled(pressed, x, y)
-    local dx, dy = x - pressed.x, y - pressed.y
-    return (dx * dx) + (dy * dy) >= (DRAG_THRESHOLD * DRAG_THRESHOLD)
-end
-
--- Ends the gesture, reporting a drop when the press travelled and a click when
--- it stayed put.
-local function FinishPress(self, x, y)
-    local pressed, dragging = self.pressed, self.dragging
-    if not pressed then
+-- Ends a drag, reporting where it landed.
+local function FinishDrag(self, x, y)
+    local dragging = self.dragging
+    if not dragging then
         return
     end
-    if dragging then
-        UpdateMarker(self, x, y)
-    end
+    UpdateMarker(self, x, y)
 
     local drop = self.dropTarget
-    self.pressed, self.dragging, self.dropTarget = nil, nil, nil
+    self.dragging, self.dropTarget = nil, nil
     self.frame:SetScript("OnUpdate", nil)
     self.dropMarker:Hide()
     SetCursor(nil)
-
-    if not dragging then
-        if FrameContains(pressed.frame, x, y) then
-            FireClick(self, pressed.target, "LeftButton")
-        end
-        return
-    end
 
     -- Releasing away from the grid discards the slot; releasing on unused space
     -- inside it cancels, so a misaimed drag never silently drops a member.
@@ -213,57 +195,34 @@ end
 
 local function Drag_OnUpdate(frame)
     local self = frame.obj
-    local pressed = self.pressed
-    if not pressed then
+    if not self.dragging then
         frame:SetScript("OnUpdate", nil)
         return
     end
-
-    local x, y = CursorPosition()
-    if not self.dragging and pressed.drag and Travelled(pressed, x, y) then
-        self.dragging = pressed.drag
-        CloseDropDownMenus()
-        SetCursor("Interface\\CURSOR\\Point.blp")
-    end
-
-    if self.dragging then
-        UpdateMarker(self, x, y)
-    end
-
-    if IsMouseButtonDown("LeftButton") then
-        return
-    end
-    -- The pressed frame reports the release itself; this catches one the client
-    -- swallowed, so a lost button never strands the cursor mid-drag.
-    FinishPress(self, x, y)
+    UpdateMarker(self, CursorPosition())
 end
 
--- Tracking the press ourselves rather than through RegisterForDrag keeps the
--- gesture identical on every client, and lets a row that cannot be dragged
--- still resolve as a click.
-local function Target_OnMouseDown(frame, button)
-    if button ~= "LeftButton" then
-        return
-    end
-    local target = frame.layoutTarget
-    if not target then
+-- The client owns the press-to-drag gesture; only the hit-test is ours, so a
+-- drop resolves by geometry rather than by asking what the mouse is over.
+local function Target_OnDragStart(frame)
+    local self = frame.obj
+    local dragging = frame.layoutTarget and DragFromTarget(frame.layoutTarget)
+    if not dragging then
         return
     end
 
-    local self = frame.obj
-    local x, y = CursorPosition()
-    self.pressed = { frame = frame, target = target, drag = DragFromTarget(target), x = x, y = y }
-    self.dragging, self.dropTarget = nil, nil
+    self.dragging, self.dropTarget = dragging, nil
+    CloseDropDownMenus()
+    SetCursor("Interface\\CURSOR\\Point.blp")
     self.frame:SetScript("OnUpdate", Drag_OnUpdate)
 end
 
-local function Target_OnMouseUp(frame, button)
-    local self = frame.obj
-    if button ~= "LeftButton" then
-        FireClick(self, frame.layoutTarget, button)
-        return
-    end
-    FinishPress(self, CursorPosition())
+local function Target_OnDragStop(frame)
+    FinishDrag(frame.obj, CursorPosition())
+end
+
+local function Target_OnClick(frame, button)
+    FireClick(frame.obj, frame.layoutTarget, button)
 end
 
 --[[-----------------------------------------------------------------------------
@@ -288,9 +247,9 @@ local function AcquireBox(self, index)
     header:SetHeight(HEADER_HEIGHT)
     header:SetPoint("TOPLEFT", BOX_PADDING, -BOX_PADDING)
     header:SetPoint("TOPRIGHT", -BOX_PADDING, -BOX_PADDING)
-    header:RegisterForClicks("AnyDown", "AnyUp")
-    header:SetScript("OnMouseDown", Target_OnMouseDown)
-    header:SetScript("OnMouseUp", Target_OnMouseUp)
+    header:EnableMouse(true)
+    header:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    header:SetScript("OnClick", Target_OnClick)
     header.obj = self
 
     local label = header:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
@@ -322,9 +281,11 @@ local function AcquireRow(self, box, index)
 
     row = CreateFrame("Button", nil, box)
     row:SetHeight(ROW_HEIGHT)
-    row:RegisterForClicks("AnyDown", "AnyUp")
-    row:SetScript("OnMouseDown", Target_OnMouseDown)
-    row:SetScript("OnMouseUp", Target_OnMouseUp)
+    row:EnableMouse(true)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnDragStart", Target_OnDragStart)
+    row:SetScript("OnDragStop", Target_OnDragStop)
+    row:SetScript("OnClick", Target_OnClick)
     row.obj = self
 
     local background = row:CreateTexture(nil, "BACKGROUND")
@@ -418,10 +379,18 @@ local function BuildBoxPlan(self)
     return plan
 end
 
+-- Only a row holding something registers for dragging, so an unused one still
+-- resolves as a click rather than starting a gesture that carries nothing.
 local function FillRow(row, text, target)
     row.layoutTarget = target
     row.label:SetText(text or "")
     row.background:SetShown(text ~= nil)
+
+    if DragFromTarget(target) then
+        row:RegisterForDrag("LeftButton")
+        return
+    end
+    row:RegisterForDrag()
 end
 
 local function BoxHeight(rows)
@@ -485,7 +454,6 @@ local methods = {
         self.layout = nil
         self.model = nil
         self.roster = {}
-        self.pressed = nil
         self.dragging = nil
         self.dropTarget = nil
         self.drawing = nil
@@ -502,7 +470,6 @@ local methods = {
         self.layout = nil
         self.model = nil
         self.roster = {}
-        self.pressed = nil
         self.dragging = nil
         self.dropTarget = nil
         self.drawing = nil
