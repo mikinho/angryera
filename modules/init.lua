@@ -23,7 +23,7 @@ local raidLayoutApplyErrors = {
     ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
     ["in-combat"] = "Groups cannot be rearranged during combat.",
     ["no-layout"] = "The displayed page has no $LAYOUT.",
-    ["no-bound-groups"] = "No layout groups are bound to a subgroup (use \"Label/N:\").",
+    ["no-bound-groups"] = "The displayed layout does not resolve to any raid members.",
     ["duplicate-member"] = "The layout assigns the same raid member more than once.",
     ["unresolved-member"] = "Every named layout member must resolve uniquely in the current raid.",
     ["subgroup-oversubscribed"] = "A subgroup is assigned more than five members.",
@@ -236,12 +236,12 @@ function AngryEra:OnInitialize()
             applylayout = {
                 type = "execute",
                 name = "Apply Group Layout to Raid",
-                desc = "Move raid members into the subgroups bound by the displayed page's $LAYOUT",
+                desc = "Move raid members into the subgroups defined by the displayed page's $LAYOUT",
                 order = 4.5,
                 hidden = true,
                 cmdHidden = false,
                 confirm = function()
-                    return "Rearrange raid subgroups to match the displayed layout? Only groups bound with \"Label/N\" move. During combat, this exact page will wait until combat ends; changing pages cancels it."
+                    return "Rearrange raid subgroups to match the displayed layout? Every group receives a subgroup; \"Label/N\" requests one explicitly. During combat, this exact page will wait until combat ends; changing pages cancels it."
                 end,
                 func = function()
                     local applied, result = self:RequestGroupLayoutApply()

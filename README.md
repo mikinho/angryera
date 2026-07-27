@@ -18,6 +18,8 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Automatic recovery:** late joiners and reloaded clients retrieve the leader's current page, and display control follows a raid-leader change.
 - **Safer shared editing:** only the current leader commits shared changes. Qualified raid assistants can submit edits to the exact active page without directly overwriting it.
 - **Inherited variables:** variables flow through nested categories to their pages, with the closest category or page value winning.
+- **Composable variable families:** combine numbered class, role, or assignment lists into reusable outputs such as `HEALER1...N` and `MELEE1...N`.
+- **Assigned-role import:** take an on-demand snapshot of Blizzard's Tank, Healer, and Damage assignments as numbered `RAID_TANK1...N`, `RAID_HEALER1...N`, and `RAID_DPS1...N` variables.
 - **Page metadata:** `$` variables can drive automatic raid markers, encounter advancement, WeakAuras, and other addons.
 - **Automatic raid markers:** display a page and AngryEra can mark the assigned players.
 - **Boss-kill auto-advance:** after a successful encounter, the leader can automatically display the next page in the category.
@@ -26,7 +28,7 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Safer imports and migration:** imported data is bounded and validated, and existing pages and settings are migrated automatically.
 - **Priority assignments:** `Primary > Backup` selects the first listed player who is present and alive.
 - **Optional received-page cleanup:** remove pages received from other leaders at login or on demand while retaining protected local data.
-- **Raid group layouts:** build inherited, roster-aware subgroup plans, render them inside notes, and apply or safely queue validated layouts.
+- **Raid group layouts:** build inherited, roster-aware subgroup plans, render them inside notes, and apply or safely queue validated layouts—including leader-only display-transition application through `$AUTOAPPLYLAYOUT`.
 
 ## Quick start
 
@@ -196,7 +198,15 @@ If a page later sets `MT=Roselea`, `{{Tank}}` resolves to `Roselea`.
 
 ### Variable families
 
-A variable name ending in `*` declares a numbered family assembled from other numbered variables:
+Raid composition changes more often than the assignment structure. Variable families let pages and layouts consume stable role positions such as `HEALER1`, `HEALER2`, and `MELEE1` while you maintain the changing people in class-, role-, or task-specific source lists.
+
+The mental model is:
+
+1. Maintain numbered source variables such as `PRIESTS1`, `PRIESTS2`, `PALADINS1`, and `DRUID1`.
+2. Declare how those sources combine with `HEALER*=PRIESTS*,PALADINS*,DRUID*`.
+3. Use the generated `{{HEALER1}}`, `{{HEALER2}}`, and later values throughout descendant notes and layouts.
+
+For example:
 
 ```text
 PRIESTS1=Roselea
@@ -204,12 +214,15 @@ PRIESTS2=Zessy
 PALADINS1=Kwayteow
 DRUID1=Eblis
 
-HEALER*=PRIESTS*,PALADINS*,DRUID1
+HEALER*=PRIESTS*,PALADINS*,DRUID*
 ```
 
 This creates the effective variables `HEALER1=Roselea`, `HEALER2=Zessy`, `HEALER3=Kwayteow`, and `HEALER4=Eblis`. The declaration `HEALER*` itself is not a template variable. Its numbered results appear in the Group Layout editor's Variables column and otherwise behave exactly like variables you wrote individually.
 
-Selectors are comma-separated and read from left to right. Braces are optional there, so `HEALER*={{PRIESTS*}},{{PALADINS*}},{{DRUID1}}` is equivalent. A wildcard matches only the same case-sensitive prefix followed by a positive number without leading zeroes, and matches use numeric order: `PRIESTS1`, `PRIESTS2`, `PRIESTS10`. Sparse source numbers are compacted into a dense destination family.
+> [!IMPORTANT]
+> The `*` expands variable names only while declaring a family. `{{HEALER*}}` does not expand inside a note or occupy multiple layout seats. Use the numbered results—`{{HEALER1}}`, `{{HEALER2}}`, and so on. Selectors name variables, not literal players; define `PRIESTS1=Roselea`, then select `PRIESTS*`.
+
+Selectors are comma-separated and read from left to right. Braces are optional there, so `HEALER*={{PRIESTS*}},{{PALADINS*}},{{DRUID*}}` is equivalent. A wildcard matches only the same case-sensitive prefix followed by a positive number without leading zeroes, and matches use numeric order: `PRIESTS1`, `PRIESTS2`, `PRIESTS10`. Sparse source numbers are compacted into a dense destination family.
 
 Families may be composed:
 
@@ -221,6 +234,8 @@ RAID*=HEALER*,MELEE*
 The nearest inherited declaration wins. An empty declaration such as `HEALER*=` disables an inherited family, while an explicit `HEALER2=Someone` on the same or a nearer layer overrides that one generated position. Repeating a source selector does not repeat the same source key, but two different source keys holding the same player remain visible so layout validation can report the duplicate.
 
 Family names use letters, numbers, and underscores, must start with a letter or underscore, and cannot end in a number before `*`. Each declaration collects at most 40 string source members; numeric, boolean, structured, and `$` metadata values are not collected. Missing selectors contribute nothing, explicitly empty string members retain their numbered position, and cyclic or oversized family definitions are rejected before an Edit Variables save.
+
+Families reorganize existing string variables; they do not inspect the raid, infer a specialization, or update a roster automatically. Use **Import Assigned Raid Roles** when Blizzard's manually assigned Tank, Healer, and Damage roles are the source you want.
 
 ### Importing assigned raid roles
 
@@ -256,6 +271,88 @@ The visible `$AE_RAID_ROSTER` line/object is managed by the importer and owns al
 
 A role import knows only Tank, Healer, and Damage. Build narrower families such as melee, ranged, priests, or mages from your own variables because Blizzard's assigned group role does not identify a remote player's specialization.
 
+For a reusable raid template, import roles on the raid's category so every descendant page sees the same snapshot. Import on an individual page only when that page intentionally needs a complete replacement role snapshot.
+
+### Putting roles, families, and layouts together
+
+#### One role import updates every encounter
+
+Suppose every encounter uses the same basic subgroup shape, but the people change each raid. Import the assigned roles on the raid category, then add stable aliases beside the managed snapshot:
+
+```text
+TANK*=RAID_TANK*
+HEALER*=RAID_HEALER*
+DPS*=RAID_DPS*
+$AUTOAPPLYLAYOUT=true
+```
+
+Build this category layout visually, or put its full Key=Value line in **Edit Variables**:
+
+```text
+$LAYOUT=Core/1: {{TANK1}}, {{TANK2}}, {{HEALER1}}, {{DPS1}}, {{DPS2}}; Group 2/2: {{HEALER2}}, {{DPS3}}, {{DPS4}}, {{DPS5}}, {{DPS6}}
+```
+
+Every descendant page now inherits the structure. Add `{layout}` to a note to show the resolved groups. On the next raid, assign Blizzard roles again, click **Import Assigned Raid Roles**, review, and save; the same pages and layout positions resolve to the new roster without editing every encounter. A generated position that does not exist, such as `TANK2` in a one-tank raid, leaves that layout slot empty.
+
+The aliases are optional—you may use `{{RAID_TANK1}}` directly—but they give downstream pages a stable vocabulary. A nearer page can replace `TANK*` with a curated source without rewriting the inherited layout.
+
+#### Add information Blizzard roles do not have
+
+Blizzard can identify Damage, but not the melee, caster, interrupt, or soak team you intend. Maintain those source lists yourself and combine them into generic families:
+
+```text
+FURY1=Mirei
+FURY2=Peanut
+ROGUE1=Zessy
+FERAL1=Paddis
+MAGE1=Ellaria
+WARLOCK1=Wonkovar
+WARLOCK2=Chadbone
+
+MELEE*=FURY*,ROGUE*,FERAL*
+CASTER*=MAGE*,WARLOCK*
+```
+
+This generates `MELEE1...4` and `CASTER1...3` in the authored selector order. A reusable layout can mix those curated families with imported roles:
+
+```text
+$LAYOUT=Windfury/3: {{RAID_TANK1}}, {{MELEE1}}, {{MELEE2}}, {{MELEE3}}, {{RAID_HEALER1}}; Support/4: {{MELEE4}}, {{CASTER1}}, {{CASTER2}}, {{CASTER3}}, {{RAID_HEALER2}}
+```
+
+If one encounter needs Rogues first, put only this nearer declaration on that page:
+
+```text
+MELEE*=ROGUE*,FURY*,FERAL*
+```
+
+The page still inherits the same `$LAYOUT`, but its generated `MELEE1...N` order changes for that encounter. This is the main benefit of families: pages and layouts describe stable jobs and positions, while smaller source lists decide who fills them.
+
+#### Drive the note, marker, and layout from one assignment
+
+Generated family members are ordinary variables, so one value can feed every consumer:
+
+```text
+TANK*=RAID_TANK*
+HEALER*=RAID_HEALER*
+MAIN_TANK={{TANK1}}
+BACKUP_TANK={{TANK2}}
+$SKULL={{MAIN_TANK}}
+$LAYOUT=Tanks/1: {{MAIN_TANK}}, {{BACKUP_TANK}}, {{HEALER1}}
+```
+
+The page can use the same values:
+
+```text
+Main tank: {{MAIN_TANK}}
+Backup: {{BACKUP_TANK}}
+
+{layout Tanks}
+```
+
+After re-importing and saving changed roles, the written assignment, automatic Skull marker, and rendered layout update from the same source; the next manual or automatic Apply uses those values for the live subgroup. Families do not hide mistakes: if two layout slots actually resolve to the same player, or a used generated name cannot be matched uniquely in the raid, layout validation rejects the entire apply instead of guessing.
+
+### Priority assignments
+
 A priority assignment uses `>` to select the first listed player who is both present and alive. It re-resolves when the roster or player state changes:
 
 ```text
@@ -282,6 +379,15 @@ Player names are class-colored automatically in the on-screen assignment display
 A variable whose name starts with `$` is metadata. Metadata inherits and resolves references like ordinary variables, but it is intended to describe what AngryEra, WeakAuras, or another addon should do.
 
 Metadata can also appear in page text. It is excluded from automatic word highlighting and is exposed to integrations without the `$` prefix.
+
+| Metadata | Purpose |
+| --- | --- |
+| `$STAR` through `$SKULL` | Assign raid target markers when the page is displayed. `$X` and `$CROSS` are aliases. |
+| `$AUTOADVANCE` | Enable or disable boss-kill advancement for the effective page. |
+| `$ENCOUNTER` / `$ENCOUNTERID` | Bind an auto-advance page to an encounter name or numeric ID. |
+| `$LAYOUT` | Define the effective named raid subgroup layout. |
+| `$AUTOAPPLYLAYOUT` | After the initial display state is recorded, let the raid leader apply a different destination page's effective layout. |
+| Other custom `$KEY` values | Expose inherited metadata to WeakAuras or another addon. Importer-managed `$AE_RAID_ROSTER` remains private. |
 
 ### Automatic raid markers
 
@@ -356,10 +462,16 @@ A `$LAYOUT` names the eight raid subgroups and the player slots in them — resi
 
 It is metadata like any other, so it inherits. Put the raid's standard arrangement on the category and every page under it has it, then give a page its own only where the fight moves people. The nearest one wins, so a page's layout replaces its category's for that page alone.
 
-`$LAYOUT` is a single line. Groups are separated by `;`; each group is `Label: slot, slot, ...`, and `Label/N` is raid subgroup N. A group written without one takes the lowest subgroup still free, so naming every group is enough to lay out a raid. A slot is a name, a priority list `A > B > C` (first present-and-alive), a class fill `*MAGE` or `*MAGE x2`, or `group:2` (the current members of subgroup 2). Auto-fill never assigns the same player twice. A raid has eight subgroups of five, so the text parser keeps only the first eight groups and first five literal slots in each group. If variable, class, or roster expansion would resolve a subgroup above five members, Apply rejects the whole plan before moving anyone.
+For examples that connect imported roles, generated families, inherited layouts, and encounter-specific overrides, see [Putting roles, families, and layouts together](#putting-roles-families-and-layouts-together).
+
+In Key=Value **Edit Variables** storage, `$LAYOUT` is one line. In JSON storage, use a `"$LAYOUT": "..."` string property. The dedicated Group Layout text view avoids either storage syntax and edits only the value. Groups are separated by `;`; each group is `Label: slot, slot, ...`, and `Label/N` is raid subgroup N. A group written without one takes the lowest subgroup still free, so naming every group is enough to lay out a raid. A slot is a name, a priority list `A > B > C` (first present-and-alive), a class fill `*MAGE` or `*MAGE x2`, or `group:2` (the current members of subgroup 2). Auto-fill never assigns the same player twice.
+
+A raid has eight subgroups of five. The parser keeps the first eight groups and admits slot expressions only while their current seat weight fits: a name uses one seat, `*MAGE x3` uses three, and `group:2` uses five. Variables may change that weight after parsing, so saving a custom layout and every Apply validate the fully expanded result and reject the whole plan before moving anyone if a subgroup would exceed five.
+
+A layout may intentionally cover only part of the raid. Only members produced by its slots receive target subgroups; everyone else has no assigned destination, although Blizzard may move an unassigned member as the other half of a required subgroup swap.
 
 ```text
-$LAYOUT=Tanks/1: MT, OT1; Spores: Lock1 > Lock2, *WARLOCK x2; Kite/8: group:3
+$LAYOUT=Tanks/1: {{MT}}, {{OT1}}; Spores: Wonkovar > Chadbone, *WARLOCK x2; Kite/8: group:3
 ```
 
 A slot may also be a `{{Variable}}`, so one name change updates the note and the layout together. The variable is read first and what it holds is classified afterwards, so `MT=Roselea` places Roselea, `MT=Roselea > Vhez` picks whichever of them is present, and `Soakers=*WARLOCK x3` fills three warlocks. A variable that is not set anywhere leaves its slot out rather than placing a player of that name.
@@ -384,11 +496,11 @@ Drag an unrostered name into a box to place it, drag between boxes to move or sw
 
 You can also type instead of drag. Click a box title to name that group — Spores, Resist, Kite — click a member to edit their slot expression, and click an empty row to add one — a name, a priority list, a class fill, or a `{{Variable}}` — so a layout can be built solo, before there is any roster to drag from. Right-clicking a box title removes the group after a confirmation.
 
-Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` keep auto-filling after you rearrange the grid. Tick **Edit as text** to switch the same layout to one group per line, which is also where roster names insert at the cursor. Both views write the same `$LAYOUT`. Groups left empty are dropped when you save, unless you named one — naming Spores before anyone is dragged into it is the point of naming it.
+Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` keep auto-filling after you rearrange the grid. Tick **Edit as text** to switch the same layout to one group per line, which is also where roster names insert at the cursor. This dedicated text view edits only the layout value: omit the `$LAYOUT=` prefix and put one group on each line. AngryEra joins those lines into the single stored `$LAYOUT` value when you save. Groups left empty are dropped unless you named one—naming Spores before anyone is dragged into it is the point of naming it.
 
-Tick **Inherit layout** to use the nearest category layout. The inherited layout remains visible but read-only. Saving while checked removes only this page or category's local `$LAYOUT` override, so later changes to the category default flow through again. Uncheck it to create a custom override, initially copied from the inherited layout.
+Tick **Inherit layout** to preview and use the nearest ancestor category layout. The inherited layout remains visible but read-only. Checking the box changes only the editor state; nothing is removed until you save. Saving a previously custom layout while checked removes only this page or category's local `$LAYOUT` override, making the inherited default effective again. Uncheck it to create an editable custom override, initially copied from the inherited layout.
 
-**Save** writes the current choice. While **Inherit layout** remains checked, saving or applying does not create a page override, so later category changes continue to flow through. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
+**Save** changes the stored layout choice; it does not rearrange the live raid. On a displayed page, **Apply to Raid** saves first and then attempts the rearrangement. While **Inherit layout** remains checked, neither action creates a page override, so later category changes continue to flow through. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
 
 **Apply to Raid** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected. It then moves one identity at a time, waits for Classic to acknowledge the change, and resolves fresh raid indices before continuing so roster renumbering cannot redirect a later move.
 
@@ -404,13 +516,17 @@ To apply layouts automatically as pages change, right-click a page or category, 
 $AUTOAPPLYLAYOUT=true
 ```
 
-`$AUTOAPPLYLAYOUT` inherits like `$LAYOUT` and is off when absent or false. Put it on a category to enable automatic layouts for its descendants, or set `$AUTOAPPLYLAYOUT=false` on a page or nearer category to disable it there. When a page with an effective true value is displayed, the raid leader automatically requests its effective layout using the same combat queue and validation. A page without an effective `$LAYOUT` does nothing. Qualified raid assistants remain manual-only and must use **Apply to Raid** or `/aa applylayout`.
+`$AUTOAPPLYLAYOUT` inherits like `$LAYOUT` and is off when absent or false. Put it on a category to enable automatic layouts for its descendants, or set `$AUTOAPPLYLAYOUT=false` on a page or nearer category to disable it there. When a different page with an effective true value becomes the shared display, the raid leader automatically requests that destination page's effective layout using the same combat queue and validation.
+
+AngryEra first records an initial display state. After that, transitioning from no displayed page or another page to a page with a different identity can apply the destination layout. The initial state itself does not rearrange the raid, and saving, rerendering, or receiving a new revision of that same page does not trigger automatic application. After editing the current layout, use **Apply to Raid** if it should move the raid immediately. A destination page without an effective `$LAYOUT` is a quiet no-op. Qualified raid assistants remain manual-only and must use **Apply to Raid** or `/aa applylayout`.
+
+During combat, only the exact current page, revision, and inherited context remain queued. Selecting another enabled page discards the older queued layout and queues the newer one; selecting a page where `$AUTOAPPLYLAYOUT` is false cancels the older request without replacing it.
 
 AngryEra preserves slot order in the editor and rendered `{layout}` output. Blizzard exposes subgroup move and swap operations, but no direct safe operation for choosing a physical position within one subgroup. Applying a layout therefore guarantees subgroup membership, not the row order shown by Blizzard's raid frame.
 
 ### Custom metadata
 
-Any other `$` key is available to WeakAuras and addons:
+Other custom `$` keys are available to WeakAuras and addons. Importer-managed `$AE_RAID_ROSTER` is consumed internally and is not exposed:
 
 ```text
 $PHASE=2
@@ -557,6 +673,33 @@ Confirm that the player:
 - is editing the exact active shared page.
 
 Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader Only**.
+
+### A variable family is empty or rejected
+
+- Use the generated numbered variables such as `{{HEALER1}}`; `{{HEALER*}}` is not a template or layout expansion.
+- Confirm each selector names an existing variable or numbered family. `HEALER*=Roselea,Zessy` looks for variables named `Roselea` and `Zessy`; it does not treat those words as player values.
+- Wildcard prefixes are case-sensitive and match only positive numeric suffixes without leading zeroes: `PRIEST1` and `PRIEST10` match `PRIEST*`; `Priest1`, `PRIEST0`, and `PRIEST01` do not.
+- Remove family cycles and keep each generated family to 40 string source members.
+- If the sources come from Blizzard roles, click **Import Assigned Raid Roles** again and save the draft. Imports are snapshots, not a live role feed.
+- Do not declare `RAID_TANK*`, `RAID_HEALER*`, or `RAID_DPS*` beside an imported role snapshot. Compose them into differently named families.
+
+### A group layout does not apply
+
+- Confirm you are in a raid and the page whose effective layout you want is the exact shared display.
+- **Save** stores the layout but does not move anyone. Use **Apply to Raid** or `/aa applylayout`.
+- Confirm the caller is the raid leader or a qualified raid assistant.
+- Ensure every explicit or priority-selected name resolves uniquely in the current raid. Use `Name-Realm` when a short name is ambiguous.
+- Ensure the same player is not produced twice and every subgroup remains at or below five players after variables, class fills, and `group:N` slots resolve.
+- A layout whose numbered variables are all missing resolves to no members and has nothing to apply.
+- In combat, wait for the queued apply. Changing the displayed page, its revision, or inherited context cancels that exact request.
+
+### Automatic group layouts do not run
+
+- Add `$AUTOAPPLYLAYOUT=true` to the destination page or one of its ancestor categories; this is metadata, not an account setting.
+- Confirm the destination page also has an effective `$LAYOUT`.
+- Only the raid leader applies layouts automatically. Qualified assistants remain manual-only.
+- After AngryEra records its initial display state, transition from no page or another page to a page with a different identity. Saving, rerendering, and receiving a newer revision of the same page do not auto-apply.
+- If the page is displayed during combat, keep that exact page active until combat ends. A later page replaces or cancels the queued request.
 
 ### Automatic markers do not appear
 

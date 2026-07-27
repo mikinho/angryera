@@ -1259,7 +1259,7 @@ local function AngryEra_EditVariables(id, entityType)
     frame:AddChild(importButton)
 
     local importStatus = AceGUI:Create("Label")
-    importStatus:SetText("Reads Blizzard-assigned roles into numbered RAID_TANK, RAID_HEALER, and RAID_DPS variables.")
+    importStatus:SetText("Creates RAID_TANK1...N, RAID_HEALER1...N, and RAID_DPS1...N from Blizzard-assigned roles.")
     importStatus:SetFullWidth(true)
     frame:AddChild(importStatus)
 
@@ -1465,7 +1465,7 @@ local RAID_LAYOUT_APPLY_ERRORS = {
     ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
     ["in-combat"] = "Groups cannot be rearranged during combat.",
     ["no-layout"] = "The displayed page has no $LAYOUT.",
-    ["no-bound-groups"] = "No layout groups are bound to a subgroup (use \"Label/N:\").",
+    ["no-bound-groups"] = "The displayed layout does not resolve to any raid members.",
     ["duplicate-member"] = "The layout assigns the same raid member more than once.",
     ["unresolved-member"] = "Every named layout member must resolve uniquely in the current raid.",
     ["subgroup-oversubscribed"] = "A subgroup is assigned more than five members.",
@@ -2511,7 +2511,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         "Apply to Raid",
         reference.EntityType == "category"
                 and "Category layouts are inherited. Display a descendant page, then apply the resolved layout from that page's editor."
-            or "Saves this displayed page's layout, then moves raid members into its eight subgroups. "
+            or "Saves this displayed page's layout, then moves raid members into the subgroups it defines. "
                 .. "Requires the raid leader or a qualified raid assistant. During combat, the exact page waits until combat ends; changing pages cancels it."
     )
     frame:AddChild(applyButton)
