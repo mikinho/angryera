@@ -1217,8 +1217,8 @@ local function DescribeWidget(widget, title, body)
 end
 
 --- Opens a dedicated editor for a page's `$LAYOUT` group layout.
--- The visual view drags members between raid subgroup boxes, free-form group
--- boxes, and the roster palette; the text view edits the same layout one group
+-- The visual view drags members between the eight raid subgroup boxes and the
+-- palette of whoever is unplaced; the text view edits the same layout one group
 -- per line. Save writes the layout, and Apply rearranges the actual raid.
 -- @tparam number id Page id.
 function AngryEra:ShowGroupLayoutEditor(id)
@@ -1507,37 +1507,6 @@ function AngryEra:ShowGroupLayoutEditor(id)
     end)
     frame:AddChild(toggle)
 
-    -- Reads the view back first so a group added from the text view lands after
-    -- whatever is already typed there rather than replacing it.
-    local newGroup = AceGUI:Create("Button")
-    newGroup:SetText("New Group")
-    newGroup:SetWidth(120)
-    newGroup:SetCallback("OnClick", function()
-        AngryEra_LayoutTextPopup({
-            Prompt = "Group name:",
-            OnAccept = function(text)
-                if closed then
-                    return
-                end
-                model = layout.Parse(CurrentSource())
-                local added, updated = layout.AddGroup(model, text)
-                if not added then
-                    return
-                end
-                model = updated
-                BuildBody()
-            end,
-        })
-    end)
-    DescribeWidget(
-        newGroup,
-        "New Group",
-        "Adds a group of your own beside the eight raid subgroups, for a spore rotation, a kite team, a resist group. "
-            .. "It shows up wherever the note says {layout}, and Apply to Raid leaves it alone. "
-            .. "Name a group Label/3 instead to bind it to raid subgroup 3."
-    )
-    frame:AddChild(newGroup)
-
     frame:AddChild(body)
     BuildBody()
 
@@ -1566,8 +1535,8 @@ function AngryEra:ShowGroupLayoutEditor(id)
     DescribeWidget(
         applyButton,
         "Apply to Raid",
-        "Saves the layout, then moves raid members into the subgroups it binds with Label/N. "
-            .. "Groups of your own are display only and nobody is moved for them. "
+        "Saves the layout, then moves raid members into the eight subgroups it lays out. "
+            .. "Click a group's title to name it, so Spores or Resist reads as itself in the note. "
             .. "Needs raid lead or assist, and will not run in combat."
     )
     frame:AddChild(applyButton)

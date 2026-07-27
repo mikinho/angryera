@@ -255,10 +255,10 @@ grid.frame:SetPoint("TOPLEFT", _G.UIParent, "TOPLEFT", 0, 0)
 grid:SetLayoutEngine(layout)
 grid:SetRoster({ "Vhez", "Kaza" })
 grid:SetWidth(400)
-grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
+grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores/3: X"))
 
--- The palette is always the last box drawn, so the count of free groups above it
--- never has to be counted out here.
+-- The palette is always the last box drawn, so its position never has to be
+-- counted out here.
 local function PaletteBox()
     for index = #grid.boxes, 1, -1 do
         if grid.boxes[index]:IsShown() then
@@ -267,18 +267,18 @@ local function PaletteBox()
     end
 end
 
--- The grid always draws eight subgroup boxes, then free groups, then the palette.
+-- The grid always draws the eight raid subgroup boxes, then the palette.
 local visible = 0
 for _, box in ipairs(grid.boxes) do
     if box:IsShown() then
         visible = visible + 1
     end
 end
-assert(visible == 10, "eight subgroup boxes plus one free group plus the palette are drawn")
-assert(grid.boxes[1].header.label:GetText() == "Main", "a bound group titles its subgroup box")
+assert(visible == 9, "eight subgroup boxes plus the palette are drawn")
+assert(grid.boxes[1].header.label:GetText() == "Main", "a group titles the subgroup box it holds")
 assert(grid.boxes[2].header.label:GetText() == "Group 2", "an unclaimed subgroup box is titled by number")
-assert(grid.boxes[9].header.label:GetText() == "Spores", "free groups follow the subgroup boxes")
-assert(PaletteBox() == grid.boxes[10], "the palette is drawn last")
+assert(grid.boxes[3].header.label:GetText() == "Spores", "a named group titles the subgroup it was given")
+assert(PaletteBox() == grid.boxes[9], "the palette is drawn last")
 assert(PaletteBox().header.label:GetText() == "Unrostered", "the palette holds whoever the layout has not placed")
 assert(grid.frame:GetHeight() > 0, "the grid reports a height for its container")
 
@@ -387,7 +387,7 @@ end
 -- widget frame's own draw layer, which a child frame always covers, so a drag
 -- gave no feedback at all.
 local marked = grid.boxes[1].rows[2]
-local source = grid.boxes[9].rows[1]
+local source = grid.boxes[3].rows[1]
 cursorX, cursorY = CentreOf(source)
 source:GetScript("OnDragStart")(source)
 assert(not grid.dropMarker:IsShown(), "a gesture that has not moved yet marks nothing")
@@ -400,20 +400,20 @@ source:GetScript("OnDragStop")(source)
 assert(not grid.dropMarker:IsShown(), "the marker clears when the gesture ends")
 
 -- Dragging a member onto another group's slot reports a slot-to-slot move.
-local drag, drop = DragTo(grid.boxes[9].rows[1], grid.boxes[1].rows[2])
+local drag, drop = DragTo(grid.boxes[3].rows[1], grid.boxes[1].rows[2])
 assert(drag.kind == "slot" and drag.group == 2 and drag.slot == 1, "the drag reports the source slot")
 assert(drop.kind == "slot" and drop.group == 1 and drop.slot == 2, "the drop reports the destination slot")
 local ok, moved = layout.ApplyDrop(grid.model, drag, drop)
 assert(ok and table.concat(moved.groups[1].slots, ",") == "A,X,B", "the reported gesture inserts at the target")
 
 -- Dropping into an unclaimed subgroup box reports the subgroup to create.
-drag, drop = DragTo(grid.boxes[9].rows[1], grid.boxes[3].rows[1])
-assert(drop.kind == "subgroup" and drop.subgroup == 3, "an unclaimed box reports its subgroup")
+drag, drop = DragTo(grid.boxes[3].rows[1], grid.boxes[4].rows[1])
+assert(drop.kind == "subgroup" and drop.subgroup == 4, "an unclaimed box reports its subgroup")
 ok, moved = layout.ApplyDrop(grid.model, drag, drop)
-assert(ok and moved.groups[3].subgroup == 3 and moved.groups[3].slots[1] == "X", "the gesture creates the bound group")
+assert(ok and moved.groups[3].subgroup == 4 and moved.groups[3].slots[1] == "X", "the gesture creates the bound group")
 
 -- Dropping onto a claimed box's empty row appends to that group.
-drag, drop = DragTo(grid.boxes[9].rows[1], blank)
+drag, drop = DragTo(grid.boxes[3].rows[1], blank)
 assert(drop.kind == "group" and drop.group == 1, "an empty row in a claimed box appends to it")
 
 -- A palette entry drags in as raw text, and dragging back onto the palette removes.
@@ -469,11 +469,17 @@ grid:SetCallback("OnHeightMeasured", function(_, height)
     measured, reports = height, reports + 1
 end)
 
-grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
-assert(reports == 0, "redrawing to the same height reports nothing")
-
+-- The eight subgroup boxes stand whether or not a group holds them, so what the
+-- layout says never changes how tall the grid is.
 grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X; Extra: Y; More: Z"))
-assert(reports == 1, "a layout that needs another row reports its new height")
+assert(reports == 0, "a layout with more groups in it is the same eight boxes")
+
+local crowd = {}
+for index = 1, 30 do
+    crowd[index] = "Spare" .. index
+end
+grid:SetRoster(crowd)
+assert(reports == 1, "a palette taller than the group columns reports its new height")
 assert(measured == grid.frame:GetHeight(), "the reported height is the one the grid drew to")
 grid:SetCallback("OnHeightMeasured", nil)
 

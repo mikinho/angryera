@@ -5,11 +5,16 @@
 -- player slots (resist groups, spore rotations, chains, trash groups). Slots
 -- resolve against the live roster and render as a `{layout}` grid in the note.
 --
+-- A layout is the raid itself: eight subgroups of five, named. Every group is
+-- bound to one of them, so a spore rotation written on a page is a real seating
+-- Apply to Raid can move people into, not a list beside the raid.
+--
 -- Compact syntax (stored as the `$LAYOUT` variable value):
---   Group 1/1: Vhez, Mage1 > Mage2, *MAGE; Spores: Lock1, Lock2, Lock3
--- Groups are separated by ";" or newlines; "Label/N" binds raid subgroup N;
--- slots are comma-separated and may be a name, a priority list "A > B", a
--- class fill "*CLASS", or a "{{Variable}}" standing in for any of those.
+--   Group 1/1: Vhez, Mage1 > Mage2, *MAGE; Spores/2: Lock1, Lock2, Lock3
+-- Groups are separated by ";" or newlines; "Label/N" is raid subgroup N, and a
+-- group written without one takes the lowest subgroup still free. Slots are
+-- comma-separated and may be a name, a priority list "A > B", a class fill
+-- "*CLASS", or a "{{Variable}}" standing in for any of those.
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
@@ -18,13 +23,9 @@ AngryEra.utils = AngryEra.utils or {}
 AngryEra.utils.layout = {}
 local layout = AngryEra.utils.layout
 
-local MAX_GROUPS = 32
-local MAX_SLOTS_PER_GROUP = 40
 local MAX_SUBGROUPS = 8
 local MAX_SUBGROUP_SLOTS = 5
 
-layout.MAX_GROUPS = MAX_GROUPS
-layout.MAX_SLOTS_PER_GROUP = MAX_SLOTS_PER_GROUP
 layout.MAX_SUBGROUPS = MAX_SUBGROUPS
 layout.MAX_SUBGROUP_SLOTS = MAX_SUBGROUP_SLOTS
 
@@ -124,21 +125,76 @@ function layout.GroupWeight(group)
     return GroupWeight(group)
 end
 
--- Subgroup-bound groups are capped by the five-per-subgroup raid limit.
-local function GroupCapacity(group)
-    if type(group) == "table" and group.subgroup then
-        return MAX_SUBGROUP_SLOTS
-    end
-    return MAX_SLOTS_PER_GROUP
+-- Every group is a raid subgroup, so they all share the five-per-group limit.
+local function CanHold(group, addedWeight, skipIndex)
+    return GroupWeight(group, skipIndex) + addedWeight <= MAX_SUBGROUP_SLOTS
 end
 
-local function CanHold(group, addedWeight, skipIndex)
-    return GroupWeight(group, skipIndex) + addedWeight <= GroupCapacity(group)
+-- Reads one "Label[/N]: slot, slot" segment, or nil when it carries no label.
+-- The subgroup here is only what the text asked for; seating decides what it
+-- gets. Slots past what a raid subgroup holds are dropped rather than kept as
+-- an arrangement the raid could never take.
+local function ParseGroup(segment)
+    local labelPart, slotsPart = segment:match("^(.-):(.*)$")
+    if not labelPart then
+        return nil
+    end
+
+    local label = Trim(labelPart)
+    local requested
+    local bareLabel, boundGroup = label:match("^(.-)%s*/%s*([1-8])$")
+    if bareLabel then
+        label = Trim(bareLabel)
+        requested = tonumber(boundGroup)
+    end
+
+    local slots, used = {}, 0
+    for slot in (slotsPart .. ","):gmatch("([^,]*),") do
+        local trimmed = Trim(slot)
+        local weight = trimmed ~= "" and layout.SlotWeight(trimmed) or 0
+        if weight > 0 and used + weight <= MAX_SUBGROUP_SLOTS then
+            slots[#slots + 1] = trimmed
+            used = used + weight
+        end
+    end
+
+    return { name = label, subgroup = requested, slots = slots }
+end
+
+-- Seats parsed groups in the eight raid subgroups. An explicit binding wins,
+-- first one written taking it; everything else -- a group with no binding, or
+-- one asking for a subgroup already claimed -- falls to the lowest still free.
+local function SeatGroups(groups)
+    local taken = {}
+    for _, group in ipairs(groups) do
+        if group.subgroup and not taken[group.subgroup] then
+            taken[group.subgroup] = true
+        else
+            group.subgroup = nil
+        end
+    end
+
+    local free = 1
+    for _, group in ipairs(groups) do
+        if not group.subgroup then
+            while taken[free] do
+                free = free + 1
+            end
+            group.subgroup = free
+            taken[free] = true
+        end
+        if group.name == "" then
+            group.name = "Group " .. group.subgroup
+        end
+    end
+    return groups
 end
 
 --- Parses the compact `$LAYOUT` syntax into a model table.
+-- Groups past the eighth are dropped: the raid has no ninth subgroup to put
+-- them in.
 -- @tparam string text Compact layout syntax.
--- @treturn table model `{ groups = { { name, subgroup?, slots = {string,...} }, ... } }`.
+-- @treturn table model `{ groups = { { name, subgroup, slots = {string,...} }, ... } }`.
 function layout.Parse(text)
     local model = { groups = {} }
     if type(text) ~= "string" or text == "" then
@@ -146,32 +202,12 @@ function layout.Parse(text)
     end
     local normalized = text:gsub("[\r\n]+", ";")
     for segment in (normalized .. ";"):gmatch("([^;]*);") do
-        local piece = Trim(segment)
-        if piece ~= "" and #model.groups < MAX_GROUPS then
-            local labelPart, slotsPart = piece:match("^(.-):(.*)$")
-            if labelPart then
-                local label = Trim(labelPart)
-                local subgroup
-                local bareLabel, boundGroup = label:match("^(.-)%s*/%s*([1-8])$")
-                if bareLabel then
-                    label = Trim(bareLabel)
-                    subgroup = tonumber(boundGroup)
-                end
-                local slots = {}
-                for slot in (slotsPart .. ","):gmatch("([^,]*),") do
-                    local trimmed = Trim(slot)
-                    if trimmed ~= "" and #slots < MAX_SLOTS_PER_GROUP then
-                        slots[#slots + 1] = trimmed
-                    end
-                end
-                model.groups[#model.groups + 1] = {
-                    name = label ~= "" and label or ("Group " .. (#model.groups + 1)),
-                    subgroup = subgroup,
-                    slots = slots,
-                }
-            end
+        local group = #model.groups < MAX_SUBGROUPS and ParseGroup(Trim(segment)) or nil
+        if group then
+            model.groups[#model.groups + 1] = group
         end
     end
+    SeatGroups(model.groups)
     return model
 end
 
@@ -429,76 +465,103 @@ local function NormalizeSubgroup(value)
     return number
 end
 
+-- Whether some group already holds a raid subgroup, ignoring one group index.
+local function IsSubgroupTaken(groups, subgroup, skipIndex)
+    for index, group in ipairs(groups) do
+        if index ~= skipIndex and group.subgroup == subgroup then
+            return true
+        end
+    end
+    return false
+end
+
+-- The lowest raid subgroup nobody holds, or nil when all eight are spoken for.
+local function FreeSubgroup(groups)
+    for subgroup = 1, MAX_SUBGROUPS do
+        if not IsSubgroupTaken(groups, subgroup) then
+            return subgroup
+        end
+    end
+    return nil
+end
+
 --- Serializes a layout model back to the compact `$LAYOUT` syntax.
 -- Round-trips `layout.Parse`.
 -- @tparam table model Layout model.
 -- @treturn string source
 function layout.Serialize(model)
     local parts = {}
-    for _, group in ipairs((type(model) == "table" and model.groups) or {}) do
-        local label = SanitizeName(group.name)
-        if label == "" then
-            label = "Group " .. (#parts + 1)
+    for index, group in ipairs((type(model) == "table" and model.groups) or {}) do
+        local subgroup = NormalizeSubgroup(group.subgroup) or NormalizeSubgroup(index)
+        if subgroup then
+            local label = SanitizeName(group.name)
+            if label == "" then
+                label = "Group " .. subgroup
+            end
+            parts[#parts + 1] = label .. "/" .. subgroup .. ": " .. table.concat(group.slots or {}, ", ")
         end
-        if group.subgroup then
-            label = label .. "/" .. tostring(group.subgroup)
-        end
-        parts[#parts + 1] = label .. ": " .. table.concat(group.slots or {}, ", ")
     end
     return table.concat(parts, "; ")
 end
 
---- Returns a copy of the model with empty groups dropped.
--- Dragging a member out of a subgroup box can leave the box behind; saving a
--- layout should not persist boxes nobody filled.
+-- A group still carrying the "Group N" it was born with was never named.
+local function IsNamedGroup(group)
+    local label = SanitizeName(group.name)
+    return label ~= "" and label ~= ("Group " .. tostring(group.subgroup))
+end
+
+--- Returns a copy of the model with unused groups dropped.
+-- Dragging the last member out of a subgroup box leaves the box behind, and an
+-- empty box is the same as no box at all -- unless it was named, because naming
+-- a group Spores before anyone is dragged into it is the point of naming it.
 -- @tparam table model Layout model.
 -- @treturn table model
 function layout.Compact(model)
     local compact = { groups = {} }
     for _, group in ipairs(layout.CopyModel(model).groups) do
-        if #group.slots > 0 then
+        if #group.slots > 0 or IsNamedGroup(group) then
             compact.groups[#compact.groups + 1] = group
         end
     end
     return compact
 end
 
---- Splits a model into the eight raid subgroup boxes plus free-form groups.
--- A second group claiming an already-bound subgroup is listed as free so it
--- stays visible and editable rather than silently hidden.
+--- Maps each of the eight raid subgroups to the group seated in it.
 -- @tparam table model Layout model.
--- @treturn table view `{ subgroups = { [1..8] = groupIndex }, free = { groupIndex, ... } }`.
+-- @treturn table view `{ subgroups = { [1..8] = groupIndex } }`.
 function layout.GridView(model)
-    local view = { subgroups = {}, free = {} }
+    local view = { subgroups = {} }
     for index, group in ipairs((type(model) == "table" and model.groups) or {}) do
-        local bound = group.subgroup
+        local bound = NormalizeSubgroup(group.subgroup)
         if bound and view.subgroups[bound] == nil then
             view.subgroups[bound] = index
-        else
-            view.free[#view.free + 1] = index
         end
     end
     return view
 end
 
---- Appends a group.
+--- Appends a group seated in a raid subgroup.
 -- @tparam table model Layout model.
 -- @tparam[opt] string name Group label; defaults to `Group N`.
--- @tparam[opt] number subgroup Raid subgroup to bind (1-8).
+-- @tparam[opt] number subgroup Raid subgroup (1-8); defaults to the lowest free one.
 -- @treturn boolean ok
 -- @treturn table|string model on success, reason on failure
 function layout.AddGroup(model, name, subgroup)
     local updated = layout.CopyModel(model)
-    if #updated.groups >= MAX_GROUPS then
-        return false, "group-limit"
-    end
     local bound = NormalizeSubgroup(subgroup)
     if subgroup ~= nil and not bound then
         return false, "unknown-subgroup"
     end
+    if bound and IsSubgroupTaken(updated.groups, bound) then
+        return false, "subgroup-taken"
+    end
+    bound = bound or FreeSubgroup(updated.groups)
+    if not bound then
+        return false, "group-limit"
+    end
     local label = SanitizeName(name)
     if label == "" then
-        label = "Group " .. (bound or (#updated.groups + 1))
+        label = "Group " .. bound
     end
     updated.groups[#updated.groups + 1] = { name = label, subgroup = bound, slots = {} }
     return true, updated
@@ -538,10 +601,10 @@ function layout.SetGroupName(model, index, name)
     return true, updated
 end
 
---- Binds a group to a raid subgroup, or unbinds it when `subgroup` is nil.
+--- Moves a group to a raid subgroup nobody else holds.
 -- @tparam table model Layout model.
 -- @tparam number index Group index.
--- @tparam[opt] number subgroup Raid subgroup (1-8).
+-- @tparam number subgroup Raid subgroup (1-8).
 -- @treturn boolean ok
 -- @treturn table|string model on success, reason on failure
 function layout.SetGroupSubgroup(model, index, subgroup)
@@ -551,18 +614,11 @@ function layout.SetGroupSubgroup(model, index, subgroup)
         return false, "unknown-group"
     end
     local bound = NormalizeSubgroup(subgroup)
-    if subgroup ~= nil and not bound then
+    if not bound then
         return false, "unknown-subgroup"
     end
-    if bound then
-        for other, candidate in ipairs(updated.groups) do
-            if other ~= index and candidate.subgroup == bound then
-                return false, "subgroup-taken"
-            end
-        end
-        if GroupWeight(group) > MAX_SUBGROUP_SLOTS then
-            return false, "group-full"
-        end
+    if IsSubgroupTaken(updated.groups, bound, index) then
+        return false, "subgroup-taken"
     end
     group.subgroup = bound
     return true, updated
@@ -643,9 +699,6 @@ local function ResolveDropGroup(model, drop)
                 return index
             end
         end
-        if #model.groups >= MAX_GROUPS then
-            return nil, "group-limit"
-        end
         model.groups[#model.groups + 1] = { name = "Group " .. bound, subgroup = bound, slots = {} }
         return #model.groups
     end
@@ -714,7 +767,7 @@ function layout.ApplyDrop(model, drag, drop)
     if isMove then
         table.remove(updated.groups[drag.group].slots, drag.slot)
     end
-    if not CanHold(target, layout.SlotWeight(text)) or #target.slots >= MAX_SLOTS_PER_GROUP then
+    if not CanHold(target, layout.SlotWeight(text)) then
         return false, "group-full"
     end
 

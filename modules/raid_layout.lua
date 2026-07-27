@@ -192,8 +192,8 @@ local function DisplayedVariables(self)
 end
 
 --- Rearranges the raid subgroups to match the displayed page's `$LAYOUT`.
--- Leader/assist and out-of-combat only, and never automatic. Groups bound with
--- `/N` map to raid subgroup N; unbound groups are display-only and ignored here.
+-- Leader/assist and out-of-combat only, and never automatic. A layout is the
+-- eight raid subgroups, so every group in it maps to the subgroup it holds.
 -- @treturn boolean applied
 -- @treturn number|string movedCountOrReason
 function AngryEra:ApplyGroupLayoutToRaid()

@@ -1,11 +1,11 @@
 ## v3.3.0-BETA
 
-* New Feature: Added raid group layouts. A page's `$LAYOUT` metadata defines named groups of player slots (resist groups, spore rotations, chains, trash groups) that render wherever a `{layout}` tag appears and update as the roster changes.
+* New Feature: Added raid group layouts. A page's `$LAYOUT` metadata names the eight raid subgroups and the player slots in them (resist groups, spore rotations, chains, trash groups), rendering wherever a `{layout}` tag appears and updating as the roster changes.
 * New Feature: Layout slots fill from the live roster: a name, a priority list `A > B > C`, a class fill `*MAGE`/`*MAGE x2`, or `group:2`. Auto-fill picks present-and-alive members and never assigns anyone twice.
-* New Feature: Added a Group Layout editor on the page right-click menu. Drag members from the roster into the eight raid subgroup boxes or your own named groups, drag between boxes to move or swap them, and right-click a member to take them out. An Edit as text toggle switches the same layout to one group per line.
-* New Feature: The Group Layout grid can also be edited by clicking. Click a box title to name that group, a member to edit their slot, or an empty row to add one, and use New Group to add an unbound group like `Spores`. Layouts can be built solo, before there is a roster to drag from.
+* New Feature: Added a Group Layout editor on the page right-click menu. Drag members from the roster into the eight raid subgroup boxes, drag between boxes to move or swap them, and right-click a member to take them out. An Edit as text toggle switches the same layout to one group per line.
+* New Feature: The Group Layout grid can also be edited by clicking. Click a box title to name that group, so a spore rotation reads as `Spores` instead of Group 3, a member to edit their slot, or an empty row to add one. Layouts can be built solo, before there is a roster to drag from.
 * New Feature: A layout slot can hold a `{{Variable}}`, so one name change updates the note and the layout together. Whatever the variable holds is classified afterwards, so it may be a name, a priority list, or a class fill, and an unset one leaves its slot out.
-* New Feature: The raid leader or an assistant can apply a layout to the raid out of combat, moving members into the subgroups bound with `Label/N`. Unbound groups are display-only.
+* New Feature: The raid leader or an assistant can apply a layout to the raid out of combat, moving members into the subgroups it lays out.
 
 ## v3.2.0-BETA
 

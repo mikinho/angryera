@@ -27,16 +27,35 @@ local providers = {
 }
 
 -- Parse: compact multi-group, subgroup binding, slot list.
-local model = layout.Parse("Group 1/1: Vhez, Main > Backup, *MAGE; Spores: Lock1, Lock2")
+local model = layout.Parse("Group 1/1: Vhez, Main > Backup, *MAGE; Spores/2: Lock1, Lock2")
 assert(#model.groups == 2, "two groups parsed")
 assert(model.groups[1].name == "Group 1" and model.groups[1].subgroup == 1, "label and subgroup binding")
 assert(#model.groups[1].slots == 3 and model.groups[1].slots[3] == "*MAGE", "slots parsed in order")
-assert(model.groups[2].name == "Spores" and model.groups[2].subgroup == nil, "unbound group has no subgroup")
+assert(model.groups[2].name == "Spores" and model.groups[2].subgroup == 2, "a named group keeps its own label")
 
 -- Parse: newlines separate groups; missing colon and empty input are ignored.
 assert(#layout.Parse("A: x\nB: y").groups == 2, "newlines separate groups")
 assert(#layout.Parse("").groups == 0, "empty input yields no groups")
 assert(#layout.Parse("no colon here").groups == 0, "a line without a colon is skipped")
+
+-- Parse seats every group in a raid subgroup, so a layout is the raid itself:
+-- an explicit /N is honored first, then whatever is left takes the lowest free.
+local seated = layout.Parse("Spores: A; Main/1: B; Dup/1: C")
+assert(seated.groups[2].subgroup == 1, "an explicit binding is honored")
+assert(seated.groups[1].subgroup == 2, "a group written without one takes the lowest free subgroup")
+assert(seated.groups[3].subgroup == 3, "a group asking for a taken subgroup falls to the next free one")
+assert(layout.Parse("Spores: A").groups[1].name == "Spores", "seating leaves a written name alone")
+assert(layout.Parse("/3: A").groups[1].name == "Group 3", "a group left unnamed is named for its subgroup")
+
+-- Parse: the raid is the limit, so groups past the eighth and slots past the
+-- fifth of a subgroup are dropped rather than kept as an unusable arrangement.
+local nine = {}
+for index = 1, 9 do
+    nine[index] = "G" .. index .. ": x"
+end
+assert(#layout.Parse(table.concat(nine, "; ")).groups == 8, "a ninth group has no raid subgroup to hold it")
+assert(#layout.Parse("G: A, B, C, D, E, F").groups[1].slots == 5, "a sixth slot does not fit a subgroup")
+assert(#layout.Parse("G: A, B, C, D, *MAGE x2").groups[1].slots == 4, "a fill that overruns the subgroup is dropped")
 
 -- Resolve: names pass through, priority resolves via provider, class fills and dedupes.
 present = { backup = true }
@@ -180,29 +199,37 @@ assert(layout.SlotWeight("group:2") == layout.MAX_SUBGROUP_SLOTS, "a subgroup re
 assert(layout.GroupWeight({ slots = { "Vhez", "*MAGE x2" } }) == 3, "group weight sums its slots")
 
 -- Serialize round-trips Parse and repairs unlabeled or unsafe groups.
-local source = "Group 1/1: Vhez, Main > Backup, *MAGE; Spores: L1, L2"
+local source = "Group 1/1: Vhez, Main > Backup, *MAGE; Spores/2: L1, L2"
 assert(layout.Serialize(layout.Parse(source)) == source, "serialize round-trips parse")
 assert(layout.Serialize({ groups = {} }) == "", "an empty model serializes to an empty source")
-assert(layout.Serialize({ groups = { { slots = { "A" } } } }) == "Group 1: A", "an unlabeled group is numbered")
-assert(layout.Serialize({ groups = { { name = "A:B", slots = { "x" } } } }) == "A B: x", "a label cannot break syntax")
+assert(layout.Serialize({ groups = { { slots = { "A" } } } }) == "Group 1/1: A", "an unseated group takes its position")
+assert(
+    layout.Serialize({ groups = { { name = "A:B", slots = { "x" } } } }) == "A B/1: x",
+    "a label cannot break syntax"
+)
 
--- Compact drops the empty boxes a drag-out leaves behind.
-local compacted = layout.Compact(layout.Parse("Keep: A; Empty: ; Also: B"))
-assert(#compacted.groups == 2, "empty groups are dropped")
+-- Compact drops the empty boxes a drag-out leaves behind, but a box named
+-- before anyone was dragged into it is the whole point of naming one.
+local compacted = layout.Compact(layout.Parse("Keep/1: A; Group 2/2: ; Also/3: B"))
+assert(#compacted.groups == 2, "an unnamed empty group is dropped")
 assert(compacted.groups[2].name == "Also", "remaining groups keep their order")
+assert(#layout.Compact(layout.Parse("Keep/1: A; Spores/2: ")).groups == 2, "a named empty group is kept")
 
--- GridView splits bound subgroup boxes from free-form groups.
-local view = layout.GridView(layout.Parse("Main/1: A; Spores: B; Dup/1: C; Resist/4: D"))
-assert(view.subgroups[1] == 1 and view.subgroups[4] == 4, "bound groups claim their subgroup box")
-assert(view.subgroups[2] == nil, "an unclaimed subgroup box is empty")
-assert(#view.free == 2 and view.free[1] == 2 and view.free[2] == 3, "unbound and duplicate bindings stay visible")
+-- GridView reports which group holds each of the eight raid subgroups.
+local view = layout.GridView(layout.Parse("Main/1: A; Resist/4: D"))
+assert(view.subgroups[1] == 1 and view.subgroups[4] == 2, "each group is found by the subgroup it holds")
+assert(view.subgroups[2] == nil, "a subgroup no group holds is empty")
 
 -- Group mutators are pure and report why they refuse.
-local base = layout.Parse("Main/1: A; Spores: B")
+local base = layout.Parse("Main/1: A; Spores/2: B")
 local ok, added = layout.AddGroup(base, nil, 3)
-assert(ok and #added.groups == 3 and added.groups[3].name == "Group 3", "a bound group is named for its subgroup")
+assert(ok and #added.groups == 3 and added.groups[3].name == "Group 3", "a group is named for its subgroup")
 assert(#base.groups == 2, "the input model is left untouched")
 assert(select(2, layout.AddGroup(base, "X", 9)) == "unknown-subgroup", "a subgroup outside 1-8 is refused")
+assert(select(2, layout.AddGroup(base, "X", 1)) == "subgroup-taken", "a subgroup another group holds is refused")
+assert(select(2, layout.AddGroup(base, "X")).groups[3].subgroup == 3, "an unasked group takes the lowest free subgroup")
+local packedRaid = layout.Parse("A/1: x; B/2: x; C/3: x; D/4: x; E/5: x; F/6: x; G/7: x; H/8: x")
+assert(select(2, layout.AddGroup(packedRaid, "Ninth")) == "group-limit", "a ninth group has nowhere to sit")
 
 assert(#select(2, layout.RemoveGroup(base, 1)).groups == 1, "a group is removed by index")
 assert(select(2, layout.RemoveGroup(base, 7)) == "unknown-group", "removing a missing group is refused")
@@ -211,10 +238,9 @@ assert(select(2, layout.SetGroupName(base, 2, "Fire:Resist")).groups[2].name == 
 assert(select(2, layout.SetGroupName(base, 2, "  ")) == "empty-name", "a blank rename is refused")
 
 assert(select(2, layout.SetGroupSubgroup(base, 2, 1)) == "subgroup-taken", "two groups cannot share a subgroup")
-assert(select(2, layout.SetGroupSubgroup(base, 2, 2)).groups[2].subgroup == 2, "a free group binds to a subgroup")
-assert(select(2, layout.SetGroupSubgroup(base, 1, nil)).groups[1].subgroup == nil, "a bound group can unbind")
-local wide = layout.Parse("Bench: A, B, C, D, E, F")
-assert(select(2, layout.SetGroupSubgroup(wide, 1, 2)) == "group-full", "an oversized group cannot bind to a subgroup")
+assert(select(2, layout.SetGroupSubgroup(base, 2, 5)).groups[2].subgroup == 5, "a group moves to a free subgroup")
+assert(select(2, layout.SetGroupSubgroup(base, 2, nil)) == "unknown-subgroup", "a group cannot leave the raid")
+assert(select(2, layout.SetGroupSubgroup(base, 9, 5)) == "unknown-group", "moving a missing group is refused")
 
 -- SetSlot retypes one slot under the same capacity rules a drop obeys.
 assert(select(2, layout.SetSlot(base, 1, 1, " C:D ")).groups[1].slots[1] == "C:D", "a typed slot is trimmed")

@@ -1,10 +1,10 @@
 --- Custom AceGUI widget that edits a raid group layout by dragging members.
--- Renders the eight raid subgroup boxes and any free-form groups in two
--- columns, with a palette of unrostered members beside them, and reports every
--- gesture as a drag/drop descriptor pair for `AngryEra.utils.layout.ApplyDrop`
--- to resolve. Clicks report their position instead, separately for a box title,
--- a filled slot, and an unused row. The height a redraw settles on is reported
--- too, so a container can grow to the whole grid instead of scrolling it.
+-- Renders the eight raid subgroup boxes in two columns, with a palette of
+-- unrostered members beside them, and reports every gesture as a drag/drop
+-- descriptor pair for `AngryEra.utils.layout.ApplyDrop` to resolve. Clicks
+-- report their position instead, separately for a box title, a filled slot,
+-- and an unused row. The height a redraw settles on is reported too, so a
+-- container can grow to the whole grid instead of scrolling it.
 --
 -- Every callback below is delivered the AceGUI way, as
 -- `(widget, event, ...)` -- a handler that reads its first argument as the
@@ -19,7 +19,7 @@
 --
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 5
+local Type, Version = "AngryLayoutGrid", 6
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -351,8 +351,8 @@ local function UnrosteredNames(self, model)
     return names
 end
 
--- Describes every box to draw: the eight subgroup boxes, then free groups, then
--- the palette. Boxes are plain descriptors so the draw pass stays dumb.
+-- Describes every box to draw: the eight subgroup boxes, then the palette.
+-- Boxes are plain descriptors so the draw pass stays dumb.
 local function BuildBoxPlan(self)
     local layout = self.layout
     local model = self.model or { groups = {} }
@@ -369,16 +369,6 @@ local function BuildBoxPlan(self)
             slots = group and group.slots or {},
             rows = MAX_SUBGROUP_SLOTS,
             bound = true,
-        }
-    end
-
-    for _, index in ipairs(view.free) do
-        local group = model.groups[index]
-        plan[#plan + 1] = {
-            title = group.name .. (group.subgroup and (" (group " .. group.subgroup .. " taken)") or ""),
-            group = index,
-            slots = group.slots,
-            rows = max(#group.slots + 1, MAX_SUBGROUP_SLOTS),
         }
     end
 
