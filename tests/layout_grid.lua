@@ -268,7 +268,17 @@ assert(grid.boxes[9].header.label:GetText() == "Spores", "free groups follow the
 assert(grid.boxes[10].header.label:GetText() == "Roster", "the palette is drawn last")
 assert(grid.frame:GetHeight() > 0, "the grid reports a height for its container")
 
+-- Groups run two to a row, odd on the left and even on the right, with the
+-- palette standing in a third column beside them.
 local palette = grid.boxes[10]
+assert(grid.boxes[1]:GetLeft() == grid.frame:GetLeft(), "the first group opens the left column")
+assert(grid.boxes[2]:GetLeft() > grid.boxes[1]:GetLeft(), "an even-numbered group stands in the right column")
+assert(grid.boxes[3]:GetLeft() == grid.boxes[1]:GetLeft(), "an odd-numbered group returns to the left column")
+assert(grid.boxes[2]:GetTop() == grid.boxes[1]:GetTop(), "the two columns share a top")
+assert(grid.boxes[3]:GetTop() < grid.boxes[1]:GetTop(), "the second row of groups sits below the first")
+assert(palette:GetLeft() >= grid.boxes[2]:GetRight(), "the palette clears both group columns")
+assert(palette:GetRight() <= grid.frame:GetRight(), "the palette stays inside the grid")
+assert(palette:GetTop() == grid.frame:GetTop(), "the palette starts at the top of the grid")
 
 -- Rows carry the target the hit-test reads back.
 local filled = grid.boxes[1].rows[1]
@@ -407,9 +417,9 @@ assert(drag == nil and drop == nil, "an unused row cannot start a drag")
 assert(not emptyClicked, "a press that travelled off a row is not a click on it")
 
 -- Releasing on empty space inside the grid cancels; releasing away from it removes.
-local insideX = select(1, CentreOf(grid.boxes[2]))
-local insideY = select(2, CentreOf(grid.boxes[9]))
-assert(insideX > grid.boxes[9]:GetRight(), "the cancel point clears the last row of boxes")
+local insideX = select(1, CentreOf(palette))
+local insideY = grid.frame:GetBottom() + 1
+assert(insideY < palette:GetBottom(), "the cancel point clears the palette")
 drag, drop = GestureTo(filled, insideX, insideY)
 assert(drag == nil and drop == nil, "a release inside the grid over no target is cancelled")
 

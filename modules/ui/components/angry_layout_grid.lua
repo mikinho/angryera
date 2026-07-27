@@ -1,8 +1,9 @@
 --- Custom AceGUI widget that edits a raid group layout by dragging members.
--- Renders the eight raid subgroup boxes plus any free-form groups and a roster
--- palette, and reports every gesture as a drag/drop descriptor pair for
--- `AngryEra.utils.layout.ApplyDrop` to resolve. Clicks report their position
--- instead, separately for a box title, a filled slot, and an unused row.
+-- Renders the eight raid subgroup boxes and any free-form groups in two columns
+-- with the roster palette beside them, and reports every gesture as a drag/drop
+-- descriptor pair for `AngryEra.utils.layout.ApplyDrop` to resolve. Clicks
+-- report their position instead, separately for a box title, a filled slot, and
+-- an unused row.
 -- @module AngryLayoutGrid
 
 local Type, Version = "AngryLayoutGrid", 3
@@ -13,7 +14,7 @@ end
 
 -- Lua APIs
 local pairs, ipairs, type = pairs, ipairs, type
-local ceil, max = math.ceil, math.max
+local max = math.max
 
 -- WoW APIs
 local CreateFrame, UIParent = CreateFrame, UIParent
@@ -24,12 +25,11 @@ local CreateFrame, UIParent = CreateFrame, UIParent
 
 local MAX_SUBGROUPS = 8
 local MAX_SUBGROUP_SLOTS = 5
-local COLUMNS = 4
+local GROUP_COLUMNS = 2
 local ROW_HEIGHT = 15
 local HEADER_HEIGHT = 16
 local BOX_PADDING = 6
 local BOX_SPACING = 4
-local SECTION_SPACING = 8
 local DRAG_THRESHOLD = 4
 local MARKER_LEVEL = 20
 
@@ -385,8 +385,7 @@ local function BuildBoxPlan(self)
             title = "Roster",
             palette = true,
             slots = self.roster,
-            rows = max(ceil(#self.roster / COLUMNS), 1),
-            columns = COLUMNS,
+            rows = #self.roster,
         }
     end
 
@@ -410,23 +409,16 @@ local function HideRowsFrom(box, first)
     end
 end
 
--- Lays a group box out as one vertical column of slots.
-local function DrawBox(self, box, entry)
-    local rows = entry.rows
-    local header = { kind = "header", group = entry.group, subgroup = entry.subgroup }
-    local empty = { kind = "empty", group = entry.group, subgroup = entry.subgroup }
-
-    box.header.label:SetText(entry.title)
-    box.header.layoutTarget = header
-
+-- Stacks `rows` rows under a box title, one per line.
+local function StackRows(self, box, rows, Target)
     for index = 1, rows do
         local row = AcquireRow(self, box, index)
-        local slot = entry.slots[index]
+        local offset = -((index - 1) * ROW_HEIGHT)
 
         row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", box.header, "BOTTOMLEFT", 0, -((index - 1) * ROW_HEIGHT))
-        row:SetPoint("TOPRIGHT", box.header, "BOTTOMRIGHT", 0, -((index - 1) * ROW_HEIGHT))
-        FillRow(row, slot, slot and { kind = "slot", group = entry.group, slot = index } or empty)
+        row:SetPoint("TOPLEFT", box.header, "BOTTOMLEFT", 0, offset)
+        row:SetPoint("TOPRIGHT", box.header, "BOTTOMRIGHT", 0, offset)
+        Target(row, index)
         row:Show()
     end
 
@@ -435,31 +427,28 @@ local function DrawBox(self, box, entry)
     box:Show()
 end
 
--- Lays the roster palette out as one wide box of several names per row.
-local function DrawPalette(self, box, entry)
-    local perRow = entry.columns
-    local rows = entry.rows
-    local width = (box:GetWidth() - (BOX_PADDING * 2)) / perRow
+-- Lays a group box out as one column of slots.
+local function DrawBox(self, box, entry)
+    local empty = { kind = "empty", group = entry.group, subgroup = entry.subgroup }
 
+    box.header.label:SetText(entry.title)
+    box.header.layoutTarget = { kind = "header", group = entry.group, subgroup = entry.subgroup }
+
+    StackRows(self, box, entry.rows, function(row, index)
+        local slot = entry.slots[index]
+        FillRow(row, slot, slot and { kind = "slot", group = entry.group, slot = index } or empty)
+    end)
+end
+
+-- Lays the palette out the same shape as a group box, one name per row.
+local function DrawPalette(self, box, entry)
     box.header.label:SetText(entry.title)
     box.header.layoutTarget = { kind = "palette" }
 
-    for index = 1, rows * perRow do
-        local row = AcquireRow(self, box, index)
+    StackRows(self, box, entry.rows, function(row, index)
         local name = entry.slots[index]
-        local column = (index - 1) % perRow
-        local line = ceil(index / perRow)
-
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", box.header, "BOTTOMLEFT", column * width, -((line - 1) * ROW_HEIGHT))
-        row:SetWidth(width)
         FillRow(row, name, { kind = "palette", text = name })
-        row:SetShown(name ~= nil)
-    end
-
-    HideRowsFrom(box, (rows * perRow) + 1)
-    box:SetHeight(BoxHeight(rows))
-    box:Show()
+    end)
 end
 
 --[[-----------------------------------------------------------------------------
@@ -527,6 +516,8 @@ local methods = {
     end,
 
     --- Redraws every box from the current model and roster.
+    -- Groups fill two columns, odd-numbered on the left and even on the right,
+    -- and the palette stands in a third column beside them.
     ["Refresh"] = function(self)
         if not self.layout or self.drawing then
             return
@@ -539,33 +530,30 @@ local methods = {
 
         self.drawing = true
         local plan = BuildBoxPlan(self)
-        local boxWidth = (width - ((COLUMNS - 1) * BOX_SPACING)) / COLUMNS
-        local column, top, rowHeight = 0, 0, 0
+        local columnWidth = (width - (GROUP_COLUMNS * BOX_SPACING)) / (GROUP_COLUMNS + 1)
+        local step = columnWidth + BOX_SPACING
+        local placed, top, rowHeight, total = 0, 0, 0, 0
 
         for index, entry in ipairs(plan) do
             local box = AcquireBox(self, index)
             box:ClearAllPoints()
+            box:SetWidth(columnWidth)
 
             if entry.palette then
-                if column > 0 then
-                    top = top + rowHeight + BOX_SPACING
-                    column, rowHeight = 0, 0
-                end
-                top = top + SECTION_SPACING
-                box:SetWidth(width)
-                box:SetPoint("TOPLEFT", self.frame, "TOPLEFT", 0, -top)
+                box:SetPoint("TOPLEFT", self.frame, "TOPLEFT", GROUP_COLUMNS * step, 0)
                 DrawPalette(self, box, entry)
-                top = top + box:GetHeight()
+                total = max(total, box:GetHeight())
             else
-                if column >= COLUMNS then
+                local column = placed % GROUP_COLUMNS
+                if column == 0 and placed > 0 then
                     top = top + rowHeight + BOX_SPACING
-                    column, rowHeight = 0, 0
+                    rowHeight = 0
                 end
-                box:SetWidth(boxWidth)
-                box:SetPoint("TOPLEFT", self.frame, "TOPLEFT", column * (boxWidth + BOX_SPACING), -top)
+                box:SetPoint("TOPLEFT", self.frame, "TOPLEFT", column * step, -top)
                 DrawBox(self, box, entry)
                 rowHeight = max(rowHeight, box:GetHeight())
-                column = column + 1
+                placed = placed + 1
+                total = max(total, top + rowHeight)
             end
         end
 
@@ -573,7 +561,6 @@ local methods = {
             self.boxes[index]:Hide()
         end
 
-        local total = top + rowHeight
         self.frame.height = total
         self.frame:SetHeight(total)
         self.drawnWidth = width
