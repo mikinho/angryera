@@ -1,10 +1,10 @@
 --- Custom AceGUI widget that edits a raid group layout by dragging members.
--- Renders the eight raid subgroup boxes in two columns, with a palette of
--- unrostered members beside them, and reports every gesture as a drag/drop
--- descriptor pair for `AngryEra.utils.layout.ApplyDrop` to resolve. Clicks
--- report their position instead, separately for a box title, a filled slot,
--- and an unused row. The height a redraw settles on is reported too, so a
--- container can grow to the whole grid instead of scrolling it.
+-- Renders the eight raid subgroup boxes in two columns, with a separately
+-- scrolling palette of unrostered members beside them, and reports every
+-- gesture as a drag/drop descriptor pair for
+-- `AngryEra.utils.layout.ApplyDrop` to resolve. Clicks report their position
+-- instead, separately for a box title, a filled slot, and an unused row. The
+-- grid is always exactly as tall as its eight subgroup boxes.
 --
 -- Every callback below is delivered the AceGUI way, as
 -- `(widget, event, ...)` -- a handler that reads its first argument as the
@@ -19,7 +19,7 @@
 --
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 7
+local Type, Version = "AngryLayoutGrid", 8
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -27,7 +27,7 @@ end
 
 -- Lua APIs
 local pairs, ipairs, type = pairs, ipairs, type
-local max = math.max
+local floor, max, min = math.floor, math.max, math.min
 
 -- WoW APIs
 local CreateFrame, UIParent = CreateFrame, UIParent
@@ -44,6 +44,15 @@ local HEADER_HEIGHT = 16
 local BOX_PADDING = 6
 local BOX_SPACING = 4
 local MARKER_LEVEL = 20
+local SCROLLBAR_WIDTH = 16
+local SCROLLBAR_GAP = 4
+local SCROLLBAR_END_PADDING = 18
+local PALETTE_WHEEL_ROWS = 3
+local GROUP_BOX_HEIGHT = HEADER_HEIGHT + (MAX_SUBGROUP_SLOTS * ROW_HEIGHT) + (BOX_PADDING * 2)
+local GROUP_ROWS = MAX_SUBGROUPS / GROUP_COLUMNS
+local GRID_HEIGHT = (GROUP_ROWS * GROUP_BOX_HEIGHT) + ((GROUP_ROWS - 1) * BOX_SPACING)
+local PALETTE_VISIBLE_ROWS = floor((GRID_HEIGHT - HEADER_HEIGHT - (BOX_PADDING * 2)) / ROW_HEIGHT)
+local widgetSequence = 0
 
 local PaneBackdrop = {
     bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -239,6 +248,67 @@ end
 
 local function Target_OnClick(frame, button)
     FireClick(frame.obj, frame.layoutTarget, button)
+end
+
+-- The palette virtualizes its rows instead of clipping real child frames in a
+-- nested ScrollFrame. The grid's drag hit-testing therefore sees only the rows
+-- that are actually visible.
+local function PaletteScroll_OnValueChanged(scrollbar, value)
+    local self = scrollbar.obj
+    if not self or self.drawing then
+        return
+    end
+    local offset = floor((value or 0) + 0.5)
+    if offset == self.paletteOffset then
+        return
+    end
+    self.paletteOffset = offset
+    self:Refresh()
+end
+
+local function Palette_OnMouseWheel(box, delta)
+    local scrollbar = box and box.scrollbar
+    if not scrollbar or not scrollbar:IsShown() then
+        return
+    end
+    local minimum, maximum = scrollbar:GetMinMaxValues()
+    local value = scrollbar:GetValue() or 0
+    scrollbar:SetValue(min(maximum, max(minimum, value - ((delta or 0) * PALETTE_WHEEL_ROWS))))
+end
+
+local function PaletteChild_OnMouseWheel(frame, delta)
+    Palette_OnMouseWheel(frame.paletteBox, delta)
+end
+
+local function AcquirePaletteScrollbar(self, box)
+    if box.scrollbar then
+        return box.scrollbar
+    end
+
+    local scrollbar = CreateFrame(
+        "Slider",
+        ("AngryEraLayoutGrid%dPaletteScrollBar"):format(self.sequence),
+        box,
+        "UIPanelScrollBarTemplate"
+    )
+    -- Classic's template installs its own value handler. Clear it before
+    -- initialization so setting the initial range/value cannot call FrameXML
+    -- with a palette it does not own.
+    scrollbar:SetScript("OnValueChanged", nil)
+    scrollbar:SetWidth(SCROLLBAR_WIDTH)
+    scrollbar:SetMinMaxValues(0, 0)
+    scrollbar:SetValueStep(1)
+    scrollbar:SetValue(0)
+    scrollbar.obj = self
+    scrollbar:SetScript("OnValueChanged", PaletteScroll_OnValueChanged)
+    box.scrollbar = scrollbar
+
+    box:EnableMouseWheel(true)
+    box:SetScript("OnMouseWheel", Palette_OnMouseWheel)
+    box.header:EnableMouseWheel(true)
+    box.header.paletteBox = box
+    box.header:SetScript("OnMouseWheel", PaletteChild_OnMouseWheel)
+    return scrollbar
 end
 
 --[[-----------------------------------------------------------------------------
@@ -517,20 +587,20 @@ local function HideRowsFrom(box, first)
 end
 
 -- Stacks `rows` rows under a box title, one per line.
-local function StackRows(self, box, rows, Target)
+local function StackRows(self, box, rows, Target, rightInset, fixedHeight)
     for index = 1, rows do
         local row = AcquireRow(self, box, index)
         local offset = -((index - 1) * ROW_HEIGHT)
 
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", box.header, "BOTTOMLEFT", 0, offset)
-        row:SetPoint("TOPRIGHT", box.header, "BOTTOMRIGHT", 0, offset)
+        row:SetPoint("TOPRIGHT", box.header, "BOTTOMRIGHT", -(rightInset or 0), offset)
         Target(row, index)
         row:Show()
     end
 
     HideRowsFrom(box, rows + 1)
-    box:SetHeight(BoxHeight(rows))
+    box:SetHeight(fixedHeight or BoxHeight(rows))
     box:Show()
 end
 
@@ -552,11 +622,34 @@ local function DrawPalette(self, box, entry)
     box.header.label:SetText(entry.title)
     box.header.layoutTarget = { kind = "palette" }
 
-    StackRows(self, box, entry.rows, function(row, index)
-        local rosterEntry = entry.slots[index]
+    local scrollbar = AcquirePaletteScrollbar(self, box)
+    scrollbar:ClearAllPoints()
+    scrollbar:SetPoint(
+        "TOPRIGHT",
+        box,
+        "TOPRIGHT",
+        -BOX_PADDING,
+        -(BOX_PADDING + HEADER_HEIGHT + SCROLLBAR_END_PADDING)
+    )
+    scrollbar:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -BOX_PADDING, BOX_PADDING + SCROLLBAR_END_PADDING)
+
+    local maximum = max(#entry.slots - PALETTE_VISIBLE_ROWS, 0)
+    local offset = min(max(floor(self.paletteOffset or 0), 0), maximum)
+    self.paletteOffset = offset
+    scrollbar:SetMinMaxValues(0, maximum)
+    scrollbar:SetValue(offset)
+    scrollbar:SetShown(maximum > 0)
+
+    local rows = max(min(#entry.slots, PALETTE_VISIBLE_ROWS), 1)
+    local rightInset = maximum > 0 and (SCROLLBAR_WIDTH + SCROLLBAR_GAP) or 0
+    StackRows(self, box, rows, function(row, index)
+        local rosterEntry = entry.slots[offset + index]
         local text = rosterEntry and rosterEntry.Text
         FillRow(row, text, { kind = "palette", text = text, fullName = rosterEntry and rosterEntry.FullName })
-    end)
+        row:EnableMouseWheel(true)
+        row.paletteBox = box
+        row:SetScript("OnMouseWheel", PaletteChild_OnMouseWheel)
+    end, rightInset, GRID_HEIGHT)
 end
 
 --[[-----------------------------------------------------------------------------
@@ -573,10 +666,17 @@ local methods = {
         self.drawing = nil
         self.drawnWidth = nil
         self.measuredHeight = nil
+        self.paletteOffset = 0
         self.frame:SetScript("OnUpdate", nil)
         self.dropMarker:Hide()
+        for _, box in ipairs(self.boxes) do
+            if box.scrollbar then
+                box.scrollbar:SetValue(0)
+                box.scrollbar:Hide()
+            end
+        end
         self:SetWidth(400)
-        self:SetHeight(200)
+        self:SetHeight(GRID_HEIGHT)
     end,
 
     ["OnRelease"] = function(self)
@@ -591,7 +691,12 @@ local methods = {
         self.drawing = nil
         self.drawnWidth = nil
         self.measuredHeight = nil
+        self.paletteOffset = 0
         for _, box in ipairs(self.boxes) do
+            if box.scrollbar then
+                box.scrollbar:SetValue(0)
+                box.scrollbar:Hide()
+            end
             box:Hide()
         end
     end,
@@ -636,7 +741,8 @@ local methods = {
 
     --- Redraws every box from the current model and roster.
     -- Groups fill two columns, odd-numbered on the left and even on the right,
-    -- and the palette stands in a third column beside them.
+    -- and the fixed-height, independently scrolling palette stands in a third
+    -- column beside them.
     ["Refresh"] = function(self)
         if not self.layout or self.drawing then
             return
@@ -651,7 +757,7 @@ local methods = {
         local plan = BuildBoxPlan(self)
         local columnWidth = (width - (GROUP_COLUMNS * BOX_SPACING)) / (GROUP_COLUMNS + 1)
         local step = columnWidth + BOX_SPACING
-        local placed, top, rowHeight, total = 0, 0, 0, 0
+        local placed, top, rowHeight = 0, 0, 0
 
         for index, entry in ipairs(plan) do
             local box = AcquireBox(self, index)
@@ -661,7 +767,6 @@ local methods = {
             if entry.palette then
                 box:SetPoint("TOPLEFT", self.frame, "TOPLEFT", GROUP_COLUMNS * step, 0)
                 DrawPalette(self, box, entry)
-                total = max(total, box:GetHeight())
             else
                 local column = placed % GROUP_COLUMNS
                 if column == 0 and placed > 0 then
@@ -672,7 +777,6 @@ local methods = {
                 DrawBox(self, box, entry)
                 rowHeight = max(rowHeight, box:GetHeight())
                 placed = placed + 1
-                total = max(total, top + rowHeight)
             end
         end
 
@@ -680,14 +784,14 @@ local methods = {
             self.boxes[index]:Hide()
         end
 
-        self.frame.height = total
-        self.frame:SetHeight(total)
+        self.frame.height = GRID_HEIGHT
+        self.frame:SetHeight(GRID_HEIGHT)
         self.drawnWidth = width
         self.drawing = nil
         if self.parent and self.parent.DoLayout then
             self.parent:DoLayout()
         end
-        ReportHeight(self, total)
+        ReportHeight(self, GRID_HEIGHT)
     end,
 }
 
@@ -695,6 +799,7 @@ local methods = {
 Constructor
 -------------------------------------------------------------------------------]]
 local function Constructor()
+    widgetSequence = widgetSequence + 1
     local frame = CreateFrame("Frame", nil, UIParent)
     frame:Hide()
 
@@ -710,6 +815,7 @@ local function Constructor()
         dropMarker = marker,
         boxes = {},
         roster = {},
+        sequence = widgetSequence,
         type = Type,
     }
     for method, func in pairs(methods) do

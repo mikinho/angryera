@@ -128,6 +128,9 @@ local function NewRegion(parent)
     function region:EnableMouse(enabled)
         self.mouseEnabled = enabled and true or false
     end
+    function region:EnableMouseWheel(enabled)
+        self.mouseWheelEnabled = enabled and true or false
+    end
     function region:SetJustifyH() end
     function region:SetBackdrop() end
     function region:SetBackdropColor() end
@@ -151,6 +154,33 @@ local function NewRegion(parent)
     end
     function region:GetHeight()
         return self.height
+    end
+    function region:SetMinMaxValues(minimum, maximum)
+        self.minimum, self.maximum = minimum, maximum
+        if self.value then
+            self.value = math.max(minimum, math.min(maximum, self.value))
+        end
+    end
+    function region:GetMinMaxValues()
+        return self.minimum or 0, self.maximum or 0
+    end
+    function region:SetValueStep(step)
+        self.valueStep = step
+    end
+    function region:SetValue(value)
+        local minimum, maximum = self:GetMinMaxValues()
+        local clamped = math.max(minimum, math.min(maximum, value))
+        if clamped == self.value then
+            return
+        end
+        self.value = clamped
+        local handler = self:GetScript("OnValueChanged")
+        if handler then
+            handler(self, clamped)
+        end
+    end
+    function region:GetValue()
+        return self.value or 0
     end
     function region:Show()
         self.shown = true
@@ -297,6 +327,8 @@ assert(grid.boxes[3]:GetTop() < grid.boxes[1]:GetTop(), "the second row of group
 assert(palette:GetLeft() >= grid.boxes[2]:GetRight(), "the palette clears both group columns")
 assert(palette:GetRight() <= grid.frame:GetRight(), "the palette stays inside the grid")
 assert(palette:GetTop() == grid.frame:GetTop(), "the palette starts at the top of the grid")
+assert(palette:GetHeight() == grid.frame:GetHeight(), "the palette is fixed to the complete subgroup canvas")
+assert(not palette.scrollbar:IsShown(), "a short unrostered list needs no scrollbar")
 
 -- Rows carry the target the hit-test reads back.
 local filled = grid.boxes[1].rows[1]
@@ -439,8 +471,8 @@ assert(not emptyClicked, "a press that travelled off a row is not a click on it"
 
 -- Releasing on empty space inside the grid cancels; releasing away from it removes.
 local insideX = select(1, CentreOf(palette))
-local insideY = grid.frame:GetBottom() + 1
-assert(insideY < palette:GetBottom(), "the cancel point clears the palette")
+local insideY = palette.rows[2]:GetBottom() - 1
+assert(insideY > palette:GetBottom(), "the cancel point sits in unused palette space")
 drag, drop = GestureTo(filled, insideX, insideY)
 assert(drag == nil and drop == nil, "a release inside the grid over no target is cancelled")
 
@@ -530,9 +562,8 @@ palette = PaletteBox()
 assert(palette.rows[1].layoutTarget.text == "Alex-RealmA", "an exact full-name slot hides only its member")
 assert(not palette.rows[2]:IsShown(), "the exact full-name match leaves one palette member")
 
--- The grid measures itself so its container can grow to the whole layout rather
--- than scroll it. Only a change is reported, because a container that resizes in
--- answer re-flows the grid, and re-reporting from that pass would bounce them.
+-- The grid always measures to the complete eight-group canvas. A tall
+-- unrostered palette scrolls internally instead of changing that height.
 local measured, reports = nil, 0
 grid:SetCallback("OnHeightMeasured", function(_, _, height)
     measured, reports = height, reports + 1
@@ -543,13 +574,55 @@ end)
 grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X; Extra: Y; More: Z"))
 assert(reports == 0, "a layout with more groups in it is the same eight boxes")
 
+grid:SetRoster({})
+palette = PaletteBox()
+assert(grid.frame:GetHeight() == 424, "an empty palette keeps all eight subgroup boxes visible")
+assert(not palette.scrollbar:IsShown(), "an empty palette hides its scrollbar")
+
 local crowd = {}
 for index = 1, 30 do
     crowd[index] = "Spare" .. index
 end
 grid:SetRoster(crowd)
-assert(reports == 1, "a palette taller than the group columns reports its new height")
-assert(measured == grid.frame:GetHeight(), "the reported height is the one the grid drew to")
+palette = PaletteBox()
+assert(reports == 0 and measured == nil, "a tall palette never asks the outer window to grow")
+assert(grid.frame:GetHeight() == 424, "thirty unrostered members keep the subgroup canvas fixed")
+assert(palette.scrollbar:IsShown(), "a palette taller than its viewport shows its own scrollbar")
+local minimum, maximum = palette.scrollbar:GetMinMaxValues()
+assert(minimum == 0 and maximum == 4, "the scrollbar exposes every hidden palette row")
+assert(palette.rows[1].layoutTarget.text == "Spare1", "the palette begins with the first unrostered member")
+assert(palette.rows[26].layoutTarget.text == "Spare26", "twenty-six palette rows fit beside the groups")
+
+palette.scrollbar:SetValue(maximum)
+assert(palette.rows[1].layoutTarget.text == "Spare5", "scrolling advances the first visible roster member")
+assert(palette.rows[26].layoutTarget.text == "Spare30", "scrolling to the end exposes the final roster member")
+assert(palette.rows[1].layoutTarget.kind == "palette", "a scrolled row retains its palette drag target")
+local scrolledDrag = DragTo(palette.rows[1], blank)
+assert(scrolledDrag.text == "Spare5", "dragging a scrolled row carries the offset roster member")
+
+local gutterDrag, gutterDrop = GestureTo(filled, CentreOf(palette.scrollbar))
+assert(gutterDrag == nil and gutterDrop == nil, "dropping over the scrollbar gutter cancels instead of removing")
+
+palette.rows[1]:GetScript("OnMouseWheel")(palette.rows[1], 1)
+assert(palette.rows[1].layoutTarget.text == "Spare2", "the mouse wheel scrolls the palette without moving the grid")
+
+for index = 31, 40 do
+    crowd[index] = "Spare" .. index
+end
+grid:SetRoster(crowd)
+palette = PaletteBox()
+minimum, maximum = palette.scrollbar:GetMinMaxValues()
+assert(minimum == 0 and maximum == 14, "a full raid-sized palette remains independently scrollable")
+palette.scrollbar:SetValue(maximum)
+assert(palette.rows[1].layoutTarget.text == "Spare15", "the full palette scrolls to its final viewport")
+assert(palette.rows[26].layoutTarget.text == "Spare40", "the fortieth member is reachable without outer scrolling")
+assert(grid.frame:GetHeight() == 424, "forty unrostered members still keep every subgroup visible")
+
+grid:SetRoster({ "OnlyOne" })
+palette = PaletteBox()
+assert(not palette.scrollbar:IsShown(), "shrinking the roster hides the no-longer-needed scrollbar")
+assert(palette.scrollbar:GetValue() == 0, "shrinking the roster clamps the palette back to its beginning")
+assert(palette.rows[1].layoutTarget.text == "OnlyOne", "the clamped palette starts with its remaining member")
 grid:SetCallback("OnHeightMeasured", nil)
 
 grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
@@ -575,5 +648,6 @@ assert(grid.pressed == nil and grid.dragging == nil, "release clears the pending
 assert(grid.dropTarget == nil, "release clears the pending drop")
 assert(grid.frame:GetScript("OnUpdate") == nil, "release stops the drag update loop")
 assert(grid.measuredHeight == nil, "release forgets the measured height so a reused grid reports to its new host")
+assert(grid.paletteOffset == 0 and not palette.scrollbar:IsShown(), "release resets the palette scroll state")
 
 print("Layout grid tests passed.")

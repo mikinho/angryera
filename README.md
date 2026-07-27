@@ -314,7 +314,7 @@ Spore soakers:
 {layout Spores}
 ```
 
-Edit it from the page's or the category's right-click menu → **Edit Group Layout**. The editor opens on a visual grid: the eight raid subgroup boxes in two columns, with roster members the resolved layout has not placed listed beside them. Drag a name from that list into a box to place it, drag between boxes to move it, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the list, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone.
+Edit it from the page's or the category's right-click menu → **Edit Group Layout**. The editor opens on a fixed visual grid: all eight raid subgroup boxes stay visible in two columns, while the unrostered-member list beside them scrolls independently when needed. Drag a name from that list into a box to place it, drag between boxes to move it, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the list, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone.
 
 You can also type instead of drag. Click a box title to name that group — Spores, Resist, Kite — click a member to edit their slot expression, and click an empty row to add one — a name, a priority list, a class fill, or a `{{Variable}}` — so a layout can be built solo, before there is any roster to drag from. Right-clicking a box title removes the group after a confirmation.
 

@@ -13,6 +13,7 @@
 * Fix: The editor applies only the exact displayed page, while category layouts direct the user to display an inheriting page; `/aa applylayout` consistently uses the actively displayed page.
 * Fix: Saved raid templates now round-trip category and page variables, including category layouts and page-specific overrides, without publishing a newly loaded page before its variables are present.
 * Fix: Priority assignments now re-resolve when a group member dies or revives as well as when the roster changes.
+* Fix: The Group Layout window is now fixed to show all eight subgroup boxes without outer vertical scrolling; only the unrostered-member palette scrolls when it exceeds the available column.
 * Fix: Received-page cleanup now fails closed when ownership metadata is missing or corrupt, and repaired identity counters no longer reuse pruned page identifiers.
 
 ## v3.2.0-BETA

@@ -1153,14 +1153,11 @@ local function AngryEra_EditVariables(id, type)
     end)
 end
 
--- The text view is a fixed ten-line box, so it sizes to a constant; the visual
--- view sizes to the grid, floored so an empty layout is still workable and
--- capped so a tall one never runs off the screen. The margin is only what keeps
--- the window off the very edge of the screen: a full raid of eight groups needs
--- most of a tall layout's height, so anything more generous crops the last row.
-local LAYOUT_TEXT_BODY_HEIGHT = 360
-local LAYOUT_MIN_BODY_HEIGHT = 200
-local LAYOUT_SCREEN_MARGIN = 24
+-- Four fixed rows of two subgroup boxes occupy 424 pixels in the visual grid.
+-- The window leaves that whole canvas visible; only the unrostered palette
+-- scrolls. Text mode receives its own nested scroller inside the same body.
+local LAYOUT_BODY_HEIGHT = 424
+local LAYOUT_WINDOW_HEIGHT = 564
 local layoutWindowSequence = 0
 
 local function RegisterLayoutEscapeFrame(frame)
@@ -1550,8 +1547,8 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     frame:SetTitle(entityType == "category" and "Category Group Layout" or "Group Layout")
     frame:SetLayout("Flow")
     frame:SetWidth(470)
-    frame:SetHeight(500)
-    frame:EnableResize(true)
+    frame:SetHeight(LAYOUT_WINDOW_HEIGHT)
+    frame:EnableResize(false)
     DarkenWindow(frame.frame)
     local escapeFrameName = RegisterLayoutEscapeFrame(frame.frame)
     -- The palette mirrors the live raid, so someone joining or leaving while the
@@ -1656,36 +1653,18 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         return true
     end
 
-    local body = AceGUI:Create("ScrollFrame")
-    body:SetLayout("Flow")
+    local body = AceGUI:Create("SimpleGroup")
+    body:SetLayout("Fill")
     body:SetFullWidth(true)
-    body:SetHeight(LAYOUT_TEXT_BODY_HEIGHT)
-
-    -- Grows the window to the view inside it so the whole raid is in front of
-    -- someone at once. The scroll pane stays behind it, since a short screen
-    -- still has to reach the bottom of a tall layout.
-    local function FitBodyHeight(wanted)
-        if closed or not wanted or wanted < 1 then
-            return
-        end
-        -- The window gains exactly what the body gains, so whatever surrounds
-        -- the body keeps the room it already holds without anyone having to
-        -- name a figure for it. Growing by the difference also carries a hand
-        -- resize forward instead of undoing it.
-        local current = body.frame:GetHeight()
-        local window = frame.frame:GetHeight()
-        local room = UIParent:GetHeight() - LAYOUT_SCREEN_MARGIN - window
-
-        local height = math.max(LAYOUT_MIN_BODY_HEIGHT, math.min(wanted, current + room))
-        if math.abs(height - current) < 1 then
-            return
-        end
-        body:SetHeight(height)
-        frame:SetHeight(window + (height - current))
-        frame:DoLayout()
-    end
+    body:SetHeight(LAYOUT_BODY_HEIGHT)
 
     local function BuildTextView()
+        local scroll = AceGUI:Create("ScrollFrame")
+        scroll:SetLayout("Flow")
+        scroll:SetFullWidth(true)
+        scroll:SetFullHeight(true)
+        body:AddChild(scroll)
+
         editBox = AceGUI:Create("MultiLineEditBox")
         editBox:SetLabel("Groups, one per line:  Label/N: name, A > B, *MAGE x2, group:2")
         editBox:SetNumLines(10)
@@ -1695,17 +1674,17 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         editBox:SetCallback("OnEnterPressed", function()
             SaveLayout()
         end)
-        body:AddChild(editBox)
+        scroll:AddChild(editBox)
 
         local heading = AceGUI:Create("Heading")
         heading:SetText("Roster (click to insert)")
         heading:SetFullWidth(true)
-        body:AddChild(heading)
+        scroll:AddChild(heading)
 
         local palette = AceGUI:Create("SimpleGroup")
         palette:SetLayout("Flow")
         palette:SetFullWidth(true)
-        body:AddChild(palette)
+        scroll:AddChild(palette)
 
         for _, rosterEntry in ipairs(roster) do
             local name = rosterEntry.Text
@@ -1737,6 +1716,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     local function BuildVisualView()
         grid = AceGUI:Create("AngryLayoutGrid")
         grid:SetFullWidth(true)
+        grid:SetFullHeight(true)
         grid:SetLayoutEngine(layout)
         grid:SetRoster(roster)
         local currentEntity, targetId = layoutEditor.ResolveEntity(reference)
@@ -1780,10 +1760,6 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
 
         -- AceGUI hands a callback the widget and the event name before the
         -- arguments the widget fired, so every one of these reads past two.
-        grid:SetCallback("OnHeightMeasured", function(_, _, height)
-            FitBodyHeight(height)
-        end)
-
         grid:SetCallback("OnLayoutDrop", function(_, _, drag, drop)
             Commit(layout.ApplyDrop(model, drag, drop))
         end)
@@ -1871,7 +1847,6 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         editBox, grid = nil, nil
         if textMode then
             BuildTextView()
-            FitBodyHeight(LAYOUT_TEXT_BODY_HEIGHT)
             return
         end
         BuildVisualView()
