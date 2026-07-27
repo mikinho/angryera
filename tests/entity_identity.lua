@@ -110,6 +110,32 @@ assert(sameIdPage.SyncId == migratedSyncIds[3], "Idempotent migration should ret
 assert(AngryAssign_Pages[20].SyncId == migratedSyncIds[4], "Preserved identity should remain stable")
 assert(AngryAssign_Pages[30].SyncId == migratedSyncIds[5], "Repaired identity should remain stable")
 
+local highestActiveLocalSequence = 0
+for _, records in ipairs({ AngryAssign_Categories, AngryAssign_Pages }) do
+    for _, entity in pairs(records) do
+        local entityInstallationId, _, sequence = AngryEra.identity.ParseSyncId(entity.SyncId)
+        if entityInstallationId == installationId and sequence > highestActiveLocalSequence then
+            highestActiveLocalSequence = sequence
+        end
+    end
+end
+AngryAssign_Meta.EntityLocal = {}
+AngryAssign_Meta.NextEntitySequence = 0
+AngryAssign_Meta.EntitySequenceHighWater = 0
+AngryEra:MigrateEntityIdentities()
+assert(
+    AngryAssign_Meta.NextEntitySequence >= highestActiveLocalSequence
+        and AngryAssign_Meta.EntitySequenceHighWater >= highestActiveLocalSequence,
+    "Migration should rebuild both counters after local metadata is lost"
+)
+
+AngryAssign_Meta.EntityLocal[sameIdPage.SyncId] = nil
+AngryEra:MigrateEntityIdentities()
+assert(
+    AngryEra:IsLocallyOwned(sameIdPage),
+    "A current-schema local-namespace record should recover missing ownership metadata"
+)
+
 local localPage = AngryEra:NewLocalPageRecord({
     Name = "Local Page",
     Contents = "Text",
@@ -150,8 +176,16 @@ AngryAssign_Pages[remotePage.Id] = remotePage
 assert(not AngryEra:IsLocallyOwned(remotePage), "Remote identity must not accept local ownership from wire data")
 assert(not AngryEra:IsPinned(remotePage), "Remote identity must not accept pin state from wire data")
 
+AngryAssign_Meta.EntityLocal[remotePage.SyncId] = nil
 AngryEra:MigrateEntityIdentities()
-assert(not AngryEra:IsLocallyOwned(remotePage), "Idempotent migration must not claim a registered remote entity")
+assert(
+    not AngryEra:IsLocallyOwned(remotePage),
+    "Idempotent migration must not claim a remote entity with missing state"
+)
+assert(
+    AngryEra:GetLocalEntityState(remotePage).OwnedLocally == nil,
+    "Missing remote ownership metadata should remain unknown rather than defaulting to remote"
+)
 
 local repairedLocalPage = {
     Id = 950,
@@ -219,7 +253,7 @@ do
         AngryAssign_Meta.EntityLocal[id] = {
             OwnedLocally = true,
             DeletedLocally = true,
-            DeletedOrdinal = index,
+            DeletedOrdinal = index == 4200 and 1 or index + 1,
             ManagedScopes = {},
         }
         retained[index] = id
@@ -231,8 +265,13 @@ do
     AngryAssign_Meta.EntityLocal[scopedTombstone] =
         { OwnedLocally = true, DeletedLocally = true, DeletedOrdinal = 0, ManagedScopes = { ["scope:1"] = true } }
 
+    AngryAssign_Meta.NextEntitySequence = 0
     local pruned = AngryEra:PruneDeletedLocalIdentities()
     assert(pruned >= 104, "pruning should evict the tombstones beyond the bound")
+    assert(
+        AngryAssign_Meta.NextEntitySequence >= 104200,
+        "Pruning must first repair the entity counter from retained tombstones"
+    )
 
     local remaining = 0
     for _, state in pairs(AngryAssign_Meta.EntityLocal) do
@@ -245,10 +284,18 @@ do
     end
     assert(remaining == 4096, "disposable tombstones must be bounded to the cap")
     assert(AngryAssign_Meta.EntityLocal[retained[1]] == nil, "the oldest tombstone should be evicted first")
-    assert(AngryAssign_Meta.EntityLocal[retained[4200]] ~= nil, "the newest tombstone should be retained")
+    assert(
+        AngryAssign_Meta.EntityLocal[retained[4200]] == nil,
+        "Pruning may remove the highest sequence when it was retired earliest"
+    )
     assert(AngryAssign_Meta.EntityLocal[pinnedTombstone] ~= nil, "a pinned tombstone must never be pruned")
     assert(AngryAssign_Meta.EntityLocal[scopedTombstone] ~= nil, "a scope-managed tombstone must never be pruned")
     assert(AngryEra:PruneDeletedLocalIdentities() == 0, "pruning at the bound should be a no-op")
+
+    AngryAssign_Meta.NextEntitySequence = 0
+    local nextSyncId = AngryEra:NextSyncId("page")
+    local _, _, nextSequence = AngryEra.identity.ParseSyncId(nextSyncId)
+    assert(nextSequence > 104200, "A repaired counter must not reissue a pruned retired SyncId")
 end
 
 print("Entity identity tests passed.")

@@ -56,8 +56,6 @@ local function EnsureLocalState(meta, syncId, ownedLocally)
     end
     if ownedLocally ~= nil then
         state.OwnedLocally = ownedLocally
-    elseif state.OwnedLocally == nil then
-        state.OwnedLocally = false
     end
     if state.Pinned == nil then
         state.Pinned = false
@@ -71,6 +69,7 @@ end
 local function AllocateSyncId(meta, kind, used)
     repeat
         meta.NextEntitySequence = meta.NextEntitySequence + 1
+        meta.EntitySequenceHighWater = math.max(meta.EntitySequenceHighWater or 0, meta.NextEntitySequence)
         local syncId = string.format("%s:%s:%d", meta.InstallationId, kind, meta.NextEntitySequence)
         if not used[syncId] and meta.EntityLocal[syncId] == nil then
             return syncId
@@ -161,11 +160,12 @@ function AngryEra:MigrateEntityIdentities()
         end
 
         local state = EnsureLocalState(meta, syncId)
-        if legacyMigration or assignedNewIdentity or repairedOwner then
+        if legacyMigration or assignedNewIdentity or repairedOwner or syncInstallationId == meta.InstallationId then
             state.OwnedLocally = true
         end
     end
 
+    identity.RepairNextEntitySequence(meta)
     self:RebuildSyncIdentityIndexes()
     meta.Migrations.EntityIdentity = ENTITY_SCHEMA_VERSION
     if meta.SchemaVersion < ENTITY_SCHEMA_VERSION then
@@ -598,6 +598,7 @@ local function PruneDeletedLocalTombstones(meta)
     if type(meta) ~= "table" or type(meta.EntityLocal) ~= "table" then
         return 0
     end
+    identity.RepairNextEntitySequence(meta)
     local prunable = {}
     for syncId, state in pairs(meta.EntityLocal) do
         if TombstoneIsPrunable(meta, syncId, state) then
@@ -701,12 +702,15 @@ local function CollectReceivedPageIds(self)
     end
     local displayedId = type(AngryAssign_State) == "table" and AngryAssign_State.displayed or nil
     for id, page in pairs(AngryAssign_Pages) do
-        if
-            type(page) == "table"
-            and id ~= displayedId
-            and not self:IsLocallyOwned(page)
-            and not self:IsPinned(page)
-        then
+        local state = type(page) == "table" and self:GetLocalEntityState(page) or nil
+        local syncInstallationId = type(page) == "table" and identity.ParseSyncId(page.SyncId) or nil
+        local positivelyRemoteOwned = state
+            and state.OwnedLocally == false
+            and syncInstallationId ~= nil
+            and page.OwnerId == syncInstallationId
+            and type(AngryAssign_Meta) == "table"
+            and syncInstallationId ~= AngryAssign_Meta.InstallationId
+        if type(page) == "table" and id ~= displayedId and positivelyRemoteOwned and not self:IsPinned(page) then
             ids[#ids + 1] = id
         end
     end
@@ -734,7 +738,7 @@ end
 -- No-op unless the autoCleanReceivedPages config is enabled.
 -- @treturn number removed
 function AngryEra:AutoCleanReceivedPagesOnLoad()
-    if type(self.GetConfig) ~= "function" or not self:GetConfig("autoCleanReceivedPages") then
+    if type(self.GetConfig) ~= "function" or self:GetConfig("autoCleanReceivedPages") ~= true then
         return 0
     end
     local removed = self:CleanReceivedPages()

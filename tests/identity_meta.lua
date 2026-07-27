@@ -59,6 +59,36 @@ assert(retained.NextEntitySequence == 27, "Entity sequence should persist")
 assert(retained.EntityLocal.example.OwnedLocally, "Local ownership metadata should persist")
 assert(retained.SyncScopes.example.Enabled, "Sync scope metadata should persist")
 
+retained.NextEntitySequence = 1
+retained.EntityLocal[retained.InstallationId .. ":page:91"] = {
+    OwnedLocally = true,
+    DeletedLocally = true,
+}
+retained.EntityLocal["ae3i:a:b:c:d:page:999"] = {
+    OwnedLocally = false,
+}
+AngryEra.identity.EnsureMeta(retained, {
+    now = function()
+        error("Counter repair must retain a valid installation identity")
+    end,
+    random = function()
+        error("Counter repair must not consume randomness")
+    end,
+})
+assert(retained.NextEntitySequence == 91, "Retained local identities should repair a regressed entity counter")
+assert(retained.EntitySequenceHighWater == 91, "Counter repair should persist a durable high-water mark")
+retained.EntityLocal[retained.InstallationId .. ":page:91"] = nil
+retained.NextEntitySequence = 0
+AngryEra.identity.EnsureMeta(retained, {
+    now = function()
+        error("Durable counter repair must retain a valid installation identity")
+    end,
+    random = function()
+        error("Durable counter repair must not consume randomness")
+    end,
+})
+assert(retained.NextEntitySequence == 91, "The durable high-water mark should survive retained-state pruning")
+
 local repaired = AngryEra.identity.EnsureMeta({
     InstallationId = "invalid",
     SchemaVersion = 5,
@@ -77,6 +107,7 @@ local repaired = AngryEra.identity.EnsureMeta({
 assert(repaired.InstallationId == "ae3i:7d0:1:1:1", "Malformed installation identity should be repaired")
 assert(repaired.SchemaVersion == 5, "A newer schema marker must not be downgraded")
 assert(repaired.NextEntitySequence == 0, "Malformed counters should reset safely")
+assert(repaired.EntitySequenceHighWater == 0, "Malformed high-water marks should reset safely")
 assert(type(repaired.EntityLocal) == "table", "Malformed local metadata should be repaired")
 assert(type(repaired.SyncScopes) == "table", "Malformed scope metadata should be repaired")
 

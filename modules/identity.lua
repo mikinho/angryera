@@ -77,6 +77,31 @@ function identity.ValidateSyncId(value, expectedKind)
     return kind ~= nil and (expectedKind == nil or kind == expectedKind)
 end
 
+--- Raises the local entity sequence past its durable and retained high-water marks.
+-- EntitySequenceHighWater survives tombstone pruning, while retained local
+-- identities repair older saves that predate the dedicated high-water field.
+-- @tparam table meta Account-wide synchronization metadata.
+-- @treturn number nextEntitySequence Repaired sequence high-water mark.
+function identity.RepairNextEntitySequence(meta)
+    if type(meta) ~= "table" then
+        return 0
+    end
+
+    local nextSequence =
+        math.max(NormalizeInteger(meta.NextEntitySequence), NormalizeInteger(meta.EntitySequenceHighWater))
+    if type(meta.EntityLocal) == "table" and identity.ValidateInstallationId(meta.InstallationId) then
+        for syncId in pairs(meta.EntityLocal) do
+            local installationId, _, sequence = identity.ParseSyncId(syncId)
+            if installationId == meta.InstallationId and sequence > nextSequence then
+                nextSequence = sequence
+            end
+        end
+    end
+    meta.NextEntitySequence = nextSequence
+    meta.EntitySequenceHighWater = nextSequence
+    return nextSequence
+end
+
 --- Generates a non-secret, opaque installation identifier.
 -- Dependencies are injectable so migration behavior can be tested outside WoW.
 -- @tparam table dependencies Clock and random providers.
@@ -106,10 +131,10 @@ function identity.EnsureMeta(meta, dependencies)
         meta.InstallationId = identity.GenerateInstallationId(dependencies)
     end
 
-    meta.NextEntitySequence = NormalizeInteger(meta.NextEntitySequence)
     if type(meta.EntityLocal) ~= "table" then
         meta.EntityLocal = {}
     end
+    identity.RepairNextEntitySequence(meta)
     if type(meta.SyncScopes) ~= "table" then
         meta.SyncScopes = {}
     end

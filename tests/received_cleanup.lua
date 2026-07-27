@@ -71,6 +71,20 @@ assert(AngryAssign_Meta.EntityLocal[recv2.SyncId] == nil, "a removed received pa
 assert(AngryEra:CleanReceivedPages() == 0, "cleanup is idempotent")
 assert(AngryEra:CountReceivedPages() == 0, "no eligible received pages remain")
 
+local unknownRemote = {
+    Id = 906,
+    Name = "Unknown provenance",
+    Contents = "keep",
+    SyncId = remoteInstallationId .. ":page:99",
+    OwnerId = remoteInstallationId,
+}
+AngryAssign_Pages[unknownRemote.Id] = unknownRemote
+AngryAssign_Meta.EntityLocal[ownedA.SyncId].OwnedLocally = false
+assert(AngryEra:CountReceivedPages() == 0, "Cleanup should require explicit remote state and a foreign owner namespace")
+assert(AngryEra:CleanReceivedPages() == 0, "Unknown or contradictory ownership must fail closed")
+assert(AngryAssign_Pages[unknownRemote.Id] and AngryAssign_Pages[ownedA.Id], "Fail-closed pages should be retained")
+AngryAssign_Meta.EntityLocal[ownedA.SyncId].OwnedLocally = true
+
 -- Auto-clean-on-load honors the opt-in config and reports its count.
 local config = { autoCleanReceivedPages = false }
 local prints = {}
@@ -86,6 +100,10 @@ assert(AngryEra:AutoCleanReceivedPagesOnLoad() == 0, "auto-clean is a no-op when
 assert(AngryAssign_Pages[recvC.Id], "disabled auto-clean keeps received pages")
 assert(#prints == 0, "disabled auto-clean prints nothing")
 
+config.autoCleanReceivedPages = "false"
+assert(AngryEra:AutoCleanReceivedPagesOnLoad() == 0, "a truthy non-boolean config must not enable cleanup")
+assert(AngryAssign_Pages[recvC.Id], "malformed auto-clean config keeps received pages")
+
 config.autoCleanReceivedPages = true
 assert(AngryEra:AutoCleanReceivedPagesOnLoad() == 1, "enabled auto-clean removes eligible received pages")
 assert(AngryAssign_Pages[recvC.Id] == nil, "enabled auto-clean removed the received page")
@@ -94,5 +112,6 @@ assert(
     "auto-clean still keeps pinned/displayed"
 )
 assert(#prints == 1 and prints[1]:find("1 received page"), "auto-clean reports the removed count")
+assert(AngryAssign_Pages[unknownRemote.Id], "auto-clean retains pages whose remote ownership is not positively known")
 
 print("Received page cleanup tests passed.")
