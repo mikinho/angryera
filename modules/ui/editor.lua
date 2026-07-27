@@ -1328,7 +1328,7 @@ end
 -- inside the same body.
 local LAYOUT_WINDOW_WIDTH = 630
 local LAYOUT_BODY_HEIGHT = 424
-local LAYOUT_WINDOW_HEIGHT = 564
+local LAYOUT_WINDOW_HEIGHT = 540
 local layoutWindowSequence = 0
 
 local function RegisterLayoutEscapeFrame(frame)
