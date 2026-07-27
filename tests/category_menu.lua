@@ -5,6 +5,7 @@
 local AngryEra = { utils = {} }
 local app = { AngryEra = AngryEra, libs = {} }
 
+assert(loadfile("modules/utils/json.lua"))("AngryEra", app)
 assert(loadfile("modules/layout.lua"))("AngryEra", app)
 
 local function EnsureUnitShortName(name)
@@ -12,8 +13,20 @@ local function EnsureUnitShortName(name)
 end
 
 AngryEra.utils.helpers = {
+    EnsureUnitFullName = function(name)
+        if name and not name:find("-", 1, true) then
+            return name .. "-RealmA"
+        end
+        return name
+    end,
     EnsureUnitShortName = EnsureUnitShortName,
     IterateGroupMembers = function() end,
+    CompareIndexedEntries = function(left, right)
+        if left.Index ~= right.Index then
+            return (left.Index or math.huge) < (right.Index or math.huge)
+        end
+        return left.Name < right.Name
+    end,
     IsCategoryDescendant = function()
         return false
     end,
@@ -108,5 +121,193 @@ end
 assert(Entry(menu, "Export").menuList[1].arg1 == 5, "an export format follows the clicked category")
 
 assert(AngryEra_CategoryMenu(99) == nil, "a missing category has no menu")
+
+-- Layout saves are bound to immutable identity and merge only $LAYOUT into the
+-- newest Vars rather than the table that happened to be open originally.
+local layoutEditor = AngryEra.utils.layout_editor
+assert(type(layoutEditor) == "table", "layout editor internals are available")
+
+local providers = layoutEditor.BuildLayoutProviders({
+    { FullName = "Alex-RealmA", ShortName = "Alex", Text = "Alex", Available = true },
+    { FullName = "Alex-RealmB", ShortName = "Alex", Text = "Alex-RealmB", Available = true },
+    { FullName = "Blair-RealmB", ShortName = "Blair", Text = "Blair-RealmB", Available = true },
+    { FullName = "Casey-RealmB", ShortName = "Casey", Text = "Casey-RealmB", Available = true },
+    { FullName = "Casey-RealmC", ShortName = "Casey", Text = "Casey-RealmC", Available = true },
+}, {})
+assert(providers.ResolveRosterName("Alex") == "Alex-RealmA", "an unqualified name prefers an exact own-realm member")
+assert(providers.ResolveRosterName("Alex-RealmB") == "Alex-RealmB", "a qualified name resolves exactly")
+assert(providers.ResolveRosterName("Blair") == "Blair-RealmB", "a unique cross-realm short name resolves safely")
+assert(providers.ResolveRosterName("Casey") == nil, "an ambiguous short name without an own-realm match is rejected")
+
+function AngryEra:Print() end
+function AngryEra:CategoryUpdated() end
+
+local updatedPageId, updatedPageVars
+local proposalMode = false
+local proposalCount = 0
+local sharedDraft
+function AngryEra:UpdatePageVars(id, vars)
+    updatedPageId, updatedPageVars = id, vars
+    if proposalMode then
+        proposalCount = proposalCount + 1
+        sharedDraft.Desired.Vars = vars
+        return true, "queued", true
+    end
+    AngryAssign_Pages[id].Vars = vars
+    return true, nil, false
+end
+
+function AngryEra:GetSharedPageChangeDraft()
+    return sharedDraft
+end
+
+AngryAssign_Pages[20] = {
+    Id = 20,
+    SyncId = "install:page:20",
+    Name = "Original",
+    Vars = "MT=Old\nNOTE=before",
+}
+local reference = layoutEditor.ReferenceEntity(20, "page")
+AngryAssign_Pages[20] = {
+    Id = 20,
+    SyncId = "install:page:20",
+    Name = "Replacement",
+    Vars = "MT=New\nNOTE=after",
+}
+local saved, saveError, proposed = layoutEditor.SaveSource(reference, "Tanks/1: MT")
+assert(saved and not saveError and not proposed, "a replaced record is found again by SyncId")
+assert(updatedPageId == 20, "the current local id receives the layout")
+assert(updatedPageVars:find("MT=New", 1, true), "a concurrent variable edit is retained")
+assert(updatedPageVars:find("NOTE=after", 1, true), "unrelated current variables are retained")
+assert(updatedPageVars:find("$LAYOUT=Tanks/1: MT", 1, true), "the new layout is merged")
+
+AngryAssign_Pages[20].Vars = "{\"MT\":\"Json\",\"Enabled\":true,\"Nested\":{\"Value\":3},\"$LAYOUT\":\"Old/1: MT\"}"
+saved, saveError, proposed = layoutEditor.SaveSource(reference, "New/1: {{MT}}")
+assert(saved and not saveError and not proposed, "a JSON-backed layout save succeeds")
+local jsonVars = AngryEra.utils.json.JSON_TryDecode(updatedPageVars)
+assert(type(jsonVars) == "table", "a JSON-backed layout remains a JSON object")
+assert(jsonVars.MT == "Json" and jsonVars.Enabled == true, "JSON scalar variables survive a layout save")
+assert(type(jsonVars.Nested) == "table" and jsonVars.Nested.Value == 3, "JSON object variables survive a layout save")
+assert(jsonVars["$LAYOUT"] == "New/1: {{MT}}", "only the JSON layout value changes")
+
+local retired = layoutEditor.ReferenceEntity(20, "page")
+AngryAssign_Pages[20] = {
+    Id = 20,
+    SyncId = "install:page:other",
+    Name = "Reused id",
+    Vars = "SAFE=yes",
+}
+saved, saveError = layoutEditor.SaveSource(retired, "Wrong/1: Someone")
+assert(not saved and saveError == "layout-target-no-longer-exists", "an id reused by another page is never mutated")
+assert(AngryAssign_Pages[20].Vars == "SAFE=yes", "the reused page remains untouched")
+
+AngryAssign_Pages[21] = {
+    Id = 21,
+    SyncId = "install:page:21",
+    Name = "Assistant page",
+    Vars = "MT=Canonical",
+}
+sharedDraft = {
+    SyncId = "install:page:21",
+    Desired = {
+        Name = "Assistant page",
+        Vars = "MT=Draft\nOTHER=kept",
+        Contents = "",
+    },
+}
+proposalMode = true
+reference = layoutEditor.ReferenceEntity(21, "page")
+saved, saveError, proposed = layoutEditor.SaveSource(reference, "Tanks/1: {{MT}}")
+assert(saved and saveError == "queued" and proposed, "an assistant layout save remains a proposal")
+assert(updatedPageVars:find("MT=Draft", 1, true), "the layout merges onto the retained assistant draft")
+assert(updatedPageVars:find("OTHER=kept", 1, true), "other draft variables are retained")
+saved, saveError, proposed = layoutEditor.SaveSource(reference, "Tanks/1: {{MT}}")
+assert(saved and saveError == "proposal-pending" and proposed, "a pending proposal never looks canonical to Apply")
+assert(proposalCount == 1, "an unchanged pending draft is not submitted twice")
+proposalMode = false
+sharedDraft = nil
+
+-- Custom templates preserve category and page Vars and feed page Vars into
+-- CreatePage atomically, before the model publishes its initial revision.
+AngryAssign_Categories = {
+    [30] = {
+        Id = 30,
+        Name = "Template source",
+        Vars = "{\"$LAYOUT\":\"Core/1: Tank\",\"ROLE\":\"main\"}",
+    },
+}
+AngryAssign_Pages = {
+    [31] = {
+        Id = 31,
+        Name = "Second",
+        CategoryId = 30,
+        Index = 2,
+        Contents = "Second note",
+        Vars = "MT=Two",
+    },
+    [32] = {
+        Id = 32,
+        Name = "First",
+        CategoryId = 30,
+        Index = 1,
+        Contents = "First note",
+        Vars = "MT=One\n$LAYOUT=First/1: {{MT}}",
+    },
+}
+AngryAssign_Templates = {}
+assert(AngryEra:SaveTemplate("Saved layout", 30), "a category with pages saves as a template")
+local template = AngryAssign_Templates[1]
+assert(template.vars == AngryAssign_Categories[30].Vars, "category Vars are saved")
+assert(
+    template.pages[1].name == "First" and template.pages[1].vars == AngryAssign_Pages[32].Vars,
+    "page order and Vars are saved"
+)
+assert(
+    template.pages[2].name == "Second" and template.pages[2].vars == AngryAssign_Pages[31].Vars,
+    "every page Vars value is saved"
+)
+
+AngryAssign_Categories = {}
+AngryAssign_Pages = {}
+local nextCategoryId = 100
+local nextPageId = 200
+local createCalls = {}
+function AngryEra:NewLocalCategoryRecord(fields)
+    local record = {}
+    for key, value in pairs(fields) do
+        record[key] = value
+    end
+    record.Id = nextCategoryId
+    nextCategoryId = nextCategoryId + 1
+    return record
+end
+function AngryEra:CreatePage(name, content, categoryId, index, suppressRefresh, initialVars)
+    local id = nextPageId
+    nextPageId = nextPageId + 1
+    AngryAssign_Pages[id] = {
+        Id = id,
+        Name = name,
+        Contents = content,
+        CategoryId = categoryId,
+        Index = index,
+        Vars = initialVars,
+    }
+    createCalls[#createCalls + 1] = {
+        Id = id,
+        SuppressRefresh = suppressRefresh,
+        InitialVars = initialVars,
+    }
+    return true, nil, id
+end
+function AngryEra:UpdateTree() end
+function AngryEra:UpdateSelected() end
+function AngryEra:RefreshDisplayedPageAfterHierarchyMutation() end
+
+local loaded, _, loadedCategoryId = layoutEditor.LoadTemplate(template)
+assert(loaded and loadedCategoryId == 100, "the saved template loads into a new category")
+assert(AngryAssign_Categories[100].Vars == template.vars, "loaded category Vars round-trip")
+assert(createCalls[1].InitialVars == template.pages[1].vars, "first page Vars reach atomic creation")
+assert(createCalls[2].InitialVars == template.pages[2].vars, "second page Vars reach atomic creation")
+assert(createCalls[1].SuppressRefresh == true, "template pages continue to batch display refresh")
 
 print("Category menu tests passed.")

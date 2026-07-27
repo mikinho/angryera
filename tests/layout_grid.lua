@@ -466,6 +466,70 @@ grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
 palette = PaletteBox()
 assert(palette.rows[3].layoutTarget.text == "Ghoal", "clearing a slot returns its member to the palette")
 
+-- The palette follows the resolved layout, not only literal slot spelling.
+-- Priority, class-fill, and variable slots therefore hide the members they
+-- currently place.
+grid:SetResolveProviders({
+    ResolvePriorityValue = function(value)
+        if value == "Missing > Vhez" then
+            return "Vhez"
+        end
+        return value
+    end,
+    ClassMembers = function(class)
+        return class == "MAGE" and { "Kaza" } or {}
+    end,
+    SubgroupMembers = function()
+        return {}
+    end,
+    Variables = { FLEX = "Ghoal" },
+})
+grid:SetLayoutModel(layout.Parse("Main/1: Missing > Vhez, *MAGE, {{FLEX}}"))
+palette = PaletteBox()
+assert(palette.rows[1].layoutTarget.text == nil, "resolved slots leave no placed member in the palette")
+assert(not palette.rows[2]:IsShown(), "an empty resolved palette stays at its one-row minimum")
+
+-- Realm-safe identity resolution also deduplicates a short explicit slot against
+-- the full name returned by a class fill. The fill advances to the next member.
+grid:SetRoster({
+    { Text = "Vhez", FullName = "Vhez-Realm", ShortName = "Vhez" },
+    { Text = "Kaza", FullName = "Kaza-Realm", ShortName = "Kaza" },
+})
+grid:SetResolveProviders({
+    ResolveRosterName = function(name)
+        local full = {
+            vhez = "Vhez-Realm",
+            ["vhez-realm"] = "Vhez-Realm",
+            kaza = "Kaza-Realm",
+            ["kaza-realm"] = "Kaza-Realm",
+        }
+        return full[name:lower()]
+    end,
+    ClassMembers = function(class)
+        return class == "MAGE" and { "Vhez-Realm", "Kaza-Realm" } or {}
+    end,
+})
+grid:SetLayoutModel(layout.Parse("Main/1: Vhez, *MAGE"))
+palette = PaletteBox()
+assert(palette.rows[1].layoutTarget.text == nil, "a short slot and full-name fill do not select one member twice")
+
+-- Ambiguous short names are never guessed. The editor can pass qualified
+-- display text for both members and only an exact full-name slot removes one.
+grid:SetResolveProviders({})
+grid:SetRoster({
+    { Text = "Alex-RealmA", FullName = "Alex-RealmA", ShortName = "Alex" },
+    { Text = "Alex-RealmB", FullName = "Alex-RealmB", ShortName = "Alex" },
+})
+grid:SetLayoutModel(layout.Parse("Main/1: Alex"))
+palette = PaletteBox()
+assert(palette.rows[1].layoutTarget.text == "Alex-RealmA", "an ambiguous short slot does not hide the first realm")
+assert(palette.rows[2].layoutTarget.text == "Alex-RealmB", "an ambiguous short slot does not hide the second realm")
+
+grid:SetLayoutModel(layout.Parse("Main/1: Alex-RealmB"))
+palette = PaletteBox()
+assert(palette.rows[1].layoutTarget.text == "Alex-RealmA", "an exact full-name slot hides only its member")
+assert(not palette.rows[2]:IsShown(), "the exact full-name match leaves one palette member")
+
 -- The grid measures itself so its container can grow to the whole layout rather
 -- than scroll it. Only a change is reported, because a container that resizes in
 -- answer re-flows the grid, and re-reporting from that pass would bounce them.

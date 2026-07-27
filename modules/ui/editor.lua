@@ -9,12 +9,17 @@ local DDM = app.libs.DDM
 local helpers = AngryEra.utils.helpers
 local colors = AngryEra.utils.colors
 local layout = AngryEra.utils.layout
+local rosterHelpers = AngryEra.utils.roster
+local variableHelpers = AngryEra.utils.variables
+local EnsureUnitFullName = helpers.EnsureUnitFullName
 local EnsureUnitShortName = helpers.EnsureUnitShortName
 local IterateGroupMembers = helpers.IterateGroupMembers
 local IsCategoryDescendant = helpers.IsCategoryDescendant
 local selectedLastValue = helpers.selectedLastValue
 
 local AngryEra_DropDown
+local layoutEditor = {}
+AngryEra.utils.layout_editor = layoutEditor
 
 -- -----------------------
 -- Guild Colors        --
@@ -389,14 +394,21 @@ local function AngryEra_LoadTemplate(template, catIndex)
         end
     end
 
+    local createdCategory = false
     if not catId then
+        local templateVars = template.vars
+        if type(templateVars) ~= "string" then
+            templateVars = type(template.Vars) == "string" and template.Vars or ""
+        end
         local category = AngryEra:NewLocalCategoryRecord({
             Name = catName,
             CategoryId = nil,
             Index = catIndex,
+            Vars = templateVars,
         })
         catId = category.Id
         AngryAssign_Categories[catId] = category
+        createdCategory = true
         AngryEra:UpdateTree()
     else
         -- Category exists, update index if none?
@@ -419,7 +431,13 @@ local function AngryEra_LoadTemplate(template, catIndex)
             end
 
             if not exists then
-                AngryEra:CreatePage(tPage.name, tPage.content, catId, i, true)
+                local templateVars = tPage.vars
+                if type(templateVars) ~= "string" then
+                    templateVars = type(tPage.Vars) == "string" and tPage.Vars or ""
+                end
+                -- `initialVars` is supplied before identity/revision creation so a
+                -- template page is never briefly published without its variables.
+                AngryEra:CreatePage(tPage.name, tPage.content, catId, i, true, templateVars)
             end
         end
     end
@@ -427,7 +445,10 @@ local function AngryEra_LoadTemplate(template, catIndex)
     AngryEra:UpdateTree()
     AngryEra:UpdateSelected()
     AngryEra:RefreshDisplayedPageAfterHierarchyMutation()
+    return true, nil, catId, createdCategory
 end
+
+layoutEditor.LoadTemplate = AngryEra_LoadTemplate
 
 function AngryEra:SaveTemplate(name, catId)
     if not name or name == "" then
@@ -437,18 +458,37 @@ function AngryEra:SaveTemplate(name, catId)
         return false, "Invalid category"
     end
 
-    local pages = {}
+    local category = AngryAssign_Categories[catId]
+    if type(category) ~= "table" then
+        return false, "Invalid category"
+    end
+
+    local records = {}
     for _, page in pairs(AngryAssign_Pages) do
         if page.CategoryId == catId then
-            table.insert(pages, { name = page.Name, content = page.Contents })
+            records[#records + 1] = page
         end
     end
 
-    if #pages == 0 then
+    if #records == 0 then
         return false, "Category is empty"
     end
 
-    table.insert(AngryAssign_Templates, { name = name, pages = pages })
+    table.sort(records, helpers.CompareIndexedEntries)
+    local pages = {}
+    for _, page in ipairs(records) do
+        pages[#pages + 1] = {
+            name = page.Name,
+            content = page.Contents,
+            vars = type(page.Vars) == "string" and page.Vars or "",
+        }
+    end
+
+    table.insert(AngryAssign_Templates, {
+        name = name,
+        vars = type(category.Vars) == "string" and category.Vars or "",
+        pages = pages,
+    })
     self:Print("Saved template: " .. name)
     return true
 end
@@ -1121,20 +1161,156 @@ end
 local LAYOUT_TEXT_BODY_HEIGHT = 360
 local LAYOUT_MIN_BODY_HEIGHT = 200
 local LAYOUT_SCREEN_MARGIN = 24
+local layoutWindowSequence = 0
 
---- Collects the short names of the current group, in roster order.
--- @treturn table Array of short names.
-local function CollectRosterNames()
-    local names = {}
-    IterateGroupMembers(function(rawName, fullName)
-        local shortName = (rawName or EnsureUnitShortName(fullName) or ""):match("([^-]+)")
-        if shortName and shortName ~= "" then
-            names[#names + 1] = shortName
+local function RegisterLayoutEscapeFrame(frame)
+    layoutWindowSequence = layoutWindowSequence + 1
+    local name = "AngryEra_LayoutEditor_Window_" .. layoutWindowSequence
+    _G[name] = frame
+    if type(UISpecialFrames) == "table" then
+        tinsert(UISpecialFrames, name)
+    end
+    return name
+end
+
+local function UnregisterLayoutEscapeFrame(name, frame)
+    if _G[name] == frame then
+        _G[name] = nil
+    end
+    if type(UISpecialFrames) ~= "table" then
+        return
+    end
+    for index = #UISpecialFrames, 1, -1 do
+        if UISpecialFrames[index] == name then
+            table.remove(UISpecialFrames, index)
+        end
+    end
+end
+
+--- Collects the current group in roster order without throwing realm identity
+-- away. Same-realm names stay short for readability, cross-realm names stay
+-- qualified, and every colliding short name is qualified so dragging one can
+-- never silently mean the other.
+-- @treturn table Array of roster entry tables.
+local function CollectLayoutRoster()
+    local staged = {}
+    local shortCounts = {}
+    IterateGroupMembers(function(rawName, fullName, _, subgroup, memberClass, online, isDead)
+        fullName = type(fullName) == "string" and fullName or rawName
+        local shortName = type(fullName) == "string" and fullName:match("^([^-]+)") or rawName
+        if type(fullName) == "string" and fullName ~= "" and type(shortName) == "string" and shortName ~= "" then
+            local shortKey = shortName:lower()
+            shortCounts[shortKey] = (shortCounts[shortKey] or 0) + 1
+            staged[#staged + 1] = {
+                FullName = fullName,
+                ShortName = shortName,
+                Class = type(memberClass) == "string" and memberClass:upper() or nil,
+                Subgroup = subgroup,
+                Available = online ~= false and isDead ~= true,
+            }
         end
         return false
     end)
-    return names
+
+    for _, entry in ipairs(staged) do
+        local shortKey = entry.ShortName:lower()
+        local displayName = EnsureUnitShortName(entry.FullName)
+        if shortCounts[shortKey] > 1 or type(displayName) ~= "string" or displayName == "" then
+            displayName = entry.FullName
+        end
+        entry.Text = displayName
+    end
+    return staged
 end
+
+-- Builds the providers the layout resolver needs from the editor's live roster.
+-- Returning the same safe text the palette inserts keeps its resolved-placement
+-- filter exact even when two realms carry the same short name.
+local function BuildEditorLayoutProviders(roster, variables)
+    local classes = {}
+    local subgroups = {}
+    local fullNames = {}
+    local shortNames = {}
+    for _, entry in ipairs(roster) do
+        local fullName = entry.FullName
+        local shortName = entry.ShortName
+        if type(fullName) == "string" and fullName ~= "" then
+            local fullKey = fullName:lower()
+            fullNames[fullKey] = fullName
+            if type(shortName) == "string" and shortName ~= "" then
+                local shortKey = shortName:lower()
+                if shortNames[shortKey] == nil then
+                    shortNames[shortKey] = fullName
+                elseif shortNames[shortKey] ~= false and shortNames[shortKey]:lower() ~= fullKey then
+                    shortNames[shortKey] = false
+                end
+            end
+        end
+        if entry.Available then
+            if entry.Class then
+                classes[entry.Class] = classes[entry.Class] or {}
+                classes[entry.Class][#classes[entry.Class] + 1] = entry.Text
+            end
+            if type(entry.Subgroup) == "number" then
+                subgroups[entry.Subgroup] = subgroups[entry.Subgroup] or {}
+                subgroups[entry.Subgroup][#subgroups[entry.Subgroup] + 1] = entry.Text
+            end
+        end
+    end
+
+    -- Duplicate accounting must use one realm-qualified identity even when a
+    -- hand-written slot uses a short name and a class/subgroup fill supplies a
+    -- full one. Prefer the player's own realm for an unqualified name; otherwise
+    -- only a unique short-name match is safe.
+    local function ResolveRosterName(name)
+        if type(name) ~= "string" or name == "" then
+            return nil
+        end
+        local exact = fullNames[name:lower()]
+        if exact then
+            return exact
+        end
+        if name:find("-", 1, true) then
+            return nil
+        end
+        if type(EnsureUnitFullName) == "function" then
+            local ownRealm = EnsureUnitFullName(name)
+            local ownRealmMatch = type(ownRealm) == "string" and fullNames[ownRealm:lower()] or nil
+            if ownRealmMatch then
+                return ownRealmMatch
+            end
+        end
+        local unique = shortNames[name:lower()]
+        return type(unique) == "string" and unique or nil
+    end
+
+    return {
+        ResolvePriorityValue = rosterHelpers
+            and (rosterHelpers.ResolvePriorityFullName or rosterHelpers.ResolvePriorityValue),
+        ResolveRosterName = ResolveRosterName,
+        ClassMembers = function(class)
+            return classes[class] or {}
+        end,
+        SubgroupMembers = function(subgroup)
+            return subgroups[subgroup] or {}
+        end,
+        Variables = variables,
+    }
+end
+
+layoutEditor.BuildLayoutProviders = BuildEditorLayoutProviders
+
+local RAID_LAYOUT_APPLY_ERRORS = {
+    ["not-in-raid"] = "You must be in a raid to rearrange groups.",
+    ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
+    ["in-combat"] = "Groups cannot be rearranged during combat.",
+    ["no-layout"] = "The displayed page has no $LAYOUT.",
+    ["no-bound-groups"] = "No layout groups are bound to a subgroup (use \"Label/N:\").",
+    ["duplicate-member"] = "The layout assigns the same raid member more than once.",
+    ["unresolved-member"] = "Every named layout member must resolve uniquely in the current raid.",
+    ["subgroup-oversubscribed"] = "A subgroup is assigned more than five members.",
+    ["subgroup-blocked"] = "The layout could not be arranged with the current raid.",
+}
 
 --- Prompts for one line of layout text and hands the answer back.
 -- @tparam table data Prompt, optional seed Text, and an OnAccept(text) callback.
@@ -1216,36 +1392,131 @@ local function DescribeWidget(widget, title, body)
     end)
 end
 
---- Returns the page or category a layout is being edited on.
--- @tparam number id Page or category id.
--- @tparam string|nil entityType Either `"category"` or `"page"`.
--- @treturn table|nil entity
-local function LayoutEntity(id, entityType)
+local function LayoutRecords(entityType)
     if entityType == "category" then
-        return AngryAssign_Categories[id]
+        return AngryAssign_Categories
     end
-    return AngryAssign_Pages[id]
+    return AngryAssign_Pages
 end
 
---- Writes an edited layout back to the entity it came from.
--- A category saves the way editing its variables does — locally, without
--- publishing a revision — so a standard arrangement costs the raid no traffic.
+--- Captures the immutable identity of the page or category a layout editor opens.
+-- A fallback object identity supports legacy/test records without a SyncId, but a
+-- real synchronized entity is always found again by SyncId before saving.
 -- @tparam number id Page or category id.
 -- @tparam string|nil entityType Either `"category"` or `"page"`.
--- @tparam string vars Vars string carrying the new `$LAYOUT` line.
+-- @treturn table|nil reference
+function layoutEditor.ReferenceEntity(id, entityType)
+    entityType = entityType == "category" and "category" or "page"
+    local entity = LayoutRecords(entityType)[id]
+    if type(entity) ~= "table" then
+        return nil
+    end
+    return {
+        EntityType = entityType,
+        SyncId = type(entity.SyncId) == "string" and entity.SyncId or nil,
+        InitialId = id,
+        InitialEntity = entity,
+    }
+end
+
+--- Resolves a captured layout-editor reference to its current local record.
+-- @tparam table reference Reference returned by `ReferenceEntity`.
+-- @treturn table|nil entity
+-- @treturn number|nil id
+-- @treturn string|nil errorCode
+function layoutEditor.ResolveEntity(reference)
+    if type(reference) ~= "table" then
+        return nil, nil, "invalid-layout-target"
+    end
+    local records = LayoutRecords(reference.EntityType)
+    if reference.SyncId then
+        local found, foundId
+        for id, entity in pairs(records) do
+            if type(entity) == "table" and entity.SyncId == reference.SyncId then
+                if found then
+                    return nil, nil, "duplicate-layout-target"
+                end
+                found, foundId = entity, id
+            end
+        end
+        if found then
+            return found, foundId
+        end
+        return nil, nil, "layout-target-no-longer-exists"
+    end
+    if records[reference.InitialId] == reference.InitialEntity then
+        return reference.InitialEntity, reference.InitialId
+    end
+    return nil, nil, "layout-target-no-longer-exists"
+end
+
+local function CurrentLayoutVars(reference, entity, id)
+    if reference.EntityType ~= "category" and type(AngryEra.GetSharedPageChangeDraft) == "function" then
+        local draft = AngryEra:GetSharedPageChangeDraft(id)
+        if
+            type(draft) == "table"
+            and (reference.SyncId == nil or draft.SyncId == reference.SyncId)
+            and type(draft.Desired) == "table"
+            and type(draft.Desired.Vars) == "string"
+        then
+            return draft.Desired.Vars, true
+        end
+    end
+    return type(entity.Vars) == "string" and entity.Vars or "", false
+end
+
+local function EffectiveLayoutVariables(reference, entity, vars)
+    if
+        type(variableHelpers) ~= "table"
+        or type(variableHelpers.CollectCategoryChain) ~= "function"
+        or type(variableHelpers.BuildAncestorVariableLayers) ~= "function"
+        or type(variableHelpers.MergeVariableLayers) ~= "function"
+    then
+        return {}
+    end
+    local layers = {}
+    if entity.CategoryId then
+        local chain = variableHelpers.CollectCategoryChain(AngryAssign_Categories, entity.CategoryId)
+        if chain then
+            layers = variableHelpers.BuildAncestorVariableLayers(chain) or {}
+        end
+    end
+    return variableHelpers.MergeVariableLayers(layers, vars) or {}
+end
+
+--- Writes only `$LAYOUT` into the latest variables belonging to a captured target.
+-- This deliberately re-reads both the canonical record and any retained shared
+-- page draft, so saving an older open window cannot roll back unrelated variable
+-- edits that arrived after it opened.
+-- @tparam table reference Reference returned by `ReferenceEntity`.
+-- @tparam string source Compact `$LAYOUT` value.
 -- @treturn boolean saved
 -- @treturn string|nil reason
-local function SaveLayoutVars(id, entityType, vars)
-    if entityType ~= "category" then
-        return AngryEra:UpdatePageVars(id, vars)
+-- @treturn boolean proposed Whether the save is waiting for leader acceptance.
+function layoutEditor.SaveSource(reference, source)
+    local entity, id, targetError = layoutEditor.ResolveEntity(reference)
+    if not entity then
+        return false, targetError, false
     end
-    local cat = AngryAssign_Categories[id]
-    if not cat or not AngryEra:CanEditEntityLocally(cat) then
-        return false, "Permission denied."
+    if not AngryEra:CanEditEntityLocally(entity) then
+        return false, "Permission denied.", false
     end
-    cat.Vars = vars
+
+    local currentVars, hasDraft = CurrentLayoutVars(reference, entity, id)
+    local newVars, mergeError = layout.UpsertSource(currentVars, source)
+    if type(newVars) ~= "string" then
+        return false, mergeError or "Could not update the layout variables.", false
+    end
+    if newVars == currentVars then
+        return true, hasDraft and "proposal-pending" or "unchanged", hasDraft
+    end
+
+    if reference.EntityType ~= "category" then
+        return AngryEra:UpdatePageVars(id, newVars)
+    end
+    entity.Vars = newVars
     AngryEra:CategoryUpdated(id)
-    return true
+    return true, nil, false
 end
 
 --- Opens a dedicated editor for a page's or category's `$LAYOUT` group layout.
@@ -1257,13 +1528,21 @@ end
 -- @tparam number id Page or category id.
 -- @tparam string|nil entityType Either `"category"` or `"page"` (the default).
 function AngryEra:ShowGroupLayoutEditor(id, entityType)
-    local entity = LayoutEntity(id, entityType)
+    local reference = layoutEditor.ReferenceEntity(id, entityType)
+    local entity, currentId = layoutEditor.ResolveEntity(reference)
     if not entity or not self:CanEditEntityLocally(entity) then
         return
     end
 
-    local roster = CollectRosterNames()
-    local model = layout.Parse(layout.ExtractSource(entity.Vars) or "")
+    local currentVars = CurrentLayoutVars(reference, entity, currentId)
+    local initialSource, sourceError = layout.ExtractSource(currentVars)
+    if sourceError then
+        self:Print("Could not open the group layout: " .. tostring(sourceError))
+        return
+    end
+
+    local roster = CollectLayoutRoster()
+    local model = layout.Parse(initialSource or "")
     local textMode = false
     local editBox, grid, closed
 
@@ -1274,8 +1553,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     frame:SetHeight(500)
     frame:EnableResize(true)
     DarkenWindow(frame.frame)
-    _G["AngryEra_LayoutEditor_Window"] = frame.frame
-    table.insert(UISpecialFrames, "AngryEra_LayoutEditor_Window")
+    local escapeFrameName = RegisterLayoutEscapeFrame(frame.frame)
     -- The palette mirrors the live raid, so someone joining or leaving while the
     -- editor sits open has to reach it. The window listens for itself because
     -- the addon's own roster handler is already bound to another method, and an
@@ -1283,23 +1561,49 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     local watcher = CreateFrame("Frame")
     watcher:RegisterEvent("GROUP_ROSTER_UPDATE")
     watcher:SetScript("OnEvent", function()
-        roster = CollectRosterNames()
+        roster = CollectLayoutRoster()
         -- The text view's roster buttons are only a typing shortcut, and
         -- rebuilding them would throw away whatever is half-typed above them.
         if closed or not grid then
             return
         end
         grid:SetRoster(roster)
+        local currentEntity, targetId = layoutEditor.ResolveEntity(reference)
+        if currentEntity then
+            local vars = CurrentLayoutVars(reference, currentEntity, targetId)
+            grid:SetResolveProviders(
+                BuildEditorLayoutProviders(roster, EffectiveLayoutVariables(reference, currentEntity, vars))
+            )
+        end
     end)
 
     -- A prompt outlives the window it was opened from, so closing the editor
     -- marks the views dead rather than letting a late answer touch a widget
     -- AceGUI has already recycled.
-    frame:SetCallback("OnClose", function(widget)
+    -- UISpecialFrames closes the raw Blizzard frame with Hide(), which does not
+    -- necessarily fire AceGUI's OnClose callback. Bridge that path while the
+    -- widget is alive, then restore AceGUI's original script before releasing it
+    -- so a pooled Window does not retain this editor's closure.
+    local previousOnHide = frame.frame:GetScript("OnHide")
+    local function CloseLayoutEditor(widget)
+        if closed then
+            return
+        end
         closed = true
+        frame.frame:SetScript("OnHide", previousOnHide)
         watcher:UnregisterAllEvents()
         watcher:SetScript("OnEvent", nil)
+        UnregisterLayoutEscapeFrame(escapeFrameName, frame.frame)
         AceGUI:Release(widget)
+    end
+    frame:SetCallback("OnClose", CloseLayoutEditor)
+    frame.frame:SetScript("OnHide", function(rawFrame, ...)
+        if previousOnHide then
+            previousOnHide(rawFrame, ...)
+        end
+        if not closed then
+            CloseLayoutEditor(frame)
+        end
     end)
 
     -- Whichever view is showing owns the layout; the other is rebuilt from it
@@ -1316,13 +1620,39 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     -- but dropped on save rather than persisted as an empty line.
     local function SaveLayout()
         local source = layout.Serialize(layout.Compact(layout.Parse(CurrentSource())))
-        local newVars = layout.UpsertSource(entity.Vars, source)
-        local saved, saveError = SaveLayoutVars(id, entityType, newVars)
+        local saved, saveError, proposed = layoutEditor.SaveSource(reference, source)
         if not saved and saveError then
-            print(saveError)
-            return false
+            self:Print("Could not save the group layout: " .. tostring(saveError))
+            return false, false, source
+        end
+        if proposed then
+            self:Print(
+                "Submitted the layout change to the raid leader. Apply to Raid is available after it is accepted and displayed."
+            )
+            return true, true, source
         end
         self:UpdateDisplayed()
+        return true, false, source
+    end
+
+    local function TargetIsDisplayedPage()
+        if reference.EntityType == "category" then
+            return false,
+                "display a descendant page that inherits this layout, then use Apply to Raid from that page's editor"
+        end
+        local target = layoutEditor.ResolveEntity(reference)
+        local displayedId = type(AngryAssign_State) == "table" and AngryAssign_State.displayed or nil
+        local displayed = displayedId and AngryAssign_Pages[displayedId] or nil
+        if not target or not displayed then
+            return false, "display this page before applying its layout"
+        end
+        if reference.SyncId then
+            if displayed.SyncId ~= reference.SyncId then
+                return false, "display this page before applying its layout"
+            end
+        elseif displayed ~= target then
+            return false, "display this page before applying its layout"
+        end
         return true
     end
 
@@ -1377,20 +1707,21 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         palette:SetFullWidth(true)
         body:AddChild(palette)
 
-        for _, shortName in ipairs(roster) do
+        for _, rosterEntry in ipairs(roster) do
+            local name = rosterEntry.Text
             local button = AceGUI:Create("Button")
-            button:SetText(shortName)
+            button:SetText(name)
             button:SetWidth(96)
             button:SetCallback("OnClick", function()
                 local inner = editBox.editBox
-                local position = inner and inner:GetCursorPosition() or 0
+                local position = inner and inner:GetCursorPosition()
                 local text = editBox:GetText() or ""
-                if position and position > 0 then
-                    editBox:SetText(text:sub(1, position) .. shortName .. text:sub(position + 1))
-                    inner:SetCursorPosition(position + #shortName)
+                if position ~= nil then
+                    editBox:SetText(text:sub(1, position) .. name .. text:sub(position + 1))
+                    inner:SetCursorPosition(position + #name)
                     return
                 end
-                editBox:SetText(text .. shortName)
+                editBox:SetText(text .. name)
             end)
             palette:AddChild(button)
         end
@@ -1408,13 +1739,25 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         grid:SetFullWidth(true)
         grid:SetLayoutEngine(layout)
         grid:SetRoster(roster)
+        local currentEntity, targetId = layoutEditor.ResolveEntity(reference)
+        local vars = currentEntity and CurrentLayoutVars(reference, currentEntity, targetId) or ""
+        grid:SetResolveProviders(
+            BuildEditorLayoutProviders(
+                roster,
+                currentEntity and EffectiveLayoutVariables(reference, currentEntity, vars) or {}
+            )
+        )
         -- Every visual edit runs the same pure mutator the drag path uses and
         -- redraws from the model it returns, so typed and dragged edits cannot
         -- drift apart. An edit confirmed after the grid was rebuilt belongs to
         -- a layout that no longer exists, so it is dropped.
         local widget = grid
         local function Commit(applied, updated)
-            if not applied or closed or grid ~= widget then
+            if closed or grid ~= widget then
+                return
+            end
+            if not applied then
+                self:Print("Could not change the group layout: " .. tostring(updated))
                 return
             end
             model = updated
@@ -1460,6 +1803,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                 Text = expression,
                 OnAccept = function(text)
                     if not StillHolds(group, slot, expression) then
+                        self:Print("That layout slot changed before the edit was confirmed; no change was made.")
                         return
                     end
                     Commit(layout.SetSlot(model, group, slot, text))
@@ -1493,6 +1837,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                     Prompt = ("Remove the group %s?"):format(label),
                     OnAccept = function()
                         if not StillHolds(group, nil, label) then
+                            self:Print("That layout group changed before removal was confirmed; no change was made.")
                             return
                         end
                         Commit(layout.RemoveGroup(model, group))
@@ -1509,6 +1854,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                         return
                     end
                     if not StillHolds(group, nil, label) then
+                        self:Print("That layout group changed before the rename was confirmed; no change was made.")
                         return
                     end
                     Commit(layout.SetGroupName(model, group, text))
@@ -1557,23 +1903,39 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     applyButton:SetText("Apply to Raid")
     applyButton:SetWidth(150)
     applyButton:SetCallback("OnClick", function()
-        if not SaveLayout() then
+        local targetsDisplay, displayError = TargetIsDisplayedPage()
+        if not targetsDisplay then
+            self:Print("Could not apply the layout: " .. displayError .. ".")
+            return
+        end
+        if type(self.CanLocalPlayerApplyRaidLayout) == "function" then
+            local allowed, reason = self:CanLocalPlayerApplyRaidLayout()
+            if allowed ~= true then
+                self:Print(
+                    "Could not apply the layout: "
+                        .. tostring(reason or "only the raid leader or a qualified raid assistant may apply it")
+                )
+                return
+            end
+        end
+        local saved, proposed = SaveLayout()
+        if not saved or proposed then
             return
         end
         local applied, result = self:ApplyGroupLayoutToRaid()
         if applied then
             self:Print(("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s"))
         else
-            self:Print("Could not apply the layout: " .. tostring(result))
+            self:Print(RAID_LAYOUT_APPLY_ERRORS[result] or ("Could not rearrange the raid: " .. tostring(result)))
         end
     end)
     DescribeWidget(
         applyButton,
         "Apply to Raid",
-        "Saves the layout, then moves raid members into the eight subgroups the displayed note lays out, "
-            .. "which is this layout once it is showing — a category's reaches the raid through a page under it. "
-            .. "Click a group's title to name it, so Spores or Resist reads as itself in the note. "
-            .. "Needs raid lead or assist, and will not run in combat."
+        reference.EntityType == "category"
+                and "Category layouts are inherited. Display a descendant page, then apply the resolved layout from that page's editor."
+            or "Saves this displayed page's layout, then moves raid members into its eight subgroups. "
+                .. "Requires the raid leader or a qualified raid assistant, and will not run in combat."
     )
     frame:AddChild(applyButton)
 end
@@ -1589,6 +1951,15 @@ local function MenuEntry(list, text)
     for index = 2, #list do
         local item = list[index]
         if item.text == text then
+            return item
+        end
+    end
+end
+
+local function MenuEntryByKey(list, key)
+    for index = 2, #list do
+        local item = list[index]
+        if item.key == key then
             return item
         end
     end
@@ -1615,6 +1986,25 @@ function AngryEra_PageMenu(pageId)
                 notCheckable = true,
                 func = function(_, clickedPageId)
                     AngryEra_DeletePage(clickedPageId)
+                end,
+            },
+            {
+                text = "Pin",
+                key = "pin",
+                notCheckable = true,
+                func = function(_, clickedPageId)
+                    local clickedPage = AngryAssign_Pages[clickedPageId]
+                    if
+                        not clickedPage
+                        or type(AngryEra.IsPinned) ~= "function"
+                        or type(AngryEra.SetPinned) ~= "function"
+                    then
+                        return
+                    end
+                    local pinned = AngryEra:IsPinned(clickedPage)
+                    if AngryEra:SetPinned(clickedPage, not pinned) then
+                        AngryEra:Print((pinned and "Unpinned " or "Pinned ") .. clickedPage.Name .. ".")
+                    end
                 end,
             },
             {
@@ -1680,6 +2070,10 @@ function AngryEra_PageMenu(pageId)
     MenuEntry(PagesDropDownList, "Rename").disabled = not permission
     MenuEntry(PagesDropDownList, "Edit Variables").disabled = not permission
     MenuEntry(PagesDropDownList, "Edit Group Layout").disabled = not permission
+    local pin = MenuEntryByKey(PagesDropDownList, "pin")
+    local pinned = type(AngryEra.IsPinned) == "function" and AngryEra:IsPinned(page)
+    pin.text = pinned and "Unpin" or "Pin"
+    pin.disabled = type(AngryEra.SetPinned) ~= "function"
 
     for _, item in ipairs(MenuEntry(PagesDropDownList, "Export").menuList) do
         item.arg1 = pageId

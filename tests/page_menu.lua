@@ -37,6 +37,18 @@ function AngryEra:CanEditEntityLocally()
     return editable
 end
 
+local pinned = {}
+function AngryEra:IsPinned(page)
+    return pinned[page.Id] == true
+end
+
+function AngryEra:SetPinned(page, value)
+    pinned[page.Id] = value == true
+    return true
+end
+
+function AngryEra:Print() end
+
 AngryAssign_Pages = {
     [11] = { Id = 11, Name = "Loatheb", CategoryId = 4 },
     [12] = { Id = 12, Name = "Export", CategoryId = nil },
@@ -60,7 +72,7 @@ local menu = AngryEra_PageMenu(11)
 assert(menu, "right-clicking a page returns a menu")
 assert(menu[1].text == "Loatheb", "the title names the page")
 
-local labels = { "Rename", "Delete", "Edit Variables", "Edit Group Layout", "Export", "Category" }
+local labels = { "Rename", "Delete", "Pin", "Edit Variables", "Edit Group Layout", "Export", "Category" }
 for _, label in ipairs(labels) do
     local entry = Entry(menu, label)
     assert(entry, "the menu offers " .. label)
@@ -86,13 +98,22 @@ for _, label in ipairs({ "Rename", "Edit Variables", "Edit Group Layout" }) do
     assert(Entry(menu, label).disabled == true, label .. " is closed to a read-only page")
 end
 assert(Entry(menu, "Export").disabled ~= true, "a read-only page can still be exported")
+assert(Entry(menu, "Pin").disabled ~= true, "a read-only received page can still be pinned locally")
 editable = true
+
+-- Pinning is local state and the reused menu changes its action to match.
+Entry(menu, "Pin").func(nil, 11)
+assert(pinned[11], "Pin protects the clicked page")
+menu = AngryEra_PageMenu(11)
+assert(Entry(menu, "Unpin"), "a pinned page offers Unpin")
+Entry(menu, "Unpin").func(nil, 11)
+assert(not pinned[11], "Unpin releases the clicked page")
 
 -- The menu is reused between clicks, so a second page must not inherit the
 -- first page's id.
 menu = AngryEra_PageMenu(12)
 assert(menu[1].text == "Export", "the title follows the clicked page")
-for _, label in ipairs(labels) do
+for _, label in ipairs({ "Rename", "Delete", "Pin", "Edit Variables", "Edit Group Layout", "Export", "Category" }) do
     assert(Entry(menu, label).arg1 == 12, label .. " follows the clicked page")
 end
 assert(Entry(menu, "Export").menuList[1].arg1 == 12, "an export format follows the clicked page")

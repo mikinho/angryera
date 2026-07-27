@@ -19,7 +19,7 @@
 --
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 6
+local Type, Version = "AngryLayoutGrid", 7
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -326,29 +326,124 @@ end
 --[[-----------------------------------------------------------------------------
 Rendering
 -------------------------------------------------------------------------------]]
--- Every name the layout already spells out, keyed case-insensitively so a typed
--- slot matches the roster spelling.
-local function PlacedNames(model)
+local function NormalizeRosterEntry(value)
+    if type(value) == "string" then
+        return {
+            Text = value,
+            FullName = value,
+            ShortName = value:match("^([^-]+)") or value,
+        }
+    end
+    if type(value) ~= "table" then
+        return nil
+    end
+    local text = type(value.Text) == "string" and value.Text or value.Name
+    local fullName = type(value.FullName) == "string" and value.FullName or text
+    if type(text) ~= "string" or text == "" or type(fullName) ~= "string" or fullName == "" then
+        return nil
+    end
+    return {
+        Text = text,
+        FullName = fullName,
+        ShortName = type(value.ShortName) == "string" and value.ShortName
+            or (fullName:match("^([^-]+)") or text:match("^([^-]+)") or text),
+    }
+end
+
+local function NormalizeRoster(values)
+    local roster = {}
+    for _, value in ipairs(type(values) == "table" and values or {}) do
+        local entry = NormalizeRosterEntry(value)
+        if entry then
+            roster[#roster + 1] = entry
+        end
+    end
+    return roster
+end
+
+local function StoreUnique(map, key, entry)
+    if key == "" then
+        return
+    end
+    if map[key] == nil then
+        map[key] = entry
+    elseif map[key] ~= entry then
+        map[key] = false
+    end
+end
+
+-- Builds exact and short-name indexes without guessing when two realms share a
+-- short name. Entries themselves are the stable identity for this redraw.
+local function IndexRoster(roster)
+    local index = { exact = {}, short = {} }
+    for _, entry in ipairs(roster) do
+        StoreUnique(index.exact, entry.FullName:lower(), entry)
+        StoreUnique(index.exact, entry.Text:lower(), entry)
+        StoreUnique(index.short, entry.ShortName:lower(), entry)
+    end
+    return index
+end
+
+local function MatchRosterEntry(index, name)
+    if type(name) ~= "string" or name == "" then
+        return nil
+    end
+    local key = name:lower()
+    local exact = index.exact[key]
+    if exact then
+        return exact
+    end
+    if name:find("-", 1, true) then
+        return nil
+    end
+    local short = index.short[key]
+    return short or nil
+end
+
+-- Resolves the whole model, then maps each selected name back to one unambiguous
+-- roster identity. This keeps class fills, priority lists, subgroup fills, and
+-- variable slots out of the palette just like literal names.
+local function PlacedRosterEntries(self, model, rosterIndex)
     local placed = {}
+    local resolver = self.layout and self.layout.Resolve
+    if type(resolver) == "function" then
+        local ok, resolved = pcall(resolver, model, self.resolveProviders or {})
+        if ok and type(resolved) == "table" then
+            for _, group in ipairs(resolved.groups or {}) do
+                for _, name in ipairs(group.members or {}) do
+                    local entry = MatchRosterEntry(rosterIndex, name)
+                    if entry then
+                        placed[entry] = true
+                    end
+                end
+            end
+        end
+    end
+
+    -- Literal slots remain useful when a reduced test/host layout engine has no
+    -- resolver. Ambiguous short names deliberately match nothing.
     for _, group in ipairs(model.groups or {}) do
         for _, slot in ipairs(group.slots or {}) do
-            placed[slot:lower()] = true
+            local entry = MatchRosterEntry(rosterIndex, slot)
+            if entry then
+                placed[entry] = true
+            end
         end
     end
     return placed
 end
 
--- The palette offers only members the layout has not named, so a raid change or
--- a placement shows up without hunting through the boxes.
-local function UnrosteredNames(self, model)
-    local placed = PlacedNames(model)
-    local names = {}
-    for _, name in ipairs(self.roster) do
-        if not placed[name:lower()] then
-            names[#names + 1] = name
+-- The palette offers only roster identities the resolved layout has not placed.
+local function UnrosteredEntries(self, model)
+    local rosterIndex = IndexRoster(self.roster)
+    local placed = PlacedRosterEntries(self, model, rosterIndex)
+    local entries = {}
+    for _, entry in ipairs(self.roster) do
+        if not placed[entry] then
+            entries[#entries + 1] = entry
         end
     end
-    return names
+    return entries
 end
 
 -- Describes every box to draw: the eight subgroup boxes, then the palette.
@@ -374,7 +469,7 @@ local function BuildBoxPlan(self)
 
     -- Drawn even while empty, so the column keeps its place and a member always
     -- has somewhere to be dragged back to.
-    local unrostered = UnrosteredNames(self, model)
+    local unrostered = UnrosteredEntries(self, model)
     plan[#plan + 1] = {
         title = "Unrostered",
         palette = true,
@@ -458,8 +553,9 @@ local function DrawPalette(self, box, entry)
     box.header.layoutTarget = { kind = "palette" }
 
     StackRows(self, box, entry.rows, function(row, index)
-        local name = entry.slots[index]
-        FillRow(row, name, { kind = "palette", text = name })
+        local rosterEntry = entry.slots[index]
+        local text = rosterEntry and rosterEntry.Text
+        FillRow(row, text, { kind = "palette", text = text, fullName = rosterEntry and rosterEntry.FullName })
     end)
 end
 
@@ -471,6 +567,7 @@ local methods = {
         self.layout = nil
         self.model = nil
         self.roster = {}
+        self.resolveProviders = nil
         self.dragging = nil
         self.dropTarget = nil
         self.drawing = nil
@@ -488,6 +585,7 @@ local methods = {
         self.layout = nil
         self.model = nil
         self.roster = {}
+        self.resolveProviders = nil
         self.dragging = nil
         self.dropTarget = nil
         self.drawing = nil
@@ -512,9 +610,18 @@ local methods = {
     end,
 
     --- Replaces the roster the palette draws from.
-    -- @tparam table names Array of short names.
-    ["SetRoster"] = function(self, names)
-        self.roster = type(names) == "table" and names or {}
+    -- Accepts legacy name strings or identity-aware entries with Text,
+    -- FullName, and ShortName fields.
+    -- @tparam table roster Array of strings or roster-entry tables.
+    ["SetRoster"] = function(self, roster)
+        self.roster = NormalizeRoster(roster)
+        self:Refresh()
+    end,
+
+    --- Supplies the live-roster/variable providers used to resolve placed slots.
+    -- @tparam table providers Providers accepted by `layout.Resolve`.
+    ["SetResolveProviders"] = function(self, providers)
+        self.resolveProviders = type(providers) == "table" and providers or nil
         self:Refresh()
     end,
 
