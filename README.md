@@ -276,7 +276,9 @@ Only the current group leader advances the shared display. Successful kills adva
 
 ### Group layouts
 
-A page's `$LAYOUT` metadata names the eight raid subgroups and the player slots in them — resist groups, spore rotations, chains, trash groups. It renders wherever you place a `{layout}` tag, updates as the roster changes, and can rearrange the actual raid.
+A `$LAYOUT` names the eight raid subgroups and the player slots in them — resist groups, spore rotations, chains, trash groups. It renders wherever you place a `{layout}` tag, updates as the roster changes, and can rearrange the actual raid.
+
+It is metadata like any other, so it inherits. Put the raid's standard arrangement on the category and every page under it has it, then give a page its own only where the fight moves people. The nearest one wins, so a page's layout replaces its category's for that page alone.
 
 `$LAYOUT` is a single line. Groups are separated by `;`; each group is `Label: slot, slot, ...`, and `Label/N` is raid subgroup N. A group written without one takes the lowest subgroup still free, so naming every group is enough to lay out a raid. A slot is a name, a priority list `A > B > C` (first present-and-alive), a class fill `*MAGE` or `*MAGE x2`, or `group:2` (the current members of subgroup 2). Auto-fill never assigns the same player twice. A raid has eight subgroups of five, so a ninth group or a sixth slot is dropped.
 
@@ -298,13 +300,13 @@ Spore soakers:
 {layout Spores}
 ```
 
-Edit it from the page's right-click menu → **Edit Group Layout**. The editor opens on a visual grid: the eight raid subgroup boxes in two columns, with everyone the layout has not placed listed beside them. Drag a name from that list into a box to place it, drag between boxes to move it, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the list, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone.
+Edit it from the page's or the category's right-click menu → **Edit Group Layout**. The editor opens on a visual grid: the eight raid subgroup boxes in two columns, with everyone the layout has not placed listed beside them. Drag a name from that list into a box to place it, drag between boxes to move it, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the list, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone.
 
 You can also type instead of drag. Click a box title to name that group — Spores, Resist, Kite — click a member to edit their slot expression, and click an empty row to add one — a name, a priority list, a class fill, or a `{{Variable}}` — so a layout can be built solo, before there is any roster to drag from. Right-clicking a box title removes the group after a confirmation.
 
 Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` keep auto-filling after you rearrange the grid. Tick **Edit as text** to switch the same layout to one group per line, which is also where roster names insert at the cursor. Both views write the same `$LAYOUT`. Groups left empty are dropped when you save, unless you named one — naming Spores before anyone is dragged into it is the point of naming it.
 
-**Save** writes the layout. As the raid leader or an assistant, out of combat, **Apply to Raid** moves everyone into the subgroup their group holds.
+**Save** writes the layout — a category's is saved locally and never sent to anyone, so a standard arrangement costs the raid no traffic. As the raid leader or an assistant, out of combat, **Apply to Raid** moves everyone into the subgroup their group holds in the layout the display currently resolves to.
 
 ### Custom metadata
 

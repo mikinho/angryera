@@ -1216,24 +1216,59 @@ local function DescribeWidget(widget, title, body)
     end)
 end
 
---- Opens a dedicated editor for a page's `$LAYOUT` group layout.
+--- Returns the page or category a layout is being edited on.
+-- @tparam number id Page or category id.
+-- @tparam string|nil entityType Either `"category"` or `"page"`.
+-- @treturn table|nil entity
+local function LayoutEntity(id, entityType)
+    if entityType == "category" then
+        return AngryAssign_Categories[id]
+    end
+    return AngryAssign_Pages[id]
+end
+
+--- Writes an edited layout back to the entity it came from.
+-- A category saves the way editing its variables does — locally, without
+-- publishing a revision — so a standard arrangement costs the raid no traffic.
+-- @tparam number id Page or category id.
+-- @tparam string|nil entityType Either `"category"` or `"page"`.
+-- @tparam string vars Vars string carrying the new `$LAYOUT` line.
+-- @treturn boolean saved
+-- @treturn string|nil reason
+local function SaveLayoutVars(id, entityType, vars)
+    if entityType ~= "category" then
+        return AngryEra:UpdatePageVars(id, vars)
+    end
+    local cat = AngryAssign_Categories[id]
+    if not cat or not AngryEra:CanEditEntityLocally(cat) then
+        return false, "Permission denied."
+    end
+    cat.Vars = vars
+    AngryEra:CategoryUpdated(id)
+    return true
+end
+
+--- Opens a dedicated editor for a page's or category's `$LAYOUT` group layout.
 -- The visual view drags members between the eight raid subgroup boxes and the
 -- palette of whoever is unplaced; the text view edits the same layout one group
--- per line. Save writes the layout, and Apply rearranges the actual raid.
--- @tparam number id Page id.
-function AngryEra:ShowGroupLayoutEditor(id)
-    local page = AngryAssign_Pages[id]
-    if not page or not self:CanEditEntityLocally(page) then
+-- per line. Save writes the layout, and Apply rearranges the actual raid. A
+-- layout is a variable like any other, so a category holds the raid's standard
+-- arrangement and a page overrides it for the one fight that needs it.
+-- @tparam number id Page or category id.
+-- @tparam string|nil entityType Either `"category"` or `"page"` (the default).
+function AngryEra:ShowGroupLayoutEditor(id, entityType)
+    local entity = LayoutEntity(id, entityType)
+    if not entity or not self:CanEditEntityLocally(entity) then
         return
     end
 
     local roster = CollectRosterNames()
-    local model = layout.Parse(layout.ExtractSource(page.Vars) or "")
+    local model = layout.Parse(layout.ExtractSource(entity.Vars) or "")
     local textMode = false
     local editBox, grid, closed
 
     local frame = AceGUI:Create("Window")
-    frame:SetTitle("Group Layout")
+    frame:SetTitle(entityType == "category" and "Category Group Layout" or "Group Layout")
     frame:SetLayout("Flow")
     frame:SetWidth(470)
     frame:SetHeight(500)
@@ -1281,8 +1316,8 @@ function AngryEra:ShowGroupLayoutEditor(id)
     -- but dropped on save rather than persisted as an empty line.
     local function SaveLayout()
         local source = layout.Serialize(layout.Compact(layout.Parse(CurrentSource())))
-        local newVars = layout.UpsertSource(page.Vars, source)
-        local saved, saveError = self:UpdatePageVars(id, newVars)
+        local newVars = layout.UpsertSource(entity.Vars, source)
+        local saved, saveError = SaveLayoutVars(id, entityType, newVars)
         if not saved and saveError then
             print(saveError)
             return false
@@ -1535,7 +1570,8 @@ function AngryEra:ShowGroupLayoutEditor(id)
     DescribeWidget(
         applyButton,
         "Apply to Raid",
-        "Saves the layout, then moves raid members into the eight subgroups it lays out. "
+        "Saves the layout, then moves raid members into the eight subgroups the displayed note lays out, "
+            .. "which is this layout once it is showing — a category's reaches the raid through a page under it. "
             .. "Click a group's title to name it, so Spores or Resist reads as itself in the note. "
             .. "Needs raid lead or assist, and will not run in combat."
     )
@@ -1546,12 +1582,12 @@ end
 
 local PagesDropDownList
 
--- Entries are addressed by label rather than position so adding one to the menu
--- above cannot silently renumber the wiring below it. Index 1 holds the page
--- name and is skipped, since a page could be named after an entry.
-local function PageMenuEntry(text)
-    for index = 2, #PagesDropDownList do
-        local item = PagesDropDownList[index]
+-- Entries are addressed by label rather than position so adding one to a menu
+-- cannot silently renumber the wiring below it. Index 1 holds the entity name
+-- and is skipped, since a page or category could be named after an entry.
+local function MenuEntry(list, text)
+    for index = 2, #list do
+        local item = list[index]
         if item.text == text then
             return item
         end
@@ -1592,7 +1628,7 @@ function AngryEra_PageMenu(pageId)
                 text = "Edit Group Layout",
                 notCheckable = true,
                 func = function(_, clickedPageId)
-                    AngryEra:ShowGroupLayoutEditor(clickedPageId)
+                    AngryEra:ShowGroupLayoutEditor(clickedPageId, "page")
                 end,
             },
             {
@@ -1641,16 +1677,16 @@ function AngryEra_PageMenu(pageId)
         PagesDropDownList[index].arg1 = pageId
     end
 
-    PageMenuEntry("Rename").disabled = not permission
-    PageMenuEntry("Edit Variables").disabled = not permission
-    PageMenuEntry("Edit Group Layout").disabled = not permission
+    MenuEntry(PagesDropDownList, "Rename").disabled = not permission
+    MenuEntry(PagesDropDownList, "Edit Variables").disabled = not permission
+    MenuEntry(PagesDropDownList, "Edit Group Layout").disabled = not permission
 
-    for _, item in ipairs(PageMenuEntry("Export").menuList) do
+    for _, item in ipairs(MenuEntry(PagesDropDownList, "Export").menuList) do
         item.arg1 = pageId
     end
 
     local categories = AngryEra_CategoryMenuList(pageId)
-    local category = PageMenuEntry("Category")
+    local category = MenuEntry(PagesDropDownList, "Category")
     category.menuList = categories or {}
     category.disabled = categories == nil
 
@@ -1658,7 +1694,7 @@ function AngryEra_PageMenu(pageId)
 end
 
 local CategoriesDropDownList
-local function AngryEra_CategoryMenu(catId)
+function AngryEra_CategoryMenu(catId)
     local cat = AngryAssign_Categories[catId]
     if not cat then
         return
@@ -1693,6 +1729,13 @@ local function AngryEra_CategoryMenu(catId)
                 notCheckable = true,
                 func = function(_, clickedCategoryId)
                     AngryEra_EditVariables(clickedCategoryId, "category")
+                end,
+            },
+            {
+                text = "Edit Group Layout",
+                notCheckable = true,
+                func = function(_, clickedCategoryId)
+                    AngryEra:ShowGroupLayoutEditor(clickedCategoryId, "category")
                 end,
             },
             {
@@ -1733,27 +1776,26 @@ local function AngryEra_CategoryMenu(catId)
             { text = "Category", notCheckable = true, hasArrow = true },
         }
     end
+
+    local permission = AngryEra:CanEditEntityLocally(cat)
+
     CategoriesDropDownList[1].text = cat.Name
-    CategoriesDropDownList[2].arg1 = catId
-    CategoriesDropDownList[2].disabled = not AngryEra:CanEditEntityLocally(cat)
-    CategoriesDropDownList[3].arg1 = catId
-    CategoriesDropDownList[4].arg1 = catId
-    CategoriesDropDownList[5].arg1 = catId
-    CategoriesDropDownList[5].disabled = not AngryEra:CanEditEntityLocally(cat)
-    CategoriesDropDownList[6].arg1 = catId
-    for _, item in ipairs(CategoriesDropDownList[6].menuList) do
+    for index = 2, #CategoriesDropDownList do
+        CategoriesDropDownList[index].arg1 = catId
+    end
+
+    MenuEntry(CategoriesDropDownList, "Rename").disabled = not permission
+    MenuEntry(CategoriesDropDownList, "Edit Variables").disabled = not permission
+    MenuEntry(CategoriesDropDownList, "Edit Group Layout").disabled = not permission
+
+    for _, item in ipairs(MenuEntry(CategoriesDropDownList, "Export").menuList) do
         item.arg1 = catId
     end
-    CategoriesDropDownList[7].arg1 = catId
 
     local categories = AngryEra_CategoryMenuList(-catId)
-    if categories ~= nil then
-        CategoriesDropDownList[7].menuList = categories
-        CategoriesDropDownList[7].disabled = false
-    else
-        CategoriesDropDownList[7].menuList = {}
-        CategoriesDropDownList[7].disabled = true
-    end
+    local category = MenuEntry(CategoriesDropDownList, "Category")
+    category.menuList = categories or {}
+    category.disabled = categories == nil
 
     return CategoriesDropDownList
 end

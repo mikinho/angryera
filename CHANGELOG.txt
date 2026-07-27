@@ -5,6 +5,7 @@
 * New Feature: Added a Group Layout editor on the page right-click menu. Drag members from the roster into the eight raid subgroup boxes, drag between boxes to move or swap them, and right-click a member to take them out. An Edit as text toggle switches the same layout to one group per line.
 * New Feature: The Group Layout grid can also be edited by clicking. Click a box title to name that group, so a spore rotation reads as `Spores` instead of Group 3, a member to edit their slot, or an empty row to add one. Layouts can be built solo, before there is a roster to drag from.
 * New Feature: A layout slot can hold a `{{Variable}}`, so one name change updates the note and the layout together. Whatever the variable holds is classified afterwards, so it may be a name, a priority list, or a class fill, and an unset one leaves its slot out.
+* New Feature: Categories have a Group Layout too, edited the same way from their right-click menu. A category holds the raid's standard arrangement and every page under it inherits that, so only the fights that move people — spore rotations, resist groups — need a layout of their own. A category layout is saved locally and never sent to anyone.
 * New Feature: The raid leader or an assistant can apply a layout to the raid out of combat, moving members into the subgroups it lays out.
 
 ## v3.2.0-BETA
