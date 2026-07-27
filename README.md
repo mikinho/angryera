@@ -8,9 +8,9 @@ Supported game clients:
 - Burning Crusade Anniversary 2.5.6
 
 > [!IMPORTANT]
-> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.1 and newer can continue sharing pages that use only their common features, but every viewer needs v3.3 or newer to render group layouts or variable families. Existing local pages and settings are migrated automatically; downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
+> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.1 and newer can continue sharing pages that use only their common features, but every viewer needs v3.3 or newer to render group layouts, variable families, or imported raid-role variables. Existing local pages and settings are migrated automatically; downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
 
-Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on group layouts or variable families in a mixed pre-v3.3 raid.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on group layouts, variable families, or imported raid-role variables in a mixed pre-v3.3 raid.
 
 ## What is new
 
@@ -221,6 +221,40 @@ RAID*=HEALER*,MELEE*
 The nearest inherited declaration wins. An empty declaration such as `HEALER*=` disables an inherited family, while an explicit `HEALER2=Someone` on the same or a nearer layer overrides that one generated position. Repeating a source selector does not repeat the same source key, but two different source keys holding the same player remain visible so layout validation can report the duplicate.
 
 Family names use letters, numbers, and underscores, must start with a letter or underscore, and cannot end in a number before `*`. Each declaration collects at most 40 string source members; numeric, boolean, structured, and `$` metadata values are not collected. Missing selectors contribute nothing, explicitly empty string members retain their numbered position, and cyclic or oversized family definitions are rejected before an Edit Variables save.
+
+### Importing assigned raid roles
+
+Classic Era's group UI can assign Tank, Healer, and Damage roles manually. AngryEra can turn those assignments into variables without trying to infer anyone's specialization:
+
+1. Assign roles in Blizzard's party or raid UI.
+2. Right-click the page or category that should own the role list and choose **Edit Variables**.
+3. Click **Import Assigned Raid Roles**.
+4. Review the imported counts and variable source, then click **Save**.
+
+Import only changes the open draft until you save it. It never assigns or changes Blizzard roles, and it does not refresh automatically when the roster or its roles change. Import again and save when assignments change.
+
+The import creates effective numbered variables:
+
+```text
+RAID_TANK1=Roselea
+RAID_HEALER1=Eblis
+RAID_HEALER2=Zessy
+RAID_DPS1=Kwayteow
+```
+
+Blizzard's `DAMAGER` role is exposed as `RAID_DPS`; players with no assigned role are skipped. Names normally omit `-Realm`. If two current group members have the same short name, AngryEra keeps `Name-Realm` for the ambiguous assignments instead of guessing. Re-importing preserves the relative order of members who remain in the same role and appends newly assigned members. Numbering stays dense, so later members shift down when an earlier member leaves that role.
+
+Use these variables directly, drag them from the Group Layout editor's Variables column, or compose them into your own families:
+
+```text
+TANK*=RAID_TANK*
+HEALER*=RAID_HEALER*
+DPS*=RAID_DPS*
+```
+
+The visible `$AE_RAID_ROSTER` line/object is managed by the importer and owns all three `RAID_` role families at that variable layer. A nearer page import replaces an inherited category import as one complete snapshot. An explicit numbered value such as `RAID_HEALER2=Backup` on the same or a nearer layer remains an intentional override. Do not also declare `RAID_TANK*`, `RAID_HEALER*`, or `RAID_DPS*` beside the managed snapshot; compose them into differently named families as shown above. Delete `$AE_RAID_ROSTER` to remove that layer's imported snapshot and resume normal inheritance.
+
+A role import knows only Tank, Healer, and Damage. Build narrower families such as melee, ranged, priests, or mages from your own variables because Blizzard's assigned group role does not identify a remote player's specialization.
 
 A priority assignment uses `>` to select the first listed player who is both present and alive. It re-resolves when the roster or player state changes:
 
@@ -493,7 +527,7 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 
 ### A raider does not receive the displayed page
 
-1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Group layouts and variable families require v3.3 or newer on every viewer.
+1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Group layouts, variable families, and imported raid-role variables require v3.3 or newer on every viewer.
 2. Confirm the sender is the current party or raid leader.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
 4. Have the leader or a raid assistant run `/aa version` in the group.

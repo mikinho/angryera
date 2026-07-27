@@ -60,6 +60,12 @@ do
     assert_equal(decoded, nil, "Expected JSON_TryDecode to reject trailing non-whitespace")
 end
 
+-- Duplicate object keys are ambiguous and must not silently overwrite.
+do
+    local decoded = json.JSON_TryDecode("{\"same\":1,\"same\":2}")
+    assert_equal(decoded, nil, "Expected JSON_TryDecode to reject duplicate object keys")
+end
+
 -- Numeric parser should accept valid JSON exponent formats.
 do
     local decoded = json.JSON_TryDecode("{\"a\":1e+2,\"b\":-2.5E-1}")
@@ -98,6 +104,15 @@ do
     assert_truthy(roundTrip, "Expected encoded JSON to decode")
     assert_equal(roundTrip.name, json.JSON_NULL, "Expected encoded null to round-trip as json.JSON_NULL")
     assert_equal(roundTrip.content, "# Trash\n\nLine2", "Expected content newlines to survive encode/decode round-trip")
+end
+
+-- Decode/encode must retain the otherwise ambiguous distinction between empty
+-- JSON objects and arrays.
+do
+    local decoded = assert(json.JSON_TryDecode([[{"object":{},"array":[]}]]))
+    local encoded = json.JSON_Encode(decoded)
+    assert_truthy(encoded:find("\"object\":{}", 1, true), "Expected an empty JSON object to remain an object")
+    assert_truthy(encoded:find("\"array\":[]", 1, true), "Expected an empty JSON array to remain an array")
 end
 
 -- ParseVariables JSON path should preserve null + newline behavior.

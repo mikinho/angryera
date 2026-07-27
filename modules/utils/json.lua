@@ -185,13 +185,15 @@ local parse_value
 local JSON_NULL = {}
 json.JSON_NULL = JSON_NULL
 local MAX_JSON_NESTING = 256
+local JSON_ARRAY_METATABLE = {}
+local JSON_OBJECT_METATABLE = {}
 
 local function parse_array(str, pos, depth)
     if depth > MAX_JSON_NESTING then
         return nil, pos, "Maximum JSON nesting exceeded"
     end
 
-    local arr = {}
+    local arr = setmetatable({}, JSON_ARRAY_METATABLE)
     pos = skip_ws(str, pos + 1)
     if str:sub(pos, pos) == "]" then
         return arr, pos + 1
@@ -220,7 +222,7 @@ local function parse_obj_impl(str, pos, depth)
         return nil, pos, "Maximum JSON nesting exceeded"
     end
 
-    local obj = {}
+    local obj = setmetatable({}, JSON_OBJECT_METATABLE)
     pos = skip_ws(str, pos + 1)
     if str:sub(pos, pos) == "}" then
         return obj, pos + 1
@@ -234,6 +236,9 @@ local function parse_obj_impl(str, pos, depth)
         key, pos, parseError = parse_string(str, pos)
         if parseError then
             return nil, pos, parseError
+        end
+        if obj[key] ~= nil then
+            return nil, pos, "Duplicate Object Key"
         end
         pos = skip_ws(str, pos)
         if str:sub(pos, pos) ~= ":" then
@@ -346,11 +351,15 @@ local function encode_json_value(value)
     end
     if valueType == "table" then
         local parts = {}
-        local isArray = (value[1] ~= nil or next(value) == nil)
-        for key in pairs(value) do
-            if type(key) ~= "number" then
-                isArray = false
-                break
+        local valueMetatable = getmetatable(value)
+        local isArray = valueMetatable == JSON_ARRAY_METATABLE
+        if valueMetatable ~= JSON_ARRAY_METATABLE and valueMetatable ~= JSON_OBJECT_METATABLE then
+            isArray = (value[1] ~= nil or next(value) == nil)
+            for key in pairs(value) do
+                if type(key) ~= "number" then
+                    isArray = false
+                    break
+                end
             end
         end
 

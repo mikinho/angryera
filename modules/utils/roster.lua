@@ -13,6 +13,181 @@ AngryEra.utils.roster = {}
 local roster = AngryEra.utils.roster
 local helpers = AngryEra.utils.helpers
 
+local ASSIGNED_ROLE_ORDER = {
+    TANK = 1,
+    HEALER = 2,
+    DPS = 3,
+}
+
+local function EnumRoleValue(...)
+    local enum = type(Enum) == "table" and Enum.LFGRole or nil
+    if type(enum) ~= "table" then
+        return nil
+    end
+    for index = 1, select("#", ...) do
+        local value = enum[select(index, ...)]
+        if value ~= nil then
+            return value
+        end
+    end
+end
+
+local function NormalizeAssignedRole(value)
+    if value == nil or value == "" then
+        return nil, "none"
+    end
+    if type(value) == "string" then
+        local normalized = value:upper()
+        if normalized == "TANK" or normalized == "HEALER" then
+            return normalized
+        end
+        if normalized == "DAMAGER" or normalized == "DPS" then
+            return "DPS"
+        end
+        if normalized == "NONE" then
+            return nil, "none"
+        end
+        return nil, "unsupported"
+    end
+
+    local tank = EnumRoleValue("Tank", "TANK")
+    local healer = EnumRoleValue("Healer", "HEALER")
+    local damage = EnumRoleValue("Damage", "Damager", "Dps", "DPS", "DAMAGER")
+    local none = type(LFG_ROLE_NO_ROLE) == "number" and LFG_ROLE_NO_ROLE or -1
+    if tank ~= nil and value == tank then
+        return "TANK"
+    end
+    if healer ~= nil and value == healer then
+        return "HEALER"
+    end
+    if damage ~= nil and value == damage then
+        return "DPS"
+    end
+    if value == none then
+        return nil, "none"
+    end
+    return nil, "unsupported"
+end
+
+local function ShortRosterName(rawName, fullName)
+    local short = type(rawName) == "string" and rawName:match("^([^-]+)") or nil
+    if type(short) ~= "string" or short == "" then
+        short = type(fullName) == "string" and fullName:match("^([^-]+)") or nil
+    end
+    return short
+end
+
+--- Reads Blizzard's assigned tank, healer, and damage roles for the current
+-- group without mutating role state. Every group member participates in short
+-- name ambiguity detection, including unassigned, offline, and dead members.
+-- Assigned results are sorted deterministically by role and canonical name.
+-- @treturn table|nil rows `{ Name, RawName, FullName, Role, Online, IsDead, Unit }[]`
+-- @treturn string|nil errorCode
+function roster.ScanAssignedRoles()
+    if type(helpers) ~= "table" or type(helpers.IterateGroupMembers) ~= "function" then
+        return nil, "roster-unavailable"
+    end
+    local assignedRoleFunction = type(UnitGroupRolesAssigned) == "function" and UnitGroupRolesAssigned
+        or (type(UnitGroupRolesAssignedEnum) == "function" and UnitGroupRolesAssignedEnum)
+    if not assignedRoleFunction then
+        return nil, "role-api-unavailable"
+    end
+    if type(IsInGroup) == "function" and not IsInGroup() and (type(IsInRaid) ~= "function" or not IsInRaid()) then
+        return nil, "not-grouped"
+    end
+
+    local scanned = {}
+    local shortCounts = {}
+    local seenFullNames = {}
+    local scanError
+    local iterated = pcall(helpers.IterateGroupMembers, function(rawName, fullName, _, _, _, online, isDead, unitToken)
+        if type(fullName) ~= "string" or fullName == "" then
+            scanError = "invalid-roster-member"
+            return true
+        end
+        if type(unitToken) ~= "string" or unitToken == "" then
+            scanError = "invalid-roster-unit"
+            return true
+        end
+
+        local fullKey = fullName:lower()
+        if seenFullNames[fullKey] then
+            return false
+        end
+        seenFullNames[fullKey] = true
+
+        local shortName = ShortRosterName(rawName, fullName)
+        if type(shortName) ~= "string" or shortName == "" then
+            scanError = "invalid-roster-member"
+            return true
+        end
+        local shortKey = shortName:lower()
+        shortCounts[shortKey] = (shortCounts[shortKey] or 0) + 1
+
+        local roleOk, assignedRole = pcall(assignedRoleFunction, unitToken)
+        if not roleOk then
+            scanError = "role-api-failed"
+            return true
+        end
+        local role, roleStatus = NormalizeAssignedRole(assignedRole)
+        if roleStatus == "unsupported" then
+            scanError = "unsupported-role-value"
+            return true
+        end
+
+        scanned[#scanned + 1] = {
+            RawName = rawName,
+            FullName = fullName,
+            ShortName = shortName,
+            ShortKey = shortKey,
+            Role = role,
+            Online = online ~= false,
+            IsDead = isDead == true,
+            Unit = unitToken,
+        }
+        return false
+    end)
+    if not iterated then
+        return nil, "roster-unavailable"
+    end
+    if scanError then
+        return nil, scanError
+    end
+
+    local rows = {}
+    for _, entry in ipairs(scanned) do
+        if entry.Role then
+            rows[#rows + 1] = {
+                Name = shortCounts[entry.ShortKey] == 1 and entry.ShortName or entry.FullName,
+                RawName = entry.RawName,
+                FullName = entry.FullName,
+                Role = entry.Role,
+                Online = entry.Online,
+                IsDead = entry.IsDead,
+                Unit = entry.Unit,
+            }
+        end
+    end
+    if #rows == 0 then
+        return nil, "no-assigned-roles"
+    end
+
+    table.sort(rows, function(left, right)
+        local leftOrder = ASSIGNED_ROLE_ORDER[left.Role]
+        local rightOrder = ASSIGNED_ROLE_ORDER[right.Role]
+        if leftOrder ~= rightOrder then
+            return leftOrder < rightOrder
+        end
+        local leftName = left.FullName:lower()
+        local rightName = right.FullName:lower()
+        if leftName ~= rightName then
+            return leftName < rightName
+        end
+        return left.FullName < right.FullName
+    end)
+    return rows
+end
+
 local function IsNameLike(token)
     if type(token) ~= "string" or token == "" then
         return false
@@ -71,8 +246,9 @@ end
 --- Resolves a named player to the canonical full roster name when they are
 -- online and alive.
 -- Realm-aware: a qualified `Name-Realm` requires an exact match; an unqualified
--- name matches its own realm exactly, or a unique online-and-alive short name
--- across realms (ambiguous short names are rejected rather than guessed).
+-- name requires one unique short-name match across the full current roster,
+-- and that uniquely identified member must be online and alive.
+-- Ambiguous short names are rejected rather than preferring the player's realm.
 -- @tparam string name Player name, optionally realm-qualified.
 -- @treturn string|nil fullName
 -- @treturn string|nil reason
@@ -80,39 +256,37 @@ function roster.ResolvePresentAndAliveName(name)
     if type(name) ~= "string" or name == "" then
         return nil, "invalid-name"
     end
-    if
-        type(helpers) ~= "table"
-        or type(helpers.IterateGroupMembers) ~= "function"
-        or type(helpers.EnsureUnitFullName) ~= "function"
-    then
+    if type(helpers) ~= "table" or type(helpers.IterateGroupMembers) ~= "function" then
         return nil, "roster-unavailable"
     end
     local qualified = name:find("-", 1, true) ~= nil
-    local fullTarget = (helpers.EnsureUnitFullName(name) or ""):lower()
-    local shortTarget = name:lower()
+    local target = name:lower()
     local exactName
+    local exactEligible = false
     local shortMatch
+    local shortMatchEligible = false
     local shortMatches = 0
     helpers.IterateGroupMembers(function(_, fullName, _, _, _, online, isDead)
-        if online == false or isDead == true then
-            return false
-        end
         local fullLower = type(fullName) == "string" and fullName:lower() or ""
-        if fullLower ~= "" and fullLower == fullTarget then
+        if qualified and fullLower ~= "" and fullLower == target then
             exactName = fullName
-        elseif not qualified then
+            exactEligible = online ~= false and isDead ~= true
+            return true
+        end
+        if not qualified then
             local short = fullLower:match("^([^-]+)")
-            if short == shortTarget then
+            if short == target then
                 shortMatches = shortMatches + 1
                 shortMatch = fullName
+                shortMatchEligible = online ~= false and isDead ~= true
             end
         end
         return false
     end)
-    if exactName then
+    if qualified and exactName and exactEligible then
         return exactName
     end
-    if not qualified and shortMatches == 1 then
+    if not qualified and shortMatches == 1 and shortMatchEligible then
         return shortMatch
     end
     return nil, not qualified and shortMatches > 1 and "ambiguous-name" or "not-present-or-alive"

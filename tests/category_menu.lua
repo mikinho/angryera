@@ -37,6 +37,21 @@ AngryEra.utils.helpers = {
     end,
 }
 AngryEra.utils.colors = {}
+local assignedRoleRows = {
+    { Name = "Roselea", FullName = "Roselea-Mankrik", Role = "TANK" },
+    { Name = "Eblis", FullName = "Eblis-Mankrik", Role = "HEALER" },
+    { Name = "Zessy", FullName = "Zessy-Mankrik", Role = "HEALER" },
+    { Name = "Kwayteow", FullName = "Kwayteow-Mankrik", Role = "DPS" },
+}
+local assignedRoleError
+AngryEra.utils.roster = {
+    ScanAssignedRoles = function()
+        if assignedRoleError then
+            return nil, assignedRoleError
+        end
+        return assignedRoleRows
+    end,
+}
 
 -- The editor only reaches for these once a window is built, so the menu tests
 -- need nothing behind them.
@@ -129,6 +144,164 @@ assert(AngryEra_CategoryMenu(99) == nil, "a missing category has no menu")
 local layoutEditor = AngryEra.utils.layout_editor
 assert(type(layoutEditor) == "table", "layout editor internals are available")
 
+local importedRoleSource, importedRoleSummary = layoutEditor.ImportAssignedRoles("KEEP=yes\nHEALERS*=RAID_HEALER*")
+assert(
+    importedRoleSource and type(importedRoleSummary) == "table",
+    "assigned roles should import into a variable draft"
+)
+assert(
+    importedRoleSummary.TANK == 1 and importedRoleSummary.HEALER == 2 and importedRoleSummary.DPS == 1,
+    "the assigned-role import should summarize every generated role"
+)
+local importedRoleVariables = assert(AngryEra.utils.variables.MergeVariableLayers({}, importedRoleSource))
+assert(importedRoleVariables.KEEP == "yes", "assigned-role import should preserve unrelated variables")
+assert(
+    importedRoleVariables.RAID_TANK1 == "Roselea"
+        and importedRoleVariables.RAID_HEALER1 == "Eblis"
+        and importedRoleVariables.RAID_HEALER2 == "Zessy"
+        and importedRoleVariables.RAID_DPS1 == "Kwayteow",
+    "assigned-role import should materialize the canonical RAID role variables"
+)
+assert(
+    importedRoleVariables.HEALERS1 == "Eblis" and importedRoleVariables.HEALERS2 == "Zessy",
+    "ordinary variable families should compose from imported RAID roles"
+)
+assignedRoleRows = {
+    { Name = "Roselea", FullName = "Roselea-Mankrik", Role = "TANK" },
+    { Name = "Aaron", FullName = "Aaron-Mankrik", Role = "HEALER" },
+    { Name = "Eblis", FullName = "Eblis-Mankrik", Role = "HEALER" },
+    { Name = "Zessy", FullName = "Zessy-Mankrik", Role = "HEALER" },
+    { Name = "Kwayteow", FullName = "Kwayteow-Mankrik", Role = "DPS" },
+}
+local reimportedRoleSource = assert(layoutEditor.ImportAssignedRoles(importedRoleSource))
+local reimportedRoleVariables = assert(AngryEra.utils.variables.MergeVariableLayers({}, reimportedRoleSource))
+assert(
+    reimportedRoleVariables.RAID_HEALER1 == "Eblis"
+        and reimportedRoleVariables.RAID_HEALER2 == "Zessy"
+        and reimportedRoleVariables.RAID_HEALER3 == "Aaron",
+    "re-import should preserve surviving relative order and append newcomers"
+)
+assignedRoleRows = {
+    { Name = "Roselea", FullName = "Roselea-Mankrik", Role = "TANK" },
+    { Name = "Eblis-Mankrik", FullName = "Eblis-Mankrik", Role = "HEALER" },
+    { Name = "Eblis-Pagle", FullName = "Eblis-Pagle", Role = "HEALER" },
+    { Name = "Zessy", FullName = "Zessy-Mankrik", Role = "HEALER" },
+    { Name = "Aaron", FullName = "Aaron-Mankrik", Role = "HEALER" },
+    { Name = "Kwayteow", FullName = "Kwayteow-Mankrik", Role = "DPS" },
+}
+local collisionRoleSource = assert(layoutEditor.ImportAssignedRoles(reimportedRoleSource))
+local collisionRoleVariables = assert(AngryEra.utils.variables.MergeVariableLayers({}, collisionRoleSource))
+assert(
+    collisionRoleVariables.RAID_HEALER1 == "Eblis-Mankrik"
+        and collisionRoleVariables.RAID_HEALER2 == "Zessy"
+        and collisionRoleVariables.RAID_HEALER3 == "Aaron"
+        and collisionRoleVariables.RAID_HEALER4 == "Eblis-Pagle",
+    "a new cross-realm collision should preserve the canonical identity and order of surviving members"
+)
+local conflictingRoleImport, conflictingRoleImportError =
+    layoutEditor.ImportAssignedRoles("OTHER1=Someone\nRAID_HEALER*=OTHER*")
+assert(
+    conflictingRoleImport == nil and conflictingRoleImportError == "conflicting-raid-roster-family",
+    "an import should reject a same-layer declaration of its managed RAID family"
+)
+assignedRoleError = "no-assigned-roles"
+local failedRoleImport, failedRoleError = layoutEditor.ImportAssignedRoles("KEEP=unchanged")
+assert(
+    failedRoleImport == nil and failedRoleError == "no-assigned-roles",
+    "a failed assigned-role scan should leave the editor source untouched"
+)
+assignedRoleError = nil
+
+-- Exercise the actual Edit Variables window callbacks. This guards both the
+-- import-as-draft contract and the historical `type` parameter shadow that
+-- made the Save callback try to call the "category" string as a function.
+local createdWidgets = {}
+function app.libs.AceGUI.Create(_, widgetType)
+    local widget = {
+        Type = widgetType,
+        callbacks = {},
+        children = {},
+    }
+    if widgetType == "Window" then
+        widget.frame = {}
+    end
+    function widget:SetText(text)
+        self.text = text
+    end
+    function widget:GetText()
+        return self.text
+    end
+    function widget:SetCallback(event, callback)
+        self.callbacks[event] = callback
+    end
+    function widget:AddChild(child)
+        self.children[#self.children + 1] = child
+    end
+    function widget:Hide()
+        self.hidden = true
+    end
+    for _, method in ipairs({
+        "SetTitle",
+        "SetLayout",
+        "SetWidth",
+        "SetHeight",
+        "EnableResize",
+        "SetFullWidth",
+        "SetLabel",
+        "SetNumLines",
+        "DisableButton",
+    }) do
+        widget[method] = function() end
+    end
+    createdWidgets[#createdWidgets + 1] = widget
+    return widget
+end
+function app.libs.AceGUI:Release() end
+
+_G.UISpecialFrames = {}
+local categoryWindowSave
+local displayedAfterVariableSave = false
+function AngryEra:Print() end
+function AngryEra:CategoryUpdated(id)
+    categoryWindowSave = id
+end
+function AngryEra:UpdateDisplayed()
+    displayedAfterVariableSave = true
+end
+
+Entry(AngryEra_CategoryMenu(5), "Edit Variables").func(nil, 5)
+local importButtonWidget
+local variableEditWidget
+local variableWindowWidget
+for _, widget in ipairs(createdWidgets) do
+    if widget.Type == "Button" then
+        importButtonWidget = widget
+    elseif widget.Type == "MultiLineEditBox" then
+        variableEditWidget = widget
+    elseif widget.Type == "Window" then
+        variableWindowWidget = widget
+    end
+end
+assert(
+    importButtonWidget and variableEditWidget and variableWindowWidget,
+    "the variable editor should build its controls"
+)
+importButtonWidget.callbacks.OnClick()
+assert(AngryAssign_Categories[5].Vars == nil, "Import Assigned Raid Roles should change only the open editor draft")
+assert(
+    variableEditWidget:GetText():find(AngryEra.utils.variables.RAID_ROSTER_DIRECTIVE, 1, true),
+    "the import button should place the managed roster in the editor"
+)
+variableEditWidget.callbacks.OnEnterPressed(variableEditWidget, "OnEnterPressed", variableEditWidget:GetText())
+assert(
+    categoryWindowSave == 5
+        and AngryAssign_Categories[5].Vars == variableEditWidget:GetText()
+        and displayedAfterVariableSave
+        and variableWindowWidget.hidden,
+    "Save should commit the imported draft to the exact category and close the window"
+)
+AngryAssign_Categories[5].Vars = nil
+
 local providers = layoutEditor.BuildLayoutProviders({
     { FullName = "Alex-RealmA", ShortName = "Alex", Text = "Alex", Available = true },
     { FullName = "Alex-RealmB", ShortName = "Alex", Text = "Alex-RealmB", Available = true },
@@ -136,7 +309,7 @@ local providers = layoutEditor.BuildLayoutProviders({
     { FullName = "Casey-RealmB", ShortName = "Casey", Text = "Casey-RealmB", Available = true },
     { FullName = "Casey-RealmC", ShortName = "Casey", Text = "Casey-RealmC", Available = true },
 }, {})
-assert(providers.ResolveRosterName("Alex") == "Alex-RealmA", "an unqualified name prefers an exact own-realm member")
+assert(providers.ResolveRosterName("Alex") == nil, "an unqualified collision is ambiguous even on the player's realm")
 assert(providers.ResolveRosterName("Alex-RealmB") == "Alex-RealmB", "a qualified name resolves exactly")
 assert(providers.ResolveRosterName("Blair") == "Blair-RealmB", "a unique cross-realm short name resolves safely")
 assert(providers.ResolveRosterName("Casey") == nil, "an ambiguous short name without an own-realm match is rejected")
@@ -334,7 +507,10 @@ assert(fallbackVariables.Role == "page-only", "a damaged ancestor falls back to 
 assert(fallbackError == "invalid-variables", "the editor preserves the inherited-variable error for visibility")
 
 function AngryEra:Print() end
-function AngryEra:CategoryUpdated() end
+local updatedCategoryId
+function AngryEra:CategoryUpdated(id)
+    updatedCategoryId = id
+end
 
 local updatedPageId, updatedPageVars
 local proposalMode = false
@@ -362,6 +538,34 @@ AngryAssign_Pages[20] = {
     Vars = "MT=Old\nNOTE=before",
 }
 local reference = layoutEditor.ReferenceEntity(20, "page")
+local savedVariables, savedVariableError, proposedVariables =
+    layoutEditor.SaveVariableSource(reference, "MT=VariableEditor\nNOTE=saved", "MT=Old\nNOTE=before")
+assert(
+    savedVariables and not savedVariableError and not proposedVariables,
+    "the variable editor should save through the page update path"
+)
+assert(
+    AngryAssign_Pages[20].Vars == "MT=VariableEditor\nNOTE=saved",
+    "the variable editor should commit the validated source"
+)
+editable = false
+savedVariables, savedVariableError = layoutEditor.SaveVariableSource(reference, "MT=Denied")
+assert(not savedVariables and savedVariableError == "Permission denied.", "permission loss should block a stale dialog")
+assert(
+    AngryAssign_Pages[20].Vars == "MT=VariableEditor\nNOTE=saved",
+    "a denied variable save should not mutate the page"
+)
+editable = true
+
+AngryAssign_Pages[20].Vars = "MT=ExternalChange"
+savedVariables, savedVariableError =
+    layoutEditor.SaveVariableSource(reference, "MT=StaleWindow", "MT=VariableEditor\nNOTE=saved")
+assert(
+    not savedVariables and savedVariableError == "variable-source-changed",
+    "a variable editor should reject a concurrent variable change"
+)
+assert(AngryAssign_Pages[20].Vars == "MT=ExternalChange", "a concurrent variable edit should remain untouched")
+
 AngryAssign_Pages[20] = {
     Id = 20,
     SyncId = "install:page:20",
@@ -394,6 +598,24 @@ AngryAssign_Pages[20] = {
 saved, saveError = layoutEditor.SaveSource(retired, "Wrong/1: Someone")
 assert(not saved and saveError == "layout-target-no-longer-exists", "an id reused by another page is never mutated")
 assert(AngryAssign_Pages[20].Vars == "SAFE=yes", "the reused page remains untouched")
+savedVariables, savedVariableError = layoutEditor.SaveVariableSource(retired, "WRONG=yes")
+assert(
+    not savedVariables and savedVariableError == "layout-target-no-longer-exists",
+    "a stale variable editor should reject a reused page id"
+)
+assert(AngryAssign_Pages[20].Vars == "SAFE=yes", "a stale variable editor should leave the reused page untouched")
+
+local categoryReference = layoutEditor.ReferenceEntity(5, "category")
+savedVariables, savedVariableError, proposedVariables =
+    layoutEditor.SaveVariableSource(categoryReference, "CATEGORY_ROLE=healers")
+assert(
+    savedVariables and not savedVariableError and not proposedVariables,
+    "the variable editor should save a local category directly"
+)
+assert(
+    AngryAssign_Categories[5].Vars == "CATEGORY_ROLE=healers" and updatedCategoryId == 5,
+    "a category variable save should update the exact category"
+)
 
 AngryAssign_Pages[21] = {
     Id = 21,

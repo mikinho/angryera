@@ -440,6 +440,404 @@ merged, mergeError = variables.MergeVariableLayers({}, "SOURCE1=One\nTARGET*=SOU
 variables.MAX_GENERATED_FAMILY_BYTES = generatedByteLimit
 AssertError(merged, mergeError, "variable-family-too-large", "generated family byte limit")
 
+-- Managed raid rosters are stored as one reserved snapshot and materialize
+-- ordinary numbered variables without exposing the ownership directive.
+local rosterSnapshot = {
+    v = 1,
+    TANK = { "TankOne", "TankTwo" },
+    HEALER = { "HealerOne", "HealerTwo" },
+    DPS = { "DpsOne" },
+    ID = {
+        TANK = { "TankOne-Mankrik", "TankTwo-Mankrik" },
+        HEALER = { "HealerOne-Mankrik", "HealerTwo-Mankrik" },
+        DPS = { "DpsOne-Mankrik" },
+    },
+}
+local safeRoster, rosterError = variables.ValidateRaidRosterSnapshot(rosterSnapshot)
+assert(safeRoster and not rosterError, "a valid managed raid roster should validate")
+assert(
+    safeRoster ~= rosterSnapshot
+        and safeRoster.TANK ~= rosterSnapshot.TANK
+        and safeRoster.ID ~= rosterSnapshot.ID
+        and safeRoster.ID.TANK ~= rosterSnapshot.ID.TANK,
+    "validated managed raid rosters should be detached"
+)
+
+for _, invalidRoster in ipairs({
+    { v = 2, TANK = {}, HEALER = {}, DPS = {}, ID = { TANK = {}, HEALER = {}, DPS = {} } },
+    { v = 1, TANK = {}, HEALER = {}, ID = { TANK = {}, HEALER = {}, DPS = {} } },
+    { v = 1, TANK = {}, HEALER = {}, DPS = {} },
+    { v = 1, TANK = {}, HEALER = {}, DPS = {}, ID = { TANK = {}, HEALER = {} } },
+    {
+        v = 1,
+        TANK = { [2] = "Gap" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { [2] = "Gap-Mankrik" }, HEALER = {}, DPS = {} },
+    },
+    { v = 1, TANK = { 7 }, HEALER = {}, DPS = {}, ID = { TANK = { "Seven-Mankrik" }, HEALER = {}, DPS = {} } },
+    {
+        v = 1,
+        TANK = { " Padded" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "Padded-Mankrik" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "Not A Name" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "NotAName-Mankrik" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "-Realm" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "Name-Realm" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "Name-" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "Name-Realm" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "Name--Realm" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "Name-Realm" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "Name" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = {}, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "Name" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "Name" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "Name" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "Other-Mankrik" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "Name-Mankrik" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "Name-Pagle" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "Name" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "Name-" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = { "Name" },
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = { "Name--Mankrik" }, HEALER = {}, DPS = {} },
+    },
+    {
+        v = 1,
+        TANK = {},
+        HEALER = {},
+        DPS = {},
+        ID = { TANK = {}, HEALER = {}, DPS = {}, OTHER = {} },
+    },
+    { v = 1, TANK = {}, HEALER = {}, DPS = {}, ID = { TANK = {}, HEALER = {}, DPS = {} }, OTHER = {} },
+}) do
+    safeRoster, rosterError = variables.ValidateRaidRosterSnapshot(invalidRoster)
+    AssertError(safeRoster, rosterError, "invalid-raid-roster", "invalid managed raid roster")
+end
+
+safeRoster, rosterError = variables.ValidateRaidRosterSnapshot({
+    v = 1,
+    TANK = { "Roselea" },
+    HEALER = { "ROSELEA" },
+    DPS = {},
+    ID = {
+        TANK = { "Roselea-Mankrik" },
+        HEALER = { "Roselea-Pagle" },
+        DPS = {},
+    },
+})
+AssertError(safeRoster, rosterError, "duplicate-raid-roster-member", "duplicate managed raid roster member")
+
+safeRoster, rosterError = variables.ValidateRaidRosterSnapshot({
+    v = 1,
+    TANK = { "Roselea" },
+    HEALER = { "Roselea-Mankrik" },
+    DPS = {},
+    ID = {
+        TANK = { "Roselea-Pagle" },
+        HEALER = { "Roselea-Mankrik" },
+        DPS = {},
+    },
+})
+AssertError(safeRoster, rosterError, "ambiguous-raid-roster-member", "ambiguous managed raid roster member")
+safeRoster, rosterError = variables.ValidateRaidRosterSnapshot({
+    v = 1,
+    TANK = { "Zed-Mankrik" },
+    HEALER = { "Zed-Pagle" },
+    DPS = {},
+    ID = {
+        TANK = { "Zed-Mankrik" },
+        HEALER = { "Zed-Pagle" },
+        DPS = {},
+    },
+})
+assert(safeRoster and not rosterError, "qualified same-short members from different realms should remain distinct")
+safeRoster, rosterError = variables.ValidateRaidRosterSnapshot({
+    v = 1,
+    TANK = { "Zed" },
+    HEALER = { "Zed-Mankrik" },
+    DPS = {},
+    ID = {
+        TANK = { "Zed-Mankrik" },
+        HEALER = { "Zed-Mankrik" },
+        DPS = {},
+    },
+})
+AssertError(safeRoster, rosterError, "duplicate-raid-roster-member", "duplicate canonical raid roster identity")
+
+local oversizedRoster = {
+    v = 1,
+    TANK = {},
+    HEALER = {},
+    DPS = {},
+    ID = {
+        TANK = {},
+        HEALER = {},
+        DPS = {},
+    },
+}
+for index = 1, variables.MAX_RAID_ROSTER_MEMBERS do
+    oversizedRoster.DPS[index] = "Dps" .. index
+    oversizedRoster.ID.DPS[index] = "Dps" .. index .. "-Mankrik"
+end
+oversizedRoster.TANK[1] = "ExtraTank"
+oversizedRoster.ID.TANK[1] = "ExtraTank-Mankrik"
+safeRoster, rosterError = variables.ValidateRaidRosterSnapshot(oversizedRoster)
+AssertError(safeRoster, rosterError, "raid-roster-too-large", "oversized managed raid roster")
+
+local keyValueRosterSource = "MT=Roselea\r\nKeep = exact spacing\r\n"
+local rosterSource, rosterSourceError = variables.UpsertRaidRosterSource(keyValueRosterSource, rosterSnapshot)
+assert(rosterSource and not rosterSourceError, "a managed roster should append to Key=Value source")
+assert(
+    rosterSource:sub(1, #keyValueRosterSource) == keyValueRosterSource
+        and rosterSource:find("\r\n" .. variables.RAID_ROSTER_DIRECTIVE .. "=", 1, true) ~= nil
+        and rosterSource:sub(-2) == "\r\n",
+    "Key=Value upsert should preserve unrelated lines, CRLF, and the final newline"
+)
+local extractedRoster, extractedRosterError = variables.ExtractRaidRosterSnapshot(rosterSource)
+assert(extractedRoster and not extractedRosterError, "the Key=Value managed roster should extract")
+assert(
+    extractedRoster.TANK[2] == "TankTwo"
+        and extractedRoster.HEALER[1] == "HealerOne"
+        and extractedRoster.DPS[1] == "DpsOne"
+        and extractedRoster.ID.TANK[2] == "TankTwo-Mankrik"
+        and extractedRoster.ID.HEALER[1] == "HealerOne-Mankrik"
+        and extractedRoster.ID.DPS[1] == "DpsOne-Mankrik",
+    "Key=Value extraction should retain display roles and canonical identities in authored order"
+)
+local absentRoster, absentRosterError = variables.ExtractRaidRosterSnapshot("MT=Roselea")
+assert(absentRoster == nil and absentRosterError == nil, "an absent managed roster should not be an error")
+assert(
+    variables.UpsertRaidRosterSource(rosterSource, rosterSnapshot) == rosterSource,
+    "a canonical Key=Value managed roster upsert should be byte-identical"
+)
+local removedRoster = assert(variables.UpsertRaidRosterSource(rosterSource, nil))
+assert(
+    removedRoster == keyValueRosterSource,
+    "removing a Key=Value snapshot should restore the unrelated source exactly"
+)
+local blankLineRosterSource = assert(variables.UpsertRaidRosterSource("\n", rosterSnapshot))
+assert(
+    variables.UpsertRaidRosterSource(blankLineRosterSource, nil) == "\n",
+    "a blank Key=Value source should survive snapshot add/remove exactly"
+)
+
+local jsonRosterSource =
+    [[{"Keep":{"nested":true},"EmptyObject":{},"EmptyArray":[],"Count":2,"$ae_raid_roster":{"v":1,"TANK":[],"HEALER":[],"DPS":[],"ID":{"TANK":[],"HEALER":[],"DPS":[]}}}]]
+local updatedJsonRoster = assert(variables.UpsertRaidRosterSource(jsonRosterSource, rosterSnapshot))
+local decodedJsonRoster = assert(app.AngryEra.utils.json.JSON_TryDecode(updatedJsonRoster))
+assert(
+    decodedJsonRoster.Keep.nested == true
+        and decodedJsonRoster.Count == 2
+        and decodedJsonRoster["$ae_raid_roster"] == nil
+        and type(decodedJsonRoster[variables.RAID_ROSTER_DIRECTIVE]) == "table",
+    "JSON upsert should preserve unrelated values and canonicalize the one reserved directive"
+)
+assert(
+    updatedJsonRoster:find("\"EmptyObject\":{}", 1, true) and updatedJsonRoster:find("\"EmptyArray\":[]", 1, true),
+    "JSON upsert should preserve unrelated empty object and array types"
+)
+extractedRoster, extractedRosterError = variables.ExtractRaidRosterSnapshot(updatedJsonRoster)
+assert(
+    extractedRoster
+        and not extractedRosterError
+        and extractedRoster.HEALER[2] == "HealerTwo"
+        and extractedRoster.ID.HEALER[2] == "HealerTwo-Mankrik",
+    "the JSON managed roster should extract"
+)
+merged, mergeError = variables.MergeVariableLayers({}, updatedJsonRoster)
+assert(
+    merged
+        and not mergeError
+        and merged.RAID_TANK1 == "TankOne"
+        and merged.RAID_HEALER2 == "HealerTwo"
+        and merged.ID == nil
+        and merged[variables.RAID_ROSTER_DIRECTIVE] == nil,
+    "JSON-object snapshots should materialize display names without exposing identity sidecar data"
+)
+local removedJsonRoster = assert(variables.UpsertRaidRosterSource(updatedJsonRoster, nil))
+local decodedRemovedJson = assert(app.AngryEra.utils.json.JSON_TryDecode(removedJsonRoster))
+assert(
+    decodedRemovedJson.Keep.nested == true
+        and decodedRemovedJson.Count == 2
+        and decodedRemovedJson[variables.RAID_ROSTER_DIRECTIVE] == nil,
+    "JSON removal should preserve unrelated values"
+)
+assert(
+    variables.UpsertRaidRosterSource(
+        [[{"$AE_RAID_ROSTER":{"v":1,"TANK":[],"HEALER":[],"DPS":[],"ID":{"TANK":[],"HEALER":[],"DPS":[]}}}]],
+        nil
+    ) == "{}",
+    "removing the sole JSON managed roster should preserve object storage"
+)
+
+local invalidRosterSource, invalidRosterSourceError = variables.UpsertRaidRosterSource("[]", rosterSnapshot)
+AssertError(invalidRosterSource, invalidRosterSourceError, "invalid-variables", "JSON array managed roster source")
+local conflictingRosterSource, conflictingRosterError = variables.ExtractRaidRosterSnapshot(
+    "$AE_RAID_ROSTER={\"v\":1,\"TANK\":[],\"HEALER\":[],\"DPS\":[],\"ID\":{\"TANK\":[],\"HEALER\":[],\"DPS\":[]}}\n"
+        .. "$ae_raid_roster={\"v\":1,\"TANK\":[],\"HEALER\":[],\"DPS\":[],\"ID\":{\"TANK\":[],\"HEALER\":[],\"DPS\":[]}}"
+)
+AssertError(
+    conflictingRosterSource,
+    conflictingRosterError,
+    "conflicting-reserved-metadata",
+    "duplicate managed roster directives"
+)
+merged, mergeError = variables.MergeVariableLayers(
+    {},
+    "$AE_RAID_ROSTER={\"v\":1,\"TANK\":[\"One\"],\"HEALER\":[],\"DPS\":[],\"ID\":{\"TANK\":[\"One-Mankrik\"],\"HEALER\":[],\"DPS\":[]}}\n"
+        .. "$AE_RAID_ROSTER={\"v\":1,\"TANK\":[\"Two\"],\"HEALER\":[],\"DPS\":[],\"ID\":{\"TANK\":[\"Two-Mankrik\"],\"HEALER\":[],\"DPS\":[]}}"
+)
+AssertError(merged, mergeError, "conflicting-reserved-metadata", "duplicate managed roster directives during merge")
+merged, mergeError = variables.MergeVariableLayers(
+    {},
+    [[{"$AE_RAID_ROSTER":{"v":1,"TANK":["One"],"HEALER":[],"DPS":[],"ID":{"TANK":["One-Mankrik"],"HEALER":[],"DPS":[]}},"$AE_RAID_ROSTER":{"v":1,"TANK":["Two"],"HEALER":[],"DPS":[],"ID":{"TANK":["Two-Mankrik"],"HEALER":[],"DPS":[]}}}]]
+)
+AssertError(merged, mergeError, "invalid-variables", "duplicate JSON managed roster directives during merge")
+
+merged, mergeError = variables.MergeVariableLayers(
+    {},
+    "$AE_RAID_ROSTER={\"v\":2,\"TANK\":[],\"HEALER\":[],\"DPS\":[],\"ID\":{\"TANK\":[],\"HEALER\":[],\"DPS\":[]}}"
+)
+AssertError(merged, mergeError, "invalid-raid-roster", "invalid managed roster during merge")
+
+rosterSource = assert(variables.UpsertRaidRosterSource("HEALER*=RAID_HEALER*", rosterSnapshot))
+merged, mergeError = variables.MergeVariableLayers({}, rosterSource)
+assert(merged and not mergeError, "a managed roster should materialize during variable merge")
+assert(
+    merged.RAID_TANK1 == "TankOne"
+        and merged.RAID_TANK2 == "TankTwo"
+        and merged.RAID_HEALER1 == "HealerOne"
+        and merged.RAID_HEALER2 == "HealerTwo"
+        and merged.RAID_DPS1 == "DpsOne",
+    "managed roster arrays should generate dense role variables"
+)
+assert(
+    merged.HEALER1 == "HealerOne" and merged.HEALER2 == "HealerTwo" and merged[variables.RAID_ROSTER_DIRECTIVE] == nil,
+    "families should consume generated roles while the reserved directive stays private"
+)
+
+local sameLayerOverride = assert(variables.UpsertRaidRosterSource("RAID_HEALER2=ManualHealer", rosterSnapshot))
+merged, mergeError = variables.MergeVariableLayers({}, sameLayerOverride)
+assert(merged and not mergeError, "a same-layer explicit generated-role override should merge")
+assert(
+    merged.RAID_HEALER1 == "HealerOne" and merged.RAID_HEALER2 == "ManualHealer",
+    "same-layer explicit RAID role variables should override generated positions"
+)
+
+local inheritedRoster = assert(variables.UpsertRaidRosterSource("RAID_DPS2=InheritedManual", rosterSnapshot))
+local closerRoster = {
+    v = 1,
+    TANK = { "PageTank" },
+    HEALER = {},
+    DPS = {},
+    ID = {
+        TANK = { "PageTank-Mankrik" },
+        HEALER = {},
+        DPS = {},
+    },
+}
+local closerRosterSource = assert(variables.UpsertRaidRosterSource("RAID_TANK1=PageException", closerRoster))
+merged, mergeError = variables.MergeVariableLayers({
+    {
+        Vars = inheritedRoster,
+    },
+}, closerRosterSource)
+assert(merged and not mergeError, "a closer managed roster should replace inherited generated roles")
+assert(
+    merged.RAID_TANK1 == "PageException"
+        and merged.RAID_TANK2 == nil
+        and merged.RAID_HEALER1 == nil
+        and merged.RAID_DPS1 == nil
+        and merged.RAID_DPS2 == nil,
+    "a closer snapshot should clear broader managed output while preserving same-layer explicit overrides"
+)
+
+local inheritedRoleFamilySource = assert(variables.UpsertRaidRosterSource("", closerRoster))
+merged, mergeError = variables.MergeVariableLayers({
+    {
+        Vars = "PRIEST1=LeakedOne\nPRIEST2=LeakedTwo\nRAID_HEALER*=PRIEST*",
+    },
+}, inheritedRoleFamilySource)
+assert(merged and not mergeError, "a closer managed snapshot should replace an inherited RAID role declaration")
+assert(
+    merged.RAID_HEALER1 == nil and merged.RAID_HEALER2 == nil,
+    "an inherited RAID role declaration should not leak members through an empty snapshot role"
+)
+
+local sameLayerRoleFamily =
+    assert(variables.UpsertRaidRosterSource("PRIEST1=Conflict\nRAID_HEALER*=PRIEST*", rosterSnapshot))
+merged, mergeError = variables.MergeVariableLayers({}, sameLayerRoleFamily)
+AssertError(
+    merged,
+    mergeError,
+    "conflicting-raid-roster-family",
+    "same-layer managed snapshot and RAID role declaration"
+)
+
+local parentRosterSource = assert(variables.UpsertRaidRosterSource("", rosterSnapshot))
+merged, mergeError = variables.MergeVariableLayers({
+    {
+        Vars = parentRosterSource,
+    },
+}, "CUSTOM1=Closer\nRAID_HEALER*=CUSTOM*")
+assert(merged and not mergeError, "a closer explicit RAID role declaration should override an inherited snapshot")
+assert(
+    merged.RAID_HEALER1 == "Closer" and merged.RAID_HEALER2 == nil,
+    "the closer role declaration should own the inherited snapshot namespace"
+)
+
 local canonicalContext, canonicalError = variables.BuildContextRevisionInput(layers, "role=page")
 assert(canonicalContext and not canonicalError, "Valid layers should produce canonical context input")
 

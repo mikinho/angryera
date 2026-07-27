@@ -17,6 +17,8 @@ local baseRaidRoster = {
     { name = "Dup-RealmA", rank = 0 },
     { name = "Dup-RealmB", rank = 0 },
     { name = "Viewer", rank = 2 },
+    { name = "HomeDup-Pagle", rank = 0 },
+    { name = "HomeDup-OtherRealm", rank = 0 },
 }
 
 local function CopyRaidRoster()
@@ -223,6 +225,13 @@ applied = AngryEra_ApplyAutoMarkers({
 })
 assert(applied == 1 and FindAssignment(2) == "raid5", "qualified names should resolve ambiguity")
 
+-- The local realm does not break a short-name tie.
+Reset()
+applied = AngryEra_ApplyAutoMarkers({
+    MOON = "HomeDup",
+})
+assert(applied == 0 and #assignments == 0, "same-realm short-name ambiguity must not be guessed")
+
 -- Unknown names and non-string values are ignored.
 Reset()
 applied = AngryEra_ApplyAutoMarkers({
@@ -339,7 +348,7 @@ assignments = {}
 raidRoster[#raidRoster + 1] = { name = "Late-OtherRealm", rank = 0 }
 applied = AngryEra:RetryDisplayedNoteMarkers()
 assert(applied == 1, "a late roster member should resolve on the roster retry")
-assert(FindAssignment(8) == "raid7", "the retry should apply the pending skull to the late member")
+assert(FindAssignment(8) == "raid9", "the retry should apply the pending skull to the late member")
 assert(CountAssignments(6) == 0, "the retry must not reassert an already-resolved square")
 assert(currentMarkers["Zessy-Pagle"] == 1, "the retry must preserve a manual marker change")
 assignments = {}

@@ -90,8 +90,28 @@ SetRoster({
     { full = "Zed-Bloodfang", online = true, dead = false },
 })
 assert(
-    roster.ResolvePresentAndAliveName("Zed") == "Zed-Bloodfang",
-    "an unqualified name prefers the exact member on the player's realm"
+    roster.ResolvePresentAndAliveName("Zed") == nil,
+    "an unqualified collision stays ambiguous even when one member is on the player's realm"
+)
+
+SetRoster({
+    { full = "Zed-Darkspear", online = true, dead = false },
+    { full = "Zed-Frostwolf", online = true, dead = true },
+})
+local deadCollisionName, deadCollisionReason = roster.ResolvePresentAndAliveName("Zed")
+assert(
+    deadCollisionName == nil and deadCollisionReason == "ambiguous-name",
+    "a dead duplicate still makes an unqualified name ambiguous"
+)
+
+SetRoster({
+    { full = "Zed-Darkspear", online = true, dead = false },
+    { full = "Zed-Frostwolf", online = false, dead = false },
+})
+local offlineCollisionName, offlineCollisionReason = roster.ResolvePresentAndAliveName("Zed")
+assert(
+    offlineCollisionName == nil and offlineCollisionReason == "ambiguous-name",
+    "an offline duplicate still makes an unqualified name ambiguous"
 )
 
 -- WoW names are UTF-8; Lua 5.1 character classes are not. Priority parsing

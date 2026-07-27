@@ -11,7 +11,6 @@ local colors = AngryEra.utils.colors
 local layout = AngryEra.utils.layout
 local rosterHelpers = AngryEra.utils.roster
 local variableHelpers = AngryEra.utils.variables
-local EnsureUnitFullName = helpers.EnsureUnitFullName
 local EnsureUnitShortName = helpers.EnsureUnitShortName
 local IterateGroupMembers = helpers.IterateGroupMembers
 local IsCategoryDescendant = helpers.IsCategoryDescendant
@@ -22,12 +21,29 @@ local layoutEditor = {}
 AngryEra.utils.layout_editor = layoutEditor
 
 local VARIABLE_SAVE_ERRORS = {
+    ["ambiguous-raid-roster-member"] = "A managed raid-role name needs Name-Realm because its short name is ambiguous.",
+    ["assigned-role-api-unavailable"] = "Assigned raid roles are not available on this client.",
+    ["assigned-role-scan-failed"] = "Could not read the assigned roles from the current group.",
+    ["conflicting-reserved-metadata"] = "Reserved metadata is declared more than once.",
+    ["conflicting-raid-roster-family"] = "Do not declare RAID_TANK*, RAID_HEALER*, or RAID_DPS* beside an imported raid-role snapshot.",
+    ["duplicate-raid-roster-member"] = "A player appears more than once in the managed raid roles.",
+    ["invalid-raid-roster"] = "The managed raid-role data is malformed.",
+    ["invalid-roster-member"] = "Blizzard returned an invalid member in the current group roster.",
+    ["invalid-roster-unit"] = "Blizzard returned a group member without a usable unit identifier.",
     ["invalid-variable-family"] = "A variable family is malformed. Use comma-separated names such as HEALER*=PRIEST*,PALADIN*.",
     ["invalid-variable-line"] = "Each nonblank variable line must use Key=Value.",
     ["variable-family-cycle"] = "Variable families cannot form a reference cycle.",
     ["variable-family-too-large"] = "A variable family is too large.",
     ["invalid-variables"] = "Variables must be valid JSON or Key=Value lines.",
+    ["no-assigned-roles"] = "No group members currently have Tank, Healer, or Damage roles assigned.",
+    ["not-grouped"] = "Join a party or raid before importing assigned roles.",
+    ["raid-roster-too-large"] = "The assigned-role roster is too large.",
     ["resolved-variables-too-large"] = "The resolved variables are too large.",
+    ["role-api-failed"] = "Could not read every assigned role from Blizzard's group roster.",
+    ["role-api-unavailable"] = "Assigned raid roles are not available on this client.",
+    ["roster-unavailable"] = "The current group roster is not available.",
+    ["unsupported-role-value"] = "Blizzard returned an assigned role this AngryEra version does not recognize.",
+    ["variable-source-changed"] = "These variables changed after this editor opened. Reopen it before saving.",
 }
 
 -- -----------------------
@@ -1077,23 +1093,151 @@ local function AngryEra_CategoryMenuList(entryId, parentId)
     end
 end
 
-local function AngryEra_EditVariables(id, type)
-    local entity
-    if type == "category" then
-        entity = AngryAssign_Categories[id]
-    else
-        entity = AngryAssign_Pages[id]
+local function FormatAssignedRoleSummary(summary)
+    return ("Imported %d tank%s, %d healer%s, and %d DPS. Review the variables, then click Save."):format(
+        summary.TANK,
+        summary.TANK == 1 and "" or "s",
+        summary.HEALER,
+        summary.HEALER == 1 and "" or "s",
+        summary.DPS
+    )
+end
+
+local function StableAssignedRoleMembers(existingMembers, existingIdentifiers, assignments, role)
+    local roleAssignments = {}
+    local byFullName = {}
+    for _, assignment in ipairs(assignments) do
+        if assignment.Role == role then
+            local index = #roleAssignments + 1
+            roleAssignments[index] = assignment
+            local fullName = type(assignment.FullName) == "string" and assignment.FullName or assignment.Name
+            local fullKey = type(fullName) == "string" and fullName:lower() or nil
+            if fullKey then
+                byFullName[fullKey] = index
+            end
+        end
     end
-    if not AngryEra:CanEditEntityLocally(entity) then
+
+    local members = {}
+    local identifiers = {}
+    local used = {}
+    for oldIndex in ipairs(existingMembers or {}) do
+        local oldIdentifier = type(existingIdentifiers) == "table" and existingIdentifiers[oldIndex] or nil
+        local oldKey = type(oldIdentifier) == "string" and oldIdentifier:lower() or nil
+        local index = oldKey and byFullName[oldKey] or nil
+        if index and not used[index] then
+            local assignment = roleAssignments[index]
+            members[#members + 1] = assignment.Name
+            identifiers[#identifiers + 1] = assignment.FullName
+            used[index] = true
+        end
+    end
+    for index, assignment in ipairs(roleAssignments) do
+        if not used[index] then
+            members[#members + 1] = assignment.Name
+            identifiers[#identifiers + 1] = assignment.FullName
+        end
+    end
+    return members, identifiers
+end
+
+--- Builds and inserts one managed snapshot from Blizzard's assigned group roles.
+-- The returned source is only an editor draft; callers decide whether to save.
+-- @tparam string|nil rawVariables Current raw page/category variables.
+-- @treturn string|nil updatedVariables
+-- @treturn table|string summaryOrError
+function layoutEditor.ImportAssignedRoles(rawVariables)
+    if type(rosterHelpers) ~= "table" or type(rosterHelpers.ScanAssignedRoles) ~= "function" then
+        return nil, "assigned-role-api-unavailable"
+    end
+    if
+        type(variableHelpers) ~= "table"
+        or type(variableHelpers.ExtractRaidRosterSnapshot) ~= "function"
+        or type(variableHelpers.MergeVariableLayers) ~= "function"
+        or type(variableHelpers.UpsertRaidRosterSource) ~= "function"
+    then
+        return nil, "variable-validation-unavailable"
+    end
+
+    local assignments, scanError = rosterHelpers.ScanAssignedRoles()
+    if not assignments then
+        return nil, scanError or "assigned-role-scan-failed"
+    end
+
+    local existingSnapshot, extractError = variableHelpers.ExtractRaidRosterSnapshot(rawVariables)
+    if extractError then
+        return nil, extractError
+    end
+    local snapshot = {
+        v = variableHelpers.RAID_ROSTER_VERSION or 1,
+        ID = {},
+    }
+    snapshot.TANK, snapshot.ID.TANK = StableAssignedRoleMembers(
+        existingSnapshot and existingSnapshot.TANK,
+        existingSnapshot and existingSnapshot.ID and existingSnapshot.ID.TANK,
+        assignments,
+        "TANK"
+    )
+    snapshot.HEALER, snapshot.ID.HEALER = StableAssignedRoleMembers(
+        existingSnapshot and existingSnapshot.HEALER,
+        existingSnapshot and existingSnapshot.ID and existingSnapshot.ID.HEALER,
+        assignments,
+        "HEALER"
+    )
+    snapshot.DPS, snapshot.ID.DPS = StableAssignedRoleMembers(
+        existingSnapshot and existingSnapshot.DPS,
+        existingSnapshot and existingSnapshot.ID and existingSnapshot.ID.DPS,
+        assignments,
+        "DPS"
+    )
+    for _, assignment in ipairs(assignments) do
+        if
+            type(snapshot[assignment.Role]) ~= "table"
+            or type(snapshot.ID[assignment.Role]) ~= "table"
+            or type(assignment.Name) ~= "string"
+            or assignment.Name == ""
+            or type(assignment.FullName) ~= "string"
+            or assignment.FullName == ""
+        then
+            return nil, "invalid-raid-roster"
+        end
+    end
+
+    local updatedVariables, updateError = variableHelpers.UpsertRaidRosterSource(rawVariables, snapshot)
+    if not updatedVariables then
+        return nil, updateError
+    end
+    local validLayer, validationError = variableHelpers.MergeVariableLayers({}, updatedVariables)
+    if not validLayer then
+        return nil, validationError
+    end
+    return updatedVariables,
+        {
+            TANK = #snapshot.TANK,
+            HEALER = #snapshot.HEALER,
+            DPS = #snapshot.DPS,
+        }
+end
+
+local function AngryEra_EditVariables(id, entityType)
+    entityType = entityType == "category" and "category" or "page"
+    local reference = type(layoutEditor.ReferenceEntity) == "function" and layoutEditor.ReferenceEntity(id, entityType)
+        or nil
+    local entity, currentId
+    if reference and type(layoutEditor.ResolveEntity) == "function" then
+        entity, currentId = layoutEditor.ResolveEntity(reference)
+    end
+    if not entity or not AngryEra:CanEditEntityLocally(entity) then
         return
     end
     local vars = entity.Vars
-    if type ~= "category" and AngryEra.GetSharedPageChangeDraft then
-        local draft = AngryEra:GetSharedPageChangeDraft(id)
-        if draft then
+    if entityType ~= "category" and AngryEra.GetSharedPageChangeDraft then
+        local draft = AngryEra:GetSharedPageChangeDraft(currentId)
+        if type(draft) == "table" and type(draft.Desired) == "table" then
             vars = draft.Desired.Vars
         end
     end
+    local expectedVariables = type(vars) == "string" and vars or ""
 
     local DEFAULT_VARS_TEMPLATE = "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK="
     if not vars or vars == "" or vars == "{}" then
@@ -1103,22 +1247,46 @@ local function AngryEra_EditVariables(id, type)
     local frame = AceGUI:Create("Window")
     frame:SetTitle("Edit Template Variables")
     frame:SetLayout("Flow")
-    frame:SetWidth(400)
-    frame:SetHeight(300)
+    frame:SetWidth(430)
+    frame:SetHeight(390)
     frame:EnableResize(true)
     _G["AngryEra_EditVars_Window"] = frame.frame
     table.insert(UISpecialFrames, "AngryEra_EditVars_Window")
 
+    local importButton = AceGUI:Create("Button")
+    importButton:SetText("Import Assigned Raid Roles")
+    importButton:SetFullWidth(true)
+    frame:AddChild(importButton)
+
+    local importStatus = AceGUI:Create("Label")
+    importStatus:SetText("Reads Blizzard-assigned roles into numbered RAID_TANK, RAID_HEALER, and RAID_DPS variables.")
+    importStatus:SetFullWidth(true)
+    frame:AddChild(importStatus)
+
     local editBox = AceGUI:Create("MultiLineEditBox")
     editBox:SetLabel("Variables (JSON or Key=Value pairs)")
-    editBox:SetNumLines(15)
+    editBox:SetNumLines(14)
     editBox:SetText(vars)
     editBox:SetFullWidth(true)
-    editBox:SetFullHeight(true)
     editBox:DisableButton(false)
+    importButton:SetCallback("OnClick", function()
+        local updatedVariables, summaryOrError = layoutEditor.ImportAssignedRoles(editBox:GetText())
+        if not updatedVariables then
+            local errorMessage = VARIABLE_SAVE_ERRORS[summaryOrError]
+                or ("Could not import assigned roles (" .. tostring(summaryOrError) .. ").")
+            importStatus:SetText(errorMessage)
+            AngryEra:Print(errorMessage)
+            return
+        end
+
+        editBox:SetText(updatedVariables)
+        local summaryMessage = FormatAssignedRoleSummary(summaryOrError)
+        importStatus:SetText(summaryMessage)
+        AngryEra:Print(summaryMessage)
+    end)
     editBox:SetCallback("OnEnterPressed", function(widget, event, text)
         -- Normalize Line Endings
-        text = text:gsub("\r\n", "\n")
+        text = text:gsub("\r\n", "\n"):gsub("\r", "\n")
 
         -- Don't save if unmodified default template
         if text == "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK=" then
@@ -1127,47 +1295,22 @@ local function AngryEra_EditVariables(id, type)
             text = nil
         end
 
-        local reference = type(layoutEditor.ReferenceEntity) == "function" and layoutEditor.ReferenceEntity(id, type)
-            or nil
-        local validVariables, validationError = false, "variable-validation-unavailable"
-        if type(layoutEditor.ValidateVariableSource) == "function" then
-            validVariables, validationError = layoutEditor.ValidateVariableSource(reference, entity, text)
-        end
-        if not validVariables then
+        local saved, saveError, proposed = layoutEditor.SaveVariableSource(reference, text, expectedVariables)
+        if not saved then
             AngryEra:Print(
                 "Could not save variables: "
                     .. (
-                        VARIABLE_SAVE_ERRORS[validationError]
-                        or ("Invalid effective variables (" .. tostring(validationError) .. ").")
+                        VARIABLE_SAVE_ERRORS[saveError]
+                        or (saveError and tostring(saveError))
+                        or "The target is no longer editable."
                     )
             )
-            return
-        end
-
-        local saved = true
-        local saveError
-        local proposed = false
-        if type == "category" then
-            local cat = AngryAssign_Categories[id]
-            if cat and AngryEra:CanEditEntityLocally(cat) then
-                cat.Vars = text
-                AngryEra:CategoryUpdated(id)
-            end
-        else
-            local page = AngryAssign_Pages[id]
-            if page and AngryEra:CanEditEntityLocally(page) then
-                saved, saveError, proposed = AngryEra:UpdatePageVars(id, text)
-            end
-        end
-        if not saved then
-            if saveError then
-                print(saveError)
-            end
             return
         end
         -- A shared-page proposal intentionally leaves the canonical page and
         -- editor draft unchanged until the leader commits a new revision.
         if proposed then
+            expectedVariables = type(text) == "string" and text or ""
             return
         end
         frame:Hide()
@@ -1285,8 +1428,7 @@ local function BuildEditorLayoutProviders(roster, variables)
 
     -- Duplicate accounting must use one realm-qualified identity even when a
     -- hand-written slot uses a short name and a class/subgroup fill supplies a
-    -- full one. Prefer the player's own realm for an unqualified name; otherwise
-    -- only a unique short-name match is safe.
+    -- full one. An unqualified name is safe only when its short name is unique.
     local function ResolveRosterName(name)
         if type(name) ~= "string" or name == "" then
             return nil
@@ -1297,13 +1439,6 @@ local function BuildEditorLayoutProviders(roster, variables)
         end
         if name:find("-", 1, true) then
             return nil
-        end
-        if type(EnsureUnitFullName) == "function" then
-            local ownRealm = EnsureUnitFullName(name)
-            local ownRealmMatch = type(ownRealm) == "string" and fullNames[ownRealm:lower()] or nil
-            if ownRealmMatch then
-                return ownRealmMatch
-            end
         end
         local unique = shortNames[name:lower()]
         return type(unique) == "string" and unique or nil
@@ -1629,6 +1764,43 @@ function layoutEditor.ValidateVariableSource(reference, entity, rawVariables)
     local merged, mergeError =
         variableHelpers.MergeVariableLayers(EffectiveLayoutAncestorLayers(reference, currentEntity), rawVariables)
     return merged ~= nil, mergeError
+end
+
+--- Validates and saves all variables for the exact page/category an editor opened.
+-- The immutable reference prevents a stale dialog from writing to a reused local
+-- id. Page edits continue through `UpdatePageVars`, including assistant proposals.
+-- @tparam table reference Reference returned by `ReferenceEntity`.
+-- @tparam string|nil rawVariables Proposed complete variable source.
+-- @tparam[opt] string expectedVariables Raw source observed when the editor opened.
+-- @treturn boolean saved
+-- @treturn string|nil reason
+-- @treturn boolean proposed Whether leader acceptance is pending.
+function layoutEditor.SaveVariableSource(reference, rawVariables, expectedVariables)
+    local entity, id, targetError = layoutEditor.ResolveEntity(reference)
+    if not entity then
+        return false, targetError, false
+    end
+    if not AngryEra:CanEditEntityLocally(entity) then
+        return false, "Permission denied.", false
+    end
+    if expectedVariables ~= nil then
+        local currentVariables = CurrentLayoutVars(reference, entity, id)
+        if currentVariables ~= expectedVariables then
+            return false, "variable-source-changed", false
+        end
+    end
+
+    local validVariables, validationError = layoutEditor.ValidateVariableSource(reference, entity, rawVariables)
+    if not validVariables then
+        return false, validationError, false
+    end
+
+    if reference.EntityType ~= "category" then
+        return AngryEra:UpdatePageVars(id, rawVariables)
+    end
+    entity.Vars = rawVariables
+    AngryEra:CategoryUpdated(id)
+    return true, nil, false
 end
 
 local function EffectiveLayoutVariables(reference, entity, vars)

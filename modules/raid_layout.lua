@@ -156,9 +156,8 @@ local function BuildRaidState()
         end
     end
 
-    -- Qualified names are exact. A short name first prefers the player's own
-    -- realm, then falls back only when exactly one roster member has that short
-    -- name. This mirrors priority resolution without ever guessing.
+    -- Qualified names are exact. A short name is safe only when exactly one
+    -- roster member has it, regardless of the local player's realm.
     local function ResolveRaidMember(name)
         if type(name) ~= "string" or name == "" then
             return nil, nil, "invalid-name"
@@ -170,12 +169,6 @@ local function BuildRaidState()
                 return fullNameByIndex[exactIndex], exactIndex
             end
             return nil, nil, "unknown-member"
-        end
-
-        local ownRealmName = helpers.EnsureUnitFullName(name)
-        local ownRealmIndex = type(ownRealmName) == "string" and indexByFullName[ownRealmName:lower()] or nil
-        if ownRealmIndex then
-            return fullNameByIndex[ownRealmIndex], ownRealmIndex
         end
 
         local candidates = indicesByShortName[lower]

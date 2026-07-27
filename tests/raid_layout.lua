@@ -200,14 +200,14 @@ assert(not applied and reason == "not-authorized", "a failing permission helper 
 assert(#operations == 0, "a failing permission helper performs no raid mutation")
 AngryEra.CanLocalPlayerApplyRaidLayout = permissionHelper
 
--- A short name prefers the exact same-realm member and never guesses the first
--- matching short name returned by the raid roster.
+-- A duplicated short name is ambiguous even when one member is on the local
+-- player's realm.
 applied, reason = Apply({
     { Name = "Zed-Other", Subgroup = 1 },
     { Name = "Zed-Home", Subgroup = 2 },
 }, "Home/2: Zed")
-assert(applied and reason == 0, "a short name resolves to the same-realm member")
-assert(#operations == 0, "the already-seated same-realm member does not move")
+assert(not applied and reason == "unresolved-member", "a same-realm collision still requires Name-Realm")
+assert(#operations == 0, "an ambiguous same-realm collision performs no raid mutation")
 
 -- With no same-realm member, a duplicated short name is ambiguous and Apply
 -- fails closed before any subgroup operation.
@@ -226,15 +226,18 @@ assert(
     "the unique canonical member is moved"
 )
 
--- Priority resolution uses canonical roster names too, so a same-realm primary
--- is not confused with a cross-realm member of the same short name.
+-- Priority resolution skips an ambiguous primary and safely uses the next
+-- unique candidate.
 applied, reason = Apply({
     { Name = "Zed-Other", Subgroup = 1 },
     { Name = "Zed-Home", Subgroup = 2 },
     { Name = "Backup-Home", Subgroup = 1 },
 }, "Priority/2: Zed > Backup")
-assert(applied and reason == 0, "priority resolution targets the canonical same-realm member")
-assert(#operations == 0, "an already-correct priority target does not move")
+assert(applied and reason == 1, "priority resolution should skip an ambiguous short name")
+assert(
+    #operations == 1 and operations[1].Index == 3 and operations[1].Subgroup == 2,
+    "the unique backup should move into the requested subgroup"
+)
 
 -- Explicit short/full duplicates are rejected as one canonical raid member.
 applied, reason = Apply({ { Name = "Zed-Home", Subgroup = 1 } }, "One/1: Zed; Two/2: Zed-Home")

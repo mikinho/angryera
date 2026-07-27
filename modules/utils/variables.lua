@@ -24,6 +24,29 @@ variables.MAX_VARIABLE_FAMILY_SELECTORS = 64
 variables.MAX_VARIABLE_FAMILY_MEMBERS = 40
 variables.MAX_GENERATED_FAMILY_VARIABLES = 1024
 variables.MAX_GENERATED_FAMILY_BYTES = variables.MAX_RESOLVED_VARIABLE_BYTES
+variables.RAID_ROSTER_DIRECTIVE = "$AE_RAID_ROSTER"
+variables.RAID_ROSTER_VERSION = 1
+variables.MAX_RAID_ROSTER_MEMBERS = 40
+
+local function RaidRosterDirectiveIdentity(key)
+    return type(key) == "string" and key:upper() == variables.RAID_ROSTER_DIRECTIVE or false
+end
+
+local function KeyValueRaidRosterDirective(rawVariables)
+    local foundValue
+    local found = false
+    for line in (rawVariables .. "\n"):gmatch("([^\r\n]*)[\r\n]+") do
+        local key, value = line:match("^%s*([^=]-)%s*=%s*(.-)%s*$")
+        if key and RaidRosterDirectiveIdentity(key) then
+            if found then
+                return nil, nil, "conflicting-reserved-metadata"
+            end
+            found = true
+            foundValue = value
+        end
+    end
+    return found, foundValue
+end
 
 local function IsPositiveInteger(value)
     return type(value) == "number" and value >= 1 and value % 1 == 0
@@ -233,6 +256,12 @@ local function ParseVariableString(rawVariables)
     if firstCharacter == "[" then
         return nil, "invalid-variables"
     end
+    if firstCharacter ~= "{" then
+        local _, _, directiveError = KeyValueRaidRosterDirective(rawVariables)
+        if directiveError then
+            return nil, directiveError
+        end
+    end
     local parser = firstCharacter == "{" and json.JSON_TryDecode or json.ParseVariables
     local ok, parsed = pcall(parser, rawVariables)
     if not ok or type(parsed) ~= "table" then
@@ -246,6 +275,319 @@ local function ParseVariableString(rawVariables)
     return parsed
 end
 
+local RAID_ROSTER_ROLES = {
+    "TANK",
+    "HEALER",
+    "DPS",
+}
+
+local RAID_ROSTER_FIELDS = {
+    DPS = true,
+    HEALER = true,
+    ID = true,
+    TANK = true,
+    v = true,
+}
+
+local RAID_ROSTER_ID_FIELDS = {
+    DPS = true,
+    HEALER = true,
+    TANK = true,
+}
+
+local function ValidRaidRosterName(member, requireQualified)
+    if
+        type(member) ~= "string"
+        or member == ""
+        or #member > 128
+        or member:match("^%s*(.-)%s*$") ~= member
+        or member:find("[%c%s{},>=]")
+    then
+        return nil
+    end
+
+    local memberIdentity = member:lower()
+    local shortStem = memberIdentity:match("^([^-]+)")
+    if
+        type(shortStem) ~= "string"
+        or shortStem == ""
+        or memberIdentity:sub(-1) == "-"
+        or memberIdentity:find("--", 1, true)
+        or (requireQualified and not memberIdentity:find("-", 1, true))
+    then
+        return nil
+    end
+    return memberIdentity, shortStem
+end
+
+local function CloneValidatedRaidRosterSnapshot(snapshot)
+    if type(snapshot) ~= "table" or snapshot == json.JSON_NULL or snapshot.v ~= variables.RAID_ROSTER_VERSION then
+        return nil, "invalid-raid-roster"
+    end
+    for key in pairs(snapshot) do
+        if not RAID_ROSTER_FIELDS[key] then
+            return nil, "invalid-raid-roster"
+        end
+    end
+    if type(snapshot.ID) ~= "table" or snapshot.ID == json.JSON_NULL then
+        return nil, "invalid-raid-roster"
+    end
+    for key in pairs(snapshot.ID) do
+        if not RAID_ROSTER_ID_FIELDS[key] then
+            return nil, "invalid-raid-roster"
+        end
+    end
+
+    local safe = {
+        ID = {},
+        v = variables.RAID_ROSTER_VERSION,
+    }
+    local total = 0
+    local seenMembers = {}
+    local seenCanonicalIds = {}
+    local qualifiedStems = {}
+    local unqualifiedStems = {}
+    for _, role in ipairs(RAID_ROSTER_ROLES) do
+        local members = snapshot[role]
+        local count = DenseArrayLength(members, variables.MAX_RAID_ROSTER_MEMBERS)
+        local canonicalIds = snapshot.ID[role]
+        local canonicalCount = DenseArrayLength(canonicalIds, variables.MAX_RAID_ROSTER_MEMBERS)
+        if count == nil or canonicalCount == nil or canonicalCount ~= count then
+            return nil, "invalid-raid-roster"
+        end
+        safe[role] = {}
+        safe.ID[role] = {}
+        for index = 1, count do
+            local member = members[index]
+            local memberIdentity, shortStem = ValidRaidRosterName(member, false)
+            local canonicalId = canonicalIds[index]
+            local canonicalIdentity, canonicalStem = ValidRaidRosterName(canonicalId, true)
+            if
+                not memberIdentity
+                or not canonicalIdentity
+                or shortStem ~= canonicalStem
+                or (member:find("-", 1, true) and memberIdentity ~= canonicalIdentity)
+            then
+                return nil, "invalid-raid-roster"
+            end
+            if seenMembers[memberIdentity] then
+                return nil, "duplicate-raid-roster-member"
+            end
+            if seenCanonicalIds[canonicalIdentity] then
+                return nil, "duplicate-raid-roster-member"
+            end
+            if member:find("-", 1, true) then
+                if unqualifiedStems[shortStem] then
+                    return nil, "ambiguous-raid-roster-member"
+                end
+                qualifiedStems[shortStem] = true
+            else
+                if qualifiedStems[shortStem] then
+                    return nil, "ambiguous-raid-roster-member"
+                end
+                unqualifiedStems[shortStem] = true
+            end
+            seenMembers[memberIdentity] = true
+            seenCanonicalIds[canonicalIdentity] = true
+            safe[role][index] = member
+            safe.ID[role][index] = canonicalId
+        end
+        total = total + count
+        if total > variables.MAX_RAID_ROSTER_MEMBERS then
+            return nil, "raid-roster-too-large"
+        end
+    end
+    return safe
+end
+
+--- Validates and detaches a version-1 managed raid-roster snapshot.
+-- Every display-role array and parallel canonical-ID array is required and dense.
+-- @tparam table snapshot `{ v=1, TANK={...}, HEALER={...}, DPS={...}, ID={TANK={...}, HEALER={...}, DPS={...}} }`.
+-- @treturn table|nil safeSnapshot
+-- @treturn string|nil errorCode
+function variables.ValidateRaidRosterSnapshot(snapshot)
+    return CloneValidatedRaidRosterSnapshot(snapshot)
+end
+
+local function DecodeRaidRosterSnapshot(value)
+    if type(value) == "string" then
+        value = json.JSON_TryDecode(value)
+    end
+    return CloneValidatedRaidRosterSnapshot(value)
+end
+
+local function DecodeRawVariablesObject(rawVariables)
+    local firstCharacter = rawVariables:match("^%s*(.)")
+    if firstCharacter ~= "{" and firstCharacter ~= "[" then
+        return nil, false
+    end
+    if firstCharacter ~= "{" then
+        return nil, true
+    end
+    local object = json.JSON_TryDecode(rawVariables)
+    if type(object) ~= "table" or object == json.JSON_NULL then
+        return nil, true
+    end
+    for key in pairs(object) do
+        if type(key) ~= "string" then
+            return nil, true
+        end
+    end
+    return object, true
+end
+
+local function FindRaidRosterDirective(object)
+    local foundKey
+    local foundValue
+    for key, value in pairs(object) do
+        if RaidRosterDirectiveIdentity(key) then
+            if foundKey ~= nil then
+                return nil, nil, "conflicting-reserved-metadata"
+            end
+            foundKey = key
+            foundValue = value
+        end
+    end
+    return foundKey, foundValue
+end
+
+--- Reads the managed raid-roster snapshot from raw Key=Value or JSON variables.
+-- An absent directive returns nil without an error.
+-- @tparam string|nil rawVariables Raw page/category variables.
+-- @treturn table|nil snapshot
+-- @treturn string|nil errorCode
+function variables.ExtractRaidRosterSnapshot(rawVariables)
+    rawVariables = rawVariables or ""
+    if type(rawVariables) ~= "string" or #rawVariables > variables.MAX_VARIABLE_BYTES then
+        return nil, "invalid-variables"
+    end
+
+    local object, isJson = DecodeRawVariablesObject(rawVariables)
+    if isJson and not object then
+        return nil, "invalid-variables"
+    end
+
+    local present
+    local value
+    local findError
+    if object then
+        local key
+        key, value, findError = FindRaidRosterDirective(object)
+        present = key ~= nil
+    else
+        present, value, findError = KeyValueRaidRosterDirective(rawVariables)
+    end
+    if findError then
+        return nil, findError
+    end
+    if not present then
+        return nil
+    end
+    return DecodeRaidRosterSnapshot(value)
+end
+
+local function NewlineFor(rawVariables)
+    return rawVariables:find("\r\n", 1, true) and "\r\n"
+        or (rawVariables:find("\n", 1, true) and "\n")
+        or (rawVariables:find("\r", 1, true) and "\r")
+        or "\n"
+end
+
+local function UpsertKeyValueRaidRoster(rawVariables, encodedSnapshot)
+    local newline = NewlineFor(rawVariables)
+    local normalized = rawVariables:gsub("\r\n", "\n"):gsub("\r", "\n")
+    local hadFinalNewline = normalized:sub(-1) == "\n"
+    local lines = {}
+    if normalized ~= "" then
+        local scan = hadFinalNewline and normalized or (normalized .. "\n")
+        for line in scan:gmatch("([^\n]*)\n") do
+            lines[#lines + 1] = line
+        end
+    end
+
+    local out = {}
+    local replaced = false
+    for _, line in ipairs(lines) do
+        local key = line:match("^%s*([^=]-)%s*=")
+        if key and RaidRosterDirectiveIdentity(key) then
+            if replaced then
+                return nil, "conflicting-reserved-metadata"
+            end
+            replaced = true
+            if encodedSnapshot then
+                out[#out + 1] = variables.RAID_ROSTER_DIRECTIVE .. "=" .. encodedSnapshot
+            end
+        else
+            out[#out + 1] = line
+        end
+    end
+
+    if encodedSnapshot and not replaced then
+        out[#out + 1] = variables.RAID_ROSTER_DIRECTIVE .. "=" .. encodedSnapshot
+    end
+
+    local result = table.concat(out, newline)
+    if hadFinalNewline then
+        result = result .. newline
+    end
+    return result
+end
+
+--- Sets or removes the one managed raid-roster directive in raw variables.
+-- Key=Value source retains unrelated lines and newline style. JSON source
+-- remains a JSON object but is canonically re-encoded.
+-- @tparam string|nil rawVariables Existing raw page/category variables.
+-- @tparam table|nil snapshot Valid version-1 snapshot, or nil to remove it.
+-- @treturn string|nil updatedVariables
+-- @treturn string|nil errorCode
+function variables.UpsertRaidRosterSource(rawVariables, snapshot)
+    rawVariables = rawVariables or ""
+    if type(rawVariables) ~= "string" or #rawVariables > variables.MAX_VARIABLE_BYTES then
+        return nil, "invalid-variables"
+    end
+
+    local safeSnapshot
+    if snapshot ~= nil then
+        local snapshotError
+        safeSnapshot, snapshotError = CloneValidatedRaidRosterSnapshot(snapshot)
+        if not safeSnapshot then
+            return nil, snapshotError
+        end
+    end
+
+    local object, isJson = DecodeRawVariablesObject(rawVariables)
+    if isJson and not object then
+        return nil, "invalid-variables"
+    end
+
+    local updated
+    if object then
+        local existingKey, _, findError = FindRaidRosterDirective(object)
+        if findError then
+            return nil, findError
+        end
+        if existingKey then
+            object[existingKey] = nil
+        end
+        if safeSnapshot then
+            object[variables.RAID_ROSTER_DIRECTIVE] = safeSnapshot
+        end
+        updated = next(object) == nil and "{}" or json.JSON_Encode(object)
+    else
+        local encodedSnapshot = safeSnapshot and json.JSON_Encode(safeSnapshot) or nil
+        local updateError
+        updated, updateError = UpsertKeyValueRaidRoster(rawVariables, encodedSnapshot)
+        if not updated then
+            return nil, updateError
+        end
+    end
+
+    if #updated > variables.MAX_VARIABLE_BYTES then
+        return nil, "invalid-variables"
+    end
+    return updated
+end
+
 local function AppendLengthPrefixed(parts, value)
     parts[#parts + 1] = tostring(#value)
     parts[#parts + 1] = ":"
@@ -253,6 +595,7 @@ local function AppendLengthPrefixed(parts, value)
 end
 
 local RESERVED_METADATA_IDENTITIES = {
+    AE_RAID_ROSTER = true,
     AUTOADVANCE = true,
     CIRCLE = true,
     DIAMOND = true,
@@ -352,6 +695,99 @@ local function NumericSuffixLess(left, right)
         return #left < #right
     end
     return left < right
+end
+
+local RAID_ROSTER_OUTPUT_PREFIXES = {
+    DPS = "RAID_DPS",
+    HEALER = "RAID_HEALER",
+    TANK = "RAID_TANK",
+}
+
+local RAID_ROSTER_FAMILY_KEYS = {
+    ["RAID_DPS*"] = true,
+    ["RAID_HEALER*"] = true,
+    ["RAID_TANK*"] = true,
+}
+
+local function RaidRosterOutputIdentity(key)
+    if type(key) ~= "string" then
+        return nil
+    end
+    local role, suffix = key:match("^RAID_([A-Z]+)([1-9]%d*)$")
+    if not role or RAID_ROSTER_OUTPUT_PREFIXES[role] == nil then
+        return nil
+    end
+    return role, suffix
+end
+
+-- Materializes the nearest managed roster snapshot into ordinary numbered
+-- variables. The directive itself is removed before public/meta partitioning.
+-- A same-layer or nearer explicit numbered member is an intentional override.
+local function ExpandRaidRosterSnapshot(merged, sourceRanks)
+    local directiveKey
+    for key in pairs(merged) do
+        if ReservedMetadataIdentity(key) == "AE_RAID_ROSTER" then
+            directiveKey = key
+            break
+        end
+    end
+    if not directiveKey then
+        return merged
+    end
+
+    local snapshot, snapshotError = DecodeRaidRosterSnapshot(merged[directiveKey])
+    if not snapshot then
+        return nil, snapshotError
+    end
+    local directiveRank = sourceRanks[directiveKey]
+    merged[directiveKey] = nil
+    sourceRanks[directiveKey] = nil
+
+    -- The snapshot replaces broader declarations of its generated families.
+    -- A same-layer declaration is ambiguous and rejected; a closer declaration
+    -- remains an intentional override and is handled by normal family expansion.
+    local inheritedDeclarations = {}
+    for key in pairs(merged) do
+        if RAID_ROSTER_FAMILY_KEYS[key] then
+            local declarationRank = sourceRanks[key] or 0
+            if declarationRank == directiveRank then
+                return nil, "conflicting-raid-roster-family"
+            end
+            if declarationRank < directiveRank then
+                inheritedDeclarations[#inheritedDeclarations + 1] = key
+            end
+        end
+    end
+    for _, key in ipairs(inheritedDeclarations) do
+        merged[key] = nil
+        sourceRanks[key] = nil
+    end
+
+    -- A closer snapshot owns the complete managed output namespace, so raw
+    -- numbered values inherited from broader layers cannot leak through it.
+    local inheritedKeys = {}
+    for key in pairs(merged) do
+        if RaidRosterOutputIdentity(key) and (sourceRanks[key] or 0) < directiveRank then
+            inheritedKeys[#inheritedKeys + 1] = key
+        end
+    end
+    for _, key in ipairs(inheritedKeys) do
+        merged[key] = nil
+        sourceRanks[key] = nil
+    end
+
+    for _, role in ipairs(RAID_ROSTER_ROLES) do
+        local prefix = RAID_ROSTER_OUTPUT_PREFIXES[role]
+        for index, member in ipairs(snapshot[role]) do
+            local targetKey = prefix .. tostring(index)
+            local targetRank = sourceRanks[targetKey]
+            if targetRank == nil or targetRank < directiveRank then
+                merged[targetKey] = member
+                sourceRanks[targetKey] = directiveRank
+            end
+        end
+    end
+    return merged
 end
 
 local function ParseFamilySelectors(raw)
@@ -682,7 +1118,11 @@ function variables.MergeVariableLayers(layers, pageVariables)
     if not mergedPage then
         return nil, mergePageError
     end
-    local expanded, familyError = ExpandVariableFamilies(merged, sourceRanks)
+    local rosterExpanded, rosterError = ExpandRaidRosterSnapshot(merged, sourceRanks)
+    if not rosterExpanded then
+        return nil, rosterError
+    end
+    local expanded, familyError = ExpandVariableFamilies(rosterExpanded, sourceRanks)
     if not expanded then
         return nil, familyError
     end

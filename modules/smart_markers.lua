@@ -109,30 +109,33 @@ end
 
 local function FindRosterUnit(candidate)
     local helpers = AngryEra and AngryEra.utils and AngryEra.utils.helpers
-    if not helpers or type(helpers.EnsureUnitFullName) ~= "function" then
+    if not helpers then
         return nil
     end
 
     local qualified = candidate:find("-", 1, true) ~= nil
-    local fullTarget = (helpers.EnsureUnitFullName(candidate) or ""):lower()
-    local shortTarget = candidate:lower()
+    local target = candidate:lower()
 
     local exactUnit
     local exactIdentity
     local shortUnit
     local shortIdentity
     local shortMatches = 0
+    local rosterMembers = 0
     if type(helpers.IterateGroupMembers) == "function" then
         helpers.IterateGroupMembers(function(_, fullName, _, _, _, _, _, unitToken)
             local fullLower = type(fullName) == "string" and fullName:lower() or ""
-            if fullLower ~= "" and fullLower == fullTarget then
+            if fullLower ~= "" then
+                rosterMembers = rosterMembers + 1
+            end
+            if qualified and fullLower ~= "" and fullLower == target then
                 exactUnit = unitToken
                 exactIdentity = fullLower
                 return true
             end
             if not qualified then
                 local shortName = fullLower:match("^([^-]+)")
-                if shortName == shortTarget then
+                if shortName == target then
                     shortMatches = shortMatches + 1
                     shortUnit = unitToken
                     shortIdentity = fullLower
@@ -142,16 +145,18 @@ local function FindRosterUnit(candidate)
         end)
     end
 
-    if exactUnit then
+    if qualified and exactUnit then
         return exactUnit, exactIdentity
     end
     if not qualified and shortMatches == 1 then
         return shortUnit, shortIdentity
     end
-    if type(helpers.PlayerFullName) == "function" then
+    if rosterMembers == 0 and type(helpers.PlayerFullName) == "function" then
         local playerName = helpers.PlayerFullName()
-        if type(playerName) == "string" and playerName:lower() == fullTarget then
-            return "player", playerName:lower()
+        local playerIdentity = type(playerName) == "string" and playerName:lower() or ""
+        local playerShort = playerIdentity:match("^([^-]+)")
+        if (qualified and playerIdentity == target) or (not qualified and playerShort == target) then
+            return "player", playerIdentity
         end
     end
     return nil
