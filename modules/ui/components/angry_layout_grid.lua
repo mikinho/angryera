@@ -154,7 +154,9 @@ end
 
 -- Marks where a release would land. The marker rides a frame of its own because
 -- a child frame draws over every layer of its parent, so a texture on the
--- widget frame would sit under the boxes it is meant to highlight.
+-- widget frame would sit under the boxes it is meant to highlight. Its level is
+-- taken from the frame it covers rather than fixed at construction, since AceGUI
+-- reparents the widget after that and rebases every level underneath it.
 local function UpdateMarker(self, x, y)
     local hovered = TargetAt(self, x, y)
     local drop = hovered and DropFromTarget(hovered.layoutTarget)
@@ -165,6 +167,7 @@ local function UpdateMarker(self, x, y)
     end
     self.dropMarker:ClearAllPoints()
     self.dropMarker:SetAllPoints(hovered)
+    self.dropMarker:SetFrameLevel(hovered:GetFrameLevel() + MARKER_LEVEL)
     self.dropMarker:Show()
 end
 
@@ -572,7 +575,6 @@ local function Constructor()
     frame:Hide()
 
     local marker = CreateFrame("Frame", nil, frame)
-    marker:SetFrameLevel(frame:GetFrameLevel() + MARKER_LEVEL)
     marker:Hide()
 
     local markerFill = marker:CreateTexture(nil, "OVERLAY")

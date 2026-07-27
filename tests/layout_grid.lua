@@ -395,6 +395,7 @@ cursorX, cursorY = CentreOf(marked)
 grid.frame:GetScript("OnUpdate")(grid.frame)
 assert(grid.dropMarker:IsShown(), "a drag marks where a release would land")
 assert(grid.dropMarker:GetTop() == marked:GetTop(), "the marker covers the row under the cursor")
+assert(grid.dropMarker:GetFrameLevel() > marked:GetFrameLevel(), "the marker draws above the row it covers")
 source:GetScript("OnDragStop")(source)
 assert(not grid.dropMarker:IsShown(), "the marker clears when the gesture ends")
 
