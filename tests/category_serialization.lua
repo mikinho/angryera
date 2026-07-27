@@ -21,14 +21,14 @@ AngryAssign_Categories = {
     [1] = {
         Id = 1,
         Name = "Root",
-        Vars = "root=yes",
+        Vars = "root=yes\n$AUTOAPPLYLAYOUT=true",
     },
     [2] = {
         Id = 2,
         Name = "Child",
         CategoryId = 1,
         Index = 2,
-        Vars = "child=yes",
+        Vars = "{\"ROLE\":\"healers\",\"$LAYOUT\":\"Healing/1: {{HEALER1}}\"}",
     },
 }
 AngryAssign_Pages = {
@@ -38,7 +38,7 @@ AngryAssign_Pages = {
         Contents = "Assignment",
         CategoryId = 1,
         Index = 1,
-        Vars = "page=yes",
+        Vars = "page=yes\n$SKULL={{MT}}",
     },
 }
 
@@ -48,6 +48,38 @@ end
 
 assert(loadfile("modules/utils/serialization.lua"))("AngryEra", app)
 local serialization = AngryEra.utils.serialization
+
+app.libs.libS.Serialize = function()
+    return "serialized-export"
+end
+app.libs.libD.CompressDeflate = function(_, serialized)
+    assert(serialized == "serialized-export", "Encoded exports should compress the serialized payload")
+    return "compressed-export"
+end
+app.libs.libD.EncodeForPrint = function(_, compressed)
+    assert(compressed == "compressed-export", "Encoded exports should make the compressed payload printable")
+    return "encoded-export"
+end
+
+assert(
+    serialization
+        .EncodeExportString({
+            Name = "Full",
+            Contents = "",
+        }, "Page")
+        :match("^AA:Page:1:"),
+    "Complete exports should retain the legacy v1 prefix"
+)
+assert(
+    serialization
+        .EncodeExportString({
+            Name = "Content only",
+            Contents = "",
+            VariablesIncluded = false,
+        }, "Page")
+        :match("^AA:Page:2:"),
+    "Content-only exports should use v2 so older importers reject them safely"
+)
 
 local importState = {}
 
@@ -84,14 +116,71 @@ local function ConfigureImport(serialized, trailingOrError, deserializeData)
 end
 
 local exported = serialization.GetCategoryExportData(AngryEra, 1)
-assert(exported and exported.Vars == "root=yes", "Root category variables should be exported")
+assert(exported and exported.VariablesIncluded == nil, "Full category exports should retain the legacy payload shape")
+assert(
+    exported.Vars == "root=yes\n$AUTOAPPLYLAYOUT=true",
+    "Root category variables and metadata should be exported exactly"
+)
 assert(exported.Children[1].Type == "Page", "Encoded children should retain deterministic ordering")
-assert(exported.Children[1].Vars == "page=yes", "Page variables should be exported")
+assert(exported.Children[1].Vars == "page=yes\n$SKULL={{MT}}", "Page variables and metadata should be exported exactly")
 assert(exported.Children[2].Type == "Category", "Nested categories should be exported")
-assert(exported.Children[2].Vars == "child=yes", "Nested category variables should be exported")
+assert(
+    exported.Children[2].Vars == "{\"ROLE\":\"healers\",\"$LAYOUT\":\"Healing/1: {{HEALER1}}\"}",
+    "JSON-form nested variables and metadata should be exported exactly"
+)
+
+local exportedPage = serialization.GetPageExportData(AngryAssign_Pages[10])
+assert(
+    exportedPage and exportedPage.VariablesIncluded == nil,
+    "Full page exports should retain the legacy payload shape"
+)
+assert(exportedPage.Vars == AngryAssign_Pages[10].Vars, "Full page exports should retain raw variables exactly")
+
+local exportedWithoutVariables = serialization.GetCategoryExportData(AngryEra, 1, {
+    includeVariables = false,
+})
+assert(
+    exportedWithoutVariables and exportedWithoutVariables.VariablesIncluded == false,
+    "Variable-free category exports should declare variables omitted"
+)
+assert(exportedWithoutVariables.Vars == nil, "Variable-free category exports should omit root variables")
+assert(exportedWithoutVariables.Children[1].Vars == nil, "Variable-free category exports should omit page variables")
+assert(
+    exportedWithoutVariables.Children[2].Vars == nil,
+    "Variable-free category exports should recursively omit nested category variables"
+)
+
+local exportedPageWithoutVariables = serialization.GetPageExportData(AngryAssign_Pages[10], {
+    includeVariables = false,
+})
+assert(
+    exportedPageWithoutVariables and exportedPageWithoutVariables.VariablesIncluded == false,
+    "Variable-free page exports should declare variables omitted"
+)
+assert(exportedPageWithoutVariables.Vars == nil, "Variable-free page exports should omit variables")
 
 local valid, validationError = serialization.ValidateEncodedCategoryPayload(exported, "Category")
 assert(valid, validationError)
+
+valid, validationError = serialization.ValidateEncodedPagePayload({
+    Name = "Invalid flag",
+    Contents = "",
+    VariablesIncluded = "false",
+}, "Page")
+assert(
+    not valid and validationError:find("VariablesIncluded", 1, true),
+    "Non-boolean page variable-inclusion flags should be rejected"
+)
+
+valid, validationError = serialization.ValidateEncodedCategoryPayload({
+    Name = "Invalid flag",
+    VariablesIncluded = "false",
+    Children = {},
+}, "Category")
+assert(
+    not valid and validationError:find("VariablesIncluded", 1, true),
+    "Non-boolean category variable-inclusion flags should be rejected"
+)
 
 valid, validationError = serialization.ValidateEncodedCategoryPayload({
     Name = "Invalid",
@@ -99,6 +188,37 @@ valid, validationError = serialization.ValidateEncodedCategoryPayload({
     Children = {},
 }, "Category")
 assert(not valid and validationError:find("Vars", 1, true), "Non-string category variables should be rejected")
+
+valid, validationError = serialization.ValidateEncodedPagePayload({
+    Name = "Oversized",
+    Contents = "",
+    Vars = string.rep("x", 5001),
+}, "Page")
+assert(
+    not valid and validationError:find("maximum variable size", 1, true),
+    "Oversized imported variable sources should be rejected"
+)
+
+local originalPageVariables = AngryAssign_Pages[10].Vars
+AngryAssign_Pages[10].Vars = string.rep("x", 5001)
+local invalidPageExport, invalidPageExportError = serialization.GetPageExportData(AngryAssign_Pages[10])
+assert(
+    invalidPageExport == nil and invalidPageExportError:find("maximum variable size", 1, true),
+    "A generated full page export must not contain variables its importer rejects"
+)
+local invalidCategoryExport, invalidCategoryExportError = serialization.GetCategoryExportData(AngryEra, 1)
+assert(
+    invalidCategoryExport == nil and invalidCategoryExportError:find("maximum variable size", 1, true),
+    "A generated full category export must reject invalid descendant variables"
+)
+local recoverableContentOnlyExport = serialization.GetCategoryExportData(AngryEra, 1, {
+    includeVariables = false,
+})
+assert(
+    recoverableContentOnlyExport and recoverableContentOnlyExport.VariablesIncluded == false,
+    "Content-only export should remain available when stored variables are invalid"
+)
+AngryAssign_Pages[10].Vars = originalPageVariables
 
 valid, validationError = serialization.ValidateEncodedCategoryPayload({
     Name = "Sparse",
@@ -145,6 +265,28 @@ ConfigureImport("serialized-category", 0, exported)
 parsed, parsedData, parsedPrefix = serialization.ParseImportString("AA:Category:1:fixture")
 assert(parsed, parsedData)
 assert(parsedData == exported and parsedPrefix == "Category", "Valid v1 category imports should remain compatible")
+
+ConfigureImport("serialized-content-only-category", 0, exportedWithoutVariables)
+parsed, validationError = serialization.ParseImportString("AA:Category:1:fixture")
+assert(
+    not parsed and validationError == "Export version 1 cannot omit variables and metadata",
+    "A v1 payload must remain an authoritative complete export"
+)
+
+ConfigureImport("serialized-content-only-category", 0, exportedWithoutVariables)
+parsed, parsedData, parsedPrefix = serialization.ParseImportString("AA:Category:2:fixture")
+assert(parsed, parsedData)
+assert(
+    parsedData == exportedWithoutVariables and parsedData.VariablesIncluded == false and parsedPrefix == "Category",
+    "Valid content-only category imports should retain their omission marker"
+)
+
+ConfigureImport("serialized-complete-category", 0, exported)
+parsed, validationError = serialization.ParseImportString("AA:Category:2:fixture")
+assert(
+    not parsed and validationError == "Export version 2 must omit variables and metadata",
+    "A v2 payload must be explicitly content-only"
+)
 
 ConfigureImport(nil, "output-too-large", validPage)
 parsed, validationError = serialization.ParseImportString("AA:Page:1:fixture")

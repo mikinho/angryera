@@ -7,8 +7,6 @@
 local _, app = ...
 local AngryEra = app.AngryEra
 local AceGUI = app.libs.AceGUI
-local libS = app.libs.libS
-local libD = app.libs.libD
 local json = AngryEra.utils.json
 local serialization = AngryEra.utils.serialization
 local CompareIndexedEntries = AngryEra.utils.helpers.CompareIndexedEntries
@@ -17,8 +15,8 @@ local CompareIndexedEntries = AngryEra.utils.helpers.CompareIndexedEntries
 
 --- Builds recursive export payload data for a category.
 -- Delegates to serialization module.
-function AngryEra:GetCategoryExportData(catId)
-    return serialization.GetCategoryExportData(self, catId)
+function AngryEra:GetCategoryExportData(catId, options)
+    return serialization.GetCategoryExportData(self, catId, options)
 end
 
 function AngryEra:ShowExportWindow(exportString, pageName)
@@ -57,21 +55,66 @@ function AngryEra:ParseImportString(str)
     return serialization.ParseImportString(str)
 end
 
+local function ResolveImportOptions(data, options)
+    -- A content-only payload cannot be promoted back to a full import. An
+    -- absent marker is a legacy complete export.
+    return {
+        includeVariables = (type(options) ~= "table" or options.includeVariables ~= false)
+            and data.VariablesIncluded ~= false,
+    }
+end
+
+local function VariableImportSummary(self, data, options, existing, category)
+    local resolved = ResolveImportOptions(data, options)
+    if resolved.includeVariables then
+        return "Variables and metadata will be imported."
+    end
+    local entityName = category and "category" or "page"
+    if not existing then
+        return "The new " .. entityName .. " will be created without variables or metadata."
+    end
+    local editable = type(self.CanEditEntityLocally) == "function" and self:CanEditEntityLocally(existing) == true
+    if not editable then
+        return "The matching "
+            .. entityName
+            .. " is read-only, so either choice creates a new local "
+            .. entityName
+            .. " without variables or metadata."
+    end
+    if category then
+        return "Replace keeps this category's variables and metadata, but recreated descendants receive none. "
+            .. "Import as New creates the imported hierarchy without them."
+    end
+    return "Replace keeps this page's variables and metadata. Import as New creates a page without them."
+end
+
+local function NewImportRequest(data, options)
+    return {
+        Payload = data,
+        Options = ResolveImportOptions(data, options),
+    }
+end
+
 --- Shows import confirmation/overwrite UI for a validated page payload.
 -- @tparam table data Page payload.
-function AngryEra:ConfirmImportPage(data)
+-- @tparam[opt] table options Import options.
+function AngryEra:ConfirmImportPage(data, options)
     local existingId = self:GetEntityByName(data.Name, "Page")
+    local existing = existingId and AngryAssign_Pages[existingId] or nil
     local preview = data.Contents:sub(1, 120)
     if #data.Contents > 120 then
         preview = preview .. "…"
     end
+    local request = NewImportRequest(data, options)
+    local variableSummary = VariableImportSummary(self, data, options, existing, false)
 
     if existingId then
         StaticPopupDialogs["AngryEra_ImportConflictPage"] = {
             text = string.format(
-                "A page named \"%s\" already exists. What would you like to do?\n\n%s",
+                "A page named \"%s\" already exists. What would you like to do?\n\n%s\n\n%s",
                 data.Name,
-                preview
+                preview,
+                variableSummary
             ),
             button1 = "Replace",
             button2 = "Import as New",
@@ -80,35 +123,36 @@ function AngryEra:ConfirmImportPage(data)
             hideOnEscape = true,
             preferredIndex = 3,
             OnAccept = function(popup)
-                AngryEra:DoImportPage(popup.data, nil, existingId)
+                AngryEra:DoImportPage(popup.data.Payload, nil, existingId, nil, popup.data.Options)
             end,
             OnCancel = function(popup, _, reason)
                 if reason == "clicked" then
                     local newData = {
-                        Name = popup.data.Name,
-                        Contents = popup.data.Contents,
-                        Vars = popup.data.Vars,
-                        Index = popup.data.Index,
+                        Name = popup.data.Payload.Name,
+                        Contents = popup.data.Payload.Contents,
+                        Vars = popup.data.Payload.Vars,
+                        VariablesIncluded = popup.data.Payload.VariablesIncluded,
+                        Index = popup.data.Payload.Index,
                     }
                     newData.Name = AngryEra:GetUniqueEntityName(newData.Name, "Page")
-                    AngryEra:DoImportPage(newData)
+                    AngryEra:DoImportPage(newData, nil, nil, nil, popup.data.Options)
                 end
             end,
         }
-        StaticPopup_Show("AngryEra_ImportConflictPage", nil, nil, data)
+        StaticPopup_Show("AngryEra_ImportConflictPage", nil, nil, request)
     else
         StaticPopupDialogs["AngryEra_ImportConfirmPage"] = {
-            text = string.format("Import page \"%s\"?\n\n%s", data.Name, preview),
+            text = string.format("Import page \"%s\"?\n\n%s\n\n%s", data.Name, preview, variableSummary),
             button1 = "Import",
             button2 = CANCEL,
             whileDead = true,
             hideOnEscape = true,
             preferredIndex = 3,
             OnAccept = function(popup)
-                AngryEra:DoImportPage(popup.data)
+                AngryEra:DoImportPage(popup.data.Payload, nil, nil, nil, popup.data.Options)
             end,
         }
-        StaticPopup_Show("AngryEra_ImportConfirmPage", nil, nil, data)
+        StaticPopup_Show("AngryEra_ImportConfirmPage", nil, nil, request)
     end
 end
 
@@ -123,7 +167,7 @@ local function IsRemoteSynchronizedEntity(self, entity)
     return not checked or locallyOwned ~= true
 end
 
-local function ApplyImportedPageFields(self, id, data)
+local function ApplyImportedPageFields(self, id, data, options)
     local proposed = false
     local saved
     local result
@@ -135,11 +179,13 @@ local function ApplyImportedPageFields(self, id, data)
     end
     proposed = proposed or fieldProposed == true
 
-    saved, result, fieldProposed = self:UpdatePageVars(id, data.Vars)
-    if saved ~= true then
-        return false, result, proposed or fieldProposed == true
+    if options.includeVariables then
+        saved, result, fieldProposed = self:UpdatePageVars(id, data.Vars or "")
+        if saved ~= true then
+            return false, result, proposed or fieldProposed == true
+        end
+        proposed = proposed or fieldProposed == true
     end
-    proposed = proposed or fieldProposed == true
 
     saved, result, fieldProposed = self:RenamePage(id, data.Name)
     if saved ~= true then
@@ -178,8 +224,10 @@ end
 -- @tparam[opt] number parentId Optional parent category id.
 -- @tparam[opt] number overwriteId Existing page id to overwrite.
 -- @tparam[opt=false] boolean suppressTreeUpdate Skip immediate tree refresh when `true`.
+-- @tparam[opt] table options Import options.
 -- @treturn number Imported page id.
-function AngryEra:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
+function AngryEra:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate, options)
+    options = ResolveImportOptions(data, options)
     local existing = overwriteId and AngryAssign_Pages[overwriteId]
     local importedName = data.Name
     if existing and not self:CanEditEntityLocally(existing) then
@@ -192,19 +240,27 @@ function AngryEra:DoImportPage(data, parentId, overwriteId, suppressTreeUpdate)
             Name = importedName,
             Contents = data.Contents,
             Vars = data.Vars,
-        })
+        }, options)
         if not applied then
             return nil, applyError, proposed
         end
         return overwriteId, applyError, proposed
     end
 
+    local importedVariables
+    if options.includeVariables then
+        importedVariables = data.Vars or ""
+    elseif existing then
+        importedVariables = type(existing.Vars) == "string" and existing.Vars or ""
+    else
+        importedVariables = ""
+    end
     local fields = {
         Updated = time(),
-        UpdateId = self:Hash(importedName, data.Contents, data.Vars),
+        UpdateId = self:Hash(importedName, data.Contents, importedVariables),
         Name = importedName,
         Contents = data.Contents,
-        Vars = data.Vars,
+        Vars = importedVariables,
         CategoryId = (existing and existing.CategoryId) or parentId,
         Index = (existing and existing.Index) or data.Index,
     }
@@ -225,8 +281,10 @@ end
 
 --- Shows import confirmation/overwrite UI for a validated category payload.
 -- @tparam table data Category payload.
-function AngryEra:ConfirmImportCategory(data)
+-- @tparam[opt] table options Import options.
+function AngryEra:ConfirmImportCategory(data, options)
     local existingId = self:GetEntityByName(data.Name, "Category")
+    local existing = existingId and AngryAssign_Categories[existingId] or nil
     local pageCount = 0
     local catCount = 0
     local function countItems(d)
@@ -240,14 +298,17 @@ function AngryEra:ConfirmImportCategory(data)
         end
     end
     countItems(data)
+    local request = NewImportRequest(data, options)
+    local variableSummary = VariableImportSummary(self, data, options, existing, true)
 
     if existingId then
         StaticPopupDialogs["AngryEra_ImportConflictCat"] = {
             text = string.format(
-                "A category named \"%s\" already exists. Replace its contents or import as new?\n\nContains %d pages and %d sub-categories.",
+                "A category named \"%s\" already exists. Replace its contents or import as new?\n\nContains %d pages and %d sub-categories.\n\n%s",
                 data.Name,
                 pageCount,
-                catCount
+                catCount,
+                variableSummary
             ),
             button1 = "Replace",
             button2 = "Import as New",
@@ -256,29 +317,31 @@ function AngryEra:ConfirmImportCategory(data)
             hideOnEscape = true,
             preferredIndex = 3,
             OnAccept = function(popup)
-                AngryEra:DoImportCategory(popup.data, nil, existingId)
+                AngryEra:DoImportCategory(popup.data.Payload, nil, existingId, nil, popup.data.Options)
             end,
             OnCancel = function(popup, _, reason)
                 if reason == "clicked" then
                     local newData = {
-                        Name = popup.data.Name,
-                        Vars = popup.data.Vars,
-                        Children = popup.data.Children,
-                        Index = popup.data.Index,
+                        Name = popup.data.Payload.Name,
+                        Vars = popup.data.Payload.Vars,
+                        VariablesIncluded = popup.data.Payload.VariablesIncluded,
+                        Children = popup.data.Payload.Children,
+                        Index = popup.data.Payload.Index,
                     }
                     newData.Name = AngryEra:GetUniqueEntityName(newData.Name, "Category")
-                    AngryEra:DoImportCategory(newData)
+                    AngryEra:DoImportCategory(newData, nil, nil, nil, popup.data.Options)
                 end
             end,
         }
-        StaticPopup_Show("AngryEra_ImportConflictCat", nil, nil, data)
+        StaticPopup_Show("AngryEra_ImportConflictCat", nil, nil, request)
     else
         StaticPopupDialogs["AngryEra_ImportConfirmCat"] = {
             text = string.format(
-                "Import category \"%s\" and children?\n\nContains %d pages and %d sub-categories.",
+                "Import category \"%s\" and children?\n\nContains %d pages and %d sub-categories.\n\n%s",
                 data.Name,
                 pageCount,
-                catCount
+                catCount,
+                variableSummary
             ),
             button1 = "Import",
             button2 = CANCEL,
@@ -286,10 +349,10 @@ function AngryEra:ConfirmImportCategory(data)
             hideOnEscape = true,
             preferredIndex = 3,
             OnAccept = function(popup)
-                AngryEra:DoImportCategory(popup.data)
+                AngryEra:DoImportCategory(popup.data.Payload, nil, nil, nil, popup.data.Options)
             end,
         }
-        StaticPopup_Show("AngryEra_ImportConfirmCat", nil, nil, data)
+        StaticPopup_Show("AngryEra_ImportConfirmCat", nil, nil, request)
     end
 end
 
@@ -298,8 +361,10 @@ end
 -- @tparam[opt] number parentId Optional parent category id.
 -- @tparam[opt] number overwriteId Existing category id to overwrite.
 -- @tparam[opt=false] boolean suppressTreeUpdate Skip immediate tree refresh when `true`.
+-- @tparam[opt] table options Import options.
 -- @treturn number Imported category id.
-function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpdate)
+function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpdate, options)
+    options = ResolveImportOptions(data, options)
     local existing = overwriteId and AngryAssign_Categories[overwriteId]
     local importedName = data.Name
     if existing and not self:CanEditEntityLocally(existing) then
@@ -315,9 +380,17 @@ function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpda
         end
     end
 
+    local importedVariables
+    if options.includeVariables then
+        importedVariables = data.Vars or ""
+    elseif existing then
+        importedVariables = type(existing.Vars) == "string" and existing.Vars or ""
+    else
+        importedVariables = ""
+    end
     local fields = {
         Name = importedName,
-        Vars = data.Vars,
+        Vars = importedVariables,
         CategoryId = (existing and existing.CategoryId) or parentId,
         Index = (existing and existing.Index) or data.Index,
     }
@@ -332,9 +405,9 @@ function AngryEra:DoImportCategory(data, parentId, overwriteId, suppressTreeUpda
 
     for _, child in ipairs(data.Children or {}) do
         if child.Type == "Category" then
-            self:DoImportCategory(child, id, nil, true)
+            self:DoImportCategory(child, id, nil, true, options)
         else
-            self:DoImportPage(child, id, nil, true)
+            self:DoImportPage(child, id, nil, true, options)
         end
     end
 
@@ -351,13 +424,26 @@ function AngryEra:ShowImportWindow()
     frame:SetTitle("Import")
     frame:SetLayout("Flow")
     frame:SetWidth(520)
-    frame:SetHeight(280)
+    frame:SetHeight(340)
     frame:EnableResize(false)
     _G["AngryEra_ImportWindow"] = frame.frame
     tinsert(UISpecialFrames, "AngryEra_ImportWindow")
     frame:SetCallback("OnClose", function(widget)
         AceGUI:Release(widget)
     end)
+
+    local includeVariables = AceGUI:Create("CheckBox")
+    includeVariables:SetLabel("Import variables and metadata when included")
+    includeVariables:SetValue(true)
+    includeVariables:SetFullWidth(true)
+    frame:AddChild(includeVariables)
+
+    local variableHelp = AceGUI:Create("Label")
+    variableHelp:SetText(
+        "Includes variable families, assigned-role snapshots, group layouts, raid markers, encounter settings, and custom $ metadata."
+    )
+    variableHelp:SetFullWidth(true)
+    frame:AddChild(variableHelp)
 
     local editBox = AceGUI:Create("MultiLineEditBox")
     editBox:SetLabel("Paste export string:")
@@ -369,11 +455,14 @@ function AngryEra:ShowImportWindow()
         if not ok then
             return
         end
+        local options = {
+            includeVariables = includeVariables:GetValue() == true,
+        }
         frame:Hide()
         if prefix == "Category" then
-            AngryEra:ConfirmImportCategory(result)
+            AngryEra:ConfirmImportCategory(result, options)
         else
-            AngryEra:ConfirmImportPage(result)
+            AngryEra:ConfirmImportPage(result, options)
         end
     end)
     frame:AddChild(editBox)
@@ -787,54 +876,152 @@ local function SerializeJSON(val)
     return json.JSON_Encode(val)
 end
 
-local function AngryEra_ShowExportWindow(text, title)
+local function HighlightExportText(editBox)
+    C_Timer.After(0, function()
+        if editBox.editBox then
+            editBox:SetFocus()
+            editBox:HighlightText()
+        end
+    end)
+end
+
+local function AngryEra_ShowExportWindow(text, title, encodedOptions)
     local frame = AceGUI:Create("Window")
     frame:SetTitle("Export " .. title)
     frame:SetLayout("Flow")
     frame:SetWidth(600)
-    frame:SetHeight(500)
+    frame:SetHeight(encodedOptions and 570 or 500)
     frame:EnableResize(true)
 
     frame:SetCallback("OnClose", function(widget)
         AceGUI:Release(widget)
     end)
 
-    local editBox = AceGUI:Create("MultiLineEditBox")
+    local editBox
+    if encodedOptions then
+        local includeVariables = AceGUI:Create("CheckBox")
+        includeVariables:SetLabel("Include variables and metadata")
+        includeVariables:SetValue(encodedOptions.includeVariables)
+        includeVariables:SetFullWidth(true)
+        frame:AddChild(includeVariables)
+
+        local variableHelp = AceGUI:Create("Label")
+        variableHelp:SetText(encodedOptions.description)
+        variableHelp:SetFullWidth(true)
+        frame:AddChild(variableHelp)
+
+        local revertingValue = false
+        includeVariables:SetCallback("OnValueChanged", function(widget, _, value)
+            if revertingValue then
+                return
+            end
+            local updatedText, exportError = encodedOptions.build(value == true)
+            if not updatedText then
+                AngryEra:Print("Unable to update export: " .. tostring(exportError or "invalid hierarchy"))
+                revertingValue = true
+                widget:SetValue(value ~= true)
+                revertingValue = false
+                return
+            end
+            editBox:SetText(updatedText)
+            HighlightExportText(editBox)
+        end)
+    end
+
+    editBox = AceGUI:Create("MultiLineEditBox")
     editBox:SetLabel("Copy the text below (Ctrl+C / Cmd+C)")
     editBox:SetFullWidth(true)
     editBox:SetFullHeight(true)
     editBox:SetText(text)
     editBox:DisableButton(true)
-    editBox:SetFocus()
-    editBox:HighlightText()
     frame:AddChild(editBox)
+    HighlightExportText(editBox)
+end
+
+local function BuildEncodedExport(self, id, entityType, includeVariables)
+    local options = {
+        includeVariables = includeVariables,
+    }
+    if entityType == "page" then
+        local page = AngryAssign_Pages[id]
+        if not page then
+            return nil, "page-not-found"
+        end
+        local data, exportError = serialization.GetPageExportData(page, options)
+        if not data then
+            return nil, exportError or "invalid-page"
+        end
+        return serialization.EncodeExportString(data, "Page"), page.Name
+    end
+    if entityType == "category" then
+        local cat = AngryAssign_Categories[id]
+        if not cat then
+            return nil, "category-not-found"
+        end
+        local data, exportError = self:GetCategoryExportData(id, options)
+        if not data then
+            return nil, exportError or "invalid-hierarchy"
+        end
+        return serialization.EncodeExportString(data, "Category"), cat.Name
+    end
+    return nil, "invalid-entity-type"
 end
 
 --- Exports a page or category in one of the supported formats.
 -- @tparam number id Entity id.
--- @tparam string type `"page"` or `"category"`.
+-- @tparam string entityType `"page"` or `"category"`.
 -- @tparam string format `"Encoded AA"`, `"JSON"`, `"Markdown"`, or `"Output"`.
-function AngryEra:Export(id, type, format)
+-- @tparam[opt] table options Export options.
+function AngryEra:Export(id, entityType, format, options)
     local exportText = ""
     local title = ""
 
-    if type == "page" then
+    if format == "Encoded AA" then
+        local includeVariables = type(options) ~= "table" or options.includeVariables ~= false
+        exportText, title = BuildEncodedExport(self, id, entityType, includeVariables)
+        if not exportText and includeVariables then
+            local variableError = title
+            exportText, title = BuildEncodedExport(self, id, entityType, false)
+            if exportText then
+                includeVariables = false
+                self:Print(
+                    "Variables and metadata could not be included ("
+                        .. tostring(variableError)
+                        .. "). Opened a content-only export instead."
+                )
+            end
+        end
+        if not exportText then
+            self:Print("Unable to export " .. tostring(entityType) .. ": " .. tostring(title or "not found"))
+            return
+        end
+        local description
+        if entityType == "category" then
+            description =
+                "Includes variable families, role snapshots, layouts, markers, and automation metadata recursively. Values inherited from above this category are not copied."
+        else
+            description =
+                "Includes variable families, role snapshots, layouts, markers, and automation metadata declared directly on this page. Inherited category values are not copied."
+        end
+        AngryEra_ShowExportWindow(exportText, title .. " (" .. format .. ")", {
+            includeVariables = includeVariables,
+            description = description,
+            build = function(selected)
+                local rebuilt, rebuiltTitleOrError = BuildEncodedExport(self, id, entityType, selected)
+                return rebuilt, rebuilt and nil or rebuiltTitleOrError
+            end,
+        })
+        return
+    end
+
+    if entityType == "page" then
         local page = AngryAssign_Pages[id]
         if not page then
             return
         end
         title = page.Name
 
-        if format == "Encoded AA" then
-            local data = { Name = page.Name, Contents = page.Contents }
-            if page.Vars and page.Vars ~= "" and page.Vars ~= "{}" then
-                data.Vars = page.Vars
-            end
-            local serialized = libS:Serialize(data)
-            local compressed = libD:CompressDeflate(serialized)
-            local encoded = libD:EncodeForPrint(compressed)
-            exportText = "AA:Page:1:" .. encoded
-        elseif format == "JSON" then
+        if format == "JSON" then
             local data = { name = page.Name, content = page.Contents }
             exportText = SerializeJSON(data)
         elseif format == "Markdown" then
@@ -846,7 +1033,7 @@ function AngryEra:Export(id, type, format)
         elseif format == "Output" then
             exportText = self:ProcessPageForOutput(page)
         end
-    elseif type == "category" then
+    elseif entityType == "category" then
         local cat = AngryAssign_Categories[id]
         if not cat then
             return
@@ -862,17 +1049,7 @@ function AngryEra:Export(id, type, format)
         end
         table.sort(pages, CompareIndexedEntries)
 
-        if format == "Encoded AA" then
-            local data, exportError = self:GetCategoryExportData(id)
-            if not data then
-                self:Print("Unable to export category: " .. tostring(exportError or "invalid hierarchy"))
-                return
-            end
-            local serialized = libS:Serialize(data)
-            local compressed = libD:CompressDeflate(serialized)
-            local encoded = libD:EncodeForPrint(compressed)
-            exportText = "AA:Category:1:" .. encoded
-        elseif format == "JSON" then
+        if format == "JSON" then
             local data = { name = cat.Name, pages = {} }
             for _, p in ipairs(pages) do
                 table.insert(data.pages, { name = p.Name, content = p.Contents })

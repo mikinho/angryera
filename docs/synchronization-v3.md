@@ -579,24 +579,31 @@ automatic removal until the conflict is resolved.
 
 ## Imports, exports, and templates
 
-Encoded AA is the lossless format. It preserves:
+Encoded AA is the complete portable content format. It preserves:
 
 - nested categories;
 - ordering;
-- page and category variables;
-- synchronization identity and revision metadata where appropriate;
-- ownership treatment explicitly chosen during import.
+- page names and contents; and
+- direct page and category variables plus `$` metadata when the default-on
+  option is selected.
 
-Importing a lossless backup may restore entities as locally owned. Importing
-someone else's shared package creates external-origin entities or local forks
-according to the selected import mode.
+The variable option applies recursively to a category export. It does not
+flatten values inherited from above the selected root. When the option is
+disabled, replacing an existing root keeps that root's direct variables; new
+and recreated descendants receive none. Complete exports retain encoding
+version 1; content-only exports use version 2 so older importers reject the new
+semantics instead of treating omitted variables as an authoritative empty
+source.
 
-Local ownership and pin state are not trusted from an ordinary shared import.
-The explicit backup-restore mode is the only path that may recreate them.
+Encoded AA does not carry synchronization identity, revision state, ownership,
+pin state, page history, installation metadata, or trust settings. New imports,
+Import as New, and attempts to replace read-only received data create locally
+owned records or local forks. Replacing an editable exact active shared page
+uses the normal change-proposal and leader-commit path.
 
 JSON and Markdown remain portable, intentionally simpler formats. Custom
-templates may evolve to use the lossless recursive representation, but history
-and live synchronization state are not template content.
+templates use their own recursive content representation; history and live
+synchronization state are not template content.
 
 ## Implementation sequence
 

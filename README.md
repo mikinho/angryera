@@ -554,11 +554,13 @@ Mouseover keybindings mark a live hostile unit under the cursor and fall back to
 
 Open the editor and choose **Menu > Import**:
 
-- **Encoded AA** imports a full AngryEra page or recursive category export, including variables and nested organization.
+- **Encoded AA** imports an AngryEra page or recursive category export. **Import variables and metadata when included** is checked by default so variable families, assigned-role snapshots, group layouts, marker assignments, encounter automation, and custom `$` metadata round-trip with the content.
 - **JSON** imports structured page or category data.
 - **Markdown** imports plain assignment text. Lines beginning with `# ` create pages inside a category.
 
 Imports are validated and bounded before they change local data. If a matching page or category name exists, AngryEra asks before replacing it.
+
+Uncheck **Import variables and metadata when included** to import only names, page contents, ordering, and hierarchy. A new item then starts without directly defined variables or metadata. Replacing an existing page keeps that page's current direct values; replacing a category keeps the matched root category's values, while its deleted-and-recreated descendants receive none. An export created without variables and metadata is also recognized as content-only. Content-only exports require AngryEra v3.3 or newer to import; older clients reject them rather than risk clearing an existing setup. Complete exports remain compatible with earlier AA Encoding importers.
 
 Read-only received data is protected: choosing **Replace** for an item you cannot edit creates a uniquely named local copy instead. Importing into the exact active shared page follows the same leader and qualified-assistant rules as editing it.
 
@@ -566,12 +568,16 @@ Read-only received data is protected: choosing **Replace** for an item you canno
 
 Right-click a page or category and choose **Export**:
 
-- **Encoded AA** is the best format for transferring or backing up complete AngryEra data.
+- **Encoded AA** is the best format for transferring or backing up complete AngryEra data. Its export window has **Include variables and metadata** checked by default; uncheck it when you intentionally want to share only the assignment content and organization.
 - **JSON** is useful for structured interchange.
 - **Markdown** is convenient for Discord, documents, or manual editing.
 - **Output** resolves templates and produces chat-ready text.
 
-For a release upgrade or downgrade backup, export important categories as **Encoded AA** or copy the addon's SavedVariables file. `/aa backup` only refreshes a legacy per-page backup field; it does not populate the **Restore** history menu and is not a portable backup.
+A standalone page export contains only variables and metadata declared directly on that page; inherited category values are not flattened into it. A category export applies the option recursively to that category, every nested category, and every page, preserving their inheritance structure. Values inherited from above the selected category are not included, so export the highest category whose context the recipient needs.
+
+In this option, metadata means `$` values stored with page or category variables. Encoded AA does not export account settings, trusted-assistant lists, ownership or synchronization identity, pin state, or page history.
+
+For a release upgrade or downgrade backup, keep **Include variables and metadata** checked and export important categories as **Encoded AA**, or copy the addon's SavedVariables file. `/aa backup` only refreshes a legacy per-page backup field; it does not populate the **Restore** history menu and is not a portable backup.
 
 ### Page history
 
