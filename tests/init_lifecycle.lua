@@ -353,8 +353,9 @@ assert(
     registeredEvents.PARTY_LEADER_CHANGED
         and registeredEvents.GROUP_JOINED
         and registeredEvents.GROUP_ROSTER_UPDATE
+        and registeredEvents.UNIT_FLAGS
         and not registeredEvents.PARTY_CONVERTED_TO_RAID,
-    "supported leader and group-boundary handlers must be active without registering the invalid conversion event"
+    "supported group and unit handlers must be active without registering the invalid conversion event"
 )
 assert(
     sessionIndex < registrationOrder[1].Index
@@ -969,6 +970,33 @@ for _, call in ipairs(calls) do
     )
 end
 AngryEra.StartProtocolSession = successfulStartProtocolSession
+
+do
+    AngryEra._displayedHasPriority = true
+    AngryEra._priorityRefreshTimer = nil
+    guildDisplayRefreshes = 0
+    local scheduledBefore = #scheduledTimers
+    AngryEra:UNIT_FLAGS("UNIT_FLAGS", "target")
+    AngryEra:UNIT_FLAGS("UNIT_FLAGS", "nameplate1")
+    assert(#scheduledTimers == scheduledBefore, "non-group unit flags should not schedule priority refreshes")
+
+    AngryEra:UNIT_FLAGS("UNIT_FLAGS", "raid2")
+    local refreshTimer = scheduledTimers[#scheduledTimers]
+    assert(
+        #scheduledTimers == scheduledBefore + 1 and refreshTimer.Method == "RunDisplayedPriorityRefresh",
+        "a unit death or revive flag should schedule a priority refresh"
+    )
+    AngryEra:UNIT_FLAGS("UNIT_FLAGS", "raid2")
+    assert(#scheduledTimers == scheduledBefore + 1, "unit flag bursts should coalesce into one priority refresh")
+    FireTimer(refreshTimer)
+    assert(guildDisplayRefreshes == 1, "the coalesced priority timer should redraw once")
+    assert(AngryEra._priorityRefreshTimer == nil, "the completed priority refresh should clear its timer token")
+
+    AngryEra._displayedHasPriority = false
+    scheduledBefore = #scheduledTimers
+    AngryEra:UNIT_FLAGS("UNIT_FLAGS", "raid2")
+    assert(#scheduledTimers == scheduledBefore, "unit flags should do no work without displayed priority assignments")
+end
 
 do
     AngryEra._guildDisplayRefreshTimer = nil

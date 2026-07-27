@@ -225,10 +225,12 @@ function AngryEra:OnInitialize()
                     end
                     local reasons = {
                         ["not-in-raid"] = "You must be in a raid to rearrange groups.",
-                        ["not-raid-leader"] = "Only the raid leader or an assistant can rearrange groups.",
+                        ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
                         ["in-combat"] = "Groups cannot be rearranged during combat.",
                         ["no-layout"] = "The displayed page has no $LAYOUT.",
                         ["no-bound-groups"] = "No layout groups are bound to a subgroup (use \"Label/N:\").",
+                        ["duplicate-member"] = "The layout assigns the same raid member more than once.",
+                        ["unresolved-member"] = "Every named layout member must resolve uniquely in the current raid.",
                         ["subgroup-oversubscribed"] = "A subgroup is assigned more than five members.",
                         ["subgroup-blocked"] = "The layout could not be arranged with the current raid.",
                     }
@@ -895,6 +897,7 @@ function AngryEra:OnEnable()
     self:RegisterEvent("PARTY_LEADER_CHANGED")
     self:RegisterEvent("GROUP_JOINED")
     self:RegisterEvent("GROUP_ROSTER_UPDATE")
+    self:RegisterEvent("UNIT_FLAGS")
 
     if isClassic then
         RequestGuildRoster()
@@ -1072,12 +1075,25 @@ function AngryEra:GROUP_ROSTER_UPDATE()
     end
 end
 
+--- Re-resolves displayed priority assignments after a unit dies or revives.
+-- UNIT_FLAGS is available on supported Classic clients. Non-group units are
+-- ignored, and the existing priority-only timer coalesces bursts before the
+-- resolver consults the live group roster.
+function AngryEra:UNIT_FLAGS(_, unit)
+    if
+        unit ~= "player"
+        and (type(unit) ~= "string" or not unit:match("^party%d+$") and not unit:match("^raid%d+$"))
+    then
+        return
+    end
+    self:RefreshDisplayedPriorityAssignments()
+end
+
 --- Coalesced re-render when the displayed note uses priority assignments.
--- A roster change can promote a higher-priority member or drop an absent one, so
--- a displayed note containing a `Name > Name` value is re-resolved. Scheduled
--- through AceTimer so a burst of roster updates collapses into one redraw and a
--- disable cancels it. Deaths are not yet a trigger; those re-resolve on the next
--- roster change or page display.
+-- Roster and unit-flag changes can promote a higher-priority member or drop an
+-- unavailable one, so a displayed note containing a `Name > Name` value is
+-- re-resolved. Scheduled through AceTimer so a burst of updates collapses into
+-- one redraw and a disable cancels it.
 function AngryEra:RefreshDisplayedPriorityAssignments()
     if not self._displayedHasPriority or self._priorityRefreshTimer then
         return
