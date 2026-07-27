@@ -487,11 +487,13 @@ end
 -- format, so callers must join multi-line editing with ";" first.
 -- @tparam string vars Existing Vars string.
 -- @tparam string source Compact layout syntax (empty removes the key).
+-- @tparam[opt=false] boolean preserveEmpty Store an explicit empty override instead of removing it.
 -- @treturn string|nil vars
 -- @treturn string|nil errorCode
-function layout.UpsertSource(vars, source)
+function layout.UpsertSource(vars, source, preserveEmpty)
     vars = type(vars) == "string" and vars or ""
     source = type(source) == "string" and source or ""
+    local hasSource = source ~= "" or preserveEmpty == true
     local object, isJson = DecodeVarsObject(vars)
     if isJson and not object then
         return nil, "invalid-variables"
@@ -502,7 +504,7 @@ function layout.UpsertSource(vars, source)
                 object[key] = nil
             end
         end
-        if source ~= "" then
+        if hasSource then
             object["$LAYOUT"] = source
         end
         if next(object) == nil then
@@ -516,7 +518,7 @@ function layout.UpsertSource(vars, source)
     for line in (vars .. "\n"):gmatch("([^\n]*)\n") do
         local key = line:match("^%s*([^=]-)%s*=")
         if key and key:upper() == "$LAYOUT" then
-            if source ~= "" and not replaced then
+            if hasSource and not replaced then
                 out[#out + 1] = "$LAYOUT=" .. source
                 replaced = true
             end
@@ -527,7 +529,7 @@ function layout.UpsertSource(vars, source)
     while #out > 0 and out[#out]:match("^%s*$") do
         out[#out] = nil
     end
-    if source ~= "" and not replaced then
+    if hasSource and not replaced then
         out[#out + 1] = "$LAYOUT=" .. source
     end
     return table.concat(out, "\n")

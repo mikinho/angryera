@@ -19,7 +19,7 @@
 --
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 9
+local Type, Version = "AngryLayoutGrid", 10
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -244,6 +244,9 @@ end
 -- drop resolves by geometry rather than by asking what the mouse is over.
 local function Target_OnDragStart(frame)
     local self = frame.obj
+    if self.disabled then
+        return
+    end
     local dragging = frame.layoutTarget and DragFromTarget(frame.layoutTarget)
     if not dragging then
         return
@@ -256,10 +259,16 @@ local function Target_OnDragStart(frame)
 end
 
 local function Target_OnDragStop(frame)
+    if frame.obj.disabled then
+        return
+    end
     FinishDrag(frame.obj, CursorPosition())
 end
 
 local function Target_OnClick(frame, button)
+    if frame.obj.disabled then
+        return
+    end
     FireClick(frame.obj, frame.layoutTarget, button)
 end
 
@@ -799,7 +808,9 @@ local methods = {
         self.drawnWidth = nil
         self.measuredHeight = nil
         self.safeDropFrame = nil
+        self.disabled = false
         self.frame:SetScript("OnUpdate", nil)
+        self.frame:SetAlpha(1)
         self.dropMarker:Hide()
         for _, box in ipairs(self.boxes) do
             if box.scrollbar then
@@ -830,6 +841,8 @@ local methods = {
         self.drawnWidth = nil
         self.measuredHeight = nil
         self.safeDropFrame = nil
+        self.disabled = false
+        self.frame:SetAlpha(1)
         for _, box in ipairs(self.boxes) do
             if box.scrollbar then
                 box.scrollbar:SetValue(0)
@@ -877,6 +890,24 @@ local methods = {
     -- A slot is removed only after it leaves this safe frame altogether.
     ["SetSafeDropFrame"] = function(self, frame)
         self.safeDropFrame = frame
+    end,
+
+    -- Makes the rendered layout a read-only preview. Palette scrolling remains
+    -- available, but clicks and drags cannot emit mutation callbacks.
+    -- @tparam boolean disabled
+    ["SetDisabled"] = function(self, disabled)
+        disabled = disabled and true or false
+        if self.disabled == disabled then
+            return
+        end
+        self.disabled = disabled
+        if disabled and self.dragging then
+            self.dragging, self.dropTarget = nil, nil
+            self.frame:SetScript("OnUpdate", nil)
+            self.dropMarker:Hide()
+            SetCursor(nil)
+        end
+        self.frame:SetAlpha(disabled and 0.55 or 1)
     end,
 
     -- A redraw asks the container to re-flow, and the container answers by

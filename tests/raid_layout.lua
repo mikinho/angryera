@@ -743,6 +743,19 @@ assert(applied and reason == 1, "a qualified assistant may still apply manually"
 -- Automatic observation is leader-only. A page seen during transient roster
 -- ordering retains one exact intent that settled leadership can retry.
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
+local observed, observationStatus = AngryEra:ObserveDisplayedRaidLayout(activeReference)
+assert(
+    not observed and observationStatus == "observed",
+    "the first displayed page only primes automatic layout tracking"
+)
+activeReference = Reference("page-b", 1, "revision-b", "context-b")
+observed, observationStatus = AngryEra:ObserveDisplayedRaidLayout(activeReference)
+assert(
+    not observed and observationStatus == "auto-disabled" and #operations == 0,
+    "page swaps do not apply layouts until the opt-in setting is enabled"
+)
+
+Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
 autoApplyRaidLayouts = true
 localRaidLeader = true
 AngryEra:ObserveDisplayedRaidLayout(activeReference)

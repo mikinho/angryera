@@ -319,12 +319,19 @@ assert(providers.ResolveRosterName("Casey") == nil, "an ambiguous short name wit
 -- ancestor layers transmitted with that page, even if its receiver-private
 -- placement points somewhere else.
 local localCategorySyncId = "ae3i:1:2:3:4:category:40"
+local localRootCategorySyncId = "ae3i:1:2:3:4:category:39"
 local remoteCategorySyncId = "ae3i:5:6:7:8:category:50"
 local localPageSyncId = "ae3i:1:2:3:4:page:41"
 local remotePageSyncId = "ae3i:5:6:7:8:page:51"
+AngryAssign_Categories[39] = {
+    Id = 39,
+    SyncId = localRootCategorySyncId,
+    Vars = "$LAYOUT=Root/8: RootTank",
+}
 AngryAssign_Categories[40] = {
     Id = 40,
     SyncId = localCategorySyncId,
+    CategoryId = 39,
     Vars = "Inherited=local\nLocalOnly=yes\nPRIEST1=LocalPriest\nHEALER*=PRIEST*\n$SQUARE=LocalTank\n$LAYOUT=Local/1: {{Inherited}}",
 }
 AngryAssign_Pages[41] = {
@@ -395,6 +402,15 @@ local effectiveSource, inheritedSource =
     layoutEditor.EffectiveLayoutSource(localReference, AngryAssign_Pages[41], AngryAssign_Pages[41].Vars)
 assert(effectiveSource == "Local/1: {{Inherited}}", "an inherited layout keeps its raw variable token")
 assert(inheritedSource == true, "the editor identifies an inherited layout source")
+assert(
+    layoutEditor.InheritedLayoutSource(localReference, AngryAssign_Pages[41]) == "Local/1: {{Inherited}}",
+    "the inheritance checkbox previews the nearest ancestor layout"
+)
+local nestedCategoryReference = layoutEditor.ReferenceEntity(40, "category")
+assert(
+    layoutEditor.InheritedLayoutSource(nestedCategoryReference, AngryAssign_Categories[40]) == "Root/8: RootTank",
+    "a category can inherit its parent category's layout"
+)
 
 activeReference = {
     SyncId = remotePageSyncId,
@@ -588,6 +604,17 @@ assert(jsonVars.MT == "Json" and jsonVars.Enabled == true, "JSON scalar variable
 assert(type(jsonVars.Nested) == "table" and jsonVars.Nested.Value == 3, "JSON object variables survive a layout save")
 assert(jsonVars["$LAYOUT"] == "New/1: {{MT}}", "only the JSON layout value changes")
 
+saved, saveError, proposed = layoutEditor.SaveSource(reference, nil)
+assert(saved and not saveError and not proposed, "saving Inherit removes a JSON-backed local layout override")
+jsonVars = AngryEra.utils.json.JSON_TryDecode(updatedPageVars)
+assert(jsonVars.MT == "Json" and jsonVars.Enabled == true, "inheritance preserves unrelated JSON variables")
+assert(jsonVars["$LAYOUT"] == nil, "inheritance removes the local JSON layout key")
+
+saved, saveError, proposed = layoutEditor.SaveSource(reference, "")
+assert(saved and not saveError and not proposed, "an unchecked empty custom layout remains a local override")
+jsonVars = AngryEra.utils.json.JSON_TryDecode(updatedPageVars)
+assert(jsonVars["$LAYOUT"] == "", "an empty custom layout remains distinct from Inherit")
+
 local retired = layoutEditor.ReferenceEntity(20, "page")
 AngryAssign_Pages[20] = {
     Id = 20,
@@ -640,6 +667,13 @@ assert(updatedPageVars:find("OTHER=kept", 1, true), "other draft variables are r
 saved, saveError, proposed = layoutEditor.SaveSource(reference, "Tanks/1: {{MT}}")
 assert(saved and saveError == "proposal-pending" and proposed, "a pending proposal never looks canonical to Apply")
 assert(proposalCount == 1, "an unchanged pending draft is not submitted twice")
+saved, saveError, proposed = layoutEditor.SaveSource(reference, nil)
+assert(saved and saveError == "queued" and proposed, "an assistant can propose restoring inherited layout")
+assert(updatedPageVars:find("MT=Draft", 1, true), "inheritance keeps unrelated assistant draft variables")
+assert(not updatedPageVars:find("$LAYOUT", 1, true), "the inheritance proposal removes only the draft layout")
+saved, saveError, proposed = layoutEditor.SaveSource(reference, nil)
+assert(saved and saveError == "proposal-pending" and proposed, "a pending inherit proposal is not duplicated")
+assert(proposalCount == 2, "the inherit proposal is submitted exactly once")
 proposalMode = false
 sharedDraft = nil
 

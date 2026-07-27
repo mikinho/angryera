@@ -211,6 +211,11 @@ assert(appended == "MT=Vn\n$LAYOUT=G1: A", "upsert appends when absent")
 
 local removed = layout.UpsertSource("MT=Vn\n$LAYOUT=old\nOT=Zed", "")
 assert(removed == "MT=Vn\nOT=Zed", "an empty source removes the layout line")
+local explicitEmpty = layout.UpsertSource("MT=Vn\n$LAYOUT=old\nOT=Zed", "", true)
+assert(
+    explicitEmpty == "MT=Vn\n$LAYOUT=\nOT=Zed" and layout.ExtractSource(explicitEmpty) == "",
+    "an explicit empty override remains distinguishable from inheritance"
+)
 
 assert(
     layout.ExtractSource(layout.UpsertSource("", "G1: A, B; G2: C")) == "G1: A, B; G2: C",
@@ -236,6 +241,8 @@ local jsonRemoved = layout.UpsertSource(jsonVars, "")
 local decodedRemoved = json.JSON_TryDecode(jsonRemoved)
 assert(decodedRemoved["$Layout"] == nil and decodedRemoved["$LAYOUT"] == nil, "JSON removal is case-insensitive")
 assert(decodedRemoved.Count == 2 and decodedRemoved.Nested.Enabled == true, "JSON removal preserves other values")
+local jsonExplicitEmpty = json.JSON_TryDecode(layout.UpsertSource(jsonVars, "", true))
+assert(jsonExplicitEmpty["$LAYOUT"] == "", "JSON can retain an explicit empty local layout override")
 assert(layout.UpsertSource("{\"$layout\":\"old\"}", "") == "{}", "removing the only JSON key preserves an object")
 local malformedSource, malformedError = layout.ExtractSource("{")
 assert(malformedSource == nil and malformedError == "invalid-variables", "malformed JSON Vars fail extraction")

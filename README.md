@@ -386,7 +386,9 @@ You can also type instead of drag. Click a box title to name that group — Spor
 
 Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` keep auto-filling after you rearrange the grid. Tick **Edit as text** to switch the same layout to one group per line, which is also where roster names insert at the cursor. Both views write the same `$LAYOUT`. Groups left empty are dropped when you save, unless you named one — naming Spores before anyone is dragged into it is the point of naming it.
 
-**Save** writes the layout. Saving or applying an inherited layout without changing it does not create a page override, so later category changes continue to flow through. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
+Tick **Inherit layout** to use the nearest category layout. The inherited layout remains visible but read-only. Saving while checked removes only this page or category's local `$LAYOUT` override, so later changes to the category default flow through again. Uncheck it to create a custom override, initially copied from the inherited layout.
+
+**Save** writes the current choice. While **Inherit layout** remains checked, saving or applying does not create a page override, so later category changes continue to flow through. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
 
 **Apply to Raid** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected. It then moves one identity at a time, waits for Classic to acknowledge the change, and resolves fresh raid indices before continuing so roster renumbering cannot redirect a later move.
 

@@ -125,6 +125,12 @@ local function NewRegion(parent)
     function region:GetFrameLevel()
         return self.frameLevel or 0
     end
+    function region:SetAlpha(alpha)
+        self.alpha = alpha
+    end
+    function region:GetAlpha()
+        return self.alpha or 1
+    end
     function region:EnableMouse(enabled)
         self.mouseEnabled = enabled and true or false
     end
@@ -439,6 +445,36 @@ local function DragTo(source, target)
     return GestureTo(source, CentreOf(target))
 end
 
+-- Inherited layouts remain visible but cannot emit any editing gesture.
+clicked, headerClicked, emptyClicked = nil, nil, nil
+grid:SetDisabled(true)
+assert(grid.disabled and grid.frame:GetAlpha() == 0.55, "disabled layouts are visibly read-only")
+Click(filled, "LeftButton")
+Click(grid.boxes[2].header, "LeftButton")
+Click(blank, "LeftButton")
+assert(not clicked and not headerClicked and not emptyClicked, "disabled layouts suppress every click mutation")
+local disabledDrag, disabledDrop = DragTo(filled, grid.boxes[3].rows[1])
+assert(disabledDrag == nil and disabledDrop == nil, "disabled layouts suppress drag/drop mutations")
+assert(cursorTexture == nil and not grid.dropMarker:IsShown(), "disabled dragging never captures the cursor or marker")
+grid:SetDisabled(false)
+assert(not grid.disabled and grid.frame:GetAlpha() == 1, "an override can re-enable the layout editor")
+Click(filled, "LeftButton")
+assert(clicked and clicked.button == "LeftButton", "re-enabled layouts emit edits normally")
+
+-- Checking Inherit while a drag is already active cancels it immediately.
+cursorX, cursorY = CentreOf(grid.boxes[3].rows[1])
+grid.boxes[3].rows[1]:GetScript("OnDragStart")(grid.boxes[3].rows[1])
+assert(cursorTexture ~= nil and grid.frame:GetScript("OnUpdate"), "the fixture starts a live drag")
+grid:SetDisabled(true)
+assert(
+    cursorTexture == nil
+        and grid.frame:GetScript("OnUpdate") == nil
+        and not grid.dropMarker:IsShown()
+        and grid.dragging == nil,
+    "switching to inherited mode cancels a live drag"
+)
+grid:SetDisabled(false)
+
 -- The regression that made dragging look dead in-game: the marker sat on the
 -- widget frame's own draw layer, which a child frame always covers, so a drag
 -- gave no feedback at all.
@@ -714,6 +750,11 @@ palette.scrollbar:SetValue(maximum)
 assert(palette.rows[1].layoutTarget.text == "Spare15", "the full palette scrolls to its final viewport")
 assert(palette.rows[26].layoutTarget.text == "Spare40", "the fortieth member is reachable without outer scrolling")
 assert(grid.frame:GetHeight() == 424, "forty unrostered members still keep every subgroup visible")
+grid:SetDisabled(true)
+palette.rows[1]:GetScript("OnMouseWheel")(palette.rows[1], 1)
+assert(palette.scrollbar:GetValue() == maximum - 3, "an inherited preview remains scrollable without becoming editable")
+grid:SetDisabled(false)
+palette.scrollbar:SetValue(maximum)
 
 grid:SetResolveProviders({
     Variables = {

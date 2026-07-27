@@ -1827,6 +1827,20 @@ local function EffectiveLayoutVariables(reference, entity, vars)
     return pageOnly or {}, mergeError or pageError
 end
 
+-- Finds only the nearest inherited `$LAYOUT`, excluding the target's own Vars.
+-- Received pages use their authoritative transmitted context; local pages and
+-- categories use their local category chain.
+local function InheritedLayoutSource(reference, entity)
+    local layers = EffectiveLayoutAncestorLayers(reference, entity)
+    for index = #layers, 1, -1 do
+        local source, sourceError = layout.ExtractSource(layers[index].Vars)
+        if sourceError or source ~= nil then
+            return source, sourceError
+        end
+    end
+    return nil
+end
+
 -- Finds the raw effective `$LAYOUT` without resolving its `{{Variable}}`
 -- expressions to today's names. The closest layer wins: entity/page first,
 -- then its direct parent back toward the root.
@@ -1836,14 +1850,8 @@ local function EffectiveLayoutSource(reference, entity, vars)
         return source, false, sourceError
     end
 
-    local layers = EffectiveLayoutAncestorLayers(reference, entity)
-    for index = #layers, 1, -1 do
-        source, sourceError = layout.ExtractSource(layers[index].Vars)
-        if sourceError or source ~= nil then
-            return source, true, sourceError
-        end
-    end
-    return nil, false
+    source, sourceError = InheritedLayoutSource(reference, entity)
+    return source, source ~= nil, sourceError
 end
 
 local function EffectiveLayoutContextSignature(reference, entity, vars)
@@ -1855,6 +1863,7 @@ end
 
 layoutEditor.EffectiveLayoutVariables = EffectiveLayoutVariables
 layoutEditor.EffectiveLayoutSource = EffectiveLayoutSource
+layoutEditor.InheritedLayoutSource = InheritedLayoutSource
 layoutEditor.EffectiveLayoutContextSignature = EffectiveLayoutContextSignature
 
 --- Writes only `$LAYOUT` into the latest variables belonging to a captured target.
@@ -1862,7 +1871,9 @@ layoutEditor.EffectiveLayoutContextSignature = EffectiveLayoutContextSignature
 -- page draft, so saving an older open window cannot roll back unrelated variable
 -- edits that arrived after it opened.
 -- @tparam table reference Reference returned by `ReferenceEntity`.
--- @tparam string source Compact `$LAYOUT` value.
+-- Passing nil removes the local key and restores inheritance. A string,
+-- including the empty string, is an explicit local override.
+-- @tparam string|nil source Compact `$LAYOUT` value, or nil to inherit.
 -- @treturn boolean saved
 -- @treturn string|nil reason
 -- @treturn boolean proposed Whether the save is waiting for leader acceptance.
@@ -1876,7 +1887,8 @@ function layoutEditor.SaveSource(reference, source)
     end
 
     local currentVars, hasDraft = CurrentLayoutVars(reference, entity, id)
-    local newVars, mergeError = layout.UpsertSource(currentVars, source)
+    local inheritLayout = source == nil
+    local newVars, mergeError = layout.UpsertSource(currentVars, source or "", not inheritLayout)
     if type(newVars) ~= "string" then
         return false, mergeError or "Could not update the layout variables.", false
     end
@@ -1907,16 +1919,28 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         return
     end
 
+    local function CanonicalLayoutSource(source)
+        return layout.Serialize(layout.Compact(layout.Parse(source or "")))
+    end
+
     local currentVars = CurrentLayoutVars(reference, entity, currentId)
-    local initialSource, inheritedSource, initialSourceError = EffectiveLayoutSource(reference, entity, currentVars)
-    if initialSourceError then
-        self:Print("Could not open the group layout: " .. tostring(initialSourceError))
+    local directSource, directSourceError = layout.ExtractSource(currentVars)
+    local initialSource, _, initialSourceError = EffectiveLayoutSource(reference, entity, currentVars)
+    local inheritedPreviewSource, inheritedSourceError = InheritedLayoutSource(reference, entity)
+    local openError = directSourceError or initialSourceError or (directSource == nil and inheritedSourceError or nil)
+    if openError then
+        self:Print("Could not open the group layout: " .. tostring(openError))
         return
     end
 
     local roster = CollectLayoutRoster()
     local model = layout.Parse(initialSource or "")
-    local initialCanonicalSource = layout.Serialize(layout.Compact(model))
+    local initialCanonicalSource = CanonicalLayoutSource(initialSource)
+    local initialHadDirectLayout = directSource ~= nil
+    local inheritLayout = not initialHadDirectLayout
+    local customDraftSource = directSource ~= nil and directSource or (initialSource or "")
+    inheritedPreviewSource = inheritedPreviewSource or ""
+    local previewedInheritedCanonicalSource = CanonicalLayoutSource(inheritedPreviewSource)
     local effectiveVariables, initialVariableError = EffectiveLayoutVariables(reference, entity, currentVars)
     local visibleContextSignature = EffectiveLayoutContextSignature(reference, entity, currentVars)
     local textMode = false
@@ -2028,7 +2052,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     -- A group nobody filled is kept while editing so its box stays draggable,
     -- but dropped on save rather than persisted as an empty line.
     local function SaveLayout()
-        local contextCurrent, contextError, currentEntity, vars, signature = RefreshLayoutContext(true)
+        local contextCurrent, contextError, currentEntity, vars = RefreshLayoutContext(true)
         if not contextCurrent then
             self:Print("Could not save the group layout: " .. tostring(contextError))
             return false, false, CurrentSource()
@@ -2038,42 +2062,63 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             return false, false, CurrentSource()
         end
 
-        local latestSource, latestInherited, sourceError = EffectiveLayoutSource(reference, currentEntity, vars)
+        local latestDirectSource, directError = layout.ExtractSource(vars)
+        local latestInheritedSource, inheritedError
+        if inheritLayout or latestDirectSource == nil then
+            latestInheritedSource, inheritedError = InheritedLayoutSource(reference, currentEntity)
+        end
+        local sourceError = directError or inheritedError
         if sourceError then
             self:Print("Could not save the group layout: " .. tostring(sourceError))
             return false, false, CurrentSource()
         end
-        local latestCanonicalSource = layout.Serialize(layout.Compact(layout.Parse(latestSource or "")))
-        if latestCanonicalSource ~= initialCanonicalSource then
+        local latestSource = latestDirectSource ~= nil and latestDirectSource or latestInheritedSource
+        local latestCanonicalSource = CanonicalLayoutSource(latestSource)
+        if (latestDirectSource ~= nil) ~= initialHadDirectLayout or latestCanonicalSource ~= initialCanonicalSource then
             self:Print("The group layout changed while this editor was open; reopen it before saving.")
             return false, false, CurrentSource()
         end
+        if inheritLayout and CanonicalLayoutSource(latestInheritedSource) ~= previewedInheritedCanonicalSource then
+            self:Print("The inherited group layout changed while this editor was open; review it before saving.")
+            return false, false, CurrentSource()
+        end
 
-        local compactModel = layout.Compact(layout.Parse(CurrentSource()))
-        local capacityValid, capacityError, capacityGroup = layout.ValidateCapacity(compactModel, effectiveVariables)
-        if not capacityValid then
-            self:Print(
-                ("Could not save the group layout: group %s is over capacity after variables resolve (%s)."):format(
-                    tostring(capacityGroup or "?"),
-                    tostring(capacityError)
+        local source
+        if not inheritLayout then
+            local compactModel = layout.Compact(layout.Parse(CurrentSource()))
+            local capacityValid, capacityError, capacityGroup =
+                layout.ValidateCapacity(compactModel, effectiveVariables)
+            if not capacityValid then
+                self:Print(
+                    ("Could not save the group layout: group %s is over capacity after variables resolve (%s)."):format(
+                        tostring(capacityGroup or "?"),
+                        tostring(capacityError)
+                    )
                 )
-            )
-            return false, false, layout.Serialize(compactModel)
+                return false, false, layout.Serialize(compactModel)
+            end
+            source = layout.Serialize(compactModel)
         end
-        local source = layout.Serialize(compactModel)
-        -- Applying an unchanged inherited layout should not materialize a page
-        -- override that silently stops following its category.
-        if inheritedSource and latestInherited and source == initialCanonicalSource then
-            visibleContextSignature = signature
-            return true, false, source
-        end
+
         local saved, saveError, proposed = layoutEditor.SaveSource(reference, source)
         if not saved and saveError then
             self:Print("Could not save the group layout: " .. tostring(saveError))
-            return false, false, source
+            return false, false, source or inheritedPreviewSource
         end
-        inheritedSource = false
-        initialCanonicalSource = source
+
+        local savedEntity, savedId = layoutEditor.ResolveEntity(reference)
+        local savedVars = savedEntity and CurrentLayoutVars(reference, savedEntity, savedId) or vars
+        local savedDirectSource = layout.ExtractSource(savedVars)
+        local savedInheritedSource = savedEntity and InheritedLayoutSource(reference, savedEntity)
+            or latestInheritedSource
+        local savedEffectiveSource = savedDirectSource ~= nil and savedDirectSource or savedInheritedSource
+        initialHadDirectLayout = savedDirectSource ~= nil
+        inheritLayout = not initialHadDirectLayout
+        initialCanonicalSource = CanonicalLayoutSource(savedEffectiveSource)
+        inheritedPreviewSource = savedInheritedSource or ""
+        previewedInheritedCanonicalSource = CanonicalLayoutSource(inheritedPreviewSource)
+        customDraftSource = inheritLayout and (savedEffectiveSource or "") or (savedDirectSource or "")
+
         local refreshed, _, _, _, savedSignature = RefreshLayoutContext(true)
         if refreshed then
             visibleContextSignature = savedSignature
@@ -2082,10 +2127,10 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             self:Print(
                 "Submitted the layout change to the raid leader. Apply to Raid is available after it is accepted and displayed."
             )
-            return true, true, source
+            return true, true, savedEffectiveSource or ""
         end
         self:UpdateDisplayed()
-        return true, false, source
+        return true, false, savedEffectiveSource or ""
     end
 
     local function LayoutViewIsCurrent()
@@ -2093,12 +2138,22 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         if not contextCurrent then
             return false, contextError
         end
-        local latestSource, _, sourceError = EffectiveLayoutSource(reference, currentEntity, vars)
+        local latestDirectSource, directError = layout.ExtractSource(vars)
+        local latestInheritedSource, inheritedError
+        if inheritLayout or latestDirectSource == nil then
+            latestInheritedSource, inheritedError = InheritedLayoutSource(reference, currentEntity)
+        end
+        local sourceError = directError or inheritedError
         if sourceError then
             return false, sourceError
         end
-        local latestCanonicalSource = layout.Serialize(layout.Compact(layout.Parse(latestSource or "")))
-        if latestCanonicalSource ~= initialCanonicalSource or signature ~= visibleContextSignature then
+        local latestSource = latestDirectSource ~= nil and latestDirectSource or latestInheritedSource
+        if
+            (latestDirectSource ~= nil) ~= initialHadDirectLayout
+            or CanonicalLayoutSource(latestSource) ~= initialCanonicalSource
+            or inheritLayout and CanonicalLayoutSource(latestInheritedSource) ~= previewedInheritedCanonicalSource
+            or signature ~= visibleContextSignature
+        then
             return false, "the layout or its variables changed while this editor was open"
         end
         return true
@@ -2143,8 +2198,11 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         editBox:SetText((layout.Serialize(model):gsub("%s*;%s*", "\n")))
         editBox:SetFullWidth(true)
         editBox:DisableButton(false)
+        editBox:SetDisabled(inheritLayout)
         editBox:SetCallback("OnEnterPressed", function()
-            SaveLayout()
+            if not inheritLayout then
+                SaveLayout()
+            end
         end)
         scroll:AddChild(editBox)
 
@@ -2163,7 +2221,11 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             local button = AceGUI:Create("Button")
             button:SetText(name)
             button:SetWidth(96)
+            button:SetDisabled(inheritLayout)
             button:SetCallback("OnClick", function()
+                if inheritLayout then
+                    return
+                end
                 local inner = editBox.editBox
                 local position = inner and inner:GetCursorPosition()
                 local text = editBox:GetText() or ""
@@ -2203,7 +2265,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         -- a layout that no longer exists, so it is dropped.
         local widget = grid
         local function Commit(applied, updated)
-            if closed or grid ~= widget then
+            if closed or inheritLayout or grid ~= widget then
                 return
             end
             if not applied then
@@ -2326,6 +2388,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
 
         body:AddChild(grid)
         grid:SetLayoutModel(model)
+        grid:SetDisabled(inheritLayout)
     end
 
     local function BuildBody()
@@ -2338,16 +2401,56 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         BuildVisualView()
     end
 
-    local toggle = AceGUI:Create("CheckBox")
-    toggle:SetLabel("Edit as text")
-    toggle:SetValue(false)
-    toggle:SetWidth(140)
-    toggle:SetCallback("OnValueChanged", function(_, _, value)
+    local inheritToggle = AceGUI:Create("CheckBox")
+    inheritToggle:SetLabel("Inherit layout")
+    inheritToggle:SetValue(inheritLayout)
+    inheritToggle:SetWidth(150)
+    inheritToggle:SetCallback("OnValueChanged", function(_, _, value)
+        local nextInherited = value and true or false
+        if nextInherited == inheritLayout then
+            return
+        end
+        if nextInherited then
+            customDraftSource = CurrentSource()
+            local contextCurrent, contextError, currentEntity, _, signature = RefreshLayoutContext(false)
+            if not contextCurrent then
+                self:Print("Could not preview the inherited group layout: " .. tostring(contextError))
+                inheritToggle:SetValue(inheritLayout)
+                return
+            end
+            local source, sourceError = InheritedLayoutSource(reference, currentEntity)
+            if sourceError then
+                self:Print("Could not preview the inherited group layout: " .. tostring(sourceError))
+                inheritToggle:SetValue(inheritLayout)
+                return
+            end
+            inheritedPreviewSource = source or ""
+            previewedInheritedCanonicalSource = CanonicalLayoutSource(inheritedPreviewSource)
+            visibleContextSignature = signature
+            model = layout.Parse(inheritedPreviewSource)
+        else
+            model = layout.Parse(customDraftSource or inheritedPreviewSource)
+        end
+        inheritLayout = nextInherited
+        BuildBody()
+    end)
+    DescribeWidget(
+        inheritToggle,
+        "Inherit layout",
+        "Use the nearest category layout and lock this editor. Saving while checked removes this page or category's local layout override."
+    )
+    frame:AddChild(inheritToggle)
+
+    local textToggle = AceGUI:Create("CheckBox")
+    textToggle:SetLabel("Edit as text")
+    textToggle:SetValue(false)
+    textToggle:SetWidth(140)
+    textToggle:SetCallback("OnValueChanged", function(_, _, value)
         model = layout.Parse(CurrentSource())
         textMode = value and true or false
         BuildBody()
     end)
-    frame:AddChild(toggle)
+    frame:AddChild(textToggle)
 
     frame:AddChild(body)
     BuildBody()
