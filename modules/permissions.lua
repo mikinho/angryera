@@ -13,6 +13,7 @@ local IterateGroupMembers = helpers.IterateGroupMembers
 
 local PERMISSION_POLICY_VERSION = 1
 local guildOfficerNames
+local guildMemberNames
 
 local NORMAL_ACTIONS = {
     categoryUpsert = true,
@@ -64,6 +65,7 @@ end
 -- @treturn table officerNames
 function AngryEra:UpdateOfficerRank()
     guildOfficerNames = {}
+    guildMemberNames = {}
 
     if
         not (
@@ -96,18 +98,17 @@ function AngryEra:UpdateOfficerRank()
 
     local clubRoles = Enum.ClubRoleIdentifier
     for _, memberInfo in ipairs(allMemberList) do
-        if
-            type(memberInfo) == "table"
-            and memberInfo.name
-            and (
-                memberInfo.role == clubRoles.Owner
-                or memberInfo.role == clubRoles.Leader
-                or memberInfo.role == clubRoles.Moderator
-            )
-        then
+        if type(memberInfo) == "table" and memberInfo.name then
             local normalizedName = NormalizePlayerName(memberInfo.name)
             if normalizedName then
-                guildOfficerNames[normalizedName] = true
+                guildMemberNames[normalizedName] = true
+                if
+                    memberInfo.role == clubRoles.Owner
+                    or memberInfo.role == clubRoles.Leader
+                    or memberInfo.role == clubRoles.Moderator
+                then
+                    guildOfficerNames[normalizedName] = true
+                end
             end
         end
     end
@@ -118,6 +119,7 @@ end
 --- Clears the cached guild officer roster.
 function AngryEra:ResetOfficerRank()
     guildOfficerNames = nil
+    guildMemberNames = nil
 end
 
 --- Returns whether a player is a guild officer or higher on this receiver.
@@ -130,6 +132,18 @@ function AngryEra:IsGuildOfficer(player)
         self:UpdateOfficerRank()
     end
     return guildOfficerNames[normalizedName] == true
+end
+
+--- Returns whether a player belongs to this installation's guild roster.
+function AngryEra:IsGuildMember(player)
+    local normalizedName = NormalizePlayerName(player)
+    if not normalizedName then
+        return false
+    end
+    if guildMemberNames == nil then
+        self:UpdateOfficerRank()
+    end
+    return guildMemberNames[normalizedName] == true
 end
 
 --- Returns the current group role for a player.
@@ -284,7 +298,21 @@ function AngryEra:CanLocalPlayerApplyRaidLayout()
 
     local player = PlayerFullName()
     local role = self:GetGroupRole(player)
-    return role == "leader" or (role == "assistant" and self:IsQualifiedAssistant(player))
+    if role == "leader" then
+        return true
+    end
+    if role ~= "assistant" then
+        return false
+    end
+    if self:GetConfig("allowAllAssistants") == true or self:IsDirectlyAllowlisted(player) then
+        return true
+    end
+
+    -- Officer status qualifies by default only when the current raid leader is
+    -- in the same local guild roster. Without this check, an officer from an
+    -- unrelated guild in a pug could gain the action merely by receiving assist.
+    local leader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader() or nil
+    return leader ~= nil and self:IsGuildMember(leader) and self:IsGuildOfficer(player)
 end
 
 --- Returns whether an entity may be edited locally or proposed to the leader.

@@ -174,6 +174,7 @@ SetRoster({
     { name = "OfficerMember-Realm", rank = 0 },
 })
 SetGuild({
+    { name = "PugLeader-Realm", role = 4 },
     { name = "Officer-Realm", role = 3 },
     { name = "OfficerMember-Realm", role = 3 },
 })
@@ -207,6 +208,19 @@ assert(
     not AngryEra:CanLocalPlayerApplyRaidLayout(),
     "Raid assist alone should not allow a layout rearrangement by default"
 )
+SetGuild({
+    { name = "Officer-Realm", role = 3 },
+})
+currentPlayer = "Officer-Realm"
+assert(
+    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "An officer from a different guild than the raid leader should not qualify by default"
+)
+SetGuild({
+    { name = "PugLeader-Realm", role = 4 },
+    { name = "Officer-Realm", role = 3 },
+    { name = "OfficerMember-Realm", role = 3 },
+})
 currentPlayer = "Viewer-Realm"
 
 config.trustedPublishers = "DirectAssist-Realm"
