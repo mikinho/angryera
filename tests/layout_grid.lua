@@ -222,10 +222,14 @@ function AceGUI:RegisterAsWidget(widget)
     function widget:SetCallback(name, handler)
         self.callbacks[name] = handler
     end
+    -- AceGUI hands a callback the widget and the event name before anything the
+    -- widget fired, and swallows whatever the handler raises. A stub that leaves
+    -- the event name out lets a host misread every argument and still pass here,
+    -- which is how dragging came to do nothing in game while this suite was green.
     function widget:Fire(name, ...)
         local handler = self.callbacks[name]
         if handler then
-            handler(self, ...)
+            handler(self, name, ...)
         end
     end
     function widget:SetWidth(width)
@@ -324,10 +328,11 @@ end
 
 -- Clicks report their position so the host can act on a row without a drag.
 local clicked
-grid:SetCallback("OnSlotClick", function(_, group, slot, button)
-    clicked = { group = group, slot = slot, button = button }
+grid:SetCallback("OnSlotClick", function(_, event, group, slot, button)
+    clicked = { event = event, group = group, slot = slot, button = button }
 end)
 Click(filled, "RightButton")
+assert(clicked.event == "OnSlotClick", "a callback is handed the event name before what was fired")
 assert(clicked.group == 1 and clicked.slot == 1, "a slot click reports its position")
 assert(clicked.button == "RightButton", "a slot click reports the mouse button")
 
@@ -344,14 +349,14 @@ assert(filled.mouseEnabled, "rows take mouse input")
 assert(grid.boxes[1].header.mouseEnabled, "box titles take mouse input")
 
 local headerClicked
-grid:SetCallback("OnGroupClick", function(_, group, subgroup)
+grid:SetCallback("OnGroupClick", function(_, _, group, subgroup)
     headerClicked = { group = group, subgroup = subgroup }
 end)
 Click(grid.boxes[2].header, "LeftButton")
 assert(headerClicked.group == nil and headerClicked.subgroup == 2, "a header click reports its subgroup")
 
 local emptyClicked
-grid:SetCallback("OnEmptyClick", function(_, group, subgroup)
+grid:SetCallback("OnEmptyClick", function(_, _, group, subgroup)
     emptyClicked = { group = group, subgroup = subgroup }
 end)
 headerClicked = nil
@@ -362,7 +367,7 @@ assert(not headerClicked, "clicking blank space does not act on the group itself
 -- Drives one drag gesture to a point and returns what it reported.
 local function GestureTo(source, x, y)
     local drag, drop
-    grid:SetCallback("OnLayoutDrop", function(_, firedDrag, firedDrop)
+    grid:SetCallback("OnLayoutDrop", function(_, _, firedDrag, firedDrop)
         drag, drop = firedDrag, firedDrop
     end)
 
@@ -465,7 +470,7 @@ assert(palette.rows[3].layoutTarget.text == "Ghoal", "clearing a slot returns it
 -- than scroll it. Only a change is reported, because a container that resizes in
 -- answer re-flows the grid, and re-reporting from that pass would bounce them.
 local measured, reports = nil, 0
-grid:SetCallback("OnHeightMeasured", function(_, height)
+grid:SetCallback("OnHeightMeasured", function(_, _, height)
     measured, reports = height, reports + 1
 end)
 
