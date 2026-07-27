@@ -419,7 +419,7 @@ function AngryEra:DisplayPage(id, options)
     -- displayed-note snapshot before the next encounter.
     AngryEra:UpdateDisplayed()
     if changedPage then
-        AngryEra:ShowDisplay()
+        AngryEra:ShowDisplay(false)
         AngryEra:UpdateTree()
         AngryEra:DisplayUpdateNotification()
     end
@@ -862,7 +862,7 @@ function AngryEra:RenamePage(id, nameOrFrame)
     if AngryAssign_State.displayed == id then
         self:UpdateDisplayed()
         if activatedLocally == true then
-            self:ShowDisplay()
+            self:ShowDisplay(false)
         end
     end
     ReportFailedDisplayPublish(self, id, published, publishResult, activatedLocally)
@@ -1093,7 +1093,7 @@ function AngryEra:UpdateContents(id, value)
     if AngryAssign_State.displayed == id then
         self:UpdateDisplayed()
         if activatedLocally == true then
-            self:ShowDisplay()
+            self:ShowDisplay(false)
             if contents_updated then
                 self:DisplayUpdateNotification()
             end

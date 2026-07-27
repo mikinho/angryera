@@ -24,6 +24,201 @@ local LSM = app.libs.LSM
 local LibMustache = app.libs.LibMustache
 
 local currentGroup = nil
+local AUTO_HIDE_REVEAL_SECONDS = 3
+local AUTO_HIDE_FADE_SECONDS = 0.2
+
+local function SetDisplayAutoHideAlpha(self, alpha)
+    alpha = math.max(0, math.min(tonumber(alpha) or 1, 1))
+    if self.display_text and type(self.display_text.SetAlpha) == "function" then
+        self.display_text:SetAlpha(alpha)
+    end
+    if self.mover and type(self.mover.SetAlpha) == "function" then
+        self.mover:SetAlpha(alpha)
+    end
+end
+
+local function DisplayAutoHideState(self)
+    local state = self._displayAutoHideState
+    if type(state) ~= "table" then
+        state = {
+            HoldRemaining = 0,
+        }
+        self._displayAutoHideState = state
+    end
+    return state
+end
+
+local function CaptureDisplayAutoHideContent(self, page, displayedId, renderedText)
+    local syncId = type(page) == "table" and rawget(page, "SyncId") or nil
+    local identity
+    if type(syncId) == "string" and syncId ~= "" then
+        identity = "sync:" .. syncId
+    elseif displayedId ~= nil then
+        identity = "local:" .. tostring(displayedId)
+    end
+
+    local state = DisplayAutoHideState(self)
+    local changed = state.PageIdentity ~= identity or state.RenderedText ~= renderedText
+    state.PageIdentity = identity
+    state.RenderedText = renderedText
+    return changed, identity
+end
+
+local function ClearDisplayAutoHideContent(self)
+    local state = DisplayAutoHideState(self)
+    state.PageIdentity = nil
+    state.RenderedText = nil
+end
+
+local function DisplayAutoHideDriver_OnUpdate(driver, elapsed)
+    local owner = driver.owner
+    if owner and type(owner.UpdateDisplayAutoHide) == "function" then
+        owner:UpdateDisplayAutoHide(elapsed)
+    end
+end
+
+local function IsDisplayAutoHideHovered(self)
+    local hover = self.display_auto_hide_hover
+    if not hover or type(hover.IsShown) ~= "function" or not hover:IsShown() then
+        return false
+    end
+
+    -- Poll geometry instead of enabling mouse on an invisible frame, so an
+    -- auto-hidden assignment never blocks clicks aimed at the world beneath it.
+    if
+        type(GetCursorPosition) == "function"
+        and type(hover.GetLeft) == "function"
+        and type(hover.GetRight) == "function"
+        and type(hover.GetBottom) == "function"
+        and type(hover.GetTop) == "function"
+    then
+        local left, right = hover:GetLeft(), hover:GetRight()
+        local bottom, top = hover:GetBottom(), hover:GetTop()
+        if left and right and bottom and top then
+            local x, y = GetCursorPosition()
+            local scale = type(hover.GetEffectiveScale) == "function" and hover:GetEffectiveScale() or 1
+            scale = type(scale) == "number" and scale > 0 and scale or 1
+            if type(x) == "number" and type(y) == "number" then
+                x, y = x / scale, y / scale
+                return x >= left and x <= right and y >= bottom and y <= top
+            end
+        end
+    end
+
+    return type(hover.IsMouseOver) == "function" and hover:IsMouseOver() or false
+end
+
+local function UpdateDisplayAutoHideHoverBounds(self, first, last)
+    local hover = self.display_auto_hide_hover
+    if not hover then
+        return
+    end
+
+    hover:ClearAllPoints()
+    if
+        not first
+        or not last
+        or self:GetConfig("autoHide") ~= true
+        or not self.display_text
+        or not self.display_text:IsShown()
+    then
+        hover:Hide()
+        return
+    end
+
+    if AngryAssign_State.directionUp then
+        hover:SetPoint("TOPLEFT", last, "TOPLEFT", -4, 4)
+        hover:SetPoint("BOTTOMRIGHT", first, "BOTTOMRIGHT", 4, -4)
+    else
+        hover:SetPoint("TOPLEFT", first, "TOPLEFT", -4, 4)
+        hover:SetPoint("BOTTOMRIGHT", last, "BOTTOMRIGHT", 4, -4)
+    end
+    hover:Show()
+end
+
+--- Advances the assignment display's opt-in hover fade.
+-- @tparam number elapsed Seconds since the previous frame.
+-- @treturn number alpha Applied display alpha.
+function AngryEra:UpdateDisplayAutoHide(elapsed)
+    local text = self.display_text
+    local state = DisplayAutoHideState(self)
+    local driver = self.display_auto_hide_driver
+    if self:GetConfig("autoHide") ~= true or not text then
+        state.HoldRemaining = 0
+        SetDisplayAutoHideAlpha(self, 1)
+        if driver then
+            driver:SetScript("OnUpdate", nil)
+        end
+        return 1
+    end
+
+    elapsed = type(elapsed) == "number" and math.max(elapsed, 0) or 0
+    state.HoldRemaining = math.max((tonumber(state.HoldRemaining) or 0) - elapsed, 0)
+
+    local textShown = type(text.IsShown) ~= "function" or text:IsShown()
+    local shouldShow = not textShown or state.HoldRemaining > 0 or IsDisplayAutoHideHovered(self)
+    local targetAlpha = shouldShow and 1 or 0
+    local currentAlpha = type(text.GetAlpha) == "function" and text:GetAlpha() or 1
+    currentAlpha = type(currentAlpha) == "number" and currentAlpha or 1
+
+    if currentAlpha ~= targetAlpha then
+        local step = AUTO_HIDE_FADE_SECONDS > 0 and (elapsed / AUTO_HIDE_FADE_SECONDS) or 1
+        if currentAlpha < targetAlpha then
+            currentAlpha = math.min(currentAlpha + step, targetAlpha)
+        else
+            currentAlpha = math.max(currentAlpha - step, targetAlpha)
+        end
+        SetDisplayAutoHideAlpha(self, currentAlpha)
+    end
+    return currentAlpha
+end
+
+--- Reveals an auto-hidden assignment for a short, replaceable hold.
+-- @tparam[opt=3] number seconds Hold duration.
+-- @treturn boolean revealed Whether auto-hide is enabled and active.
+function AngryEra:RevealDisplayForAutoHide(seconds)
+    if self:GetConfig("autoHide") ~= true or not self.display_text then
+        return false
+    end
+
+    local state = DisplayAutoHideState(self)
+    state.HoldRemaining = type(seconds) == "number" and math.max(seconds, 0) or AUTO_HIDE_REVEAL_SECONDS
+    if self.display_auto_hide_driver then
+        self.display_auto_hide_driver:SetScript("OnUpdate", DisplayAutoHideDriver_OnUpdate)
+    end
+    self:UpdateDisplayAutoHide(0)
+    return true
+end
+
+--- Applies the current auto-hide option immediately.
+-- Disabling always restores full opacity; enabling may preview the behavior.
+-- @tparam[opt=false] boolean reveal Start a fresh three-second reveal.
+-- @treturn boolean enabled
+function AngryEra:RefreshDisplayAutoHide(reveal)
+    local enabled = self:GetConfig("autoHide") == true and self.display_text ~= nil
+    local state = DisplayAutoHideState(self)
+    local driver = self.display_auto_hide_driver
+    if not enabled then
+        state.HoldRemaining = 0
+        SetDisplayAutoHideAlpha(self, 1)
+        if driver then
+            driver:SetScript("OnUpdate", nil)
+        end
+        if self.display_auto_hide_hover then
+            self.display_auto_hide_hover:Hide()
+        end
+        return false
+    end
+
+    if driver then
+        driver:SetScript("OnUpdate", DisplayAutoHideDriver_OnUpdate)
+    end
+    if reveal == true then
+        state.HoldRemaining = AUTO_HIDE_REVEAL_SECONDS
+    end
+    self:UpdateDisplayAutoHide(0)
+    return true
+end
 
 -- -------------------------
 -- Keybinding globals
@@ -97,19 +292,27 @@ function AngryEra:ResetPosition()
     lwin.RestorePosition(self.frame)
 
     self:UpdateDirection()
+    self:RefreshDisplayAutoHide(true)
 end
 
 --- Shows the on-screen assignment display.
-function AngryEra:ShowDisplay()
+-- @tparam[opt=true] boolean revealAutoHide Start a fresh auto-hide reveal.
+function AngryEra:ShowDisplay(revealAutoHide)
     self.display_text:Show()
     self:UpdateBackdrop()
     AngryAssign_State.display.hidden = false
+    self:RefreshDisplayAutoHide(revealAutoHide ~= false)
 end
 
 --- Hides the on-screen assignment display.
 function AngryEra:HideDisplay()
     self.display_text:Hide()
     AngryAssign_State.display.hidden = true
+    DisplayAutoHideState(self).HoldRemaining = 0
+    if self.display_auto_hide_hover then
+        self.display_auto_hide_hover:Hide()
+    end
+    self:RefreshDisplayAutoHide(false)
 end
 
 --- Toggles the on-screen assignment display visibility.
@@ -233,11 +436,25 @@ function AngryEra:CreateDisplay()
     glow2:SetAlpha(0)
     self.display_glow2 = glow2
 
+    -- The display root is one pixel tall and the message frame is always 700
+    -- pixels tall. This transparent sibling instead follows the actual rendered
+    -- lines, so hover-to-reveal neither misses the note nor claims empty screen.
+    local autoHideHover = CreateFrame("Frame", nil, frame)
+    autoHideHover:EnableMouse(false)
+    autoHideHover:Hide()
+    self.display_auto_hide_hover = autoHideHover
+
+    local autoHideDriver = CreateFrame("Frame", nil, frame)
+    autoHideDriver:SetAllPoints(frame)
+    autoHideDriver.owner = self
+    self.display_auto_hide_driver = autoHideDriver
+
     if AngryAssign_State.display.hidden then
         text:Hide()
     end
     self:UpdateMedia()
     self:UpdateDirection()
+    self:RefreshDisplayAutoHide(false)
 end
 
 function AngryEra:ToggleLock()
@@ -247,6 +464,7 @@ function AngryEra:ToggleLock()
     else
         self.mover:Show()
     end
+    self:RefreshDisplayAutoHide(not AngryAssign_State.locked)
 end
 
 function AngryEra:ToggleDirection()
@@ -315,6 +533,7 @@ function AngryEra:UpdateBackdrop()
     else
         self.backdrop:Hide()
     end
+    UpdateDisplayAutoHideHoverBounds(self, first, last)
 end
 
 local editFontName, editFontHeight, editFontFlags
@@ -733,11 +952,13 @@ end
 
 --- Rebuilds and draws the active display page.
 function AngryEra:UpdateDisplayed()
-    local page = AngryAssign_Pages[AngryAssign_State.displayed]
+    local displayedId = AngryAssign_State.displayed
+    local page = AngryAssign_Pages[displayedId]
     if not page then
         self._displayedHasPriority = false
         self.display_text:Clear()
         self:UpdateBackdrop()
+        ClearDisplayAutoHideContent(self)
         if type(self.NotifyDisplayedNoteChanged) == "function" then
             pcall(self.NotifyDisplayedNoteChanged, self, nil)
         end
@@ -871,6 +1092,7 @@ function AngryEra:UpdateDisplayed()
         self:UpdateBackdrop()
     end)
 
+    local displayChanged, displayIdentity = CaptureDisplayAutoHideContent(self, renderedPage, displayedId, text)
     if type(self.NotifyDisplayedNoteChanged) == "function" then
         if ACTIVE_CONTEXT_UNAVAILABLE[variableError] then
             pcall(self.NotifyDisplayedNoteChanged, self, nil)
@@ -882,5 +1104,15 @@ function AngryEra:UpdateDisplayed()
                 AncestorVariableLayers = ancestorVariableLayers,
             })
         end
+    end
+    local autoHideState = DisplayAutoHideState(self)
+    if
+        displayChanged
+        and AngryAssign_State.displayed == displayedId
+        and AngryAssign_Pages[displayedId] == page
+        and autoHideState.PageIdentity == displayIdentity
+        and autoHideState.RenderedText == text
+    then
+        self:RevealDisplayForAutoHide()
     end
 end

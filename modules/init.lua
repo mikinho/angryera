@@ -81,6 +81,7 @@ end
 -- class AngryEraConfig
 -- field scale number Scale of the edit window
 -- field hideoncombat boolean Hide display in combat
+-- field autoHide boolean Fade the assignment display when the mouse is away
 -- field highlight string Comma/space separated words to highlight
 -- field highlightColor string Hex color for highlights
 -- field backdropShow boolean Show backdrop
@@ -424,6 +425,20 @@ function AngryEra:OnInitialize()
                         end,
                         set = function(info, val)
                             self:SetConfig("hideoncombat", val)
+                        end,
+                    },
+                    autoHide = {
+                        type = "toggle",
+                        order = 3.25,
+                        name = "Auto-hide Display",
+                        desc = "Fade the assignment display out when the mouse is away. Page or content changes keep it visible for 3 seconds.",
+                        get = function(info)
+                            return self:GetConfig("autoHide")
+                        end,
+                        set = function(info, val)
+                            self:SetConfig("autoHide", val)
+                            self:UpdateBackdrop()
+                            self:RefreshDisplayAutoHide(val == true)
                         end,
                     },
                     chatoutput = {

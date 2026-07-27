@@ -1,6 +1,7 @@
 ## v3.3.0-BETA
 
 * Compatibility: Pages that use group layouts, variable families, imported raid-role variables, or Key=Value boolean metadata require AngryEra v3.3 or newer on every viewer. Pages using only earlier shared features and no Key=Value booleans remain compatible with v3.1 and v3.2 clients.
+* New Feature: Added optional display auto-hide. The assignment fades out when the mouse is away, fades back in over its rendered area, and remains visible for three seconds after the page or displayed content changes.
 * Improvement: `/ae` is now the canonical slash command throughout AngryEra. `/aa` remains a temporary compatibility alias and prints a local deprecation notice once per login.
 * New Feature: Added inheritable raid group layouts. Put a standard `$LAYOUT` on a category, override only the encounter pages that differ, render up to eight named raid subgroups with `{layout}`, and optionally apply the same plan to the live raid.
 * New Feature: Layout slots fill from the live roster: a name, a priority list `A > B > C`, a class fill `*MAGE`/`*MAGE x2`, or `group:2`. Auto-fill picks present-and-alive members and never assigns anyone twice.

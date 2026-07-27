@@ -38,6 +38,9 @@ function AngryEra:RestoreDefaults()
     AngryAssign_Config = {}
     self:UpdateMedia()
     self:UpdateDisplayed()
+    if type(self.RefreshDisplayAutoHide) == "function" then
+        self:RefreshDisplayAutoHide(false)
+    end
     LibStub("AceConfigRegistry-3.0"):NotifyChange("AngryEra")
 end
 

@@ -28,6 +28,7 @@ core.MAX_IMPORT_SERIALIZED_BYTES = 8 * 1024 * 1024
 core.configDefaults = {
     scale = 1,
     hideoncombat = false,
+    autoHide = false,
     fontName = "Friz Quadrata TT",
     fontHeight = 12,
     fontFlags = "NONE",

@@ -1116,7 +1116,7 @@ local function RefreshAfterDisplay(self, displayed)
         refreshed = false
     end
     local displayFinishedAt = debugEnabled and PreciseNowMilliseconds() or 0
-    if displayed and not CallUiMethod(self, "ShowDisplay") then
+    if displayed and not CallUiMethod(self, "ShowDisplay", false) then
         refreshed = false
     end
     if displayed and not CallUiMethod(self, "DisplayUpdateNotification") then

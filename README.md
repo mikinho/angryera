@@ -630,6 +630,7 @@ Open `/ae` to configure:
 
 - highlighted words and the special `Group` keyword;
 - hide-on-combat behavior;
+- optional hover auto-hide, with a three-second reveal after page or displayed-content changes;
 - editor scale;
 - display backdrop and colors;
 - update-notification glow color;

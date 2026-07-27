@@ -49,6 +49,9 @@ local secondPage = {
     Contents = "Second assignment",
 }
 local rendered = {}
+local autoHideEnabled = false
+local autoHideRevealCount = 0
+local autoHideReveals = {}
 
 AngryAssign_Categories = {}
 AngryAssign_Pages = {
@@ -72,10 +75,23 @@ AngryEra.display_text = {
 }
 AngryEra.GetConfig = function(_, key)
     local values = {
+        autoHide = autoHideEnabled,
         highlight = "",
         highlightColor = "ffffff",
     }
     return values[key]
+end
+AngryEra.RevealDisplayForAutoHide = function()
+    if not autoHideEnabled then
+        return false
+    end
+    autoHideRevealCount = autoHideRevealCount + 1
+    local note = AngryEra:GetDisplayedNote()
+    autoHideReveals[#autoHideReveals + 1] = {
+        LocalId = AngryAssign_State.displayed,
+        SyncId = note and note.SyncId or nil,
+    }
+    return true
 end
 AngryEra.GetCurrentGroup = function()
     return 1
@@ -183,6 +199,9 @@ local function ResetScenario(channel, mode)
     aceDispatchDepth = 0
     maximumWeakAuraDispatchDepth = 0
     maximumAceDispatchDepth = 0
+    autoHideRevealCount = 0
+    autoHideReveals = {}
+    AngryEra._displayAutoHideState = nil
 
     AngryAssign_State.displayed = 1
     listenerChannel = channel
@@ -223,6 +242,20 @@ for _, channel in ipairs({ "WeakAuras", "AceEvent" }) do
     RunScenario(channel, "switch")
     RunScenario(channel, "clear")
 end
+
+autoHideEnabled = true
+for _, channel in ipairs({ "WeakAuras", "AceEvent" }) do
+    RunScenario(channel, "switch")
+    assert(autoHideRevealCount == 1, channel .. " switch should reveal only the final displayed page")
+    assert(
+        autoHideReveals[1].LocalId == 2 and autoHideReveals[1].SyncId == secondPage.SyncId,
+        channel .. " switch should not reveal the superseded outer render"
+    )
+
+    RunScenario(channel, "clear")
+    assert(autoHideRevealCount == 0, channel .. " clear should not reveal a superseded outer render")
+end
+autoHideEnabled = false
 
 local isolatedAceEvents = {}
 _G.WeakAuras.ScanEvents = function(event)
@@ -316,5 +349,42 @@ assert(
     familyVars and familyVars.HEALER1 == "Roselea" and familyVars.HEALER2 == "Zessy" and familyVars["HEALER*"] == nil,
     "the displayed-note API should expose generated family members without their declaration"
 )
+
+autoHideEnabled = false
+_G.WeakAuras.ScanEvents = function() end
+function AngryEra:SendMessage() end
+AngryEra:NotifyDisplayedNoteChanged(nil)
+AngryEra._displayAutoHideState = nil
+
+autoHideEnabled = true
+autoHideRevealCount = 0
+autoHideReveals = {}
+AngryAssign_State.displayed = 1
+AngryEra:UpdateDisplayed()
+assert(autoHideRevealCount == 1, "the first displayed note should start an auto-hide reveal")
+AngryEra:UpdateDisplayed()
+assert(autoHideRevealCount == 1, "an identical redraw should not restart the auto-hide reveal")
+
+firstPage.Contents = "Changed first assignment"
+AngryEra:UpdateDisplayed()
+assert(autoHideRevealCount == 2, "a displayed-content change should restart the auto-hide reveal")
+
+AngryAssign_State.displayed = 2
+AngryEra:UpdateDisplayed()
+assert(autoHideRevealCount == 3, "a page change should restart the auto-hide reveal")
+
+secondPage.Updated = 12345
+secondPage.UpdatedBy = "Roselea"
+AngryEra:UpdateDisplayed()
+assert(autoHideRevealCount == 3, "a non-visible metadata change should not restart the auto-hide reveal")
+
+local notifyDisplayedNoteChanged = AngryEra.NotifyDisplayedNoteChanged
+AngryEra.NotifyDisplayedNoteChanged = function()
+    error("displayed-note API failure")
+end
+secondPage.Contents = "Changed second assignment"
+AngryEra:UpdateDisplayed()
+assert(autoHideRevealCount == 4, "a visible change should reveal even when the public note API fails")
+AngryEra.NotifyDisplayedNoteChanged = notifyDisplayedNoteChanged
 
 print("Display note API integration tests passed.")
