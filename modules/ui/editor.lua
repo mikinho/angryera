@@ -1470,6 +1470,15 @@ local RAID_LAYOUT_APPLY_ERRORS = {
     ["unresolved-member"] = "Every named layout member must resolve uniquely in the current raid.",
     ["subgroup-oversubscribed"] = "A subgroup is assigned more than five members.",
     ["subgroup-blocked"] = "The layout could not be arranged with the current raid.",
+    ["plan-too-large"] = "The raid layout requires too many group changes.",
+    ["active-display-unavailable"] = "The exact displayed page is not available.",
+    ["display-changed"] = "The displayed page changed before the layout could be applied.",
+    ["invalid-roster"] = "Classic returned an invalid raid roster; apply the layout again.",
+    ["roster-unavailable"] = "Classic's raid roster is temporarily unavailable; apply the layout again.",
+    ["raid-api-failed"] = "Classic rejected a protected raid-group change.",
+    ["raid-api-timeout"] = "Classic did not confirm the raid-group change in time.",
+    ["roster-changed"] = "The raid roster changed while the layout was being applied; apply it again.",
+    ["timer-unavailable"] = "The raid layout worker could not schedule its next step.",
 }
 
 --- Prompts for one line of layout text and hands the answer back.
@@ -2379,8 +2388,16 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         if not saved or proposed then
             return
         end
-        local applied, result = self:ApplyGroupLayoutToRaid()
+        local applied, result = self:RequestGroupLayoutApply()
         if applied then
+            if result == "queued" then
+                self:Print("Queued this displayed page's raid layout until combat ends. Changing pages will cancel it.")
+                return
+            end
+            if result == "started" or result == "in-progress" then
+                self:Print("Started applying the displayed page's raid layout.")
+                return
+            end
             self:Print(("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s"))
         else
             self:Print(RAID_LAYOUT_APPLY_ERRORS[result] or ("Could not rearrange the raid: " .. tostring(result)))
@@ -2392,7 +2409,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         reference.EntityType == "category"
                 and "Category layouts are inherited. Display a descendant page, then apply the resolved layout from that page's editor."
             or "Saves this displayed page's layout, then moves raid members into its eight subgroups. "
-                .. "Requires the raid leader or a qualified raid assistant, and will not run in combat."
+                .. "Requires the raid leader or a qualified raid assistant. During combat, the exact page waits until combat ends; changing pages cancels it."
     )
     frame:AddChild(applyButton)
 end

@@ -44,5 +44,6 @@ core.configDefaults = {
     editBoxFont = false,
     chatoutput = "Acronym",
     mouseoverHostileOnly = true,
+    autoApplyRaidLayouts = false,
     autoCleanReceivedPages = false,
 }

@@ -12,6 +12,13 @@ local authorityReceiveAllowed = true
 local grouped = true
 local scheduledTimers = {}
 local timerOrdinal = 0
+local layoutApplyResetCount = 0
+local layoutApplyCancelCount = 0
+local layoutFlushApplied = false
+local layoutFlushResult = "no-pending-layout"
+local layoutFlushCount = 0
+local layoutPauseCount = 0
+local unitCombat = {}
 
 local function Record(name, value)
     calls[#calls + 1] = {
@@ -66,6 +73,27 @@ assert(loadfile("modules/init.lua"))("AngryEra", app)
 
 function AngryEra:ResetOfficerRank()
     Record("reset-officer-rank")
+end
+
+function AngryEra:ResetGroupLayoutApplyState()
+    layoutApplyResetCount = layoutApplyResetCount + 1
+end
+
+function AngryEra:CancelPendingGroupLayoutApply()
+    layoutApplyCancelCount = layoutApplyCancelCount + 1
+end
+
+function AngryEra:FlushPendingGroupLayoutApply()
+    layoutFlushCount = layoutFlushCount + 1
+    return layoutFlushApplied, layoutFlushResult
+end
+
+function AngryEra:PauseGroupLayoutApplyForCombat()
+    layoutPauseCount = layoutPauseCount + 1
+end
+
+function AngryEra:GetConfig()
+    return false
 end
 
 local guildDisplayRefreshes = 0
@@ -247,6 +275,10 @@ function _G.IsInGroup()
     return grouped
 end
 
+function _G.UnitAffectingCombat(unit)
+    return unitCombat[unit] == true
+end
+
 local function LatestTimer(method)
     for index = #scheduledTimers, 1, -1 do
         local timer = scheduledTimers[index]
@@ -293,6 +325,7 @@ assert(not AngryEra:IsSyncDebugEnabled(), "debug off should disable tracing")
 calls = {}
 
 AngryEra:OnEnable()
+assert(layoutApplyResetCount == 1, "startup should clear session-local raid-layout apply state")
 
 local createIndex
 local captureIndex
@@ -353,6 +386,8 @@ assert(
     registeredEvents.PARTY_LEADER_CHANGED
         and registeredEvents.GROUP_JOINED
         and registeredEvents.GROUP_ROSTER_UPDATE
+        and registeredEvents.PLAYER_REGEN_DISABLED
+        and registeredEvents.PLAYER_REGEN_ENABLED
         and registeredEvents.UNIT_FLAGS
         and not registeredEvents.PARTY_CONVERTED_TO_RAID,
     "supported group and unit handlers must be active without registering the invalid conversion event"
@@ -374,8 +409,42 @@ for _, call in ipairs(calls) do
 end
 
 calls = {}
+layoutFlushApplied = true
+layoutFlushResult = 2
+AngryEra:PLAYER_REGEN_ENABLED()
+assert(layoutFlushCount == 1, "leaving combat should flush one queued layout request")
+assert(#calls == 0, "the asynchronous completion hook, not the combat event, should report the result")
+AngryEra:OnGroupLayoutApplyFinished(true, 2)
+assert(
+    #calls == 1 and calls[1].Name == "print" and calls[1].Value == "Rearranged the raid to the layout (2 moves).",
+    "leaving combat should report a completed queued layout exactly once"
+)
+calls = {}
+layoutFlushApplied = false
+layoutFlushResult = "no-pending-layout"
+AngryEra:PLAYER_REGEN_ENABLED()
+assert(layoutFlushCount == 2 and #calls == 0, "leaving combat with no queued layout should stay silent")
+AngryEra:OnGroupLayoutApplyFinished(false, "display-changed")
+assert(#calls == 0, "an expected page-change cancellation should stay silent")
+AngryEra:PLAYER_REGEN_DISABLED()
+assert(layoutPauseCount == 1, "entering combat should pause any not-yet-issued raid-layout operation")
+unitCombat.raid1 = true
+AngryEra:UNIT_FLAGS(nil, "raid1")
+assert(layoutPauseCount == 1, "a remote raider's combat flag should not pause locally protected layout work")
+unitCombat.raid1 = false
+AngryEra:UNIT_FLAGS(nil, "raid1")
+assert(layoutFlushCount == 2, "a remote raider's combat flag should not flush locally protected layout work")
+unitCombat.player = true
+AngryEra:UNIT_FLAGS(nil, "player")
+assert(layoutPauseCount == 2, "the local player's combat flag should pause layout work")
+unitCombat.player = false
+AngryEra:UNIT_FLAGS(nil, "player")
+assert(layoutFlushCount == 3, "the local player's combat flag should retry queued layout work")
+
+calls = {}
 AngryEra._protocolStarted = true
 AngryEra:GROUP_JOINED()
+assert(layoutApplyResetCount == 2, "a group boundary should discard layout work from the prior group")
 assert(
     calls[1].Name == "discard-display-authority-recovery",
     "group join must invalidate a startup display candidate from the prior group"
@@ -475,6 +544,7 @@ assert(markerRetryCount == 1, "a roster update should retry unresolved displayed
 calls = {}
 local rotationsBeforeSettledPromotion = tenureRotationCount
 AngryEra:PARTY_LEADER_CHANGED()
+assert(layoutApplyCancelCount == 1, "a leader change should cancel layout work authorized under the old leader")
 for _, call in ipairs(calls) do
     assert(
         call.Name ~= "version-query" and call.Name ~= "restore-display-authority",

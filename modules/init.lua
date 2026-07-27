@@ -18,6 +18,34 @@ local pageProtocolPrefix = AngryEra.utils.protocol.PAGE_PREFIX
 local activePageProtocolPrefix = AngryEra.utils.protocol.ACTIVE_PAGE_PREFIX
 local leadershipRosterReconcileDelay = 0.25
 local leadershipRosterReconcileMaxAttempts = 3
+local raidLayoutApplyErrors = {
+    ["not-in-raid"] = "You must be in a raid to rearrange groups.",
+    ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
+    ["in-combat"] = "Groups cannot be rearranged during combat.",
+    ["no-layout"] = "The displayed page has no $LAYOUT.",
+    ["no-bound-groups"] = "No layout groups are bound to a subgroup (use \"Label/N:\").",
+    ["duplicate-member"] = "The layout assigns the same raid member more than once.",
+    ["unresolved-member"] = "Every named layout member must resolve uniquely in the current raid.",
+    ["subgroup-oversubscribed"] = "A subgroup is assigned more than five members.",
+    ["subgroup-blocked"] = "The layout could not be arranged with the current raid.",
+    ["plan-too-large"] = "The raid layout requires too many group changes.",
+    ["active-display-unavailable"] = "The exact displayed page is not available.",
+    ["display-changed"] = "The displayed page changed before the layout could be applied.",
+    ["invalid-roster"] = "Classic returned an invalid raid roster; apply the layout again.",
+    ["roster-unavailable"] = "Classic's raid roster is temporarily unavailable; apply the layout again.",
+    ["raid-api-failed"] = "Classic rejected a protected raid-group change.",
+    ["raid-api-timeout"] = "Classic did not confirm the raid-group change in time.",
+    ["roster-changed"] = "The raid roster changed while the layout was being applied; apply it again.",
+    ["timer-unavailable"] = "The raid layout worker could not schedule its next step.",
+}
+local quietRaidLayoutApplyResults = {
+    ["auto-disabled"] = true,
+    ["canceled"] = true,
+    ["display-changed"] = true,
+    ["no-pending-layout"] = true,
+    ["not-raid-leader"] = true,
+    ["superseded"] = true,
+}
 
 local colors = AngryEra.utils.colors
 local RGBToHex = colors.RGBToHex
@@ -54,6 +82,7 @@ local blizOptionsCategoryId
 -- field fontHeight number Font size
 -- field fontFlags string Font outline
 -- field color string Normal text color
+-- field autoApplyRaidLayouts boolean Apply displayed-page raid layouts automatically as raid leader
 
 -- class AngryEraTemplatePage
 -- field name string
@@ -213,28 +242,27 @@ function AngryEra:OnInitialize()
                 hidden = true,
                 cmdHidden = false,
                 confirm = function()
-                    return "Rearrange raid subgroups to match the displayed layout? Only groups bound with \"Label/N\" move, and this cannot be done in combat."
+                    return "Rearrange raid subgroups to match the displayed layout? Only groups bound with \"Label/N\" move. During combat, this exact page will wait until combat ends; changing pages cancels it."
                 end,
                 func = function()
-                    local applied, result = self:ApplyGroupLayoutToRaid()
+                    local applied, result = self:RequestGroupLayoutApply()
                     if applied then
+                        if result == "queued" then
+                            self:Print(
+                                "Queued this displayed page's raid layout until combat ends. Changing pages will cancel it."
+                            )
+                            return
+                        end
+                        if result == "started" or result == "in-progress" then
+                            self:Print("Started applying the displayed page's raid layout.")
+                            return
+                        end
                         self:Print(
                             ("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s")
                         )
                         return
                     end
-                    local reasons = {
-                        ["not-in-raid"] = "You must be in a raid to rearrange groups.",
-                        ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
-                        ["in-combat"] = "Groups cannot be rearranged during combat.",
-                        ["no-layout"] = "The displayed page has no $LAYOUT.",
-                        ["no-bound-groups"] = "No layout groups are bound to a subgroup (use \"Label/N:\").",
-                        ["duplicate-member"] = "The layout assigns the same raid member more than once.",
-                        ["unresolved-member"] = "Every named layout member must resolve uniquely in the current raid.",
-                        ["subgroup-oversubscribed"] = "A subgroup is assigned more than five members.",
-                        ["subgroup-blocked"] = "The layout could not be arranged with the current raid.",
-                    }
-                    self:Print(reasons[result] or ("Could not rearrange the raid: " .. tostring(result)))
+                    self:Print(raidLayoutApplyErrors[result] or ("Could not rearrange the raid: " .. tostring(result)))
                 end,
             },
             defaults = {
@@ -656,6 +684,29 @@ function AngryEra:OnInitialize()
                     },
                 },
             },
+            raidlayouts = {
+                type = "group",
+                order = 8.5,
+                name = "Raid Group Layouts",
+                inline = true,
+                args = {
+                    autoApplyRaidLayouts = {
+                        type = "toggle",
+                        order = 1,
+                        name = "Auto-Apply Displayed Raid Layouts",
+                        desc = "As raid leader, automatically apply the layout when the displayed page changes. Combat queues only that exact page until combat ends; changing the page, its revision, or inherited context cancels it. Raid assistants remain manual-only.",
+                        get = function(info)
+                            return self:GetConfig("autoApplyRaidLayouts")
+                        end,
+                        set = function(info, val)
+                            self:SetConfig("autoApplyRaidLayouts", val)
+                            if not val and type(self.CancelAutomaticGroupLayoutApply) == "function" then
+                                self:CancelAutomaticGroupLayoutApply()
+                            end
+                        end,
+                    },
+                },
+            },
             library = {
                 type = "group",
                 order = 9,
@@ -852,6 +903,9 @@ end
 -- Initializes display and core event listeners.
 function AngryEra:OnEnable()
     self:CancelProtocolLeadershipRosterReconcile()
+    if type(self.ResetGroupLayoutApplyState) == "function" then
+        self:ResetGroupLayoutApplyState()
+    end
     self:ResetOfficerRank()
     self:CreateDisplay()
     if type(self.CaptureDisplayAuthorityRecovery) == "function" then
@@ -891,6 +945,7 @@ function AngryEra:OnEnable()
     self:ScheduleTimer("AfterEnable", 4)
 
     self:RegisterEvent("PLAYER_REGEN_DISABLED")
+    self:RegisterEvent("PLAYER_REGEN_ENABLED")
     self:RegisterEvent("PLAYER_GUILD_UPDATE")
     self:RegisterEvent("GUILD_ROSTER_UPDATE")
     self:RegisterEvent("ENCOUNTER_END")
@@ -912,6 +967,9 @@ function AngryEra:OnEnable()
 end
 
 function AngryEra:PARTY_LEADER_CHANGED()
+    if type(self.CancelPendingGroupLayoutApply) == "function" then
+        self:CancelPendingGroupLayoutApply()
+    end
     local tenure
     if self._protocolStarted and type(self.RefreshProtocolLeadershipTenure) == "function" then
         local refreshed, result = self:RefreshProtocolLeadershipTenure(nil, true)
@@ -956,6 +1014,9 @@ function AngryEra:GROUP_JOINED()
     local preserveLeadershipReconcile = self._leadershipRosterReconcilePending == true
     local preservedLeadershipReconcileAttempts = self._leadershipRosterReconcileAttempts or 0
     self:CancelProtocolLeadershipRosterReconcile()
+    if type(self.ResetGroupLayoutApplyState) == "function" then
+        self:ResetGroupLayoutApplyState()
+    end
     if type(self.DiscardDisplayAuthorityRecovery) == "function" then
         self:DiscardDisplayAuthorityRecovery()
     end
@@ -983,9 +1044,35 @@ function AngryEra:GROUP_JOINED()
 end
 
 function AngryEra:PLAYER_REGEN_DISABLED()
+    if type(self.PauseGroupLayoutApplyForCombat) == "function" then
+        self:PauseGroupLayoutApplyForCombat()
+    end
     if AngryEra:GetConfig("hideoncombat") then
         self:HideDisplay()
     end
+end
+
+function AngryEra:PLAYER_REGEN_ENABLED()
+    if type(self.FlushPendingGroupLayoutApply) ~= "function" then
+        return
+    end
+    self:FlushPendingGroupLayoutApply()
+end
+
+--- Reports the terminal result of a paced raid-layout apply.
+-- Immediate validation results are reported by the initiating button/command;
+-- this hook owns work that completed asynchronously after those callers return.
+-- @tparam boolean success
+-- @tparam number|string result Move count or stable error code.
+function AngryEra:OnGroupLayoutApplyFinished(success, result)
+    if success and type(result) == "number" then
+        self:Print(("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s"))
+        return
+    end
+    if quietRaidLayoutApplyResults[result] then
+        return
+    end
+    self:Print(raidLayoutApplyErrors[result] or ("Could not rearrange the raid: " .. tostring(result)))
 end
 
 --- Rechecks protocol tenure after roster roles have settled.
@@ -1042,6 +1129,9 @@ function AngryEra:ReconcileProtocolLeadershipFromRoster()
         if type(self.RestoreDisplayAuthority) == "function" then
             self:RestoreDisplayAuthority()
         end
+        if type(self.RetryObservedGroupLayoutAutoApply) == "function" then
+            self:RetryObservedGroupLayoutAutoApply()
+        end
     elseif result.PendingDisplayBootstrap ~= true then
         if type(self.CancelDisplayRequestWatchdog) == "function" then
             self:CancelDisplayRequestWatchdog()
@@ -1056,6 +1146,9 @@ function AngryEra:GROUP_ROSTER_UPDATE()
     local reconcileLeadership = self._leadershipRosterReconcilePending == true
     if not (IsInRaid() or IsInGroup()) then
         self:CancelProtocolLeadershipRosterReconcile()
+        if type(self.ResetGroupLayoutApplyState) == "function" then
+            self:ResetGroupLayoutApplyState()
+        end
         if type(self.DiscardDisplayAuthorityRecovery) == "function" then
             self:DiscardDisplayAuthorityRecovery()
         end
@@ -1066,6 +1159,12 @@ function AngryEra:GROUP_ROSTER_UPDATE()
         self:PruneProtocolPeers()
         if reconcileLeadership then
             self:RunProtocolLeadershipRosterReconcile(self._leadershipRosterReconcileGeneration)
+        end
+        if type(self.RetryObservedGroupLayoutAutoApply) == "function" then
+            self:RetryObservedGroupLayoutAutoApply()
+        end
+        if type(self.FlushPendingGroupLayoutApply) == "function" then
+            self:FlushPendingGroupLayoutApply()
         end
         self:UpdateDisplayedIfNewGroup()
         if type(self.RetryDisplayedNoteMarkers) == "function" then
@@ -1087,6 +1186,19 @@ function AngryEra:UNIT_FLAGS(_, unit)
         return
     end
     self:RefreshDisplayedPriorityAssignments()
+    if unit ~= "player" then
+        return
+    end
+    local inCombat = false
+    if type(UnitAffectingCombat) == "function" then
+        local called, affectingCombat = pcall(UnitAffectingCombat, unit)
+        inCombat = called and affectingCombat == true
+    end
+    if inCombat and type(self.PauseGroupLayoutApplyForCombat) == "function" then
+        self:PauseGroupLayoutApplyForCombat()
+    elseif not inCombat and type(self.FlushPendingGroupLayoutApply) == "function" then
+        self:FlushPendingGroupLayoutApply()
+    end
 end
 
 --- Coalesced re-render when the displayed note uses priority assignments.

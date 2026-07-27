@@ -26,7 +26,7 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Safer imports and migration:** imported data is bounded and validated, and existing pages and settings are migrated automatically.
 - **Priority assignments:** `Primary > Backup` selects the first listed player who is present and alive.
 - **Optional received-page cleanup:** remove pages received from other leaders at login or on demand while retaining protected local data.
-- **Raid group layouts:** build inherited, roster-aware subgroup plans, render them inside notes, and apply validated layouts out of combat.
+- **Raid group layouts:** build inherited, roster-aware subgroup plans, render them inside notes, and apply or safely queue validated layouts.
 
 ## Quick start
 
@@ -52,7 +52,7 @@ Only the current party or raid leader selects and clears the shared display. Lea
 
 ### For raid assistants
 
-Raid assistants can output assignments to chat. Qualified assistants can also edit the exact active shared page when the leader's permission settings accept them and apply a validated raid layout out of combat. Raid assist alone does not enable either action by default. See [Shared pages and permissions](#shared-pages-and-permissions).
+Raid assistants can output assignments to chat. Qualified assistants can also edit the exact active shared page when the leader's permission settings accept them and manually apply a validated raid layout. Raid assist alone does not enable either action by default. See [Shared pages and permissions](#shared-pages-and-permissions).
 
 ## Shared pages and permissions
 
@@ -388,11 +388,17 @@ Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` ke
 
 **Save** writes the layout. Saving or applying an inherited layout without changing it does not create a page override, so later category changes continue to flow through. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
 
-Out of combat, **Apply to Raid** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected.
+**Apply to Raid** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected. It then moves one identity at a time, waits for Classic to acknowledge the change, and resolves fresh raid indices before continuing so roster renumbering cannot redirect a later move.
 
 The raid leader may always apply it. A raid assistant must also be an officer in the current raid leader's guild, be listed in **Trusted Assistants** on that installation, or have **Allow All Raid Assistants** enabled there. This local check means routinely granting assist to an entire raid does not enable the action for everyone by default.
 
 The editor button saves and applies only the exact page currently displayed. After editing a category layout, display a descendant page that inherits it and use `/aa applylayout`, or open that displayed page's layout editor. `/aa applylayout` always applies the layout resolved by the actively displayed page.
+
+Raid subgroup changes are protected during combat. If you use **Apply to Raid** or `/aa applylayout` in combat, AngryEra queues that exact displayed page instead of attempting the move. Displaying another page, receiving a newer revision, or changing the inherited layout context cancels the queued request; returning to the page later does not revive it. When combat ends, AngryEra resolves the layout again against the live roster, rechecks permission, and applies it once.
+
+**Auto-Apply Displayed Raid Layouts** is an opt-in setting and is off by default. When enabled, the raid leader automatically requests the layout whenever the displayed page changes, using the same combat queue and validation. Qualified raid assistants remain manual-only and must use **Apply to Raid** or `/aa applylayout`.
+
+AngryEra preserves slot order in the editor and rendered `{layout}` output. Blizzard exposes subgroup move and swap operations, but no direct safe operation for choosing a physical position within one subgroup. Applying a layout therefore guarantees subgroup membership, not the row order shown by Blizzard's raid frame.
 
 ### Custom metadata
 
@@ -496,7 +502,8 @@ Open `/aa` to configure:
 - font face, size, outline, colors, and line spacing;
 - whether the edit box uses the display font;
 - chat output format;
-- whether Smart Marker mouseover bindings may mark friendly units; and
+- whether Smart Marker mouseover bindings may mark friendly units;
+- opt-in, raid-leader-only automatic application of displayed group layouts; and
 - automatic or on-demand cleanup of received pages.
 
 Adding `Group` to **Highlight** emphasizes your current group token, such as `G2`, when it appears in a displayed assignment.
@@ -514,7 +521,7 @@ Adding `Group` to **Highlight** emphasizes your current group token, such as `G2
 | `/aa clear` | Clear the shared display as leader, or the local display otherwise. |
 | `/aa first` | Toggle to or from the first page in the active category. |
 | `/aa output` | Output the actively displayed page to group chat. |
-| `/aa applylayout` | Apply the displayed page's validated group layout to the raid. Available to the raid leader and qualified raid assistants while out of combat. |
+| `/aa applylayout` | Apply the exact displayed page's validated group layout. In combat, queue it until combat ends and cancel it if that page, revision, or inherited context changes. |
 | `/aa version` | Check AngryEra versions in the current party or raid. Available to the leader and raid assistants. |
 | `/aa resetposition` | Reset the assignment display position and size. |
 | `/aa defaults` | Restore configuration defaults after confirmation. |

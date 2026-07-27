@@ -453,6 +453,9 @@ function AngryEra:NotifyDisplayedNoteChanged(context)
 
     local previous = self._displayedNoteSnapshot
     self._displayedNoteSnapshot = snapshot
+    if type(self.ObserveDisplayedRaidLayout) == "function" then
+        pcall(self.ObserveDisplayedRaidLayout, self, snapshot)
+    end
     if not SnapshotChanged(previous, snapshot) then
         return false
     end

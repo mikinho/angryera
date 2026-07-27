@@ -119,6 +119,7 @@ local authorization = {
 }
 local authorizationCalls = {}
 local authorizationHook
+local layoutInvalidations = {}
 function AngryEra:CanReceiveFrom(sender, action)
     authorizationCalls[#authorizationCalls + 1] = {
         Sender = sender,
@@ -128,6 +129,10 @@ function AngryEra:CanReceiveFrom(sender, action)
         authorizationHook(#authorizationCalls, sender, action)
     end
     return authorization[action] == true
+end
+
+function AngryEra:InvalidatePendingGroupLayoutApply(reference)
+    layoutInvalidations[#layoutInvalidations + 1] = DeepCopy(reference)
 end
 
 local localPublish = {
@@ -601,6 +606,7 @@ local displayPayload = {
     ContextRevisionId = matchingPayload.ContextRevisionId,
 }
 local displayedBeforeRequest = AngryAssign_State.displayed
+local invalidationsBeforePendingDisplay = #layoutInvalidations
 accepted, result = AngryEra:AcceptActiveDisplay(Auth(), displayPayload)
 Assert(accepted, result)
 Assert(result.RequestNeeded and not result.Applied, "missing exact render tuple returns request-needed")
@@ -613,6 +619,12 @@ AssertEqual(
 )
 AssertEqual(AngryAssign_State.displayed, displayedBeforeRequest, "missing tuple does not change display selection")
 Assert(AngryEra:GetPendingActiveDisplayRequest() ~= nil, "missing tuple is retained only as volatile pending state")
+Assert(
+    #layoutInvalidations == invalidationsBeforePendingDisplay + 1
+        and layoutInvalidations[#layoutInvalidations].SyncId == remotePageSyncId
+        and layoutInvalidations[#layoutInvalidations].ContextRevisionId == matchingPayload.ContextRevisionId,
+    "an accepted pending display immediately invalidates layout work for the old active tuple"
+)
 
 accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), matchingPayload)
 Assert(accepted, result)

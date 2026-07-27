@@ -2760,6 +2760,9 @@ local function AcceptDisplay(self, auth, payload)
                 return false, "stale-active-page-state"
             end
             self._activePendingDisplay = pending
+            if type(self.InvalidatePendingGroupLayoutApply) == "function" then
+                pcall(self.InvalidatePendingGroupLayoutApply, self, reference)
+            end
             return true,
                 {
                     Applied = false,

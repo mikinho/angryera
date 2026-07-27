@@ -90,7 +90,11 @@ end
 
 function helpers.IterateGroupMembers(callback)
     if IsInRaid() then
-        for i = 1, GetNumGroupMembers() do
+        -- Raid indices can briefly contain holes while Classic acknowledges a
+        -- subgroup move. Scan the complete raid-index range so role and
+        -- identity lookups do not mistake a reindexed member for absent.
+        local limit = type(MAX_RAID_MEMBERS) == "number" and MAX_RAID_MEMBERS or 40
+        for i = 1, limit do
             local rawName, rank, subgroup, _, _, class, _, online, isDead = GetRaidRosterInfo(i)
             if rawName then
                 local fullName = helpers.EnsureUnitFullName(rawName)

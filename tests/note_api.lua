@@ -28,6 +28,7 @@ local categoriesBySyncId = {
 
 local scanEvents = {}
 local messages = {}
+local layoutObservations = {}
 local reference = {
     SyncId = pageSyncId,
     Revision = 1,
@@ -73,6 +74,10 @@ function AngryEra:SendMessage(event, ...)
     messages[#messages + 1] = { event = event, ... }
 end
 
+function AngryEra:ObserveDisplayedRaidLayout(snapshot)
+    layoutObservations[#layoutObservations + 1] = snapshot or false
+end
+
 local wirePage = {
     SyncId = pageSyncId,
     Revision = 1,
@@ -115,6 +120,12 @@ local announced = AngryEra:NotifyDisplayedNoteChanged({
 })
 assert(announced == true, "The first render should announce")
 assert(#scanEvents == 1 and #messages == 1, "Both event channels should fire once")
+assert(
+    #layoutObservations == 1
+        and layoutObservations[1].SyncId == pageSyncId
+        and layoutObservations[1].ContextRevisionId == "ctx-1",
+    "the exact displayed-note snapshot should also reach the raid-layout observer"
+)
 assert(scanEvents[1].event == "ANGRYERA_NOTE_UPDATE", "The WeakAuras event name should match")
 assert(scanEvents[1][1] == pageSyncId, "The event should carry the page sync id")
 assert(scanEvents[1][2] == "Patchwerk", "The event should carry the page name")
@@ -182,6 +193,7 @@ assert(json.JSON_NULL.consumerMutation == nil, "Public null mutations should not
 structuredMeta.assignments.tanks[1] = "Zessy"
 
 local invalidVariableKey = {}
+local observationsBeforeInvalid = #layoutObservations
 local rejected, rejectionError = AngryEra:NotifyDisplayedNoteChanged({
     Page = wirePage,
     RenderedText = "PATCHWERK - MT: Zessy",
@@ -195,6 +207,10 @@ assert(rejected == false, "Invalid variable graphs should not announce")
 assert(rejectionError == "invalid-variables", "Invalid variable graphs should report their partition error")
 assert(AngryEra:GetDisplayedVars().MT == "Zessy", "A rejected graph should preserve the previous snapshot")
 assert(#scanEvents == 1 and #messages == 1, "A rejected graph should not publish an event")
+assert(
+    #layoutObservations == observationsBeforeInvalid,
+    "a rejected graph must not replace the raid-layout display observation"
+)
 
 local invalidContextAnnounced, invalidContextError = AngryEra:NotifyDisplayedNoteChanged({})
 assert(invalidContextAnnounced == false, "Invalid render contexts should not announce")
@@ -209,6 +225,10 @@ announced = AngryEra:NotifyDisplayedNoteChanged({
 })
 assert(announced == false, "An identical render should not announce")
 assert(#scanEvents == 1 and #messages == 1, "Duplicate renders should not repeat events")
+assert(
+    #layoutObservations == observationsBeforeInvalid + 1,
+    "an identical render should still revalidate pending layout work against the active tuple"
+)
 
 announced = AngryEra:NotifyDisplayedNoteChanged({
     Page = wirePage,
@@ -258,6 +278,7 @@ assert(AngryEra:GetDisplayedMeta().strategy.assignments.tanks[1] == "Thorn", "Ch
 
 announced = AngryEra:NotifyDisplayedNoteChanged(nil)
 assert(announced == true, "Clearing the display should announce")
+assert(layoutObservations[#layoutObservations] == false, "clearing the display should cancel page-bound layout work")
 assert(AngryEra:GetDisplayedNote() == nil, "A cleared display should expose no note")
 assert(AngryEra:GetDisplayedVars() == nil, "A cleared display should expose no variables")
 assert(AngryEra:GetDisplayedMeta() == nil, "A cleared display should expose no metadata")
