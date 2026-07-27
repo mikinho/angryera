@@ -791,6 +791,19 @@ localPublish.display = true
 
 local activelyStoredPage = AngryAssign_Pages[4]
 Assert(AngryEra:HasAuthoritativePageContext(activelyStoredPage), "remote page has an exact authoritative base")
+local retainedContext = AngryEra:GetAuthoritativePageRenderContext(activelyStoredPage)
+Assert(retainedContext ~= nil, "remote page exposes its retained authoritative render context")
+AssertEqual(
+    retainedContext.Page.SyncId,
+    activelyStoredPage.SyncId,
+    "retained context belongs to the requested remote page"
+)
+retainedContext.AncestorVariableLayers[1].Vars = "mutated=caller"
+local retainedContextAgain = AngryEra:GetAuthoritativePageRenderContext(activelyStoredPage)
+Assert(
+    retainedContextAgain.AncestorVariableLayers[1].Vars ~= "mutated=caller",
+    "retained context is detached from caller mutation"
+)
 local firstSameSecondPayload = MakePayload(6, "Tank: Six", "tie=a")
 accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), firstSameSecondPayload)
 Assert(accepted and result.NoOp, "first same-second context-only change is cached")
@@ -1185,6 +1198,14 @@ Assert(
 Assert(AngryAssign_Pages == persistedPages, "transient reset never clears persisted pages")
 Assert(not AngryEra:HasAuthoritativePageContext(4), "remote page needs an exact cached authoritative base")
 Assert(AngryEra:HasAuthoritativePageContext(1), "local-owned page never needs remote hierarchy context")
+Assert(
+    AngryEra:GetAuthoritativePageRenderContext(4) == nil,
+    "a remote page without cached context exposes no private-tree fallback"
+)
+Assert(
+    AngryEra:GetAuthoritativePageRenderContext(1) == nil,
+    "a local-owned page does not masquerade as retained remote context"
+)
 local missingContextUpsert, missingContextError = AngryEra:PrepareActivePageUpsert(4, {
     UpdatedAt = 4000,
     UpdatedBy = "Viewer-Realm",

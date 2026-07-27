@@ -1154,8 +1154,10 @@ local function AngryEra_EditVariables(id, type)
 end
 
 -- Four fixed rows of two subgroup boxes occupy 424 pixels in the visual grid.
--- The window leaves that whole canvas visible; only the unrostered palette
--- scrolls. Text mode receives its own nested scroller inside the same body.
+-- The window leaves that whole canvas visible; the Unrostered and Variables
+-- columns scroll independently. Text mode receives its own nested scroller
+-- inside the same body.
+local LAYOUT_WINDOW_WIDTH = 630
 local LAYOUT_BODY_HEIGHT = 424
 local LAYOUT_WINDOW_HEIGHT = 564
 local layoutWindowSequence = 0
@@ -1462,24 +1464,139 @@ local function CurrentLayoutVars(reference, entity, id)
     return type(entity.Vars) == "string" and entity.Vars or "", false
 end
 
-local function EffectiveLayoutVariables(reference, entity, vars)
+local function ValidatedContextAncestorLayers(context, entity)
+    if
+        type(context) ~= "table"
+        or type(context.Page) ~= "table"
+        or context.Page.SyncId ~= entity.SyncId
+        or context.Page.Revision ~= entity.Revision
+        or context.Page.RevisionId ~= entity.RevisionId
+        or type(context.AncestorVariableLayers) ~= "table"
+    then
+        return nil
+    end
+    return variableHelpers.ValidateAncestorVariableLayers(context.AncestorVariableLayers, context.Page.ParentSyncId)
+end
+
+-- A received page keeps its authoritative category variables in retained wire
+-- context, never in the receiver's private category tree. The exact active
+-- display tuple wins; a background page uses its validated retained base.
+local function RemoteAncestorLayers(reference, entity)
+    if
+        reference.EntityType == "category"
+        or type(reference.SyncId) ~= "string"
+        or type(AngryEra.IsLocallyOwned) ~= "function"
+    then
+        return nil, false
+    end
+    local ownershipChecked, locallyOwned = pcall(AngryEra.IsLocallyOwned, AngryEra, entity)
+    if ownershipChecked and locallyOwned == true then
+        return nil, false
+    end
+    if not ownershipChecked then
+        return {}, true
+    end
+
+    local referenceChecked, activeReference
+    if type(AngryEra.GetActiveDisplayReference) == "function" then
+        referenceChecked, activeReference = pcall(AngryEra.GetActiveDisplayReference, AngryEra)
+    end
+    if
+        referenceChecked
+        and type(activeReference) == "table"
+        and activeReference.SyncId == reference.SyncId
+        and activeReference.SyncId == entity.SyncId
+        and activeReference.Revision == entity.Revision
+        and activeReference.RevisionId == entity.RevisionId
+        and type(activeReference.ContextRevisionId) == "string"
+    then
+        if type(AngryEra.GetActivePageRenderContext) ~= "function" then
+            return {}, true
+        end
+        local contextChecked, context = pcall(
+            AngryEra.GetActivePageRenderContext,
+            AngryEra,
+            activeReference.SyncId,
+            activeReference.Revision,
+            activeReference.RevisionId,
+            activeReference.ContextRevisionId
+        )
+        local layers = contextChecked and ValidatedContextAncestorLayers(context, entity) or nil
+        return layers or {}, true
+    end
+
+    if type(AngryEra.GetAuthoritativePageRenderContext) == "function" then
+        local contextChecked, context = pcall(AngryEra.GetAuthoritativePageRenderContext, AngryEra, entity)
+        local layers = contextChecked and ValidatedContextAncestorLayers(context, entity) or nil
+        return layers or {}, true
+    end
+    return {}, true
+end
+
+local function EffectiveLayoutAncestorLayers(reference, entity)
     if
         type(variableHelpers) ~= "table"
         or type(variableHelpers.CollectCategoryChain) ~= "function"
         or type(variableHelpers.BuildAncestorVariableLayers) ~= "function"
-        or type(variableHelpers.MergeVariableLayers) ~= "function"
+        or type(variableHelpers.ValidateAncestorVariableLayers) ~= "function"
     then
         return {}
     end
-    local layers = {}
-    if entity.CategoryId then
+
+    local layers, remotePage = RemoteAncestorLayers(reference, entity)
+    if not remotePage and entity.CategoryId then
         local chain = variableHelpers.CollectCategoryChain(AngryAssign_Categories, entity.CategoryId)
         if chain then
             layers = variableHelpers.BuildAncestorVariableLayers(chain) or {}
         end
     end
-    return variableHelpers.MergeVariableLayers(layers, vars) or {}
+    return layers or {}
 end
+
+local function EffectiveLayoutVariables(reference, entity, vars)
+    if type(variableHelpers) ~= "table" or type(variableHelpers.MergeVariableLayers) ~= "function" then
+        return {}
+    end
+    local merged, mergeError =
+        variableHelpers.MergeVariableLayers(EffectiveLayoutAncestorLayers(reference, entity), vars)
+    if merged then
+        return merged
+    end
+    -- Match display rendering: a damaged ancestor must not hide otherwise valid
+    -- page variables or make editor capacity less strict than Apply to Raid.
+    local pageOnly, pageError = variableHelpers.MergeVariableLayers({}, vars)
+    return pageOnly or {}, mergeError or pageError
+end
+
+-- Finds the raw effective `$LAYOUT` without resolving its `{{Variable}}`
+-- expressions to today's names. The closest layer wins: entity/page first,
+-- then its direct parent back toward the root.
+local function EffectiveLayoutSource(reference, entity, vars)
+    local source, sourceError = layout.ExtractSource(vars)
+    if sourceError or source ~= nil then
+        return source, false, sourceError
+    end
+
+    local layers = EffectiveLayoutAncestorLayers(reference, entity)
+    for index = #layers, 1, -1 do
+        source, sourceError = layout.ExtractSource(layers[index].Vars)
+        if sourceError or source ~= nil then
+            return source, true, sourceError
+        end
+    end
+    return nil, false
+end
+
+local function EffectiveLayoutContextSignature(reference, entity, vars)
+    if type(variableHelpers) ~= "table" or type(variableHelpers.BuildContextRevisionInput) ~= "function" then
+        return type(vars) == "string" and vars or ""
+    end
+    return variableHelpers.BuildContextRevisionInput(EffectiveLayoutAncestorLayers(reference, entity), vars)
+end
+
+layoutEditor.EffectiveLayoutVariables = EffectiveLayoutVariables
+layoutEditor.EffectiveLayoutSource = EffectiveLayoutSource
+layoutEditor.EffectiveLayoutContextSignature = EffectiveLayoutContextSignature
 
 --- Writes only `$LAYOUT` into the latest variables belonging to a captured target.
 -- This deliberately re-reads both the canonical record and any retained shared
@@ -1517,8 +1634,8 @@ function layoutEditor.SaveSource(reference, source)
 end
 
 --- Opens a dedicated editor for a page's or category's `$LAYOUT` group layout.
--- The visual view drags members between the eight raid subgroup boxes and the
--- palette of whoever is unplaced; the text view edits the same layout one group
+-- The visual view drags members and effective `{{Variable}}` expressions into
+-- the eight raid subgroup boxes; the text view edits the same layout one group
 -- per line. Save writes the layout, and Apply rearranges the actual raid. A
 -- layout is a variable like any other, so a category holds the raid's standard
 -- arrangement and a page overrides it for the one fight that needs it.
@@ -1532,21 +1649,63 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     end
 
     local currentVars = CurrentLayoutVars(reference, entity, currentId)
-    local initialSource, sourceError = layout.ExtractSource(currentVars)
-    if sourceError then
-        self:Print("Could not open the group layout: " .. tostring(sourceError))
+    local initialSource, inheritedSource, initialSourceError = EffectiveLayoutSource(reference, entity, currentVars)
+    if initialSourceError then
+        self:Print("Could not open the group layout: " .. tostring(initialSourceError))
         return
     end
 
     local roster = CollectLayoutRoster()
     local model = layout.Parse(initialSource or "")
+    local initialCanonicalSource = layout.Serialize(layout.Compact(model))
+    local effectiveVariables, initialVariableError = EffectiveLayoutVariables(reference, entity, currentVars)
+    local visibleContextSignature = EffectiveLayoutContextSignature(reference, entity, currentVars)
     local textMode = false
     local editBox, grid, closed
+    local lastVariableError
+
+    local function ReportVariableError(variableError)
+        if variableError == lastVariableError then
+            return
+        end
+        lastVariableError = variableError
+        if variableError then
+            self:Print(
+                "Could not use inherited group-layout variables ("
+                    .. tostring(variableError)
+                    .. "); using this page's variables only."
+            )
+        end
+    end
+    ReportVariableError(initialVariableError)
+
+    -- Re-read identity, drafts, authoritative hierarchy, and variables before
+    -- every mutation. A visual refresh records exactly what the user has seen;
+    -- Apply uses that record to refuse a newer unseen context.
+    local function RefreshLayoutContext(redraw)
+        local currentEntity, targetId, targetError = layoutEditor.ResolveEntity(reference)
+        if not currentEntity then
+            return false, targetError
+        end
+        local vars = CurrentLayoutVars(reference, currentEntity, targetId)
+        local variables, variableError = EffectiveLayoutVariables(reference, currentEntity, vars)
+        local signature, signatureError = EffectiveLayoutContextSignature(reference, currentEntity, vars)
+        if not signature then
+            return false, signatureError or variableError or "invalid-layout-context"
+        end
+        effectiveVariables = variables
+        ReportVariableError(variableError)
+        if redraw and grid then
+            grid:SetResolveProviders(BuildEditorLayoutProviders(roster, effectiveVariables))
+            visibleContextSignature = signature
+        end
+        return true, nil, currentEntity, vars, signature
+    end
 
     local frame = AceGUI:Create("Window")
     frame:SetTitle(entityType == "category" and "Category Group Layout" or "Group Layout")
     frame:SetLayout("Flow")
-    frame:SetWidth(470)
+    frame:SetWidth(LAYOUT_WINDOW_WIDTH)
     frame:SetHeight(LAYOUT_WINDOW_HEIGHT)
     frame:EnableResize(false)
     DarkenWindow(frame.frame)
@@ -1565,13 +1724,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             return
         end
         grid:SetRoster(roster)
-        local currentEntity, targetId = layoutEditor.ResolveEntity(reference)
-        if currentEntity then
-            local vars = CurrentLayoutVars(reference, currentEntity, targetId)
-            grid:SetResolveProviders(
-                BuildEditorLayoutProviders(roster, EffectiveLayoutVariables(reference, currentEntity, vars))
-            )
-        end
+        RefreshLayoutContext(true)
     end)
 
     -- A prompt outlives the window it was opened from, so closing the editor
@@ -1616,11 +1769,55 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     -- A group nobody filled is kept while editing so its box stays draggable,
     -- but dropped on save rather than persisted as an empty line.
     local function SaveLayout()
-        local source = layout.Serialize(layout.Compact(layout.Parse(CurrentSource())))
+        local contextCurrent, contextError, currentEntity, vars, signature = RefreshLayoutContext(true)
+        if not contextCurrent then
+            self:Print("Could not save the group layout: " .. tostring(contextError))
+            return false, false, CurrentSource()
+        end
+        if not self:CanEditEntityLocally(currentEntity) then
+            self:Print("Could not save the group layout: Permission denied.")
+            return false, false, CurrentSource()
+        end
+
+        local latestSource, latestInherited, sourceError = EffectiveLayoutSource(reference, currentEntity, vars)
+        if sourceError then
+            self:Print("Could not save the group layout: " .. tostring(sourceError))
+            return false, false, CurrentSource()
+        end
+        local latestCanonicalSource = layout.Serialize(layout.Compact(layout.Parse(latestSource or "")))
+        if latestCanonicalSource ~= initialCanonicalSource then
+            self:Print("The group layout changed while this editor was open; reopen it before saving.")
+            return false, false, CurrentSource()
+        end
+
+        local compactModel = layout.Compact(layout.Parse(CurrentSource()))
+        local capacityValid, capacityError, capacityGroup = layout.ValidateCapacity(compactModel, effectiveVariables)
+        if not capacityValid then
+            self:Print(
+                ("Could not save the group layout: group %s is over capacity after variables resolve (%s)."):format(
+                    tostring(capacityGroup or "?"),
+                    tostring(capacityError)
+                )
+            )
+            return false, false, layout.Serialize(compactModel)
+        end
+        local source = layout.Serialize(compactModel)
+        -- Applying an unchanged inherited layout should not materialize a page
+        -- override that silently stops following its category.
+        if inheritedSource and latestInherited and source == initialCanonicalSource then
+            visibleContextSignature = signature
+            return true, false, source
+        end
         local saved, saveError, proposed = layoutEditor.SaveSource(reference, source)
         if not saved and saveError then
             self:Print("Could not save the group layout: " .. tostring(saveError))
             return false, false, source
+        end
+        inheritedSource = false
+        initialCanonicalSource = source
+        local refreshed, _, _, _, savedSignature = RefreshLayoutContext(true)
+        if refreshed then
+            visibleContextSignature = savedSignature
         end
         if proposed then
             self:Print(
@@ -1630,6 +1827,22 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         end
         self:UpdateDisplayed()
         return true, false, source
+    end
+
+    local function LayoutViewIsCurrent()
+        local contextCurrent, contextError, currentEntity, vars, signature = RefreshLayoutContext(false)
+        if not contextCurrent then
+            return false, contextError
+        end
+        local latestSource, _, sourceError = EffectiveLayoutSource(reference, currentEntity, vars)
+        if sourceError then
+            return false, sourceError
+        end
+        local latestCanonicalSource = layout.Serialize(layout.Compact(layout.Parse(latestSource or "")))
+        if latestCanonicalSource ~= initialCanonicalSource or signature ~= visibleContextSignature then
+            return false, "the layout or its variables changed while this editor was open"
+        end
+        return true
     end
 
     local function TargetIsDisplayedPage()
@@ -1718,15 +1931,13 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         grid:SetFullWidth(true)
         grid:SetFullHeight(true)
         grid:SetLayoutEngine(layout)
+        grid:SetSafeDropFrame(frame.frame)
         grid:SetRoster(roster)
-        local currentEntity, targetId = layoutEditor.ResolveEntity(reference)
-        local vars = currentEntity and CurrentLayoutVars(reference, currentEntity, targetId) or ""
-        grid:SetResolveProviders(
-            BuildEditorLayoutProviders(
-                roster,
-                currentEntity and EffectiveLayoutVariables(reference, currentEntity, vars) or {}
-            )
-        )
+        local contextCurrent = RefreshLayoutContext(true)
+        if not contextCurrent then
+            effectiveVariables = {}
+            grid:SetResolveProviders(BuildEditorLayoutProviders(roster, effectiveVariables))
+        end
         -- Every visual edit runs the same pure mutator the drag path uses and
         -- redraws from the model it returns, so typed and dragged edits cannot
         -- drift apart. An edit confirmed after the grid was rebuilt belongs to
@@ -1761,7 +1972,10 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         -- AceGUI hands a callback the widget and the event name before the
         -- arguments the widget fired, so every one of these reads past two.
         grid:SetCallback("OnLayoutDrop", function(_, _, drag, drop)
-            Commit(layout.ApplyDrop(model, drag, drop))
+            if not RefreshLayoutContext(true) then
+                return
+            end
+            Commit(layout.ApplyDrop(model, drag, drop, effectiveVariables))
         end)
 
         grid:SetCallback("OnSlotClick", function(_, _, group, slot, button)
@@ -1770,7 +1984,14 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                 return
             end
             if button == "RightButton" then
-                Commit(layout.ApplyDrop(model, { kind = "slot", group = group, slot = slot }, { kind = "remove" }))
+                Commit(
+                    layout.ApplyDrop(
+                        model,
+                        { kind = "slot", group = group, slot = slot },
+                        { kind = "remove" },
+                        effectiveVariables
+                    )
+                )
                 return
             end
             local expression = target.slots[slot]
@@ -1782,7 +2003,10 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                         self:Print("That layout slot changed before the edit was confirmed; no change was made.")
                         return
                     end
-                    Commit(layout.SetSlot(model, group, slot, text))
+                    if not RefreshLayoutContext(true) then
+                        return
+                    end
+                    Commit(layout.SetSlot(model, group, slot, text, effectiveVariables))
                 end,
             })
         end)
@@ -1797,7 +2021,10 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             AngryEra_LayoutTextPopup({
                 Prompt = "Add a slot:",
                 OnAccept = function(text)
-                    Commit(layout.ApplyDrop(model, { kind = "text", text = text }, drop))
+                    if not RefreshLayoutContext(true) then
+                        return
+                    end
+                    Commit(layout.ApplyDrop(model, { kind = "text", text = text }, drop, effectiveVariables))
                 end,
             })
         end)
@@ -1878,6 +2105,11 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     applyButton:SetText("Apply to Raid")
     applyButton:SetWidth(150)
     applyButton:SetCallback("OnClick", function()
+        local viewCurrent, viewError = LayoutViewIsCurrent()
+        if not viewCurrent then
+            self:Print("Could not apply the layout: " .. tostring(viewError) .. "; review it and try again.")
+            return
+        end
         local targetsDisplay, displayError = TargetIsDisplayedPage()
         if not targetsDisplay then
             self:Print("Could not apply the layout: " .. displayError .. ".")

@@ -5,7 +5,9 @@
 local AngryEra = { utils = {} }
 local app = { AngryEra = AngryEra, libs = {} }
 
+assert(loadfile("modules/identity.lua"))("AngryEra", app)
 assert(loadfile("modules/utils/json.lua"))("AngryEra", app)
+assert(loadfile("modules/utils/variables.lua"))("AngryEra", app)
 assert(loadfile("modules/layout.lua"))("AngryEra", app)
 
 local function EnsureUnitShortName(name)
@@ -138,6 +140,172 @@ assert(providers.ResolveRosterName("Alex") == "Alex-RealmA", "an unqualified nam
 assert(providers.ResolveRosterName("Alex-RealmB") == "Alex-RealmB", "a qualified name resolves exactly")
 assert(providers.ResolveRosterName("Blair") == "Blair-RealmB", "a unique cross-realm short name resolves safely")
 assert(providers.ResolveRosterName("Casey") == nil, "an ambiguous short name without an own-realm match is rejected")
+
+-- A locally owned/background page derives inherited variables from the local
+-- category tree. An exact active remote page instead uses the authoritative
+-- ancestor layers transmitted with that page, even if its receiver-private
+-- placement points somewhere else.
+local localCategorySyncId = "ae3i:1:2:3:4:category:40"
+local remoteCategorySyncId = "ae3i:5:6:7:8:category:50"
+local localPageSyncId = "ae3i:1:2:3:4:page:41"
+local remotePageSyncId = "ae3i:5:6:7:8:page:51"
+AngryAssign_Categories[40] = {
+    Id = 40,
+    SyncId = localCategorySyncId,
+    Vars = "Inherited=local\nLocalOnly=yes\n$SQUARE=LocalTank\n$LAYOUT=Local/1: {{Inherited}}",
+}
+AngryAssign_Pages[41] = {
+    Id = 41,
+    SyncId = localPageSyncId,
+    CategoryId = 40,
+    Vars = "Role=local-page",
+    LocallyOwned = true,
+}
+AngryAssign_Pages[51] = {
+    Id = 51,
+    SyncId = remotePageSyncId,
+    CategoryId = 40,
+    Revision = 7,
+    RevisionId = "fcs32:remote7",
+    Vars = "Role=canonical\nCanonicalOnly=yes",
+    LocallyOwned = false,
+}
+
+function AngryEra:IsLocallyOwned(entity)
+    return entity.LocallyOwned == true
+end
+
+local activeReference
+local activeContext
+local retainedContext
+local contextRequest
+function AngryEra:GetActiveDisplayReference()
+    return activeReference
+end
+function AngryEra:GetActivePageRenderContext(syncId, revision, revisionId, contextRevisionId)
+    contextRequest = { syncId, revision, revisionId, contextRevisionId }
+    return activeContext
+end
+function AngryEra:GetAuthoritativePageRenderContext()
+    return retainedContext
+end
+
+local localReference = layoutEditor.ReferenceEntity(41, "page")
+local effective =
+    layoutEditor.EffectiveLayoutVariables(localReference, AngryAssign_Pages[41], AngryAssign_Pages[41].Vars)
+assert(effective.Inherited == "local" and effective.LocalOnly == "yes", "a local page uses its local category chain")
+assert(effective.Role == "local-page", "local page variables override their category")
+assert(effective["$SQUARE"] == "LocalTank", "local inherited metadata remains effective")
+local effectiveSource, inheritedSource =
+    layoutEditor.EffectiveLayoutSource(localReference, AngryAssign_Pages[41], AngryAssign_Pages[41].Vars)
+assert(effectiveSource == "Local/1: {{Inherited}}", "an inherited layout keeps its raw variable token")
+assert(inheritedSource == true, "the editor identifies an inherited layout source")
+
+activeReference = {
+    SyncId = remotePageSyncId,
+    Revision = 7,
+    RevisionId = "fcs32:remote7",
+    ContextRevisionId = "fcs32:context7",
+}
+activeContext = {
+    Page = {
+        SyncId = remotePageSyncId,
+        Revision = 7,
+        RevisionId = "fcs32:remote7",
+        ParentSyncId = remoteCategorySyncId,
+    },
+    AncestorVariableLayers = {
+        {
+            SyncId = remoteCategorySyncId,
+            Vars = "{\"Inherited\":\"remote\",\"RemoteOnly\":\"yes\",\"Role\":\"remote-ancestor\",\"$SQUARE\":\"RemoteTank\",\"$LAYOUT\":\"Remote/1: {{Role}}\"}",
+        },
+    },
+}
+local remoteReference = layoutEditor.ReferenceEntity(51, "page")
+effective = layoutEditor.EffectiveLayoutVariables(remoteReference, AngryAssign_Pages[51], AngryAssign_Pages[51].Vars)
+assert(effective.Inherited == "remote" and effective.RemoteOnly == "yes", "a remote page uses transmitted ancestors")
+assert(effective.LocalOnly == nil, "a remote page never borrows its receiver-private category variables")
+assert(
+    effective.Role == "canonical" and effective.CanonicalOnly == "yes",
+    "canonical page Vars override remote ancestors"
+)
+assert(effective["$SQUARE"] == "RemoteTank", "remote inherited metadata remains effective")
+effectiveSource, inheritedSource =
+    layoutEditor.EffectiveLayoutSource(remoteReference, AngryAssign_Pages[51], AngryAssign_Pages[51].Vars)
+assert(effectiveSource == "Remote/1: {{Role}}", "a remote inherited layout keeps its authoritative raw token")
+assert(inheritedSource == true, "a remote ancestor layout is marked inherited")
+assert(
+    contextRequest[1] == remotePageSyncId
+        and contextRequest[2] == 7
+        and contextRequest[3] == "fcs32:remote7"
+        and contextRequest[4] == "fcs32:context7",
+    "the editor requests the exact active page tuple"
+)
+
+effective = layoutEditor.EffectiveLayoutVariables(
+    remoteReference,
+    AngryAssign_Pages[51],
+    "{\"Role\":\"draft\",\"DraftOnly\":\"yes\"}"
+)
+assert(effective.Inherited == "remote" and effective.Role == "draft", "assistant draft Vars override remote ancestors")
+assert(effective.DraftOnly == "yes" and effective.CanonicalOnly == nil, "the draft replaces canonical page Vars")
+effectiveSource, inheritedSource = layoutEditor.EffectiveLayoutSource(
+    remoteReference,
+    AngryAssign_Pages[51],
+    "{\"Role\":\"draft\",\"$LAYOUT\":\"Draft/1: {{Role}}\"}"
+)
+assert(effectiveSource == "Draft/1: {{Role}}", "a draft layout overrides its remote ancestor without resolving")
+assert(inheritedSource == false, "a draft's own layout is not marked inherited")
+
+activeContext = nil
+effective = layoutEditor.EffectiveLayoutVariables(remoteReference, AngryAssign_Pages[51], AngryAssign_Pages[51].Vars)
+assert(effective.Role == "canonical", "a missing exact context retains canonical page Vars")
+assert(effective.LocalOnly == nil, "a missing exact remote context fails closed instead of using local ancestry")
+
+activeReference = nil
+retainedContext = {
+    Page = {
+        SyncId = remotePageSyncId,
+        Revision = 7,
+        RevisionId = "fcs32:remote7",
+        ParentSyncId = remoteCategorySyncId,
+    },
+    AncestorVariableLayers = {
+        {
+            SyncId = remoteCategorySyncId,
+            Vars = "Inherited=retained\nBackgroundOnly=yes\n$LAYOUT=Background/1: {{Role}}",
+        },
+    },
+}
+effective = layoutEditor.EffectiveLayoutVariables(remoteReference, AngryAssign_Pages[51], AngryAssign_Pages[51].Vars)
+assert(effective.Inherited == "retained", "a background remote page uses its retained authoritative context")
+assert(effective.BackgroundOnly == "yes", "retained background variables reach the editor")
+assert(effective.LocalOnly == nil, "a background remote page never borrows its private local placement")
+effectiveSource, inheritedSource =
+    layoutEditor.EffectiveLayoutSource(remoteReference, AngryAssign_Pages[51], AngryAssign_Pages[51].Vars)
+assert(effectiveSource == "Background/1: {{Role}}", "a background remote layout keeps retained raw tokens")
+assert(inheritedSource == true, "a retained remote layout is marked inherited")
+
+effective = layoutEditor.EffectiveLayoutVariables(localReference, AngryAssign_Pages[41], AngryAssign_Pages[41].Vars)
+assert(effective.Inherited == "local", "a background local page continues to use its category chain")
+
+AngryAssign_Categories[42] = {
+    Id = 42,
+    SyncId = "ae3i:1:2:3:4:category:42",
+    Vars = "{",
+}
+AngryAssign_Pages[43] = {
+    Id = 43,
+    SyncId = "ae3i:1:2:3:4:page:43",
+    CategoryId = 42,
+    Vars = "Role=page-only",
+    LocallyOwned = true,
+}
+local fallbackReference = layoutEditor.ReferenceEntity(43, "page")
+local fallbackVariables, fallbackError =
+    layoutEditor.EffectiveLayoutVariables(fallbackReference, AngryAssign_Pages[43], AngryAssign_Pages[43].Vars)
+assert(fallbackVariables.Role == "page-only", "a damaged ancestor falls back to valid page variables")
+assert(fallbackError == "invalid-variables", "the editor preserves the inherited-variable error for visibility")
 
 function AngryEra:Print() end
 function AngryEra:CategoryUpdated() end

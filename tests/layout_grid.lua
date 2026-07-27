@@ -225,7 +225,10 @@ _G.UIParent.rect = { left = 0, bottom = 0, right = 1024, top = 768 }
 function _G.CreateFrame(_, _, parent)
     return NewRegion(parent or _G.UIParent)
 end
-function _G.SetCursor() end
+local cursorTexture
+function _G.SetCursor(value)
+    cursorTexture = value
+end
 function _G.CloseDropDownMenus() end
 
 local cursorX, cursorY = 0, 0
@@ -288,47 +291,63 @@ grid:OnAcquire()
 grid.frame:SetPoint("TOPLEFT", _G.UIParent, "TOPLEFT", 0, 0)
 grid:SetLayoutEngine(layout)
 grid:SetRoster({ "Vhez", "Kaza" })
-grid:SetWidth(400)
+grid:SetWidth(600)
 grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores/3: X"))
+local safeDropFrame = NewRegion(_G.UIParent)
+safeDropFrame.rect = { left = -10, bottom = 250, right = 620, top = 780 }
+grid:SetSafeDropFrame(safeDropFrame)
 
--- The palette is always the last box drawn, so its position never has to be
--- counted out here.
-local function PaletteBox()
-    for index = #grid.boxes, 1, -1 do
-        if grid.boxes[index]:IsShown() then
-            return grid.boxes[index]
+local function BoxByTitle(title)
+    for _, box in ipairs(grid.boxes) do
+        if box:IsShown() and box.header.label:GetText() == title then
+            return box
         end
     end
 end
 
--- The grid always draws the eight raid subgroup boxes, then the palette.
+local function PaletteBox()
+    return BoxByTitle("Unrostered")
+end
+
+local function VariablesBox()
+    return BoxByTitle("Variables")
+end
+
+-- The grid always draws the eight raid subgroup boxes, then both palettes.
 local visible = 0
 for _, box in ipairs(grid.boxes) do
     if box:IsShown() then
         visible = visible + 1
     end
 end
-assert(visible == 9, "eight subgroup boxes plus the palette are drawn")
+assert(visible == 10, "eight subgroup boxes plus both palettes are drawn")
 assert(grid.boxes[1].header.label:GetText() == "Main", "a group titles the subgroup box it holds")
 assert(grid.boxes[2].header.label:GetText() == "Group 2", "an unclaimed subgroup box is titled by number")
 assert(grid.boxes[3].header.label:GetText() == "Spores", "a named group titles the subgroup it was given")
-assert(PaletteBox() == grid.boxes[9], "the palette is drawn last")
+assert(PaletteBox() == grid.boxes[9], "the unrostered palette follows the subgroup boxes")
+assert(VariablesBox() == grid.boxes[10], "the variables palette is drawn last")
 assert(PaletteBox().header.label:GetText() == "Unrostered", "the palette holds whoever the layout has not placed")
+assert(VariablesBox().header.label:GetText() == "Variables", "the variables palette holds reusable expressions")
 assert(grid.frame:GetHeight() > 0, "the grid reports a height for its container")
 
 -- Groups run two to a row, odd on the left and even on the right, with the
--- palette standing in a third column beside them.
+-- two palettes standing beside them.
 local palette = PaletteBox()
+local variablesPalette = VariablesBox()
 assert(grid.boxes[1]:GetLeft() == grid.frame:GetLeft(), "the first group opens the left column")
 assert(grid.boxes[2]:GetLeft() > grid.boxes[1]:GetLeft(), "an even-numbered group stands in the right column")
 assert(grid.boxes[3]:GetLeft() == grid.boxes[1]:GetLeft(), "an odd-numbered group returns to the left column")
 assert(grid.boxes[2]:GetTop() == grid.boxes[1]:GetTop(), "the two columns share a top")
 assert(grid.boxes[3]:GetTop() < grid.boxes[1]:GetTop(), "the second row of groups sits below the first")
 assert(palette:GetLeft() >= grid.boxes[2]:GetRight(), "the palette clears both group columns")
-assert(palette:GetRight() <= grid.frame:GetRight(), "the palette stays inside the grid")
+assert(variablesPalette:GetLeft() >= palette:GetRight(), "Variables stands to the right of Unrostered")
+assert(variablesPalette:GetRight() <= grid.frame:GetRight(), "the variables palette stays inside the grid")
 assert(palette:GetTop() == grid.frame:GetTop(), "the palette starts at the top of the grid")
+assert(variablesPalette:GetTop() == grid.frame:GetTop(), "the variables palette starts at the top of the grid")
 assert(palette:GetHeight() == grid.frame:GetHeight(), "the palette is fixed to the complete subgroup canvas")
+assert(variablesPalette:GetHeight() == grid.frame:GetHeight(), "Variables shares the fixed subgroup canvas")
 assert(not palette.scrollbar:IsShown(), "a short unrostered list needs no scrollbar")
+assert(not variablesPalette.scrollbar:IsShown(), "an empty variables list needs no scrollbar")
 
 -- Rows carry the target the hit-test reads back.
 local filled = grid.boxes[1].rows[1]
@@ -476,9 +495,13 @@ assert(insideY > palette:GetBottom(), "the cancel point sits in unused palette s
 drag, drop = GestureTo(filled, insideX, insideY)
 assert(drag == nil and drop == nil, "a release inside the grid over no target is cancelled")
 
+local controlsY = grid.frame:GetBottom() - 20
+drag, drop = GestureTo(filled, insideX, controlsY)
+assert(drag == nil and drop == nil, "a release over editor controls outside the grid is cancelled")
+
 local awayX = grid.frame:GetRight() + 50
 local _, outsideDrop = GestureTo(filled, awayX, grid.frame:GetTop())
-assert(outsideDrop and outsideDrop.kind == "remove", "a release away from the grid removes the slot")
+assert(outsideDrop and outsideDrop.kind == "remove", "a release outside the editor removes the slot")
 
 local paletteOutsideDrag = GestureTo(palette.rows[1], awayX, grid.frame:GetTop())
 assert(paletteOutsideDrag == nil, "a palette entry released over nothing is not a removal")
@@ -514,8 +537,78 @@ grid:SetResolveProviders({
     SubgroupMembers = function()
         return {}
     end,
-    Variables = { FLEX = "Ghoal" },
+    Variables = {
+        alpha = "Vhez",
+        Count = 2,
+        Empty = "",
+        FLEX = "Ghoal",
+        NeedsPage = "{{MISSING}}",
+        ["Pipe|Role"] = "Vhez",
+        Enabled = true,
+        Nested = { Name = "Nope" },
+        ["$LAYOUT"] = "Main/1: A",
+        ["$CUSTOM"] = "metadata",
+        [" Bad "] = "trimmed keys cannot round-trip",
+        ["Bad,Key"] = "commas split slots",
+        ["Bad;Key"] = "semicolons split groups",
+        ["Bad{Key"] = "braces break tokens",
+    },
 })
+
+variablesPalette = VariablesBox()
+assert(variablesPalette.rows[1].label:GetText() == "{{alpha}} = Vhez", "variables sort by name")
+assert(variablesPalette.rows[2].label:GetText() == "{{Empty}} = (empty)", "empty variables remain available")
+assert(variablesPalette.rows[3].label:GetText() == "{{FLEX}} = Ghoal", "string variables show their resolved value")
+assert(
+    variablesPalette.rows[4].label:GetText() == "{{NeedsPage}} = [unresolved] {{MISSING}}",
+    "an unresolved string remains visible and clearly labelled"
+)
+assert(
+    variablesPalette.rows[5].label:GetText() == "{{Pipe||Role}} = Vhez"
+        and variablesPalette.rows[5].layoutTarget.text == "{{Pipe|Role}}",
+    "pipe characters are escaped only in the variable's display label"
+)
+assert(
+    not variablesPalette.rows[6] or not variablesPalette.rows[6]:IsShown(),
+    "metadata, numeric, structured, boolean, and unsafe-key values are excluded"
+)
+assert(
+    variablesPalette.rows[3].layoutTarget.kind == "variable"
+        and variablesPalette.rows[3].layoutTarget.text == "{{FLEX}}",
+    "a variable row carries its exact reusable token"
+)
+
+local variableDrag, variableDrop = DragTo(variablesPalette.rows[3], blank)
+assert(variableDrag.kind == "text" and variableDrag.text == "{{FLEX}}", "dragging uses the token, not its value")
+assert(variableDrop.kind == "group" and variableDrop.group == 1, "a variable can be dropped into a layout group")
+local variableApplied, variableModel = layout.ApplyDrop(grid.model, variableDrag, variableDrop)
+assert(
+    variableApplied and variableModel.groups[1].slots[3] == "{{FLEX}}",
+    "dropping a variable stores its dynamic expression"
+)
+grid:SetLayoutModel(variableModel)
+variablesPalette = VariablesBox()
+assert(
+    variablesPalette.rows[3].layoutTarget.text == "{{FLEX}}",
+    "a variable stays in the source catalog after placement"
+)
+
+local variableCancelDrag, variableCancelDrop = DragTo(filled, variablesPalette.rows[3])
+assert(
+    variableCancelDrag == nil and variableCancelDrop == nil,
+    "dropping a layout slot on Variables cancels instead of deleting it"
+)
+local variableToRosterDrag, variableToRosterDrop = DragTo(variablesPalette.rows[3], PaletteBox().rows[1])
+assert(
+    variableToRosterDrag == nil and variableToRosterDrop == nil,
+    "dropping a reusable variable onto Unrostered cancels"
+)
+local pipeDrag, pipeDrop = DragTo(variablesPalette.rows[5], grid.boxes[1].rows[4])
+local pipeApplied, pipeModel = layout.ApplyDrop(variableModel, pipeDrag, pipeDrop)
+assert(pipeApplied and pipeModel.groups[1].slots[4] == "{{Pipe|Role}}", "pipe-key variables store their raw token")
+grid:SetLayoutModel(pipeModel)
+assert(grid.boxes[1].rows[4].label:GetText() == "{{Pipe||Role}}", "placed pipe tokens render as literal text")
+
 grid:SetLayoutModel(layout.Parse("Main/1: Missing > Vhez, *MAGE, {{FLEX}}"))
 palette = PaletteBox()
 assert(palette.rows[1].layoutTarget.text == nil, "resolved slots leave no placed member in the palette")
@@ -602,6 +695,10 @@ assert(scrolledDrag.text == "Spare5", "dragging a scrolled row carries the offse
 
 local gutterDrag, gutterDrop = GestureTo(filled, CentreOf(palette.scrollbar))
 assert(gutterDrag == nil and gutterDrop == nil, "dropping over the scrollbar gutter cancels instead of removing")
+local scrollbarTopX = select(1, CentreOf(palette.scrollbar))
+local scrollbarTopY = palette.scrollbar:GetTop() - 1
+local topGutterDrag, topGutterDrop = GestureTo(filled, scrollbarTopX, scrollbarTopY)
+assert(topGutterDrag == nil and topGutterDrop == nil, "the scrollbar arrow area also cancels a drop")
 
 palette.rows[1]:GetScript("OnMouseWheel")(palette.rows[1], 1)
 assert(palette.rows[1].layoutTarget.text == "Spare2", "the mouse wheel scrolls the palette without moving the grid")
@@ -618,11 +715,53 @@ assert(palette.rows[1].layoutTarget.text == "Spare15", "the full palette scrolls
 assert(palette.rows[26].layoutTarget.text == "Spare40", "the fortieth member is reachable without outer scrolling")
 assert(grid.frame:GetHeight() == 424, "forty unrostered members still keep every subgroup visible")
 
+-- Variables virtualize and scroll independently from Unrostered. Moving either
+-- viewport must not disturb the other one.
+local manyVariables = {}
+for index = 1, 30 do
+    manyVariables[("ROLE%02d"):format(index)] = "Variable" .. index
+end
+grid:SetResolveProviders({ Variables = manyVariables })
+palette = PaletteBox()
+variablesPalette = VariablesBox()
+local variableMinimum, variableMaximum = variablesPalette.scrollbar:GetMinMaxValues()
+assert(variableMinimum == 0 and variableMaximum == 4, "thirty variables expose every hidden variable row")
+assert(palette.scrollbar:GetValue() == 14, "adding variables preserves the Unrostered viewport")
+assert(variablesPalette.rows[1].layoutTarget.text == "{{ROLE01}}", "Variables begins with its first token")
+assert(variablesPalette.rows[26].layoutTarget.text == "{{ROLE26}}", "twenty-six variable rows fit beside the groups")
+
+variablesPalette.scrollbar:SetValue(variableMaximum)
+assert(variablesPalette.rows[1].layoutTarget.text == "{{ROLE05}}", "Variables scrolls to its fifth token")
+assert(variablesPalette.rows[26].layoutTarget.text == "{{ROLE30}}", "the final variable is reachable")
+assert(palette.scrollbar:GetValue() == 14, "scrolling Variables leaves Unrostered untouched")
+local scrolledVariableDrag = DragTo(variablesPalette.rows[1], blank)
+assert(
+    scrolledVariableDrag.kind == "text" and scrolledVariableDrag.text == "{{ROLE05}}",
+    "dragging a scrolled variable carries its exact token"
+)
+
+local variableGutterDrag, variableGutterDrop = GestureTo(filled, CentreOf(variablesPalette.scrollbar))
+assert(variableGutterDrag == nil and variableGutterDrop == nil, "dropping over the Variables scrollbar gutter cancels")
+
+variablesPalette.rows[1]:GetScript("OnMouseWheel")(variablesPalette.rows[1], 1)
+assert(variablesPalette.rows[1].layoutTarget.text == "{{ROLE02}}", "the mouse wheel scrolls Variables")
+assert(palette.scrollbar:GetValue() == 14, "wheel-scrolling Variables leaves Unrostered untouched")
+
+grid:SetResolveProviders({ Variables = { ONLY = "OnlyOne" } })
+palette = PaletteBox()
+variablesPalette = VariablesBox()
+assert(not variablesPalette.scrollbar:IsShown(), "shrinking Variables hides its no-longer-needed scrollbar")
+assert(variablesPalette.scrollbar:GetValue() == 0, "shrinking Variables clamps its viewport to the beginning")
+assert(variablesPalette.rows[1].layoutTarget.text == "{{ONLY}}", "the remaining variable stays available")
+assert(palette.scrollbar:GetValue() == 14, "shrinking Variables preserves the Unrostered viewport")
+
 grid:SetRoster({ "OnlyOne" })
 palette = PaletteBox()
+variablesPalette = VariablesBox()
 assert(not palette.scrollbar:IsShown(), "shrinking the roster hides the no-longer-needed scrollbar")
 assert(palette.scrollbar:GetValue() == 0, "shrinking the roster clamps the palette back to its beginning")
 assert(palette.rows[1].layoutTarget.text == "OnlyOne", "the clamped palette starts with its remaining member")
+assert(variablesPalette.rows[1].layoutTarget.text == "{{ONLY}}", "roster changes leave Variables available")
 grid:SetCallback("OnHeightMeasured", nil)
 
 grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
@@ -643,11 +782,19 @@ assert(grid.frame:GetWidth() == 360, "the grid keeps the width its container ass
 grid.parent = nil
 
 -- Release clears the gesture so a stale press cannot fire later.
+cursorX, cursorY = CentreOf(grid.boxes[2].rows[1])
+grid.boxes[2].rows[1]:GetScript("OnDragStart")(grid.boxes[2].rows[1])
+assert(cursorTexture ~= nil, "a live drag owns the custom cursor")
 grid:OnRelease()
 assert(grid.pressed == nil and grid.dragging == nil, "release clears the pending gesture")
+assert(cursorTexture == nil, "release restores the cursor when a drag was active")
 assert(grid.dropTarget == nil, "release clears the pending drop")
 assert(grid.frame:GetScript("OnUpdate") == nil, "release stops the drag update loop")
 assert(grid.measuredHeight == nil, "release forgets the measured height so a reused grid reports to its new host")
-assert(grid.paletteOffset == 0 and not palette.scrollbar:IsShown(), "release resets the palette scroll state")
+assert(next(grid.paletteOffsets) == nil, "release forgets both palette offsets")
+assert(
+    not palette.scrollbar:IsShown() and not variablesPalette.scrollbar:IsShown(),
+    "release hides both palette scrollbars"
+)
 
 print("Layout grid tests passed.")

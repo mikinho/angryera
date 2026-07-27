@@ -1795,16 +1795,13 @@ function AngryEra:GetPendingActiveDisplayRequest()
     return IsPlainTable(self._activePendingDisplay) and Clone(self._activePendingDisplay) or nil
 end
 
---- Reports whether a page can be published without reconstructing remote wire
--- hierarchy from receiver-private placement. This function does not mutate
--- SavedVariables or volatile active-page state.
-function AngryEra:HasAuthoritativePageContext(pageOrId)
+local function ResolveAuthoritativeContextPage(pageOrId)
     if
         not IsPlainTable(AngryAssign_Pages)
         or not IsPlainTable(AngryAssign_Meta)
         or not IsPlainTable(AngryAssign_Meta.EntityLocal)
     then
-        return false
+        return nil
     end
 
     local page
@@ -1818,6 +1815,40 @@ function AngryEra:HasAuthoritativePageContext(pageOrId)
         or not identity.ValidateSyncId(rawget(page, "SyncId"), "page")
         or not identity.ValidateInstallationId(rawget(page, "OwnerId"))
     then
+        return nil
+    end
+    return page
+end
+
+--- Returns a detached validated retained context for a remote page's current
+-- canonical revision. This does not select the page as the active display.
+function AngryEra:GetAuthoritativePageRenderContext(pageOrId)
+    local page = ResolveAuthoritativeContextPage(pageOrId)
+    if not page then
+        return nil
+    end
+    local locallyOwned = PageIsLocallyOwned({
+        EntityLocal = AngryAssign_Meta.EntityLocal,
+        Meta = AngryAssign_Meta,
+    }, page)
+    if locallyOwned ~= false then
+        return nil
+    end
+
+    local hashCallback = GetHashCallback(self)
+    if not hashCallback then
+        return nil
+    end
+    local _, payload = FindAuthoritativeContext(self, page, hashCallback)
+    return payload and Clone(payload) or nil
+end
+
+--- Reports whether a page can be published without reconstructing remote wire
+-- hierarchy from receiver-private placement. This function does not mutate
+-- SavedVariables or volatile active-page state.
+function AngryEra:HasAuthoritativePageContext(pageOrId)
+    local page = ResolveAuthoritativeContextPage(pageOrId)
+    if not page then
         return false
     end
 
@@ -1831,12 +1862,7 @@ function AngryEra:HasAuthoritativePageContext(pageOrId)
     if locallyOwned == nil then
         return false
     end
-
-    local hashCallback = GetHashCallback(self)
-    if not hashCallback then
-        return false
-    end
-    return FindAuthoritativeContext(self, page, hashCallback) ~= nil
+    return self:GetAuthoritativePageRenderContext(page) ~= nil
 end
 
 --- Prepares a canonical local PAGE_UPSERT payload without sending it.

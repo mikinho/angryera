@@ -259,6 +259,25 @@ assert(layout.SlotWeight("Vhez") == 1 and layout.SlotWeight("A > B") == 1, "name
 assert(layout.SlotWeight("*MAGE x3") == 3, "a counted class fill weighs its count")
 assert(layout.SlotWeight("group:2") == layout.MAX_SUBGROUP_SLOTS, "a subgroup reference weighs a full subgroup")
 assert(layout.GroupWeight({ slots = { "Vhez", "*MAGE x2" } }) == 3, "group weight sums its slots")
+assert(
+    layout.ExpandedSlotWeight("{{Fill}}", { Fill = "*MAGE x3" }) == 3,
+    "editor capacity follows a variable's expanded fill"
+)
+assert(layout.ExpandedSlotWeight("{{Unset}}", {}) == 1, "an unresolved expression still occupies one editable row")
+assert(
+    layout.GroupWeight({ slots = { "{{Fill}}", "Vhez" } }, { Fill = "*MAGE x3" }) == 4,
+    "group capacity can count effective variable expressions"
+)
+local capacityValid, capacityError, capacityGroup =
+    layout.ValidateCapacity(layout.Parse("Main/1: A, B, C, D, {{Fill}}"), { Fill = "*MAGE x2" })
+assert(
+    capacityValid == false and capacityError == "subgroup-oversubscribed" and capacityGroup == 1,
+    "model validation rejects a variable-expanded subgroup before save"
+)
+assert(
+    layout.ValidateCapacity(layout.Parse("Main/1: A, B, C, {{Fill}}"), { Fill = "*MAGE x2" }) == true,
+    "model validation accepts a variable-expanded subgroup that fits"
+)
 
 -- Serialize round-trips Parse and repairs unlabeled or unsafe groups.
 local source = "Group 1/1: Vhez, Main > Backup, *MAGE; Spores/2: L1, L2"
@@ -313,6 +332,10 @@ assert(select(2, layout.SetSlot(base, 1, 1, "  ")) == "empty-slot", "a blank slo
 local packed = layout.Parse("Main/1: A, B, C, D, E")
 assert(select(2, layout.SetSlot(packed, 1, 1, "*MAGE x2")) == "group-full", "a retype cannot exceed the subgroup cap")
 assert(select(2, layout.SetSlot(packed, 1, 1, "*MAGE")).groups[1].slots[1] == "*MAGE", "a same-weight retype fits")
+assert(
+    select(2, layout.SetSlot(packed, 1, 1, "{{Fill}}", { Fill = "*MAGE x2" })) == "group-full",
+    "a variable cannot hide an oversized typed fill"
+)
 
 -- ApplyDrop: moving a slot between groups appends to the destination.
 local roster = layout.Parse("Main/1: A, B; Spores: C")
@@ -366,6 +389,11 @@ assert(twoSeatDrop == "group-full", "a two-seat fill does not fit one free seat"
 local spare =
     select(2, layout.ApplyDrop(four, { kind = "text", text = "*MAGE x2" }, { kind = "subgroup", subgroup = 5 }))
 assert(spare.groups[2].slots[1] == "*MAGE x2", "the same fill fits an empty subgroup")
+local variableFillDrop = select(
+    2,
+    layout.ApplyDrop(four, { kind = "text", text = "{{Fill}}" }, { kind = "group", group = 1 }, { Fill = "*MAGE x2" })
+)
+assert(variableFillDrop == "group-full", "a dragged variable cannot hide an oversized fill")
 
 -- ApplyDrop: malformed gestures are refused without touching the model.
 local refusedDropCases = {

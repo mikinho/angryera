@@ -1,6 +1,6 @@
 --- Custom AceGUI widget that edits a raid group layout by dragging members.
--- Renders the eight raid subgroup boxes in two columns, with a separately
--- scrolling palette of unrostered members beside them, and reports every
+-- Renders the eight raid subgroup boxes in two columns, with separately
+-- scrolling Unrostered and Variables palettes beside them, and reports every
 -- gesture as a drag/drop descriptor pair for
 -- `AngryEra.utils.layout.ApplyDrop` to resolve. Clicks report their position
 -- instead, separately for a box title, a filled slot, and an unused row. The
@@ -19,7 +19,7 @@
 --
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 8
+local Type, Version = "AngryLayoutGrid", 9
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -27,6 +27,7 @@ end
 
 -- Lua APIs
 local pairs, ipairs, type = pairs, ipairs, type
+local sort = table.sort
 local floor, max, min = math.floor, math.max, math.min
 
 -- WoW APIs
@@ -39,6 +40,8 @@ local CreateFrame, UIParent = CreateFrame, UIParent
 local MAX_SUBGROUPS = 8
 local MAX_SUBGROUP_SLOTS = 5
 local GROUP_COLUMNS = 2
+local AUXILIARY_COLUMNS = 2
+local TOTAL_COLUMNS = GROUP_COLUMNS + AUXILIARY_COLUMNS
 local ROW_HEIGHT = 15
 local HEADER_HEIGHT = 16
 local BOX_PADDING = 6
@@ -103,6 +106,9 @@ end
 
 -- The row or title under the cursor within one box.
 local function BoxTargetAt(box, x, y)
+    if box.scrollbar and box.scrollbar:IsShown() and FrameContains(box.scrollbar, x, y) then
+        return nil
+    end
     for _, row in ipairs(box.rows) do
         if row:IsShown() and FrameContains(row, x, y) then
             return row
@@ -149,7 +155,7 @@ local function DragFromTarget(target)
     if target.kind == "slot" then
         return { kind = "slot", group = target.group, slot = target.slot }
     end
-    if target.kind == "palette" and target.text then
+    if (target.kind == "palette" or target.kind == "variable") and target.text then
         return { kind = "text", text = target.text }
     end
     return nil
@@ -210,10 +216,17 @@ local function FinishDrag(self, x, y)
     -- Releasing away from the grid discards the slot; releasing on unused space
     -- inside it cancels, so a misaimed drag never silently drops a member.
     if not drop then
-        if FrameContains(self.frame, x, y) or dragging.kind ~= "slot" then
+        local safeFrame = self.safeDropFrame or self.frame
+        if FrameContains(safeFrame, x, y) or dragging.kind ~= "slot" then
             return
         end
         drop = { kind = "remove" }
+    end
+    -- Both palettes are reusable sources. Only an existing layout slot can be
+    -- removed by landing on Unrostered; dropping one source onto another is a
+    -- harmless cancel instead of an invalid edit callback.
+    if drop.kind == "remove" and dragging.kind ~= "slot" then
+        return
     end
     self:Fire("OnLayoutDrop", dragging, drop)
 end
@@ -258,11 +271,16 @@ local function PaletteScroll_OnValueChanged(scrollbar, value)
     if not self or self.drawing then
         return
     end
-    local offset = floor((value or 0) + 0.5)
-    if offset == self.paletteOffset then
+    local paletteKey = scrollbar.paletteKey
+    if type(paletteKey) ~= "string" then
         return
     end
-    self.paletteOffset = offset
+    local offset = floor((value or 0) + 0.5)
+    self.paletteOffsets = self.paletteOffsets or {}
+    if offset == self.paletteOffsets[paletteKey] then
+        return
+    end
+    self.paletteOffsets[paletteKey] = offset
     self:Refresh()
 end
 
@@ -280,14 +298,15 @@ local function PaletteChild_OnMouseWheel(frame, delta)
     Palette_OnMouseWheel(frame.paletteBox, delta)
 end
 
-local function AcquirePaletteScrollbar(self, box)
+local function AcquirePaletteScrollbar(self, box, paletteKey)
     if box.scrollbar then
+        box.scrollbar.paletteKey = paletteKey
         return box.scrollbar
     end
 
     local scrollbar = CreateFrame(
         "Slider",
-        ("AngryEraLayoutGrid%dPaletteScrollBar"):format(self.sequence),
+        ("AngryEraLayoutGrid%dBox%dScrollBar"):format(self.sequence, box.index),
         box,
         "UIPanelScrollBarTemplate"
     )
@@ -300,6 +319,7 @@ local function AcquirePaletteScrollbar(self, box)
     scrollbar:SetValueStep(1)
     scrollbar:SetValue(0)
     scrollbar.obj = self
+    scrollbar.paletteKey = paletteKey
     scrollbar:SetScript("OnValueChanged", PaletteScroll_OnValueChanged)
     box.scrollbar = scrollbar
 
@@ -328,6 +348,7 @@ local function AcquireBox(self, index)
     box:SetBackdrop(PaneBackdrop)
     box:SetBackdropColor(0.1, 0.1, 0.1, 0.6)
     box:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    box.index = index
 
     local header = CreateFrame("Button", nil, box)
     header:SetHeight(HEADER_HEIGHT)
@@ -382,7 +403,17 @@ local function AcquireRow(self, box, index)
     local label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     label:SetPoint("LEFT", 3, 0)
     label:SetPoint("RIGHT", -3, 0)
+    label:SetHeight(ROW_HEIGHT)
     label:SetJustifyH("LEFT")
+    if label.SetWordWrap then
+        label:SetWordWrap(false)
+    end
+    if label.SetNonSpaceWrap then
+        label:SetNonSpaceWrap(false)
+    end
+    if label.SetMaxLines then
+        label:SetMaxLines(1)
+    end
     row.label = label
 
     local highlight = row:CreateTexture(nil, "HIGHLIGHT")
@@ -516,7 +547,62 @@ local function UnrosteredEntries(self, model)
     return entries
 end
 
--- Describes every box to draw: the eight subgroup boxes, then the palette.
+local function IsRepresentableVariable(key, value)
+    if
+        type(key) ~= "string"
+        or key == ""
+        or key:sub(1, 1) == "$"
+        or key:match("^%s*(.-)%s*$") ~= key
+        or key:find("[%c{},;]")
+    then
+        return false
+    end
+    -- A whole layout slot can safely stand in only for a string expression.
+    -- Numeric variables remain valid inside hand-written expressions such as
+    -- `*MAGE x{{Count}}`, but dragging `{{Count}}` as a whole slot would name a
+    -- nonexistent player.
+    return type(value) == "string"
+end
+
+local function VariablePreview(value)
+    local preview = value:gsub("[%c]", " "):gsub("%s+", " "):gsub("|", "||")
+    if preview == "" then
+        return "(empty)"
+    end
+    if value:find("{{", 1, true) then
+        return "[unresolved] " .. preview
+    end
+    return preview
+end
+
+-- The Variables palette contains effective inherited/page variables as reusable
+-- source expressions. It deliberately retains a token after placement and
+-- excludes `$` metadata plus values the layout expander cannot consume.
+local function VariableEntries(self)
+    local providers = type(self.resolveProviders) == "table" and self.resolveProviders or {}
+    local values = type(providers.Variables) == "table" and providers.Variables or {}
+    local entries = {}
+    for key, value in pairs(values) do
+        if IsRepresentableVariable(key, value) then
+            local token = "{{" .. key .. "}}"
+            entries[#entries + 1] = {
+                Key = key,
+                Text = token,
+                Label = token:gsub("|", "||") .. " = " .. VariablePreview(value),
+            }
+        end
+    end
+    sort(entries, function(left, right)
+        local leftKey, rightKey = left.Key:lower(), right.Key:lower()
+        if leftKey ~= rightKey then
+            return leftKey < rightKey
+        end
+        return left.Key < right.Key
+    end)
+    return entries
+end
+
+-- Describes every box to draw: the eight subgroup boxes, then both palettes.
 -- Boxes are plain descriptors so the draw pass stays dumb.
 local function BuildBoxPlan(self)
     local layout = self.layout
@@ -542,9 +628,17 @@ local function BuildBoxPlan(self)
     local unrostered = UnrosteredEntries(self, model)
     plan[#plan + 1] = {
         title = "Unrostered",
-        palette = true,
+        palette = "unrostered",
         slots = unrostered,
         rows = max(#unrostered, 1),
+    }
+
+    local variableEntries = VariableEntries(self)
+    plan[#plan + 1] = {
+        title = "Variables",
+        palette = "variables",
+        slots = variableEntries,
+        rows = max(#variableEntries, 1),
     }
 
     return plan
@@ -613,16 +707,17 @@ local function DrawBox(self, box, entry)
 
     StackRows(self, box, entry.rows, function(row, index)
         local slot = entry.slots[index]
-        FillRow(row, slot, slot and { kind = "slot", group = entry.group, slot = index } or empty)
+        local displaySlot = type(slot) == "string" and slot:gsub("|", "||") or slot
+        FillRow(row, displaySlot, slot and { kind = "slot", group = entry.group, slot = index } or empty)
     end)
 end
 
--- Lays the palette out the same shape as a group box, one name per row.
+-- Lays either fixed-height palette out with one virtualized entry per row.
 local function DrawPalette(self, box, entry)
     box.header.label:SetText(entry.title)
-    box.header.layoutTarget = { kind = "palette" }
+    box.header.layoutTarget = { kind = entry.palette == "unrostered" and "palette" or "variable" }
 
-    local scrollbar = AcquirePaletteScrollbar(self, box)
+    local scrollbar = AcquirePaletteScrollbar(self, box, entry.palette)
     scrollbar:ClearAllPoints()
     scrollbar:SetPoint(
         "TOPRIGHT",
@@ -634,8 +729,8 @@ local function DrawPalette(self, box, entry)
     scrollbar:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -BOX_PADDING, BOX_PADDING + SCROLLBAR_END_PADDING)
 
     local maximum = max(#entry.slots - PALETTE_VISIBLE_ROWS, 0)
-    local offset = min(max(floor(self.paletteOffset or 0), 0), maximum)
-    self.paletteOffset = offset
+    local offset = min(max(floor(self.paletteOffsets[entry.palette] or 0), 0), maximum)
+    self.paletteOffsets[entry.palette] = offset
     scrollbar:SetMinMaxValues(0, maximum)
     scrollbar:SetValue(offset)
     scrollbar:SetShown(maximum > 0)
@@ -643,9 +738,13 @@ local function DrawPalette(self, box, entry)
     local rows = max(min(#entry.slots, PALETTE_VISIBLE_ROWS), 1)
     local rightInset = maximum > 0 and (SCROLLBAR_WIDTH + SCROLLBAR_GAP) or 0
     StackRows(self, box, rows, function(row, index)
-        local rosterEntry = entry.slots[offset + index]
-        local text = rosterEntry and rosterEntry.Text
-        FillRow(row, text, { kind = "palette", text = text, fullName = rosterEntry and rosterEntry.FullName })
+        local item = entry.slots[offset + index]
+        if entry.palette == "variables" then
+            FillRow(row, item and item.Label, { kind = "variable", text = item and item.Text, key = item and item.Key })
+        else
+            local text = item and item.Text
+            FillRow(row, text, { kind = "palette", text = text, fullName = item and item.FullName })
+        end
         row:EnableMouseWheel(true)
         row.paletteBox = box
         row:SetScript("OnMouseWheel", PaletteChild_OnMouseWheel)
@@ -657,16 +756,17 @@ Methods
 -------------------------------------------------------------------------------]]
 local methods = {
     ["OnAcquire"] = function(self)
+        local wasDragging = self.dragging ~= nil
         self.layout = nil
         self.model = nil
         self.roster = {}
         self.resolveProviders = nil
         self.dragging = nil
         self.dropTarget = nil
-        self.drawing = nil
+        self.drawing = true
         self.drawnWidth = nil
         self.measuredHeight = nil
-        self.paletteOffset = 0
+        self.safeDropFrame = nil
         self.frame:SetScript("OnUpdate", nil)
         self.dropMarker:Hide()
         for _, box in ipairs(self.boxes) do
@@ -675,11 +775,17 @@ local methods = {
                 box.scrollbar:Hide()
             end
         end
+        self.paletteOffsets = {}
+        self.drawing = nil
+        if wasDragging then
+            SetCursor(nil)
+        end
         self:SetWidth(400)
         self:SetHeight(GRID_HEIGHT)
     end,
 
     ["OnRelease"] = function(self)
+        local wasDragging = self.dragging ~= nil
         self.frame:SetScript("OnUpdate", nil)
         self.dropMarker:Hide()
         self.layout = nil
@@ -688,10 +794,10 @@ local methods = {
         self.resolveProviders = nil
         self.dragging = nil
         self.dropTarget = nil
-        self.drawing = nil
+        self.drawing = true
         self.drawnWidth = nil
         self.measuredHeight = nil
-        self.paletteOffset = 0
+        self.safeDropFrame = nil
         for _, box in ipairs(self.boxes) do
             if box.scrollbar then
                 box.scrollbar:SetValue(0)
@@ -699,22 +805,27 @@ local methods = {
             end
             box:Hide()
         end
+        self.paletteOffsets = {}
+        self.drawing = nil
+        if wasDragging then
+            SetCursor(nil)
+        end
     end,
 
-    --- Supplies the layout engine the widget reads grid structure from.
+    -- Supplies the layout engine the widget reads grid structure from.
     -- @tparam table engine `AngryEra.utils.layout`.
     ["SetLayoutEngine"] = function(self, engine)
         self.layout = engine
     end,
 
-    --- Replaces the layout model on display.
+    -- Replaces the layout model on display.
     -- @tparam table model Layout model.
     ["SetLayoutModel"] = function(self, model)
         self.model = model
         self:Refresh()
     end,
 
-    --- Replaces the roster the palette draws from.
+    -- Replaces the roster the palette draws from.
     -- Accepts legacy name strings or identity-aware entries with Text,
     -- FullName, and ShortName fields.
     -- @tparam table roster Array of strings or roster-entry tables.
@@ -723,11 +834,17 @@ local methods = {
         self:Refresh()
     end,
 
-    --- Supplies the live-roster/variable providers used to resolve placed slots.
+    -- Supplies the live-roster/variable providers used to resolve placed slots.
     -- @tparam table providers Providers accepted by `layout.Resolve`.
     ["SetResolveProviders"] = function(self, providers)
         self.resolveProviders = type(providers) == "table" and providers or nil
         self:Refresh()
+    end,
+
+    -- Supplies a containing editor frame whose empty chrome cancels a drag.
+    -- A slot is removed only after it leaves this safe frame altogether.
+    ["SetSafeDropFrame"] = function(self, frame)
+        self.safeDropFrame = frame
     end,
 
     -- A redraw asks the container to re-flow, and the container answers by
@@ -739,10 +856,10 @@ local methods = {
         self:Refresh()
     end,
 
-    --- Redraws every box from the current model and roster.
-    -- Groups fill two columns, odd-numbered on the left and even on the right,
-    -- and the fixed-height, independently scrolling palette stands in a third
-    -- column beside them.
+    -- Redraws every box from the current model and roster.
+    -- Groups fill two columns, odd-numbered on the left and even on the right.
+    -- The fixed-height, independently scrolling Unrostered and Variables
+    -- palettes stand in the third and fourth columns.
     ["Refresh"] = function(self)
         if not self.layout or self.drawing then
             return
@@ -755,9 +872,9 @@ local methods = {
 
         self.drawing = true
         local plan = BuildBoxPlan(self)
-        local columnWidth = (width - (GROUP_COLUMNS * BOX_SPACING)) / (GROUP_COLUMNS + 1)
+        local columnWidth = (width - ((TOTAL_COLUMNS - 1) * BOX_SPACING)) / TOTAL_COLUMNS
         local step = columnWidth + BOX_SPACING
-        local placed, top, rowHeight = 0, 0, 0
+        local placed, auxiliary, top, rowHeight = 0, 0, 0, 0
 
         for index, entry in ipairs(plan) do
             local box = AcquireBox(self, index)
@@ -765,8 +882,9 @@ local methods = {
             box:SetWidth(columnWidth)
 
             if entry.palette then
-                box:SetPoint("TOPLEFT", self.frame, "TOPLEFT", GROUP_COLUMNS * step, 0)
+                box:SetPoint("TOPLEFT", self.frame, "TOPLEFT", (GROUP_COLUMNS + auxiliary) * step, 0)
                 DrawPalette(self, box, entry)
+                auxiliary = auxiliary + 1
             else
                 local column = placed % GROUP_COLUMNS
                 if column == 0 and placed > 0 then

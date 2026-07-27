@@ -314,13 +314,17 @@ Spore soakers:
 {layout Spores}
 ```
 
-Edit it from the page's or the category's right-click menu → **Edit Group Layout**. The editor opens on a fixed visual grid: all eight raid subgroup boxes stay visible in two columns, while the unrostered-member list beside them scrolls independently when needed. Drag a name from that list into a box to place it, drag between boxes to move it, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the list, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone.
+Edit it from the page's or the category's right-click menu → **Edit Group Layout**. The editor opens on a fixed visual grid: all eight raid subgroup boxes stay visible in two columns. **Unrostered** is the third column, and **Variables** is the fourth column to its right; each list scrolls independently when needed without moving the subgroup boxes.
+
+The Variables column shows the effective string variables inherited by the page or category being edited. For an actively displayed received page, AngryEra uses the leader's authoritative shared inheritance context rather than that page's placement in your local tree. Dragging one into a subgroup stores its exact token, such as `{{MT}}`, rather than the player name it currently resolves to, so the layout stays dynamic when that variable changes. Variables remain in the column after placement and can be reused in more than one slot. Numeric variables are not offered as whole-slot entries, but remain available inside expressions you type manually, such as `*MAGE x{{Count}}`.
+
+Drag an unrostered name into a box to place it, drag between boxes to move or swap a slot, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the Unrostered list, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone.
 
 You can also type instead of drag. Click a box title to name that group — Spores, Resist, Kite — click a member to edit their slot expression, and click an empty row to add one — a name, a priority list, a class fill, or a `{{Variable}}` — so a layout can be built solo, before there is any roster to drag from. Right-clicking a box title removes the group after a confirmation.
 
 Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` keep auto-filling after you rearrange the grid. Tick **Edit as text** to switch the same layout to one group per line, which is also where roster names insert at the cursor. Both views write the same `$LAYOUT`. Groups left empty are dropped when you save, unless you named one — naming Spores before anyone is dragged into it is the point of naming it.
 
-**Save** writes the layout. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
+**Save** writes the layout. Saving or applying an inherited layout without changing it does not create a page override, so later category changes continue to flow through. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
 
 Out of combat, **Apply to Raid** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected.
 

@@ -108,12 +108,25 @@ function layout.SlotWeight(slot)
     return 1
 end
 
+--- Returns editor capacity after substituting effective variables.
+-- Even an empty or unresolved variable keeps one visual row in the editor,
+-- while a variable that becomes a counted fill consumes every raid seat that
+-- fill can occupy.
+-- @tparam string slot Slot expression.
+-- @tparam[opt] table variables Resolved variable map.
+-- @treturn number weight
+function layout.ExpandedSlotWeight(slot, variables)
+    local expanded = layout.ExpandSlotVariables(slot, variables)
+    local weight = expanded ~= "" and layout.SlotWeight(expanded) or 0
+    return weight > 1 and weight or 1
+end
+
 -- Sums slot weights for a group, optionally ignoring one slot index.
-local function GroupWeight(group, skipIndex)
+local function GroupWeight(group, skipIndex, variables)
     local total = 0
     for index, slot in ipairs((type(group) == "table" and group.slots) or {}) do
         if index ~= skipIndex then
-            total = total + layout.SlotWeight(slot)
+            total = total + (variables and layout.ExpandedSlotWeight(slot, variables) or layout.SlotWeight(slot))
         end
     end
     return total
@@ -121,14 +134,34 @@ end
 
 --- Returns the total slot weight a group currently holds.
 -- @tparam table group Group entry.
+-- @tparam[opt] table variables Resolved variable map used to expand expressions.
 -- @treturn number weight
-function layout.GroupWeight(group)
-    return GroupWeight(group)
+function layout.GroupWeight(group, variables)
+    return GroupWeight(group, nil, variables)
+end
+
+--- Validates every subgroup against effective variable-expanded capacity.
+-- Unlike parsing, this never drops an oversized expression silently.
+-- @tparam table model Layout model.
+-- @tparam[opt] table variables Resolved variable map.
+-- @treturn boolean valid
+-- @treturn string|nil errorCode
+-- @treturn number|nil groupIndex
+function layout.ValidateCapacity(model, variables)
+    if type(model) ~= "table" or type(model.groups) ~= "table" then
+        return false, "invalid-layout"
+    end
+    for index, group in ipairs(model.groups) do
+        if layout.GroupWeight(group, variables) > MAX_SUBGROUP_SLOTS then
+            return false, "subgroup-oversubscribed", index
+        end
+    end
+    return true
 end
 
 -- Every group is a raid subgroup, so they all share the five-per-group limit.
-local function CanHold(group, addedWeight, skipIndex)
-    return GroupWeight(group, skipIndex) + addedWeight <= MAX_SUBGROUP_SLOTS
+local function CanHold(group, addedWeight, skipIndex, variables)
+    return GroupWeight(group, skipIndex, variables) + addedWeight <= MAX_SUBGROUP_SLOTS
 end
 
 -- Reads one "Label[/N]: slot, slot" segment, or nil when it carries no label.
@@ -735,9 +768,10 @@ end
 -- @tparam number index Group index.
 -- @tparam number slot Slot index.
 -- @tparam string text Slot expression.
+-- @tparam[opt] table variables Effective variables used for capacity validation.
 -- @treturn boolean ok
 -- @treturn table|string model on success, reason on failure
-function layout.SetSlot(model, index, slot, text)
+function layout.SetSlot(model, index, slot, text, variables)
     local updated = layout.CopyModel(model)
     local group = updated.groups[index]
     if not group then
@@ -750,7 +784,7 @@ function layout.SetSlot(model, index, slot, text)
     if expression == "" then
         return false, "empty-slot"
     end
-    if not CanHold(group, layout.SlotWeight(expression), slot) then
+    if not CanHold(group, layout.ExpandedSlotWeight(expression, variables), slot, variables) then
         return false, "group-full"
     end
     group.slots[slot] = expression
@@ -811,13 +845,13 @@ local function ResolveDropGroup(model, drop)
 end
 
 -- Trades two slots when a member is dropped onto an occupant of a full group.
-local function SwapSlots(model, dragIndex, dragSlot, targetIndex, targetSlot, text, occupant)
+local function SwapSlots(model, dragIndex, dragSlot, targetIndex, targetSlot, text, occupant, variables)
     local source = model.groups[dragIndex]
     local target = model.groups[targetIndex]
-    if not CanHold(target, layout.SlotWeight(text), targetSlot) then
+    if not CanHold(target, layout.ExpandedSlotWeight(text, variables), targetSlot, variables) then
         return false, "group-full"
     end
-    if not CanHold(source, layout.SlotWeight(occupant), dragSlot) then
+    if not CanHold(source, layout.ExpandedSlotWeight(occupant, variables), dragSlot, variables) then
         return false, "group-full"
     end
     source.slots[dragSlot] = occupant
@@ -833,9 +867,10 @@ end
 -- @tparam table model Layout model.
 -- @tparam table drag Drag descriptor.
 -- @tparam table drop Drop descriptor.
+-- @tparam[opt] table variables Effective variables used for capacity validation.
 -- @treturn boolean ok
 -- @treturn table|string model on success, reason on failure
-function layout.ApplyDrop(model, drag, drop)
+function layout.ApplyDrop(model, drag, drop, variables)
     if type(drag) ~= "table" or type(drop) ~= "table" then
         return false, "unknown-drag"
     end
@@ -863,15 +898,15 @@ function layout.ApplyDrop(model, drag, drop)
 
     if isMove and drop.kind == "slot" and targetIndex ~= drag.group then
         local occupant = target.slots[drop.slot]
-        if occupant and not CanHold(target, layout.SlotWeight(text)) then
-            return SwapSlots(updated, drag.group, drag.slot, targetIndex, drop.slot, text, occupant)
+        if occupant and not CanHold(target, layout.ExpandedSlotWeight(text, variables), nil, variables) then
+            return SwapSlots(updated, drag.group, drag.slot, targetIndex, drop.slot, text, occupant, variables)
         end
     end
 
     if isMove then
         table.remove(updated.groups[drag.group].slots, drag.slot)
     end
-    if not CanHold(target, layout.SlotWeight(text)) then
+    if not CanHold(target, layout.ExpandedSlotWeight(text, variables), nil, variables) then
         return false, "group-full"
     end
 
