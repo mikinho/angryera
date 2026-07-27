@@ -1203,11 +1203,29 @@ function AngryEra:ShowGroupLayoutEditor(id)
     frame:EnableResize(true)
     _G["AngryEra_LayoutEditor_Window"] = frame.frame
     table.insert(UISpecialFrames, "AngryEra_LayoutEditor_Window")
+    -- The palette mirrors the live raid, so someone joining or leaving while the
+    -- editor sits open has to reach it. The window listens for itself because
+    -- the addon's own roster handler is already bound to another method, and an
+    -- AceEvent registration is per-object.
+    local watcher = CreateFrame("Frame")
+    watcher:RegisterEvent("GROUP_ROSTER_UPDATE")
+    watcher:SetScript("OnEvent", function()
+        roster = CollectRosterNames()
+        -- The text view's roster buttons are only a typing shortcut, and
+        -- rebuilding them would throw away whatever is half-typed above them.
+        if closed or not grid then
+            return
+        end
+        grid:SetRoster(roster)
+    end)
+
     -- A prompt outlives the window it was opened from, so closing the editor
     -- marks the views dead rather than letting a late answer touch a widget
     -- AceGUI has already recycled.
     frame:SetCallback("OnClose", function(widget)
         closed = true
+        watcher:UnregisterAllEvents()
+        watcher:SetScript("OnEvent", nil)
         AceGUI:Release(widget)
     end)
 
