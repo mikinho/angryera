@@ -715,6 +715,31 @@ assert(palette.rows[1].layoutTarget.text == "Spare15", "the full palette scrolls
 assert(palette.rows[26].layoutTarget.text == "Spare40", "the fortieth member is reachable without outer scrolling")
 assert(grid.frame:GetHeight() == 424, "forty unrostered members still keep every subgroup visible")
 
+grid:SetResolveProviders({
+    Variables = {
+        A1B = "Mixed",
+        A10 = "TenA",
+        A2 = "TwoA",
+        HEALER10 = "Ten",
+        HEALER2 = "Two",
+        HEALER1 = "One",
+        HUGE100000000000000000000 = "HugeLater",
+        HUGE99999999999999999999 = "HugeEarlier",
+    },
+})
+variablesPalette = VariablesBox()
+assert(
+    variablesPalette.rows[1].layoutTarget.text == "{{A2}}"
+        and variablesPalette.rows[2].layoutTarget.text == "{{A10}}"
+        and variablesPalette.rows[3].layoutTarget.text == "{{A1B}}"
+        and variablesPalette.rows[4].layoutTarget.text == "{{HEALER1}}"
+        and variablesPalette.rows[5].layoutTarget.text == "{{HEALER2}}"
+        and variablesPalette.rows[6].layoutTarget.text == "{{HEALER10}}"
+        and variablesPalette.rows[7].layoutTarget.text == "{{HUGE99999999999999999999}}"
+        and variablesPalette.rows[8].layoutTarget.text == "{{HUGE100000000000000000000}}",
+    "numbered variable families sort naturally in the Variables palette"
+)
+
 -- Variables virtualize and scroll independently from Unrostered. Moving either
 -- viewport must not disturb the other one.
 local manyVariables = {}

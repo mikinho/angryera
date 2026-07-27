@@ -575,6 +575,42 @@ local function VariablePreview(value)
     return preview
 end
 
+local function VariableKeyLess(left, right)
+    local leftPrefix, leftSuffix = left:match("^(.-)(%d+)$")
+    local rightPrefix, rightSuffix = right:match("^(.-)(%d+)$")
+    local leftPrimary = (leftPrefix or left):lower()
+    local rightPrimary = (rightPrefix or right):lower()
+    if leftPrimary ~= rightPrimary then
+        return leftPrimary < rightPrimary
+    end
+
+    local leftKind, rightKind = leftSuffix and 1 or 0, rightSuffix and 1 or 0
+    if leftKind ~= rightKind then
+        return leftKind < rightKind
+    end
+    if leftSuffix and rightSuffix then
+        local leftNumber = leftSuffix:gsub("^0+", "")
+        local rightNumber = rightSuffix:gsub("^0+", "")
+        leftNumber = leftNumber ~= "" and leftNumber or "0"
+        rightNumber = rightNumber ~= "" and rightNumber or "0"
+        if #leftNumber ~= #rightNumber then
+            return #leftNumber < #rightNumber
+        end
+        if leftNumber ~= rightNumber then
+            return leftNumber < rightNumber
+        end
+        if #leftSuffix ~= #rightSuffix then
+            return #leftSuffix < #rightSuffix
+        end
+    end
+
+    local leftFolded, rightFolded = left:lower(), right:lower()
+    if leftFolded ~= rightFolded then
+        return leftFolded < rightFolded
+    end
+    return left < right
+end
+
 -- The Variables palette contains effective inherited/page variables as reusable
 -- source expressions. It deliberately retains a token after placement and
 -- excludes `$` metadata plus values the layout expander cannot consume.
@@ -593,11 +629,7 @@ local function VariableEntries(self)
         end
     end
     sort(entries, function(left, right)
-        local leftKey, rightKey = left.Key:lower(), right.Key:lower()
-        if leftKey ~= rightKey then
-            return leftKey < rightKey
-        end
-        return left.Key < right.Key
+        return VariableKeyLess(left.Key, right.Key)
     end)
     return entries
 end

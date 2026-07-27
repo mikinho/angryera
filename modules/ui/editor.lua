@@ -21,6 +21,15 @@ local AngryEra_DropDown
 local layoutEditor = {}
 AngryEra.utils.layout_editor = layoutEditor
 
+local VARIABLE_SAVE_ERRORS = {
+    ["invalid-variable-family"] = "A variable family is malformed. Use comma-separated names such as HEALER*=PRIEST*,PALADIN*.",
+    ["invalid-variable-line"] = "Each nonblank variable line must use Key=Value.",
+    ["variable-family-cycle"] = "Variable families cannot form a reference cycle.",
+    ["variable-family-too-large"] = "A variable family is too large.",
+    ["invalid-variables"] = "Variables must be valid JSON or Key=Value lines.",
+    ["resolved-variables-too-large"] = "The resolved variables are too large.",
+}
+
 -- -----------------------
 -- Guild Colors        --
 -- -----------------------
@@ -1109,13 +1118,30 @@ local function AngryEra_EditVariables(id, type)
     editBox:DisableButton(false)
     editBox:SetCallback("OnEnterPressed", function(widget, event, text)
         -- Normalize Line Endings
-        local normalized = text:gsub("\r\n", "\n")
+        text = text:gsub("\r\n", "\n")
 
         -- Don't save if unmodified default template
-        if normalized == "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK=" then
+        if text == "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK=" then
             text = nil
         elseif text == "" then
             text = nil
+        end
+
+        local reference = type(layoutEditor.ReferenceEntity) == "function" and layoutEditor.ReferenceEntity(id, type)
+            or nil
+        local validVariables, validationError = false, "variable-validation-unavailable"
+        if type(layoutEditor.ValidateVariableSource) == "function" then
+            validVariables, validationError = layoutEditor.ValidateVariableSource(reference, entity, text)
+        end
+        if not validVariables then
+            AngryEra:Print(
+                "Could not save variables: "
+                    .. (
+                        VARIABLE_SAVE_ERRORS[validationError]
+                        or ("Invalid effective variables (" .. tostring(validationError) .. ").")
+                    )
+            )
+            return
         end
 
         local saved = true
@@ -1551,6 +1577,58 @@ local function EffectiveLayoutAncestorLayers(reference, entity)
         end
     end
     return layers or {}
+end
+
+local function ValidateEditableVariableLines(rawVariables)
+    if rawVariables == nil or rawVariables == "" then
+        return true
+    end
+    if type(rawVariables) ~= "string" then
+        return false
+    end
+
+    local firstCharacter = rawVariables:match("^%s*(.)")
+    if firstCharacter == "{" or firstCharacter == "[" then
+        return true
+    end
+
+    local normalized = rawVariables:gsub("\r\n", "\n"):gsub("\r", "\n")
+    for line in (normalized .. "\n"):gmatch("(.-)\n") do
+        if not line:match("^%s*$") then
+            local key = line:match("^([^=]+)=")
+            if not key or key:match("^%s*(.-)%s*$") == "" then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+--- Validates proposed raw variables against the target's effective ancestors.
+-- The resolved map is deliberately discarded; callers need only know whether
+-- the edit can render consistently before committing it.
+-- @tparam table reference Captured page/category reference.
+-- @tparam table entity Last-known target record.
+-- @tparam string|nil rawVariables Proposed variable source.
+-- @treturn boolean valid
+-- @treturn string|nil errorCode
+function layoutEditor.ValidateVariableSource(reference, entity, rawVariables)
+    if type(reference) ~= "table" then
+        return false, "invalid-variable-target"
+    end
+    if not ValidateEditableVariableLines(rawVariables) then
+        return false, "invalid-variable-line"
+    end
+    local currentEntity, _, resolveError = layoutEditor.ResolveEntity(reference)
+    if not currentEntity then
+        return false, resolveError
+    end
+    if currentEntity ~= entity and reference.SyncId == nil then
+        return false, "variable-target-changed"
+    end
+    local merged, mergeError =
+        variableHelpers.MergeVariableLayers(EffectiveLayoutAncestorLayers(reference, currentEntity), rawVariables)
+    return merged ~= nil, mergeError
 end
 
 local function EffectiveLayoutVariables(reference, entity, vars)

@@ -19,6 +19,11 @@ local variables = AngryEra.utils.variables
 variables.MAX_ANCESTOR_DEPTH = 32
 variables.MAX_VARIABLE_BYTES = 5000
 variables.MAX_RESOLVED_VARIABLE_BYTES = (variables.MAX_ANCESTOR_DEPTH + 1) * variables.MAX_VARIABLE_BYTES
+variables.MAX_VARIABLE_FAMILIES = 64
+variables.MAX_VARIABLE_FAMILY_SELECTORS = 64
+variables.MAX_VARIABLE_FAMILY_MEMBERS = 40
+variables.MAX_GENERATED_FAMILY_VARIABLES = 1024
+variables.MAX_GENERATED_FAMILY_BYTES = variables.MAX_RESOLVED_VARIABLE_BYTES
 
 local function IsPositiveInteger(value)
     return type(value) == "number" and value >= 1 and value % 1 == 0
@@ -277,7 +282,7 @@ local function ReservedMetadataIdentity(key)
     return identityKey
 end
 
-local function MergeParsedVariableLayer(merged, reservedKeys, parsed)
+local function MergeParsedVariableLayer(merged, reservedKeys, sourceRanks, rank, parsed)
     local layerReservedKeys = {}
     for key in pairs(parsed) do
         local identityKey = ReservedMetadataIdentity(key)
@@ -295,12 +300,309 @@ local function MergeParsedVariableLayer(merged, reservedKeys, parsed)
             local previousKey = reservedKeys[identityKey]
             if previousKey ~= nil and previousKey ~= key then
                 merged[previousKey] = nil
+                sourceRanks[previousKey] = nil
             end
             reservedKeys[identityKey] = key
         end
         merged[key] = value
+        sourceRanks[key] = rank
     end
     return true
+end
+
+local function Trim(value)
+    return type(value) == "string" and value:match("^%s*(.-)%s*$") or ""
+end
+
+-- Family names deliberately end in a non-digit so `HEALER12` has exactly one
+-- possible declaration owner (`HEALER*`). That keeps nested-family dependency
+-- and collision handling deterministic.
+local function IsFamilyBase(value)
+    return type(value) == "string" and value:match("^[A-Za-z_][A-Za-z0-9_]*$") ~= nil and value:match("%d$") == nil
+end
+
+local function IsVariableIdentifier(value)
+    return type(value) == "string" and value:match("^[A-Za-z_][A-Za-z0-9_]*$") ~= nil
+end
+
+local function FamilyDeclarationBase(key)
+    if type(key) ~= "string" or key:sub(-1) ~= "*" then
+        return nil, false
+    end
+    local base = key:sub(1, -2)
+    if key:sub(1, 1) == "$" or not IsFamilyBase(base) then
+        return nil, true
+    end
+    return base, true
+end
+
+local function IndexedFamilyMember(key)
+    if type(key) ~= "string" or key:sub(1, 1) == "$" then
+        return nil
+    end
+    local base, suffix = key:match("^(.-)([1-9]%d*)$")
+    if not IsFamilyBase(base) then
+        return nil
+    end
+    return base, suffix
+end
+
+local function NumericSuffixLess(left, right)
+    if #left ~= #right then
+        return #left < #right
+    end
+    return left < right
+end
+
+local function ParseFamilySelectors(raw)
+    if type(raw) ~= "string" then
+        return nil, "invalid-variable-family"
+    end
+    if Trim(raw) == "" then
+        return {}
+    end
+
+    local selectors = {}
+    local cursor = 1
+    while true do
+        local separator = raw:find(",", cursor, true)
+        local term = Trim(raw:sub(cursor, separator and separator - 1 or nil))
+        if term == "" then
+            return nil, "invalid-variable-family"
+        end
+
+        if term:sub(1, 2) == "{{" or term:sub(-2) == "}}" then
+            local wrapped = term:match("^{{%s*([^{}]-)%s*}}$")
+            if not wrapped then
+                return nil, "invalid-variable-family"
+            end
+            term = Trim(wrapped)
+        end
+
+        local selector
+        if term:sub(-1) == "*" then
+            local base = term:sub(1, -2)
+            if not IsFamilyBase(base) then
+                return nil, "invalid-variable-family"
+            end
+            selector = {
+                Kind = "family",
+                Base = base,
+            }
+        else
+            if not IsVariableIdentifier(term) then
+                return nil, "invalid-variable-family"
+            end
+            selector = {
+                Kind = "exact",
+                Key = term,
+            }
+        end
+
+        selectors[#selectors + 1] = selector
+        if #selectors > variables.MAX_VARIABLE_FAMILY_SELECTORS then
+            return nil, "variable-family-too-large"
+        end
+        if not separator then
+            break
+        end
+        cursor = separator + 1
+    end
+    return selectors
+end
+
+-- Expands declaration pseudo-keys such as `HEALER*` into dense, ordinary
+-- `HEALER1..N` references. Inheritance has already selected the nearest
+-- declaration. A nearer declaration owns its numbered namespace, while an
+-- explicit member from the same or a nearer layer remains an intentional
+-- override.
+local function ExpandVariableFamilies(merged, sourceRanks)
+    local definitions = {}
+    local definitionBases = {}
+    local declarationKeys = {}
+    for key in pairs(merged) do
+        local _, attempted = FamilyDeclarationBase(key)
+        if attempted then
+            declarationKeys[#declarationKeys + 1] = key
+        end
+    end
+    if #declarationKeys == 0 then
+        return merged
+    end
+    if #declarationKeys > variables.MAX_VARIABLE_FAMILIES then
+        return nil, "variable-family-too-large"
+    end
+    table.sort(declarationKeys)
+
+    for _, key in ipairs(declarationKeys) do
+        local base = FamilyDeclarationBase(key)
+        local value = merged[key]
+        if not base or type(value) ~= "string" then
+            return nil, "invalid-variable-family"
+        end
+        local selectors, selectorError = ParseFamilySelectors(value)
+        if not selectors then
+            return nil, selectorError
+        end
+        definitionBases[#definitionBases + 1] = base
+        definitions[base] = {
+            Key = key,
+            Rank = sourceRanks[key],
+            Selectors = selectors,
+        }
+    end
+
+    for _, base in ipairs(definitionBases) do
+        local key = definitions[base].Key
+        merged[key] = nil
+        sourceRanks[key] = nil
+    end
+
+    local memberIndex = {}
+    local function IndexMember(key)
+        local base, suffix = IndexedFamilyMember(key)
+        if not base then
+            return
+        end
+        memberIndex[base] = memberIndex[base] or {}
+        memberIndex[base][suffix] = key
+    end
+    local function UnindexMember(key)
+        local base, suffix = IndexedFamilyMember(key)
+        local indexed = base and memberIndex[base]
+        if indexed and indexed[suffix] == key then
+            indexed[suffix] = nil
+        end
+    end
+    for key in pairs(merged) do
+        IndexMember(key)
+    end
+
+    local state = {}
+    local generatedCount = 0
+    local generatedBytes = 0
+
+    local function EvaluateFamily(base)
+        if state[base] == 2 then
+            return true
+        end
+        if state[base] == 1 then
+            return nil, "variable-family-cycle"
+        end
+
+        local definition = definitions[base]
+        if not definition then
+            return true
+        end
+        state[base] = 1
+
+        -- A closer declaration replaces concrete members inherited under the
+        -- same destination prefix. Same-layer and still-closer exact members
+        -- are retained as explicit ordinal overrides.
+        local destinationMembers = memberIndex[base]
+        if destinationMembers then
+            local inheritedKeys = {}
+            for _, key in pairs(destinationMembers) do
+                if (sourceRanks[key] or 0) < definition.Rank then
+                    inheritedKeys[#inheritedKeys + 1] = key
+                end
+            end
+            for _, key in ipairs(inheritedKeys) do
+                merged[key] = nil
+                sourceRanks[key] = nil
+                UnindexMember(key)
+            end
+        end
+
+        local sourceKeys = {}
+        local seenSources = {}
+        local function AddSource(key)
+            if seenSources[key] or type(merged[key]) ~= "string" then
+                return true
+            end
+            seenSources[key] = true
+            sourceKeys[#sourceKeys + 1] = key
+            if #sourceKeys > variables.MAX_VARIABLE_FAMILY_MEMBERS then
+                return nil, "variable-family-too-large"
+            end
+            return true
+        end
+
+        for _, selector in ipairs(definition.Selectors) do
+            if selector.Kind == "family" then
+                local evaluated, evaluateError = EvaluateFamily(selector.Base)
+                if not evaluated then
+                    return nil, evaluateError
+                end
+                local indexed = memberIndex[selector.Base] or {}
+                local suffixes = {}
+                for suffix, key in pairs(indexed) do
+                    if type(merged[key]) == "string" and not seenSources[key] then
+                        suffixes[#suffixes + 1] = suffix
+                        if #sourceKeys + #suffixes > variables.MAX_VARIABLE_FAMILY_MEMBERS then
+                            return nil, "variable-family-too-large"
+                        end
+                    end
+                end
+                table.sort(suffixes, NumericSuffixLess)
+                for _, suffix in ipairs(suffixes) do
+                    local added, addError = AddSource(indexed[suffix])
+                    if not added then
+                        return nil, addError
+                    end
+                end
+            else
+                local dependencyBase = IndexedFamilyMember(selector.Key)
+                local dependency = dependencyBase and definitions[dependencyBase]
+                local selectedRank = sourceRanks[selector.Key]
+                if dependency and (selectedRank == nil or selectedRank < dependency.Rank) then
+                    local evaluated, evaluateError = EvaluateFamily(dependencyBase)
+                    if not evaluated then
+                        return nil, evaluateError
+                    end
+                end
+                local added, addError = AddSource(selector.Key)
+                if not added then
+                    return nil, addError
+                end
+            end
+        end
+
+        for ordinal, sourceKey in ipairs(sourceKeys) do
+            local targetKey = base .. tostring(ordinal)
+            local targetRank = sourceRanks[targetKey]
+            if targetRank == nil or targetRank < definition.Rank then
+                -- Copy the effective raw expression instead of adding another
+                -- reference hop. Deeply composed families therefore retain the
+                -- ordinary resolver's full recursion budget for the variables
+                -- the original member actually references.
+                local generatedValue = merged[sourceKey]
+                local addedBytes = #targetKey + #generatedValue
+                if
+                    generatedCount + 1 > variables.MAX_GENERATED_FAMILY_VARIABLES
+                    or generatedBytes + addedBytes > variables.MAX_GENERATED_FAMILY_BYTES
+                then
+                    return nil, "variable-family-too-large"
+                end
+                merged[targetKey] = generatedValue
+                sourceRanks[targetKey] = definition.Rank
+                IndexMember(targetKey)
+                generatedCount = generatedCount + 1
+                generatedBytes = generatedBytes + addedBytes
+            end
+        end
+
+        state[base] = 2
+        return true
+    end
+
+    for _, base in ipairs(definitionBases) do
+        local evaluated, evaluateError = EvaluateFamily(base)
+        if not evaluated then
+            return nil, evaluateError
+        end
+    end
+    return merged
 end
 
 --- Builds collision-resistant canonical input for a page render context revision.
@@ -367,18 +669,25 @@ function variables.MergeVariableLayers(layers, pageVariables)
 
     local merged = {}
     local reservedKeys = {}
+    local sourceRanks = {}
     for index = 1, count do
-        local mergedLayer, mergeError = MergeParsedVariableLayer(merged, reservedKeys, parsedLayers[index])
+        local mergedLayer, mergeError =
+            MergeParsedVariableLayer(merged, reservedKeys, sourceRanks, index, parsedLayers[index])
         if not mergedLayer then
             return nil, mergeError
         end
     end
-    local mergedPage, mergePageError = MergeParsedVariableLayer(merged, reservedKeys, parsedPage)
+    local mergedPage, mergePageError =
+        MergeParsedVariableLayer(merged, reservedKeys, sourceRanks, count + 1, parsedPage)
     if not mergedPage then
         return nil, mergePageError
     end
+    local expanded, familyError = ExpandVariableFamilies(merged, sourceRanks)
+    if not expanded then
+        return nil, familyError
+    end
     return json.ResolveVariableReferences(
-        merged,
+        expanded,
         nil,
         variables.MAX_RESOLVED_VARIABLE_BYTES,
         variables.MAX_VARIABLE_BYTES

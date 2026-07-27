@@ -179,11 +179,16 @@ end
 -- metadata, after which $SQUARE=$MT resolves through the metadata table.
 Reset()
 local variables = AngryEra.utils.variables
-local merged, mergeError = variables.MergeVariableLayers({}, "MT=Zessy\n$MT={{MT}}\n$SQUARE=$MT")
+local merged, mergeError =
+    variables.MergeVariableLayers({}, "WARRIOR1=Zessy\nTANK*=WARRIOR*\nMT={{TANK1}}\n$MT={{MT}}\n$SQUARE=$MT")
 assert(merged and not mergeError, "the marker bridge should merge through the production variable resolver")
 local publicVars, markerMeta, partitionError = variables.PartitionResolvedVariables(merged)
 assert(publicVars and markerMeta and not partitionError, "the resolved bridge should partition")
 assert(publicVars.MT == "Zessy", "the public MT variable should remain available")
+assert(
+    publicVars.TANK1 == "Zessy" and publicVars["TANK*"] == nil,
+    "generated family members should reach marker metadata without exposing their declaration"
+)
 assert(markerMeta.MT == "Zessy", "$MT={{MT}} should bridge the public value into metadata")
 assert(markerMeta.SQUARE == "$MT", "$SQUARE=$MT should remain a metadata reference")
 local applied = AngryEra_ApplyAutoMarkers(markerMeta, publicVars)

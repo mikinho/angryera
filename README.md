@@ -8,9 +8,9 @@ Supported game clients:
 - Burning Crusade Anniversary 2.5.6
 
 > [!IMPORTANT]
-> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.1 and newer can continue sharing ordinary pages with each other, but every viewer needs v3.3 or newer to render group layouts. Existing local pages and settings are migrated automatically; downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
+> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.1 and newer can continue sharing pages that use only their common features, but every viewer needs v3.3 or newer to render group layouts or variable families. Existing local pages and settings are migrated automatically; downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
 
-Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on group layouts in a mixed pre-v3.3 raid.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on group layouts or variable families in a mixed pre-v3.3 raid.
 
 ## What is new
 
@@ -193,6 +193,34 @@ Tank={{MT}}
 ```
 
 If a page later sets `MT=Roselea`, `{{Tank}}` resolves to `Roselea`.
+
+### Variable families
+
+A variable name ending in `*` declares a numbered family assembled from other numbered variables:
+
+```text
+PRIESTS1=Roselea
+PRIESTS2=Zessy
+PALADINS1=Kwayteow
+DRUID1=Eblis
+
+HEALER*=PRIESTS*,PALADINS*,DRUID1
+```
+
+This creates the effective variables `HEALER1=Roselea`, `HEALER2=Zessy`, `HEALER3=Kwayteow`, and `HEALER4=Eblis`. The declaration `HEALER*` itself is not a template variable. Its numbered results appear in the Group Layout editor's Variables column and otherwise behave exactly like variables you wrote individually.
+
+Selectors are comma-separated and read from left to right. Braces are optional there, so `HEALER*={{PRIESTS*}},{{PALADINS*}},{{DRUID1}}` is equivalent. A wildcard matches only the same case-sensitive prefix followed by a positive number without leading zeroes, and matches use numeric order: `PRIESTS1`, `PRIESTS2`, `PRIESTS10`. Sparse source numbers are compacted into a dense destination family.
+
+Families may be composed:
+
+```text
+MELEE*=FURY*,ROGUE*
+RAID*=HEALER*,MELEE*
+```
+
+The nearest inherited declaration wins. An empty declaration such as `HEALER*=` disables an inherited family, while an explicit `HEALER2=Someone` on the same or a nearer layer overrides that one generated position. Repeating a source selector does not repeat the same source key, but two different source keys holding the same player remain visible so layout validation can report the duplicate.
+
+Family names use letters, numbers, and underscores, must start with a letter or underscore, and cannot end in a number before `*`. Each declaration collects at most 40 string source members; numeric, boolean, structured, and `$` metadata values are not collected. Missing selectors contribute nothing, explicitly empty string members retain their numbered position, and cyclic or oversized family definitions are rejected before an Edit Variables save.
 
 A priority assignment uses `>` to select the first listed player who is both present and alive. It re-resolves when the roster or player state changes:
 
@@ -465,7 +493,7 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 
 ### A raider does not receive the displayed page
 
-1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Group layouts require v3.3 or newer on every viewer.
+1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Group layouts and variable families require v3.3 or newer on every viewer.
 2. Confirm the sender is the current party or raid leader.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
 4. Have the leader or a raid assistant run `/aa version` in the group.

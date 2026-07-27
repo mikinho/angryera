@@ -55,7 +55,7 @@ AngryAssign_Categories = {
     [1] = {
         Id = 1,
         SyncId = rootSyncId,
-        Vars = "root=root\ntarget=root\nresolved={{target}}",
+        Vars = "root=root\ntarget=root\nresolved={{target}}\nPRIEST1=LeaderPriest\nHEALER*=PRIEST*",
     },
     [2] = {
         Id = 2,
@@ -81,8 +81,26 @@ assert(not localError, localError)
 assert(localText == "root/middle/parent/page/page", "Local render should inherit every ancestor root-to-page")
 assert(localVariables.target == "page", "Page variables should win")
 
+local familyText, familyVariables, familyError = AngryEra:RenderPageContent({
+    Contents = "{{HEALER1}}/{{HEALER2}}/{{HEALER3}}",
+    CategoryId = 3,
+    Vars = "PRIEST1=PriestOne\nPALADIN1=PaladinOne\nDRUID1=DruidOne\nHEALER*=PRIEST*,PALADIN*,DRUID1",
+}, {})
+assert(not familyError, familyError)
+assert(
+    familyText == "PriestOne/PaladinOne/DruidOne",
+    "generated family members should render like ordinary page variables"
+)
+assert(
+    familyVariables.HEALER1 == "PriestOne"
+        and familyVariables.HEALER3 == "DruidOne"
+        and familyVariables["HEALER*"] == nil,
+    "display consumers should receive numbered outputs but not the declaration"
+)
+
 local chain = assert(variableHelpers.CollectCategoryChain(AngryAssign_Categories, 3))
 local wireLayers = assert(variableHelpers.BuildAncestorVariableLayers(chain))
+AngryAssign_Categories[1].Vars = "root=root\ntarget=root\nresolved={{target}}\nPRIEST1=ViewerPriest\nHEALER*=PRIEST*"
 local activePageSyncId = "ae3i:1:2:3:4:page:4"
 local activeRevision = 4
 local activeRevisionId = "fcs32:12345678"
@@ -129,6 +147,12 @@ local wireText, wireVariables, wireError, renderedWirePage = AngryEra:RenderPage
 assert(not wireError, wireError)
 assert(wireText == localText, "Standalone wire layers should render identically to the local hierarchy")
 assert(wireVariables.resolved == localVariables.resolved, "Wire and local merged variables should match")
+assert(
+    wireVariables.HEALER1 == "LeaderPriest" and wireVariables.PRIEST1 == "LeaderPriest",
+    "active rendering should expand families from the leader's authoritative ancestor layers"
+)
+assert(wireVariables.HEALER1 ~= "ViewerPriest", "receiver-private family values must not enter active rendering")
+assert(wireVariables["HEALER*"] == nil, "authoritative family declarations should remain internal")
 assert(renderedWirePage == wirePage, "Active rendering should use the exact cached page snapshot")
 
 AngryEra.GetActiveDisplayReference = function()

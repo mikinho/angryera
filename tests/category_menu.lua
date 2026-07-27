@@ -152,13 +152,13 @@ local remotePageSyncId = "ae3i:5:6:7:8:page:51"
 AngryAssign_Categories[40] = {
     Id = 40,
     SyncId = localCategorySyncId,
-    Vars = "Inherited=local\nLocalOnly=yes\n$SQUARE=LocalTank\n$LAYOUT=Local/1: {{Inherited}}",
+    Vars = "Inherited=local\nLocalOnly=yes\nPRIEST1=LocalPriest\nHEALER*=PRIEST*\n$SQUARE=LocalTank\n$LAYOUT=Local/1: {{Inherited}}",
 }
 AngryAssign_Pages[41] = {
     Id = 41,
     SyncId = localPageSyncId,
     CategoryId = 40,
-    Vars = "Role=local-page",
+    Vars = "Role=local-page\nPRIEST1=Roselea\nHEALER*=PRIEST*",
     LocallyOwned = true,
 }
 AngryAssign_Pages[51] = {
@@ -195,6 +195,28 @@ local effective =
     layoutEditor.EffectiveLayoutVariables(localReference, AngryAssign_Pages[41], AngryAssign_Pages[41].Vars)
 assert(effective.Inherited == "local" and effective.LocalOnly == "yes", "a local page uses its local category chain")
 assert(effective.Role == "local-page", "local page variables override their category")
+assert(
+    effective.HEALER1 == "Roselea" and effective["HEALER*"] == nil,
+    "the layout editor receives concrete family members without declaration pseudo-keys"
+)
+local validVariables, variableValidationError = layoutEditor.ValidateVariableSource(
+    localReference,
+    AngryAssign_Pages[41],
+    "PRIEST1=Roselea\nPALADIN1=Zessy\nHEALER*=PRIEST*,PALADIN*"
+)
+assert(validVariables and not variableValidationError, "the editor should accept a valid family before saving")
+validVariables, variableValidationError =
+    layoutEditor.ValidateVariableSource(localReference, AngryAssign_Pages[41], "A*=B*\nB*=A*")
+assert(
+    validVariables == false and variableValidationError == "variable-family-cycle",
+    "the editor should reject a family cycle before saving"
+)
+validVariables, variableValidationError =
+    layoutEditor.ValidateVariableSource(localReference, AngryAssign_Pages[41], "HEALER* PRIEST*")
+assert(
+    validVariables == false and variableValidationError == "invalid-variable-line",
+    "the editor should reject a mistyped family line instead of silently ignoring it"
+)
 assert(effective["$SQUARE"] == "LocalTank", "local inherited metadata remains effective")
 local effectiveSource, inheritedSource =
     layoutEditor.EffectiveLayoutSource(localReference, AngryAssign_Pages[41], AngryAssign_Pages[41].Vars)
@@ -217,7 +239,7 @@ activeContext = {
     AncestorVariableLayers = {
         {
             SyncId = remoteCategorySyncId,
-            Vars = "{\"Inherited\":\"remote\",\"RemoteOnly\":\"yes\",\"Role\":\"remote-ancestor\",\"$SQUARE\":\"RemoteTank\",\"$LAYOUT\":\"Remote/1: {{Role}}\"}",
+            Vars = "{\"Inherited\":\"remote\",\"RemoteOnly\":\"yes\",\"Role\":\"remote-ancestor\",\"PRIEST1\":\"RemotePriest\",\"HEALER*\":\"PRIEST*\",\"$SQUARE\":\"RemoteTank\",\"$LAYOUT\":\"Remote/1: {{Role}}\"}",
         },
     },
 }
@@ -225,6 +247,10 @@ local remoteReference = layoutEditor.ReferenceEntity(51, "page")
 effective = layoutEditor.EffectiveLayoutVariables(remoteReference, AngryAssign_Pages[51], AngryAssign_Pages[51].Vars)
 assert(effective.Inherited == "remote" and effective.RemoteOnly == "yes", "a remote page uses transmitted ancestors")
 assert(effective.LocalOnly == nil, "a remote page never borrows its receiver-private category variables")
+assert(
+    effective.HEALER1 == "RemotePriest" and effective["HEALER*"] == nil,
+    "the layout editor expands only the leader's authoritative variable family"
+)
 assert(
     effective.Role == "canonical" and effective.CanonicalOnly == "yes",
     "canonical page Vars override remote ancestors"

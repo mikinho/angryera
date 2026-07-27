@@ -30,10 +30,14 @@ AngryEra.utils.helpers = {
     end,
 }
 
+assert(loadfile("modules/identity.lua"))("AngryEra", app)
+assert(loadfile("modules/utils/json.lua"))("AngryEra", app)
+assert(loadfile("modules/utils/variables.lua"))("AngryEra", app)
 assert(loadfile("modules/utils/roster.lua"))("AngryEra", app)
 assert(loadfile("modules/layout.lua"))("AngryEra", app)
 assert(loadfile("modules/raid_layout.lua"))("AngryEra", app)
 local rl = AngryEra.utils.raid_layout
+local variableHelpers = AngryEra.utils.variables
 
 -- Applies a plan to a copy of the current state, asserting the cap is never
 -- exceeded, and returns the resulting subgroup map.
@@ -260,5 +264,22 @@ applied, reason = Apply({
 }, "Over/1: A, B, C, D, {{Fill}}", { Fill = "*MAGE x5" })
 assert(not applied and reason == "subgroup-oversubscribed", "expanded layouts enforce subgroup capacity")
 assert(#operations == 0, "capacity validation finishes before raid mutation")
+
+local roleVariables =
+    assert(variableHelpers.MergeVariableLayers({}, "PRIEST1=Alice\nPALADIN1=Bob\nHEALER*=PRIEST*,PALADIN*"))
+applied, reason = Apply({
+    { Name = "Alice-Home", Subgroup = 1 },
+    { Name = "Bob-Home", Subgroup = 1 },
+}, "Healers/2: {{HEALER1}}, {{HEALER2}}", roleVariables)
+assert(applied and reason == 2, "generated family members should apply like ordinary layout variables")
+assert(#operations == 2, "each generated role member should move into the bound subgroup")
+
+roleVariables =
+    assert(variableHelpers.MergeVariableLayers({}, "PRIEST1=Alice\nPALADIN1=Alice\nHEALER*=PRIEST*,PALADIN*"))
+applied, reason = Apply({
+    { Name = "Alice-Home", Subgroup = 1 },
+}, "Healers/2: {{HEALER1}}, {{HEALER2}}", roleVariables)
+assert(not applied and reason == "duplicate-member", "duplicate generated role values should fail visibly")
+assert(#operations == 0, "duplicate generated roles should never partially rearrange the raid")
 
 print("Raid layout planner and apply tests passed.")

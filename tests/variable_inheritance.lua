@@ -215,6 +215,231 @@ merged, mergeError = variables.MergeVariableLayers({}, table.concat(expansiveRef
 assert(merged == nil, "Exponentially expanding references should be rejected")
 assert(mergeError == "resolved-variables-too-large", "Expansion rejection should return a stable error")
 
+-- Variable-family declarations flatten numbered source families in authored
+-- order and materialize ordinary dense variables for every existing consumer.
+merged, mergeError = variables.MergeVariableLayers(
+    {},
+    [[
+PRIESTS1=PriestOne
+PRIESTS3=PriestThree
+PRIESTS10=PriestTen
+PRIESTS01=NotCanonical
+PRIESTS0=NotPositive
+Priests2=WrongCase
+PALADINS1=PaladinOne
+DRUID1=DruidOne
+FURY1=FuryOne
+ROGUE1=RogueOne
+HEALER*={{PRIESTS*}},{{PALADINS*}},{{DRUID1}}
+MELEE*=FURY*,ROGUE*
+RAID*=HEALER*,MELEE*,{{HEALER1}}
+FIRST_HEALER={{HEALER1}}
+]]
+)
+assert(merged and not mergeError, "valid variable families should expand")
+assert(
+    merged.HEALER1 == "PriestOne"
+        and merged.HEALER2 == "PriestThree"
+        and merged.HEALER3 == "PriestTen"
+        and merged.HEALER4 == "PaladinOne"
+        and merged.HEALER5 == "DruidOne",
+    "families should preserve selector order and sort numbered matches naturally"
+)
+assert(merged.MELEE1 == "FuryOne" and merged.MELEE2 == "RogueOne", "bare wildcard selectors should compose a family")
+assert(
+    merged.RAID1 == "PriestOne"
+        and merged.RAID5 == "DruidOne"
+        and merged.RAID6 == "FuryOne"
+        and merged.RAID7 == "RogueOne"
+        and merged.RAID8 == nil,
+    "nested families should flatten densely and deduplicate repeated source keys"
+)
+assert(merged.FIRST_HEALER == "PriestOne", "ordinary variables should resolve generated family members")
+assert(
+    merged["HEALER*"] == nil and merged["MELEE*"] == nil and merged["RAID*"] == nil,
+    "family declaration pseudo-keys should not reach consumers"
+)
+
+merged, mergeError = variables.MergeVariableLayers(
+    {},
+    "SOURCE100000000000000000000=Later\nSOURCE99999999999999999999=Earlier\nTARGET*=SOURCE*"
+)
+assert(
+    merged and not mergeError and merged.TARGET1 == "Earlier" and merged.TARGET2 == "Later",
+    "large numeric suffixes should sort naturally without runtime-specific number conversion"
+)
+
+local deepFamilyComposition = { "BASE1=DeepMember" }
+local previousFamily = "BASE"
+for index = 1, 25 do
+    local nextFamily = "CHAIN_" .. string.char(64 + index)
+    deepFamilyComposition[#deepFamilyComposition + 1] = nextFamily .. "*=" .. previousFamily .. "*"
+    previousFamily = nextFamily
+end
+merged, mergeError = variables.MergeVariableLayers({}, table.concat(deepFamilyComposition, "\n"))
+assert(
+    merged and not mergeError and merged[previousFamily .. "1"] == "DeepMember",
+    "deep family composition should not consume ordinary reference recursion depth"
+)
+
+merged, mergeError = variables.MergeVariableLayers(
+    {},
+    [[
+EMPTY1=
+SAME1=Roselea
+SAME2=Roselea
+NUMBER1=7
+BOOLEAN1=true
+DRUID1=DruidOne
+STABLE*=EMPTY*,DRUID1
+DUPLICATE*=SAME*
+STRING_ONLY*=NUMBER*,BOOLEAN*,DRUID1
+]]
+)
+assert(merged and not mergeError, "family member filtering should resolve")
+assert(
+    merged.STABLE1 == "" and merged.STABLE2 == "DruidOne",
+    "an explicitly empty matched member should keep its stable ordinal"
+)
+assert(
+    merged.DUPLICATE1 == "Roselea" and merged.DUPLICATE2 == "Roselea",
+    "different source keys with equal values should remain visible for duplicate validation"
+)
+assert(
+    merged.STRING_ONLY1 == "DruidOne" and merged.STRING_ONLY2 == nil,
+    "numeric and boolean source values should not become role-family members"
+)
+
+merged, mergeError =
+    variables.MergeVariableLayers({}, "{\"PRIEST1\":\"PriestOne\",\"HEALER*\":\"PRIEST*\",\"COPY\":\"{{HEALER1}}\"}")
+assert(merged and not mergeError, "JSON-form family declarations should expand")
+assert(merged.HEALER1 == "PriestOne" and merged.COPY == "PriestOne", "JSON families should resolve normally")
+
+-- A declaration owns lower-layer numbered members under its prefix. Explicit
+-- members from the same or a closer layer remain intentional exceptions.
+merged, mergeError = variables.MergeVariableLayers({
+    {
+        Vars = "PALADIN1=PaladinOne\nPALADIN2=PaladinTwo\nHEALER1=OldOne\nHEALER2=OldTwo\nHEALER9=OldNine",
+    },
+}, "HEALER*=PALADIN*\nHEALER2=Special")
+assert(merged and not mergeError, "a closer family declaration should replace inherited members")
+assert(merged.HEALER1 == "PaladinOne", "a closer family should replace an inherited first member")
+assert(merged.HEALER2 == "Special", "an exact same-layer member should override its generated ordinal")
+assert(merged.HEALER3 == nil, "an exact override should not renumber later generated members")
+assert(merged.HEALER9 == nil, "a closer family should clear stale inherited members in its namespace")
+
+merged, mergeError = variables.MergeVariableLayers({
+    {
+        Vars = "PRIEST1=RootOne\nPRIEST2=RootTwo\nHEALER*=PRIEST*",
+    },
+}, "PRIEST2=PageTwo\nHEALER1=PageException")
+assert(merged and not mergeError, "inherited families should use the final effective source values")
+assert(merged.HEALER1 == "PageException", "a closer exact member should override an inherited family output")
+assert(merged.HEALER2 == "PageTwo", "child source overrides should feed an inherited family")
+
+merged, mergeError = variables.MergeVariableLayers({
+    {
+        Vars = "HEALER1=OldOne\nHEALER2=OldTwo\nHEALER*=PRIEST*",
+    },
+}, "HEALER*=")
+assert(merged and not mergeError, "an empty closer declaration should disable an inherited family")
+assert(merged.HEALER1 == nil and merged.HEALER2 == nil, "disabling a family should clear inherited members")
+
+merged, mergeError = variables.MergeVariableLayers({}, "A*=B*\nB*=A*")
+AssertError(merged, mergeError, "variable-family-cycle", "wildcard family cycle")
+merged, mergeError = variables.MergeVariableLayers({}, "A*={{B1}}\nB*={{A1}}")
+AssertError(merged, mergeError, "variable-family-cycle", "exact generated-member cycle")
+
+merged, mergeError = variables.MergeVariableLayers({}, "A1=Alice\nA*=A1")
+assert(
+    merged and not mergeError and merged.A1 == "Alice",
+    "a same-layer explicit member should satisfy its own family without a false cycle"
+)
+merged, mergeError = variables.MergeVariableLayers({}, "A*=B1\nB*=A1\nB1=Bob")
+assert(
+    merged and not mergeError and merged.A1 == "Bob" and merged.B1 == "Bob",
+    "an explicit exact member should break an otherwise cyclic family dependency"
+)
+merged, mergeError = variables.MergeVariableLayers({}, "A1=Alice\nB1=Bob\nA*=B1\nB*=A1")
+assert(
+    merged and not mergeError and merged.A1 == "Alice" and merged.B1 == "Bob",
+    "cross-family exact overrides should remain deterministic"
+)
+
+for _, invalidSource in ipairs({
+    "HEALER*=PRIEST*.PALADIN*",
+    "HEALER*=PRIEST*,",
+    "HEALER1*=PRIEST*",
+    "$HEALER*=PRIEST*",
+    "{\"HEALER*\":7}",
+}) do
+    merged, mergeError = variables.MergeVariableLayers({}, invalidSource)
+    AssertError(merged, mergeError, "invalid-variable-family", "malformed family declaration")
+end
+
+local oversizedFamily = {}
+for index = 1, variables.MAX_VARIABLE_FAMILY_MEMBERS + 1 do
+    oversizedFamily[#oversizedFamily + 1] = ("SOURCE%d=Member%d"):format(index, index)
+end
+oversizedFamily[#oversizedFamily + 1] = "TARGET*=SOURCE*"
+merged, mergeError = variables.MergeVariableLayers({}, table.concat(oversizedFamily, "\n"))
+AssertError(merged, mergeError, "variable-family-too-large", "oversized family member list")
+
+local tooManyGenerated = {}
+for index = 1, variables.MAX_VARIABLE_FAMILY_MEMBERS do
+    tooManyGenerated[#tooManyGenerated + 1] = ("SOURCE%d=Member%d"):format(index, index)
+end
+for first = 1, 2 do
+    for second = 1, 13 do
+        tooManyGenerated[#tooManyGenerated + 1] = ("FAMILY_%s%s*=SOURCE*"):format(
+            string.char(64 + first),
+            string.char(64 + second)
+        )
+    end
+end
+merged, mergeError = variables.MergeVariableLayers({}, table.concat(tooManyGenerated, "\n"))
+AssertError(merged, mergeError, "variable-family-too-large", "total generated family output")
+
+local familyBoundary = {}
+for first = 1, 3 do
+    for second = 1, 26 do
+        familyBoundary[#familyBoundary + 1] = ("BOUND_%s%s*="):format(string.char(64 + first), string.char(64 + second))
+    end
+end
+local maximumFamilies = {}
+for index = 1, variables.MAX_VARIABLE_FAMILIES do
+    maximumFamilies[index] = familyBoundary[index]
+end
+merged, mergeError = variables.MergeVariableLayers({}, table.concat(maximumFamilies, "\n"))
+assert(merged and not mergeError, "the exact family declaration limit should be accepted")
+maximumFamilies[#maximumFamilies + 1] = familyBoundary[variables.MAX_VARIABLE_FAMILIES + 1]
+merged, mergeError = variables.MergeVariableLayers({}, table.concat(maximumFamilies, "\n"))
+AssertError(merged, mergeError, "variable-family-too-large", "family declaration count above the limit")
+maximumFamilies[#maximumFamilies + 1] = "$MALFORMED*=SOURCE*"
+merged, mergeError = variables.MergeVariableLayers({}, table.concat(maximumFamilies, "\n"))
+AssertError(
+    merged,
+    mergeError,
+    "variable-family-too-large",
+    "family count should have deterministic precedence over malformed declarations"
+)
+
+local selectorBoundary = {}
+for index = 1, variables.MAX_VARIABLE_FAMILY_SELECTORS do
+    selectorBoundary[index] = "SOURCE1"
+end
+merged, mergeError = variables.MergeVariableLayers({}, "SOURCE1=One\nTARGET*=" .. table.concat(selectorBoundary, ","))
+assert(merged and not mergeError and merged.TARGET1 == "One", "the exact selector limit should be accepted")
+selectorBoundary[#selectorBoundary + 1] = "SOURCE1"
+merged, mergeError = variables.MergeVariableLayers({}, "SOURCE1=One\nTARGET*=" .. table.concat(selectorBoundary, ","))
+AssertError(merged, mergeError, "variable-family-too-large", "selector count above the limit")
+
+local generatedByteLimit = variables.MAX_GENERATED_FAMILY_BYTES
+variables.MAX_GENERATED_FAMILY_BYTES = 1
+merged, mergeError = variables.MergeVariableLayers({}, "SOURCE1=One\nTARGET*=SOURCE*")
+variables.MAX_GENERATED_FAMILY_BYTES = generatedByteLimit
+AssertError(merged, mergeError, "variable-family-too-large", "generated family byte limit")
+
 local canonicalContext, canonicalError = variables.BuildContextRevisionInput(layers, "role=page")
 assert(canonicalContext and not canonicalError, "Valid layers should produce canonical context input")
 

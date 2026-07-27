@@ -308,4 +308,13 @@ assert(
     "The coalesced event should describe the latest snapshot"
 )
 
+firstPage.Vars = "PRIEST1=Roselea\nPALADIN1=Zessy\nHEALER*=PRIEST*,PALADIN*"
+AngryAssign_State.displayed = 1
+AngryEra:UpdateDisplayed()
+local familyVars = AngryEra:GetDisplayedVars()
+assert(
+    familyVars and familyVars.HEALER1 == "Roselea" and familyVars.HEALER2 == "Zessy" and familyVars["HEALER*"] == nil,
+    "the displayed-note API should expose generated family members without their declaration"
+)
+
 print("Display note API integration tests passed.")
