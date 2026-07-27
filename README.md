@@ -35,20 +35,20 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 ### For every raider
 
 1. Install the same AngryEra release as the rest of the group.
-2. Type `/aa` to open the addon settings.
+2. Type `/ae` to open the addon settings.
 3. Set a keybinding for **Toggle Display** under **Angry Era** in the game's keybinding menu.
-4. Use `/aa lock` or the **Toggle Lock** keybinding to show the display mover.
+4. Use `/ae lock` or the **Toggle Lock** keybinding to show the display mover.
 5. Drag the display into position, resize it from the red strip, choose whether it grows upward or downward, and lock it again.
 
 When the group leader displays an assignment, it appears automatically. Reloading, reconnecting, or joining late retrieves the current page again.
 
 ### For raid and party leaders
 
-1. Open the editor with `/aa window` or the **Toggle Window** keybinding.
+1. Open the editor with `/ae window` or the **Toggle Window** keybinding.
 2. Create pages and categories from **Menu**, or load one of the included raid templates.
 3. Select a page and click **Send**. Double-clicking a page in the tree does the same thing.
 4. Use the **Previous Page**, **Next Page**, and **First Page** keybindings to navigate the category containing the actively displayed page.
-5. Use **Menu > Clear Page** or `/aa clear` to clear the shared display.
+5. Use **Menu > Clear Page** or `/ae clear` to clear the shared display.
 
 Only the current party or raid leader selects and clears the shared display. Leadership transfers automatically when the group leader changes.
 
@@ -88,7 +88,7 @@ Assistant edits are limited to the active page's name, variables, and contents. 
 
 ### Permission settings
 
-Open `/aa` and find **Permissions**:
+Open `/ae` and find **Permissions**:
 
 - **Leader + Qualified Assistants** is the default. It accepts the leader plus assistants who meet the rules above.
 - **Leader Only** rejects assistant edits. The leader still controls the shared page normally.
@@ -100,7 +100,7 @@ These settings never let an assistant select or clear the shared display.
 
 ## Editor guide
 
-Open the editor with `/aa window` or **Toggle Window**. The left side contains a searchable page tree with drag-and-drop ordering and nested categories. Right-click pages and categories for their management menus.
+Open the editor with `/ae window` or **Toggle Window**. The left side contains a searchable page tree with drag-and-drop ordering and nested categories. Right-click pages and categories for their management menus.
 
 ### Main menu
 
@@ -157,11 +157,11 @@ While grouped, only the leader's navigation changes the shared display. Rapid na
 The output source depends on how you invoke it:
 
 - The editor's **Output** button outputs the page currently selected in the editor.
-- The **Output Assignment to Chat** keybinding and `/aa output` output the actively displayed page.
+- The **Output Assignment to Chat** keybinding and `/ae output` output the actively displayed page.
 - Output automatically chooses the appropriate available group chat channel.
 - Leaders and raid assistants may output while grouped.
 
-Use **Chat Output Format** in `/aa` to choose spell names or acronyms.
+Use **Chat Output Format** in `/ae` to choose spell names or acronyms.
 
 ## Variables and inheritance
 
@@ -510,9 +510,9 @@ Tick **Inherit layout** to preview and use the nearest ancestor category layout.
 
 The raid leader may always apply it. A raid assistant must also be an officer in the current raid leader's guild, be listed in **Trusted Assistants** on that installation, or have **Allow All Raid Assistants** enabled there. This local check means routinely granting assist to an entire raid does not enable the action for everyone by default.
 
-The editor button saves and applies only the exact page currently displayed. After editing a category layout, display a descendant page that inherits it and use `/aa applylayout`, or open that displayed page's layout editor. `/aa applylayout` always applies the layout resolved by the actively displayed page.
+The editor button saves and applies only the exact page currently displayed. After editing a category layout, display a descendant page that inherits it and use `/ae applylayout`, or open that displayed page's layout editor. `/ae applylayout` always applies the layout resolved by the actively displayed page.
 
-Raid subgroup changes are protected during combat. If you use **Apply to Raid** or `/aa applylayout` in combat, AngryEra queues that exact displayed page instead of attempting the move. Displaying another page, receiving a newer revision, or changing the inherited layout context cancels the queued request; returning to the page later does not revive it. When combat ends, AngryEra resolves the layout again against the live roster, rechecks permission, and applies it once.
+Raid subgroup changes are protected during combat. If you use **Apply to Raid** or `/ae applylayout` in combat, AngryEra queues that exact displayed page instead of attempting the move. Displaying another page, receiving a newer revision, or changing the inherited layout context cancels the queued request; returning to the page later does not revive it. When combat ends, AngryEra resolves the layout again against the live roster, rechecks permission, and applies it once.
 
 To apply layouts automatically as pages change, right-click a page or category, choose **Edit Variables**, and add:
 
@@ -522,7 +522,7 @@ $AUTOAPPLYLAYOUT=$true
 
 `$AUTOAPPLYLAYOUT` inherits like `$LAYOUT` and is off when absent or `$false`. Put it on a category to enable automatic layouts for its descendants, or set `$AUTOAPPLYLAYOUT=$false` on a page or nearer category to disable it there. When a different page with an effective `$true` value becomes the shared display, the raid leader automatically requests that destination page's effective layout using the same combat queue and validation.
 
-AngryEra first records an initial display state. After that, transitioning from no displayed page or another page to a page with a different identity can apply the destination layout. The initial state itself does not rearrange the raid, and saving, rerendering, or receiving a new revision of that same page does not trigger automatic application. After editing the current layout, use **Apply to Raid** if it should move the raid immediately. A destination page without an effective `$LAYOUT` is a quiet no-op. Qualified raid assistants remain manual-only and must use **Apply to Raid** or `/aa applylayout`.
+AngryEra first records an initial display state. After that, transitioning from no displayed page or another page to a page with a different identity can apply the destination layout. The initial state itself does not rearrange the raid, and saving, rerendering, or receiving a new revision of that same page does not trigger automatic application. After editing the current layout, use **Apply to Raid** if it should move the raid immediately. A destination page without an effective `$LAYOUT` is a quiet no-op. Qualified raid assistants remain manual-only and must use **Apply to Raid** or `/ae applylayout`.
 
 During combat, only the exact current page, revision, and inherited context remain queued. Selecting another enabled page discards the older queued layout and queues the newer one; selecting a page where `$AUTOAPPLYLAYOUT` is false cancels the older request without replacing it.
 
@@ -550,7 +550,7 @@ The **AngryEra | Smart Markers** section in the game's keybinding menu contains:
 
 Assigning a marker that is already on the selected unit leaves it in place rather than toggling it off.
 
-Mouseover keybindings mark a live hostile unit under the cursor and fall back to your current target when the mouseover is not valid. Enable **Allow Friendly Smart Markers** in `/aa` if you intentionally want those bindings to mark friendly players too.
+Mouseover keybindings mark a live hostile unit under the cursor and fall back to your current target when the mouseover is not valid. Enable **Allow Friendly Smart Markers** in `/ae` if you intentionally want those bindings to mark friendly players too.
 
 ## Importing, exporting, and backups
 
@@ -581,7 +581,7 @@ A standalone page export contains only variables and metadata declared directly 
 
 In this option, metadata means `$` values stored with page or category variables. Encoded AA does not export account settings, trusted-assistant lists, ownership or synchronization identity, pin state, or page history.
 
-For a release upgrade or downgrade backup, keep **Include variables and metadata** checked and export important categories as **Encoded AA**, or copy the addon's SavedVariables file. `/aa backup` only refreshes a legacy per-page backup field; it does not populate the **Restore** history menu and is not a portable backup.
+For a release upgrade or downgrade backup, keep **Include variables and metadata** checked and export important categories as **Encoded AA**, or copy the addon's SavedVariables file. `/ae backup` only refreshes a legacy per-page backup field; it does not populate the **Restore** history menu and is not a portable backup.
 
 ### Page history
 
@@ -626,7 +626,7 @@ Named raid targets become native `{rt1}` through `{rt8}` tokens when output to c
 
 ## Display settings
 
-Open `/aa` to configure:
+Open `/ae` to configure:
 
 - highlighted words and the special `Group` keyword;
 - hide-on-combat behavior;
@@ -645,21 +645,23 @@ Adding `Group` to **Highlight** emphasizes your current group token, such as `G2
 
 | Command | Action |
 | --- | --- |
-| `/aa` | Open settings. |
-| `/aa help` | List available commands. |
-| `/aa window` | Toggle the editor window. |
-| `/aa toggle` | Toggle the assignment display. |
-| `/aa lock` | Show or hide the display mover. |
-| `/aa send <exact page name>` | Display a page by its exact name. |
-| `/aa clear` | Clear the shared display as leader, or the local display otherwise. |
-| `/aa first` | Toggle to or from the first page in the active category. |
-| `/aa output` | Output the actively displayed page to group chat. |
-| `/aa applylayout` | Apply the exact displayed page's validated group layout. In combat, queue it until combat ends and cancel it if that page, revision, or inherited context changes. |
-| `/aa version` | Check AngryEra versions in the current party or raid. Available to the leader and raid assistants. |
-| `/aa resetposition` | Reset the assignment display position and size. |
-| `/aa defaults` | Restore configuration defaults after confirmation. |
-| `/aa deleteall` | Permanently delete the local page library after confirmation. |
-| `/aa debug [on\|off\|status]` | Control session-local sharing diagnostics. |
+| `/ae` | Open settings. |
+| `/ae help` | List available commands. |
+| `/ae window` | Toggle the editor window. |
+| `/ae toggle` | Toggle the assignment display. |
+| `/ae lock` | Show or hide the display mover. |
+| `/ae send <exact page name>` | Display a page by its exact name. |
+| `/ae clear` | Clear the shared display as leader, or the local display otherwise. |
+| `/ae first` | Toggle to or from the first page in the active category. |
+| `/ae output` | Output the actively displayed page to group chat. |
+| `/ae applylayout` | Apply the exact displayed page's validated group layout. In combat, queue it until combat ends and cancel it if that page, revision, or inherited context changes. |
+| `/ae version` | Check AngryEra versions in the current party or raid. Available to the leader and raid assistants. |
+| `/ae resetposition` | Reset the assignment display position and size. |
+| `/ae defaults` | Restore configuration defaults after confirmation. |
+| `/ae deleteall` | Permanently delete the local page library after confirmation. |
+| `/ae debug [on\|off\|status]` | Control session-local sharing diagnostics. |
+
+`/aa` remains a temporary compatibility alias for existing macros and habits. It runs the same commands, but prints one local deprecation notice per login. Update macros and documentation to use `/ae`.
 
 Debug is off by default and resets to off after a UI reload. It never prints page contents or variable values, but it does include character names and message, page, and revision identifiers. Review debug output before sharing it publicly.
 
@@ -670,9 +672,9 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Group layouts, variable families, and imported raid-role variables require v3.3 or newer on every viewer.
 2. Confirm the sender is the current party or raid leader.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
-4. Have the leader or a raid assistant run `/aa version` in the group.
+4. Have the leader or a raid assistant run `/ae version` in the group.
 5. Reload the affected client. It should request the active page automatically.
-6. If needed, enable `/aa debug on`, reproduce one page change, then disable it with `/aa debug off`.
+6. If needed, enable `/ae debug on`, reproduce one page change, then disable it with `/ae debug off`.
 
 ### An assistant's edit is rejected
 
@@ -696,7 +698,7 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 ### A group layout does not apply
 
 - Confirm you are in a raid and the page whose effective layout you want is the exact shared display.
-- **Save** stores the layout but does not move anyone. Use **Apply to Raid** or `/aa applylayout`.
+- **Save** stores the layout but does not move anyone. Use **Apply to Raid** or `/ae applylayout`.
 - Confirm the caller is the raid leader or a qualified raid assistant.
 - Ensure every explicit or priority-selected name resolves uniquely in the current raid. Use `Name-Realm` when a short name is ambiguous.
 - Ensure the same player is not produced twice and every subgroup remains at or below five players after variables, class fills, and `group:N` slots resolve.

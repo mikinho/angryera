@@ -1,6 +1,7 @@
 ## v3.3.0-BETA
 
 * Compatibility: Pages that use group layouts, variable families, imported raid-role variables, or Key=Value boolean metadata require AngryEra v3.3 or newer on every viewer. Pages using only earlier shared features and no Key=Value booleans remain compatible with v3.1 and v3.2 clients.
+* Improvement: `/ae` is now the canonical slash command throughout AngryEra. `/aa` remains a temporary compatibility alias and prints a local deprecation notice once per login.
 * New Feature: Added inheritable raid group layouts. Put a standard `$LAYOUT` on a category, override only the encounter pages that differ, render up to eight named raid subgroups with `{layout}`, and optionally apply the same plan to the live raid.
 * New Feature: Layout slots fill from the live roster: a name, a priority list `A > B > C`, a class fill `*MAGE`/`*MAGE x2`, or `group:2`. Auto-fill picks present-and-alive members and never assigns anyone twice.
 * New Feature: Added a Group Layout editor on the page right-click menu. Drag members from the roster into the eight raid subgroup boxes, drag between boxes to move or swap them, and right-click a member to take them out. An Edit as text toggle switches the same layout to one group per line.
@@ -24,7 +25,7 @@
 * Fix: Raid layouts now move one identity at a time, wait for Classic to acknowledge each change, and resolve fresh raid indices before continuing, preventing roster renumbering and API throttling from targeting the wrong player.
 * Fix: Group Layout editing preserves JSON-form variables, merges into the latest saved variable state, and never applies an older layout while an assistant proposal is pending.
 * Fix: Group Layout editing uses the exact authoritative inheritance context for an actively displayed received page, and saving or applying an unchanged inherited layout no longer creates a page override.
-* Fix: The editor applies only the exact displayed page, while category layouts direct the user to display an inheriting page; `/aa applylayout` consistently uses the actively displayed page.
+* Fix: The editor applies only the exact displayed page, while category layouts direct the user to display an inheriting page; `/ae applylayout` consistently uses the actively displayed page.
 * Fix: Saved raid templates now round-trip category and page variables, including category layouts and page-specific overrides, without publishing a newly loaded page before its variables are present.
 * Fix: Priority assignments now re-resolve when a group member dies or revives as well as when the roster changes.
 * Fix: Short player names are now accepted only when unique across the current group; priority assignments, automatic markers, and raid layouts no longer guess the local-realm player when another realm has the same name.

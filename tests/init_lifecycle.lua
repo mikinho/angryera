@@ -19,6 +19,9 @@ local layoutFlushResult = "no-pending-layout"
 local layoutFlushCount = 0
 local layoutPauseCount = 0
 local unitCombat = {}
+local registeredSlashCommands = {}
+local slashRegistrationOrder = {}
+local aceConfigCommandCalls = {}
 
 local function Record(name, value)
     calls[#calls + 1] = {
@@ -259,6 +262,28 @@ function AngryEra:Print(message)
     Record("print", message)
 end
 
+function AngryEra:RegisterChatCommand(command, handler)
+    registeredSlashCommands[command] = handler
+    slashRegistrationOrder[#slashRegistrationOrder + 1] = {
+        Command = command,
+        Handler = handler,
+    }
+end
+
+function _G.LibStub(libraryName)
+    assert(libraryName == "AceConfigCmd-3.0", "the slash-command test should request only AceConfigCmd")
+    return {
+        HandleCommand = function(addon, command, optionsName, input)
+            aceConfigCommandCalls[#aceConfigCommandCalls + 1] = {
+                Addon = addon,
+                Command = command,
+                Input = input,
+                OptionsName = optionsName,
+            }
+        end,
+    }
+end
+
 local function CommandInput(value)
     return {
         trim = function()
@@ -316,13 +341,55 @@ local function CountActiveTimers(method)
 end
 
 assert(not AngryEra:IsSyncDebugEnabled(), "sync debug should be disabled by default")
+AngryEra:RegisterSlashCommands()
+assert(
+    registeredSlashCommands.ae == "ChatCommand"
+        and registeredSlashCommands.aa == "LegacyChatCommand"
+        and #slashRegistrationOrder == 2
+        and slashRegistrationOrder[1].Command == "ae"
+        and slashRegistrationOrder[2].Command == "aa",
+    "startup should register only /ae as canonical and /aa as the compatibility alias, in that order"
+)
 AngryEra:ChatCommand(CommandInput("debug"))
 assert(AngryEra:IsSyncDebugEnabled(), "bare debug command should enable tracing")
 AngryEra:ChatCommand(CommandInput("debug status"))
 assert(calls[#calls].Name == "print", "debug status should print its current state")
 AngryEra:ChatCommand(CommandInput("debug off"))
 assert(not AngryEra:IsSyncDebugEnabled(), "debug off should disable tracing")
+for _, call in ipairs(calls) do
+    assert(
+        call.Name ~= "print" or not call.Value:find("/aa command is deprecated", 1, true),
+        "the canonical /ae command must not print a legacy-alias warning"
+    )
+end
+
 calls = {}
+AngryEra._legacySlashCommandWarningShown = nil
+AngryEra:LegacyChatCommand(CommandInput("debug status"))
+AngryEra:LegacyChatCommand(CommandInput("debug status"))
+local legacyWarningCount = 0
+local legacyStatusCount = 0
+for _, call in ipairs(calls) do
+    if call.Name == "print" and call.Value:find("/aa command is deprecated", 1, true) then
+        legacyWarningCount = legacyWarningCount + 1
+    elseif call.Name == "print" and call.Value == "Synchronization debug is disabled." then
+        legacyStatusCount = legacyStatusCount + 1
+    end
+end
+assert(legacyWarningCount == 1, "the deprecated /aa alias should warn locally once per login")
+assert(legacyStatusCount == 2, "every /aa invocation should still dispatch its command")
+
+calls = {}
+local legacyFallbackInput = CommandInput("help")
+AngryEra:LegacyChatCommand(legacyFallbackInput)
+assert(
+    #aceConfigCommandCalls == 1
+        and aceConfigCommandCalls[1].Addon == AngryEra
+        and aceConfigCommandCalls[1].Command == "ae"
+        and aceConfigCommandCalls[1].OptionsName == "AngryEra"
+        and aceConfigCommandCalls[1].Input == legacyFallbackInput,
+    "legacy commands should preserve their input while AceConfig advertises the canonical /ae prefix"
+)
 
 AngryEra:OnEnable()
 assert(layoutApplyResetCount == 1, "startup should clear session-local raid-layout apply state")

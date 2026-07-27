@@ -38,7 +38,7 @@ end
 function AngryEra:SetSyncDebugEnabled(enabled)
     self._syncDebugEnabled = enabled == true
     if self._syncDebugEnabled then
-        self:Print("Synchronization debug enabled for this login. Use /aa debug again to disable it.")
+        self:Print("Synchronization debug enabled for this login. Use /ae debug again to disable it.")
     else
         self:Print("Synchronization debug disabled.")
     end
@@ -75,7 +75,7 @@ function AngryEra:SyncDebug(stage, formatText, ...)
     return true
 end
 
---- Handles `/aa debug`, `/aa debug on|off`, and `/aa debug status`.
+--- Handles `/ae debug`, `/ae debug on|off`, and `/ae debug status`.
 -- @tparam[opt] string argument Normalized command argument.
 -- @treturn boolean handled
 function AngryEra:HandleSyncDebugCommand(argument)
@@ -89,7 +89,7 @@ function AngryEra:HandleSyncDebugCommand(argument)
     elseif argument == "status" then
         self:Print("Synchronization debug is " .. (self:IsSyncDebugEnabled() and "enabled." or "disabled."))
     else
-        self:Print("Usage: /aa debug [on|off|status]")
+        self:Print("Usage: /ae debug [on|off|status]")
     end
     return true
 end

@@ -367,7 +367,7 @@ refreshes, shared clears, and protocol responses emit `DISPLAY` control
 immediately. A forced uncached page publication retains only its independent
 page-snapshot debounce; it does not delay the control message.
 
-`/aa debug` enables session-local timing traces for display selection, debounce
+`/ae debug` enables session-local timing traces for display selection, debounce
 replacement, encoded byte and chunk counts, local transport drain, approximate
 receive age, receiver cache hit or miss, page completion, and UI render time.
 Page-stream submissions also capture sender frame rate, ChatThrottleLib's

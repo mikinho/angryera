@@ -18,6 +18,8 @@ local pageProtocolPrefix = AngryEra.utils.protocol.PAGE_PREFIX
 local activePageProtocolPrefix = AngryEra.utils.protocol.ACTIVE_PAGE_PREFIX
 local leadershipRosterReconcileDelay = 0.25
 local leadershipRosterReconcileMaxAttempts = 3
+local primarySlashCommand = "ae"
+local legacySlashCommand = "aa"
 local raidLayoutApplyErrors = {
     ["not-in-raid"] = "You must be in a raid to rearrange groups.",
     ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
@@ -61,6 +63,12 @@ local AngryEra_Version = AngryEra.Version
 
 local blizOptionsPanel
 local blizOptionsCategoryId
+
+--- Registers the canonical slash command and its temporary compatibility alias.
+function AngryEra:RegisterSlashCommands()
+    self:RegisterChatCommand(primarySlashCommand, "ChatCommand")
+    self:RegisterChatCommand(legacySlashCommand, "LegacyChatCommand")
+end
 
 -- class AngryEraState
 -- field tree table Tree view state (collapsed nodes etc)
@@ -190,7 +198,7 @@ function AngryEra:OnInitialize()
                 name = "Help",
                 hidden = true,
                 func = function()
-                    LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryEra", "")
+                    LibStub("AceConfigCmd-3.0").HandleCommand(self, primarySlashCommand, "AngryEra", "")
                 end,
             },
             debug = {
@@ -737,7 +745,7 @@ function AngryEra:OnInitialize()
         },
     }
 
-    self:RegisterChatCommand("aa", "ChatCommand")
+    self:RegisterSlashCommands()
     LibStub("AceConfig-3.0"):RegisterOptionsTable("AngryEra", options)
 
     blizOptionsPanel, blizOptionsCategoryId =
@@ -747,7 +755,7 @@ function AngryEra:OnInitialize()
     end
 end
 
---- Slash command entry point (`/aa`).
+--- Slash command entry point (`/ae`).
 -- @tparam string input Raw slash command arguments.
 function AngryEra:ChatCommand(input)
     if not input or input:trim() == "" then
@@ -767,10 +775,21 @@ function AngryEra:ChatCommand(input)
             if debugArgument then
                 self:HandleSyncDebugCommand(debugArgument)
             else
-                LibStub("AceConfigCmd-3.0").HandleCommand(self, "aa", "AngryEra", input)
+                LibStub("AceConfigCmd-3.0").HandleCommand(self, primarySlashCommand, "AngryEra", input)
             end
         end
     end
+end
+
+--- Compatibility entry point for the deprecated `/aa` alias.
+-- Prints a local-only notice once per login, then dispatches normally.
+-- @tparam string input Raw slash command arguments.
+function AngryEra:LegacyChatCommand(input)
+    if self._legacySlashCommandWarningShown ~= true then
+        self._legacySlashCommandWarningShown = true
+        self:Print("The /aa command is deprecated and will be removed in a future release. Use /ae instead.")
+    end
+    return self:ChatCommand(input)
 end
 
 local function CancelLeadershipRosterReconcileTimer(self)
