@@ -44,6 +44,35 @@ function AngryEra:UpdateGuildColors()
 end
 
 -- --------------------------
+-- Window Chrome        --
+-- --------------------------
+
+local WINDOW_BACKDROP = {
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true,
+    tileSize = 32,
+    edgeSize = 32,
+    insets = { left = 11, right = 12, top = 12, bottom = 11 },
+}
+
+-- Makes a window read as a panel rather than a pane of glass. The stock
+-- backdrop is translucent enough that whatever the window sits over shows
+-- through it, so an opaque texture goes underneath and the backdrop is
+-- recolored to match instead of tinting the world behind it.
+local function DarkenWindow(f)
+    local bg = f:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(f)
+    bg:SetColorTexture(0, 0, 0, 0.95)
+
+    if not f.SetBackdrop then
+        return
+    end
+    f:SetBackdrop(WINDOW_BACKDROP)
+    f:SetBackdropColor(0, 0, 0, 1)
+end
+
+-- --------------------------
 -- Bulk Management      --
 -- --------------------------
 
@@ -67,28 +96,11 @@ function AngryEra:ShowBulkManagement()
             f:SetToplevel(true)
         end
 
-        -- Force SOLID Black Background Texture
-        local bg = f:CreateTexture(nil, "BACKGROUND")
-        bg:SetAllPoints(f)
-        bg:SetColorTexture(0, 0, 0, 0.95)
+        DarkenWindow(f)
 
         -- Assign a global name so UISpecialFrames can find it
         local globalName = "AngryEra_BulkManage"
         _G[globalName] = f
-
-        -- Darker Background
-        local backdrop = {
-            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-            tile = true,
-            tileSize = 32,
-            edgeSize = 32,
-            insets = { left = 11, right = 12, top = 12, bottom = 11 },
-        }
-        if f.SetBackdrop then
-            f:SetBackdrop(backdrop)
-            f:SetBackdropColor(0, 0, 0, 1)
-        end
 
         -- Register for Escape key closing
         local found = false
@@ -1201,6 +1213,7 @@ function AngryEra:ShowGroupLayoutEditor(id)
     frame:SetWidth(470)
     frame:SetHeight(500)
     frame:EnableResize(true)
+    DarkenWindow(frame.frame)
     _G["AngryEra_LayoutEditor_Window"] = frame.frame
     table.insert(UISpecialFrames, "AngryEra_LayoutEditor_Window")
     -- The palette mirrors the live raid, so someone joining or leaving while the
