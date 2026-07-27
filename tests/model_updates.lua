@@ -828,9 +828,7 @@ created, createError, createdId = AngryEra:CreatePage("Templated Sibling", "Assi
 assert(created and not createError and createdId == 46, "page creation should accept initial variables")
 assert(AngryAssign_Pages[46].Vars == initialVars, "initial variables are stored before the page is published")
 assert(
-    hashArguments[1] == "Templated Sibling"
-        and hashArguments[2] == "Assignments"
-        and hashArguments[3] == initialVars,
+    hashArguments[1] == "Templated Sibling" and hashArguments[2] == "Assignments" and hashArguments[3] == initialVars,
     "the initial content identity includes template variables"
 )
 assert(sentPageId == 46, "the first published page revision includes the fully initialized record")

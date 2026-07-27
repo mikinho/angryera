@@ -217,7 +217,7 @@ function AceGUI:RegisterWidgetType(name, constructor)
     registered[name] = constructor
 end
 
-function AceGUI:RegisterAsWidget(widget)
+function AceGUI.RegisterAsWidget(_, widget)
     widget.callbacks = {}
     function widget:SetCallback(name, handler)
         self.callbacks[name] = handler
@@ -418,12 +418,12 @@ ok, moved = layout.ApplyDrop(grid.model, drag, drop)
 assert(ok and moved.groups[3].subgroup == 4 and moved.groups[3].slots[1] == "X", "the gesture creates the bound group")
 
 -- Dropping onto a claimed box's empty row appends to that group.
-drag, drop = DragTo(grid.boxes[3].rows[1], blank)
-assert(drop.kind == "group" and drop.group == 1, "an empty row in a claimed box appends to it")
+local _, appendDrop = DragTo(grid.boxes[3].rows[1], blank)
+assert(appendDrop.kind == "group" and appendDrop.group == 1, "an empty row in a claimed box appends to it")
 
 -- A palette entry drags in as raw text, and dragging back onto the palette removes.
-drag, drop = DragTo(palette.rows[2], blank)
-assert(drag.kind == "text" and drag.text == "Kaza", "the palette drags a name as text")
+local paletteDrag = DragTo(palette.rows[2], blank)
+assert(paletteDrag.kind == "text" and paletteDrag.text == "Kaza", "the palette drags a name as text")
 
 drag, drop = DragTo(filled, palette.rows[1])
 assert(drop.kind == "remove", "dropping onto the palette removes the slot")
@@ -445,11 +445,11 @@ drag, drop = GestureTo(filled, insideX, insideY)
 assert(drag == nil and drop == nil, "a release inside the grid over no target is cancelled")
 
 local awayX = grid.frame:GetRight() + 50
-drag, drop = GestureTo(filled, awayX, grid.frame:GetTop())
-assert(drop and drop.kind == "remove", "a release away from the grid removes the slot")
+local _, outsideDrop = GestureTo(filled, awayX, grid.frame:GetTop())
+assert(outsideDrop and outsideDrop.kind == "remove", "a release away from the grid removes the slot")
 
-drag, drop = GestureTo(palette.rows[1], awayX, grid.frame:GetTop())
-assert(drag == nil, "a palette entry released over nothing is not a removal")
+local paletteOutsideDrag = GestureTo(palette.rows[1], awayX, grid.frame:GetTop())
+assert(paletteOutsideDrag == nil, "a palette entry released over nothing is not a removal")
 
 -- The palette offers only members the layout has not named, matched however the
 -- slot happens to be spelled.

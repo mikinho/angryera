@@ -401,11 +401,7 @@ local function DecodeVarsObject(vars)
     if firstCharacter ~= "{" and firstCharacter ~= "[" then
         return nil, false
     end
-    if
-        firstCharacter ~= "{"
-        or type(json) ~= "table"
-        or type(json.JSON_TryDecode) ~= "function"
-    then
+    if firstCharacter ~= "{" or type(json) ~= "table" or type(json.JSON_TryDecode) ~= "function" then
         return nil, true
     end
     local decoded = json.JSON_TryDecode(vars)
