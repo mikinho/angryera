@@ -1400,15 +1400,17 @@ function AngryEra:ShowGroupLayoutEditor(id)
             return current.name == expression
         end
 
-        grid:SetCallback("OnHeightMeasured", function(_, height)
+        -- AceGUI hands a callback the widget and the event name before the
+        -- arguments the widget fired, so every one of these reads past two.
+        grid:SetCallback("OnHeightMeasured", function(_, _, height)
             FitBodyHeight(height)
         end)
 
-        grid:SetCallback("OnLayoutDrop", function(_, drag, drop)
+        grid:SetCallback("OnLayoutDrop", function(_, _, drag, drop)
             Commit(layout.ApplyDrop(model, drag, drop))
         end)
 
-        grid:SetCallback("OnSlotClick", function(_, group, slot, button)
+        grid:SetCallback("OnSlotClick", function(_, _, group, slot, button)
             local target = model.groups[group]
             if not target then
                 return
@@ -1432,7 +1434,7 @@ function AngryEra:ShowGroupLayoutEditor(id)
 
         -- An unused row types into its box, which is the only way to fill a
         -- layout while solo since the palette needs a live roster.
-        grid:SetCallback("OnEmptyClick", function(_, group, subgroup, button)
+        grid:SetCallback("OnEmptyClick", function(_, _, group, subgroup, button)
             if button ~= "LeftButton" then
                 return
             end
@@ -1445,7 +1447,7 @@ function AngryEra:ShowGroupLayoutEditor(id)
             })
         end)
 
-        grid:SetCallback("OnGroupClick", function(_, group, subgroup, button)
+        grid:SetCallback("OnGroupClick", function(_, _, group, subgroup, button)
             local existing = group and model.groups[group]
             local label = existing and existing.name
             if button == "RightButton" then

@@ -5,6 +5,18 @@
 -- to resolve. Clicks report their position instead, separately for a box title,
 -- a filled slot, and an unused row. The height a redraw settles on is reported
 -- too, so a container can grow to the whole grid instead of scrolling it.
+--
+-- Every callback below is delivered the AceGUI way, as
+-- `(widget, event, ...)` -- a handler that reads its first argument as the
+-- first value fired here is reading the event name instead, and AceGUI
+-- swallows what that goes on to raise.
+--
+--     OnLayoutDrop(widget, event, drag, drop)
+--     OnSlotClick(widget, event, group, slot, button)
+--     OnEmptyClick(widget, event, group, subgroup, button)
+--     OnGroupClick(widget, event, group, subgroup, button)
+--     OnHeightMeasured(widget, event, height)
+--
 -- @module AngryLayoutGrid
 
 local Type, Version = "AngryLayoutGrid", 5
