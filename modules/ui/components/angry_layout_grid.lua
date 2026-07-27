@@ -3,10 +3,11 @@
 -- columns, with a palette of unrostered members beside them, and reports every
 -- gesture as a drag/drop descriptor pair for `AngryEra.utils.layout.ApplyDrop`
 -- to resolve. Clicks report their position instead, separately for a box title,
--- a filled slot, and an unused row.
+-- a filled slot, and an unused row. The height a redraw settles on is reported
+-- too, so a container can grow to the whole grid instead of scrolling it.
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 4
+local Type, Version = "AngryLayoutGrid", 5
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -400,6 +401,17 @@ local function BoxHeight(rows)
     return HEADER_HEIGHT + (rows * ROW_HEIGHT) + (BOX_PADDING * 2)
 end
 
+-- Publishes the height a redraw settled on. Only a change is announced, because
+-- a container that resizes in answer to this re-flows us, and re-announcing the
+-- same height from that pass would bounce the two off each other.
+local function ReportHeight(self, total)
+    if total == self.measuredHeight then
+        return
+    end
+    self.measuredHeight = total
+    self:Fire("OnHeightMeasured", total)
+end
+
 -- Hides the rows a redraw no longer needs.
 local function HideRowsFrom(box, first)
     for index = first, #box.rows do
@@ -461,6 +473,7 @@ local methods = {
         self.dropTarget = nil
         self.drawing = nil
         self.drawnWidth = nil
+        self.measuredHeight = nil
         self.frame:SetScript("OnUpdate", nil)
         self.dropMarker:Hide()
         self:SetWidth(400)
@@ -477,6 +490,7 @@ local methods = {
         self.dropTarget = nil
         self.drawing = nil
         self.drawnWidth = nil
+        self.measuredHeight = nil
         for _, box in ipairs(self.boxes) do
             box:Hide()
         end
@@ -564,6 +578,7 @@ local methods = {
         if self.parent and self.parent.DoLayout then
             self.parent:DoLayout()
         end
+        ReportHeight(self, total)
     end,
 }
 

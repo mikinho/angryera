@@ -1113,6 +1113,13 @@ local function AngryEra_EditVariables(id, type)
     end)
 end
 
+-- The text view is a fixed ten-line box, so it sizes to a constant; the visual
+-- view sizes to the grid, floored so an empty layout is still workable and
+-- capped so a tall one never runs off the screen.
+local LAYOUT_TEXT_BODY_HEIGHT = 360
+local LAYOUT_MIN_BODY_HEIGHT = 200
+local LAYOUT_SCREEN_MARGIN = 80
+
 --- Collects the short names of the current group, in roster order.
 -- @treturn table Array of short names.
 local function CollectRosterNames()
@@ -1269,7 +1276,34 @@ function AngryEra:ShowGroupLayoutEditor(id)
     local body = AceGUI:Create("ScrollFrame")
     body:SetLayout("Flow")
     body:SetFullWidth(true)
-    body:SetHeight(360)
+    body:SetHeight(LAYOUT_TEXT_BODY_HEIGHT)
+
+    -- Grows the window to the view inside it so the whole raid is in front of
+    -- someone at once. The scroll pane stays behind it, since a short screen
+    -- still has to reach the bottom of a tall layout.
+    local chrome
+
+    local function FitBodyHeight(wanted)
+        if closed or not wanted or wanted < 1 then
+            return
+        end
+        -- What surrounds the body is measured rather than assumed, so the
+        -- toggle, the buttons and the border keep the room they were built
+        -- with. It is read once, while the window still stands at that size: a
+        -- later reading folds in a hand resize, and shrinking the window by
+        -- hand would then leave the body hanging out of the bottom of it.
+        local current = body.frame:GetHeight()
+        chrome = chrome or (frame.frame:GetHeight() - current)
+
+        local ceiling = UIParent:GetHeight() - LAYOUT_SCREEN_MARGIN - chrome
+        local height = math.max(LAYOUT_MIN_BODY_HEIGHT, math.min(wanted, ceiling))
+        if math.abs(height - current) < 1 then
+            return
+        end
+        body:SetHeight(height)
+        frame:SetHeight(chrome + height)
+        frame:DoLayout()
+    end
 
     local function BuildTextView()
         editBox = AceGUI:Create("MultiLineEditBox")
@@ -1350,6 +1384,10 @@ function AngryEra:ShowGroupLayoutEditor(id)
             end
             return current.name == expression
         end
+
+        grid:SetCallback("OnHeightMeasured", function(_, height)
+            FitBodyHeight(height)
+        end)
 
         grid:SetCallback("OnLayoutDrop", function(_, drag, drop)
             Commit(layout.ApplyDrop(model, drag, drop))
@@ -1435,6 +1473,7 @@ function AngryEra:ShowGroupLayoutEditor(id)
         editBox, grid = nil, nil
         if textMode then
             BuildTextView()
+            FitBodyHeight(LAYOUT_TEXT_BODY_HEIGHT)
             return
         end
         BuildVisualView()

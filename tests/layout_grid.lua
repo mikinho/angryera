@@ -461,6 +461,24 @@ grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
 palette = PaletteBox()
 assert(palette.rows[3].layoutTarget.text == "Ghoal", "clearing a slot returns its member to the palette")
 
+-- The grid measures itself so its container can grow to the whole layout rather
+-- than scroll it. Only a change is reported, because a container that resizes in
+-- answer re-flows the grid, and re-reporting from that pass would bounce them.
+local measured, reports = nil, 0
+grid:SetCallback("OnHeightMeasured", function(_, height)
+    measured, reports = height, reports + 1
+end)
+
+grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
+assert(reports == 0, "redrawing to the same height reports nothing")
+
+grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X; Extra: Y; More: Z"))
+assert(reports == 1, "a layout that needs another row reports its new height")
+assert(measured == grid.frame:GetHeight(), "the reported height is the one the grid drew to")
+grid:SetCallback("OnHeightMeasured", nil)
+
+grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
+
 -- A container that re-applies the width after every redraw, the way AceGUI's
 -- flow layout does, must settle rather than recurse.
 local passes = 0
@@ -481,5 +499,6 @@ grid:OnRelease()
 assert(grid.pressed == nil and grid.dragging == nil, "release clears the pending gesture")
 assert(grid.dropTarget == nil, "release clears the pending drop")
 assert(grid.frame:GetScript("OnUpdate") == nil, "release stops the drag update loop")
+assert(grid.measuredHeight == nil, "release forgets the measured height so a reused grid reports to its new host")
 
 print("Layout grid tests passed.")
