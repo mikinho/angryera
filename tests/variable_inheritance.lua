@@ -75,6 +75,7 @@ local reservedCaseKeys = {
     "SQUARE",
     "SKULL",
     "AUTOADVANCE",
+    "AUTOAPPLYLAYOUT",
     "ENCOUNTER",
     "ENCOUNTERID",
     "LAYOUT",
@@ -88,6 +89,25 @@ for _, key in ipairs(reservedCaseKeys) do
     assert(merged["$" .. key] == nil, key .. " inherited spelling should be removed")
     assert(merged["$" .. lowerKey] == "page", key .. " should preserve the winning spelling and value")
 end
+
+merged, mergeError = variables.MergeVariableLayers({
+    { Vars = "$AUTOAPPLYLAYOUT=true" },
+}, "")
+assert(merged and not mergeError, "inherited automatic layout metadata should merge")
+assert(merged["$AUTOAPPLYLAYOUT"] == true, "automatic layout metadata should inherit from a category")
+
+merged, mergeError = variables.MergeVariableLayers({
+    { Vars = "$AUTOAPPLYLAYOUT=true" },
+}, "$autoapplylayout=false")
+assert(merged and not mergeError, "a page should override inherited automatic layout metadata")
+assert(merged["$AUTOAPPLYLAYOUT"] == nil, "the inherited automatic layout spelling should be removed")
+assert(merged["$autoapplylayout"] == false, "a page should be able to disable inherited automatic layout application")
+
+merged, mergeError = variables.MergeVariableLayers({
+    { Vars = "$AUTOAPPLYLAYOUT=false" },
+}, "$autoapplylayout=true")
+assert(merged and not mergeError, "a page should enable automatic layouts above an inherited false")
+assert(merged["$autoapplylayout"] == true, "the nearest automatic layout metadata should win")
 
 merged, mergeError = variables.MergeVariableLayers({
     { Vars = "$CROSS=ancestor" },
@@ -109,6 +129,8 @@ AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer mar
 
 merged, mergeError = variables.MergeVariableLayers({}, "$AUTOADVANCE=true\n$autoadvance=false")
 AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer reserved case conflict")
+merged, mergeError = variables.MergeVariableLayers({}, "$AUTOAPPLYLAYOUT=true\n$autoapplylayout=false")
+AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer automatic layout case conflict")
 
 local emptyLayers, emptyLayerError = variables.ValidateAncestorVariableLayers({}, nil)
 assert(emptyLayers and not emptyLayerError and #emptyLayers == 0, "A root-level page should accept no ancestors")

@@ -208,12 +208,41 @@ local function RaidIsInCombat()
     return UnitIsInCombat("player")
 end
 
-local function AutoApplyEnabled(self)
-    if type(self.GetConfig) ~= "function" then
-        return false
+local function MetadataValue(meta, canonicalKey)
+    if type(meta) ~= "table" then
+        return nil
     end
-    local called, enabled = pcall(self.GetConfig, self, "autoApplyRaidLayouts")
-    return called and enabled == true
+    if rawget(meta, canonicalKey) ~= nil then
+        return rawget(meta, canonicalKey)
+    end
+    for key, value in pairs(meta) do
+        if type(key) == "string" and key:upper() == canonicalKey then
+            return value
+        end
+    end
+    return nil
+end
+
+local function TruthyMetadataFlag(value)
+    return value == true or value == 1 or (type(value) == "string" and value:lower() == "true")
+end
+
+local function DisplayedMetadata(self)
+    if type(self.GetDisplayedMeta) ~= "function" then
+        return nil
+    end
+    local called, meta = pcall(self.GetDisplayedMeta, self)
+    return called and type(meta) == "table" and meta or nil
+end
+
+-- The accepted snapshot is authoritative during a display transition,
+-- including inherited context sent with a remote page. Later authorization
+-- checks re-read the current displayed snapshot so combat-queued work cannot
+-- outlive a nearer `$AUTOAPPLYLAYOUT=false` override.
+local function AutoApplyEnabled(self, snapshot)
+    local meta = type(snapshot) == "table" and type(snapshot.Meta) == "table" and snapshot.Meta
+        or DisplayedMetadata(self)
+    return TruthyMetadataFlag(MetadataValue(meta, "AUTOAPPLYLAYOUT"))
 end
 
 local function IsLocalRaidLeader(self)
@@ -243,19 +272,8 @@ local function RequestStillAuthorized(self, request)
 end
 
 local function DisplayedLayoutSource(self)
-    if type(self.GetDisplayedMeta) ~= "function" then
-        return nil
-    end
-    local ok, meta = pcall(self.GetDisplayedMeta, self)
-    if not ok or type(meta) ~= "table" then
-        return nil
-    end
-    for key, value in pairs(meta) do
-        if type(key) == "string" and type(value) == "string" and key:upper() == "LAYOUT" then
-            return value
-        end
-    end
-    return nil
+    local value = MetadataValue(DisplayedMetadata(self), "LAYOUT")
+    return type(value) == "string" and value or nil
 end
 
 local function DisplayedVariables(self)
@@ -1000,7 +1018,8 @@ end
 function AngryEra:ObserveDisplayedRaidLayout(snapshot)
     local reference = CopyDisplayReference(snapshot)
     local canceled = self:InvalidatePendingGroupLayoutApply(reference)
-    if not AutoApplyEnabled(self) then
+    local autoApplyEnabled = AutoApplyEnabled(self, snapshot)
+    if not autoApplyEnabled then
         canceled = self:CancelAutomaticGroupLayoutApply() or canceled
     end
 
@@ -1017,7 +1036,7 @@ function AngryEra:ObserveDisplayedRaidLayout(snapshot)
     if previousSyncId == reference.SyncId then
         return false, canceled and "canceled" or "same-page"
     end
-    if not AutoApplyEnabled(self) then
+    if not autoApplyEnabled then
         return false, canceled and "canceled" or "auto-disabled"
     end
     if not IsLocalRaidLeader(self) then

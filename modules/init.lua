@@ -82,7 +82,6 @@ local blizOptionsCategoryId
 -- field fontHeight number Font size
 -- field fontFlags string Font outline
 -- field color string Normal text color
--- field autoApplyRaidLayouts boolean Apply displayed-page raid layouts automatically as raid leader
 
 -- class AngryEraTemplatePage
 -- field name string
@@ -680,29 +679,6 @@ function AngryEra:OnInitialize()
                         end,
                         set = function(info, val)
                             self:SetConfig("mouseoverHostileOnly", val)
-                        end,
-                    },
-                },
-            },
-            raidlayouts = {
-                type = "group",
-                order = 8.5,
-                name = "Raid Group Layouts",
-                inline = true,
-                args = {
-                    autoApplyRaidLayouts = {
-                        type = "toggle",
-                        order = 1,
-                        name = "Auto-Apply Displayed Raid Layouts",
-                        desc = "As raid leader, automatically apply the layout when the displayed page changes. Combat queues only that exact page until combat ends; changing the page, its revision, or inherited context cancels it. Raid assistants remain manual-only.",
-                        get = function(info)
-                            return self:GetConfig("autoApplyRaidLayouts")
-                        end,
-                        set = function(info, val)
-                            self:SetConfig("autoApplyRaidLayouts", val)
-                            if not val and type(self.CancelAutomaticGroupLayoutApply) == "function" then
-                                self:CancelAutomaticGroupLayoutApply()
-                            end
                         end,
                     },
                 },

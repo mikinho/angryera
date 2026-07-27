@@ -126,7 +126,8 @@ local layoutSource
 local layoutVars
 local operations = {}
 local activeReference
-local autoApplyRaidLayouts = false
+local autoApplyLayoutValue
+local autoApplyLayoutKey = "AUTOAPPLYLAYOUT"
 local localRaidLeader = false
 local failRaidApi = false
 local failScheduleTimer = false
@@ -226,7 +227,11 @@ function AngryEra:CanLocalPlayerApplyRaidLayout()
 end
 
 function AngryEra:GetDisplayedMeta()
-    return { LAYOUT = layoutSource }
+    local meta = { LAYOUT = layoutSource }
+    if autoApplyLayoutValue ~= nil then
+        meta[autoApplyLayoutKey] = autoApplyLayoutValue
+    end
+    return meta
 end
 
 function AngryEra:GetDisplayedVars()
@@ -235,12 +240,6 @@ end
 
 function AngryEra:GetActiveDisplayReference()
     return activeReference
-end
-
-function AngryEra:GetConfig(key)
-    if key == "autoApplyRaidLayouts" then
-        return autoApplyRaidLayouts
-    end
 end
 
 function AngryEra:IsPlayerRaidLeader()
@@ -364,7 +363,8 @@ local function Setup(members, source, variables)
     combatUnits = {}
     applyAllowed = true
     permissionRequiresReadableRoster = false
-    autoApplyRaidLayouts = false
+    autoApplyLayoutValue = nil
+    autoApplyLayoutKey = "AUTOAPPLYLAYOUT"
     localRaidLeader = false
     failRaidApi = false
     failScheduleTimer = false
@@ -616,7 +616,7 @@ Setup({
     { Name = "Alice-Home", Subgroup = 1 },
     { Name = "Bob-Home", Subgroup = 1 },
 }, "Old/2: Alice")
-autoApplyRaidLayouts = true
+autoApplyLayoutValue = 1
 localRaidLeader = true
 AngryEra:ObserveDisplayedRaidLayout(activeReference)
 autoAcknowledgeRaidApi = false
@@ -704,7 +704,7 @@ Setup({
     { Name = "Alice-Home", Subgroup = 1 },
     { Name = "Bob-Home", Subgroup = 1 },
 }, "A/2: Alice")
-autoApplyRaidLayouts = true
+autoApplyLayoutValue = true
 localRaidLeader = true
 AngryEra:ObserveDisplayedRaidLayout(activeReference)
 inCombat = true
@@ -752,11 +752,12 @@ activeReference = Reference("page-b", 1, "revision-b", "context-b")
 observed, observationStatus = AngryEra:ObserveDisplayedRaidLayout(activeReference)
 assert(
     not observed and observationStatus == "auto-disabled" and #operations == 0,
-    "page swaps do not apply layouts until the opt-in setting is enabled"
+    "page swaps do not apply layouts without effective $AUTOAPPLYLAYOUT metadata"
 )
 
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
-autoApplyRaidLayouts = true
+autoApplyLayoutKey = "autoapplylayout"
+autoApplyLayoutValue = "TRUE"
 localRaidLeader = true
 AngryEra:ObserveDisplayedRaidLayout(activeReference)
 activeReference = Reference("page-b", 1, "revision-b", "context-b")
@@ -773,9 +774,10 @@ assert(#finishEvents == 1 and finishEvents[1].Origin == "auto", "the retried aut
 applied, reason = AngryEra:RetryObservedGroupLayoutAutoApply()
 assert(not applied and reason == "no-auto-intent", "a consumed intent cannot replay")
 
--- Exact page mismatch and option disable both clear the retained auto intent.
+-- Exact page mismatch and a nearer false metadata override both clear the
+-- retained auto intent.
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
-autoApplyRaidLayouts = true
+autoApplyLayoutValue = true
 localRaidLeader = true
 AngryEra:ObserveDisplayedRaidLayout(activeReference)
 activeReference = Reference("page-b", 1, "revision-b", "context-b")
@@ -789,19 +791,47 @@ applied, reason = AngryEra:RetryObservedGroupLayoutAutoApply()
 assert(not applied and reason == "no-auto-intent", "a stale automatic intent never crosses pages")
 
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
-autoApplyRaidLayouts = true
+autoApplyLayoutValue = true
 localRaidLeader = true
 AngryEra:ObserveDisplayedRaidLayout(activeReference)
 activeReference = Reference("page-b", 1, "revision-b", "context-b")
 localRaidLeader = false
 AngryEra:ObserveDisplayedRaidLayout(activeReference)
-autoApplyRaidLayouts = false
+autoApplyLayoutValue = false
 applied, reason = AngryEra:RetryObservedGroupLayoutAutoApply()
 assert(not applied and reason == "auto-disabled", "disabling automatic layouts clears retained intent")
-autoApplyRaidLayouts = true
+autoApplyLayoutValue = true
 localRaidLeader = true
 applied, reason = AngryEra:RetryObservedGroupLayoutAutoApply()
 assert(not applied and reason == "no-auto-intent", "re-enabling cannot revive an old-page intent")
+
+-- Transition observation uses the accepted snapshot's authoritative metadata,
+-- rather than a receiver-private or stale local category result.
+Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
+autoApplyLayoutValue = true
+localRaidLeader = true
+AngryEra:ObserveDisplayedRaidLayout(activeReference)
+activeReference = Reference("page-b", 1, "revision-b", "context-b")
+activeReference.Meta = { AUTOAPPLYLAYOUT = false, LAYOUT = layoutSource }
+applied, reason = AngryEra:ObserveDisplayedRaidLayout(activeReference)
+assert(not applied and reason == "auto-disabled", "the accepted page metadata can disable automatic application")
+assert(#operations == 0, "an authoritative false override never rearranges the raid")
+
+-- Combat execution rechecks the current metadata and consumes stale automatic
+-- work if the effective value becomes false before any raid mutation.
+Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
+autoApplyLayoutValue = true
+localRaidLeader = true
+AngryEra:ObserveDisplayedRaidLayout(activeReference)
+inCombat = true
+activeReference = Reference("page-b", 1, "revision-b", "context-b")
+applied, reason = AngryEra:ObserveDisplayedRaidLayout(activeReference)
+assert(applied and reason == "queued", "enabled destination metadata queues automatic combat work")
+autoApplyLayoutValue = false
+inCombat = false
+applied, reason = AngryEra:FlushPendingGroupLayoutApply()
+assert(not applied and reason == "auto-disabled", "combat flush rechecks current automatic-layout metadata")
+assert(#operations == 0 and #finishEvents == 0, "disabled stale automatic work remains a quiet no-op")
 
 -- Disabling automatic behavior cancels only auto-origin work; manual work is
 -- retained through combat.
@@ -817,20 +847,20 @@ assert(finishEvents[1].Success and finishEvents[1].Origin == "manual", "manual w
 -- Actionable automatic failures use the completion hook, while expected quiet
 -- states do not. Immediate manual failures were already verified above.
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "One/1: Alice; Two/2: Alice-Home")
-autoApplyRaidLayouts = true
+autoApplyLayoutValue = true
 localRaidLeader = true
 applied, reason = AngryEra:RequestGroupLayoutApply("auto")
 assert(not applied and reason == "duplicate-member", "an invalid automatic layout fails immediately")
 assert(#finishEvents == 1 and finishEvents[1].Result == "duplicate-member", "actionable auto failure is reported")
 
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, nil)
-autoApplyRaidLayouts = true
+autoApplyLayoutValue = true
 localRaidLeader = true
 applied, reason = AngryEra:RequestGroupLayoutApply("auto")
 assert(not applied and reason == "no-layout" and #finishEvents == 0, "no-layout is quiet for automatic work")
 
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
-autoApplyRaidLayouts = true
+autoApplyLayoutValue = true
 localRaidLeader = false
 applied, reason = AngryEra:RequestGroupLayoutApply("auto")
 assert(not applied and reason == "not-raid-leader" and #finishEvents == 0, "non-leader auto rejection is quiet")

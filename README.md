@@ -398,7 +398,13 @@ The editor button saves and applies only the exact page currently displayed. Aft
 
 Raid subgroup changes are protected during combat. If you use **Apply to Raid** or `/aa applylayout` in combat, AngryEra queues that exact displayed page instead of attempting the move. Displaying another page, receiving a newer revision, or changing the inherited layout context cancels the queued request; returning to the page later does not revive it. When combat ends, AngryEra resolves the layout again against the live roster, rechecks permission, and applies it once.
 
-**Auto-Apply Displayed Raid Layouts** is an opt-in setting and is off by default. When enabled, the raid leader automatically requests the layout whenever the displayed page changes, using the same combat queue and validation. Qualified raid assistants remain manual-only and must use **Apply to Raid** or `/aa applylayout`.
+To apply layouts automatically as pages change, right-click a page or category, choose **Edit Variables**, and add:
+
+```text
+$AUTOAPPLYLAYOUT=true
+```
+
+`$AUTOAPPLYLAYOUT` inherits like `$LAYOUT` and is off when absent or false. Put it on a category to enable automatic layouts for its descendants, or set `$AUTOAPPLYLAYOUT=false` on a page or nearer category to disable it there. When a page with an effective true value is displayed, the raid leader automatically requests its effective layout using the same combat queue and validation. A page without an effective `$LAYOUT` does nothing. Qualified raid assistants remain manual-only and must use **Apply to Raid** or `/aa applylayout`.
 
 AngryEra preserves slot order in the editor and rendered `{layout}` output. Blizzard exposes subgroup move and swap operations, but no direct safe operation for choosing a physical position within one subgroup. Applying a layout therefore guarantees subgroup membership, not the row order shown by Blizzard's raid frame.
 
@@ -504,8 +510,7 @@ Open `/aa` to configure:
 - font face, size, outline, colors, and line spacing;
 - whether the edit box uses the display font;
 - chat output format;
-- whether Smart Marker mouseover bindings may mark friendly units;
-- opt-in, raid-leader-only automatic application of displayed group layouts; and
+- whether Smart Marker mouseover bindings may mark friendly units; and
 - automatic or on-demand cleanup of received pages.
 
 Adding `Group` to **Highlight** emphasizes your current group token, such as `G2`, when it appears in a displayed assignment.

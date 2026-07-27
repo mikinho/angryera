@@ -597,6 +597,7 @@ end
 local RESERVED_METADATA_IDENTITIES = {
     AE_RAID_ROSTER = true,
     AUTOADVANCE = true,
+    AUTOAPPLYLAYOUT = true,
     CIRCLE = true,
     DIAMOND = true,
     ENCOUNTER = true,
