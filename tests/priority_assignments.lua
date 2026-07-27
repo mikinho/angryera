@@ -68,6 +68,10 @@ assert(select(2, roster.ResolvePriorityValue("")) == false, "an empty value is n
 -- Realm-aware membership.
 SetRoster({ { full = "Zed-Darkspear", online = true, dead = false } })
 assert(roster.IsPresentAndAlive("Zed") == true, "a unique cross-realm short name matches")
+assert(
+    roster.ResolvePresentAndAliveName("Zed") == "Zed-Darkspear",
+    "a unique short name resolves to its canonical full roster name"
+)
 
 SetRoster({ { full = "Zed-Frostwolf", online = true, dead = false } })
 assert(roster.IsPresentAndAlive("Zed-Frostwolf") == true, "a qualified name matches its realm exactly")
@@ -78,6 +82,30 @@ SetRoster({
     { full = "Zed-Frostwolf", online = true, dead = false },
 })
 assert(roster.IsPresentAndAlive("Zed") == false, "an ambiguous cross-realm short name is rejected")
+local ambiguousName, ambiguousReason = roster.ResolvePresentAndAliveName("Zed")
+assert(ambiguousName == nil and ambiguousReason == "ambiguous-name", "canonical resolution reports ambiguity")
+
+SetRoster({
+    { full = "Zed-Darkspear", online = true, dead = false },
+    { full = "Zed-Bloodfang", online = true, dead = false },
+})
+assert(
+    roster.ResolvePresentAndAliveName("Zed") == "Zed-Bloodfang",
+    "an unqualified name prefers the exact member on the player's realm"
+)
+
+-- WoW names are UTF-8; Lua 5.1 character classes are not. Priority parsing
+-- accepts those names and canonical resolution still returns the full name.
+SetRoster({
+    { full = "Éowyn-Bloodfang", online = true, dead = false },
+    { full = "Backup-Bloodfang", online = true, dead = false },
+})
+local unicodeResolved, unicodePriority = roster.ResolvePriorityValue("Éowyn > Backup")
+assert(unicodeResolved == "Éowyn" and unicodePriority == true, "UTF-8 names are accepted in priorities")
+assert(
+    roster.ResolvePriorityFullName("Éowyn > Backup") == "Éowyn-Bloodfang",
+    "priority resolution can return the canonical full roster name"
+)
 
 -- The map hook resolves both marker ($) and text keys to the same member.
 SetRoster({

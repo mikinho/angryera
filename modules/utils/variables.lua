@@ -253,6 +253,7 @@ local RESERVED_METADATA_IDENTITIES = {
     DIAMOND = true,
     ENCOUNTER = true,
     ENCOUNTERID = true,
+    LAYOUT = true,
     MOON = true,
     SKULL = true,
     SQUARE = true,

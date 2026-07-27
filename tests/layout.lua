@@ -1,8 +1,10 @@
 local AngryEra = { utils = {} }
 local app = { AngryEra = AngryEra }
 
+assert(loadfile("modules/utils/json.lua"))("AngryEra", app)
 assert(loadfile("modules/layout.lua"))("AngryEra", app)
 local layout = AngryEra.utils.layout
+local json = AngryEra.utils.json
 
 -- Stubbed roster providers.
 local present = {}
@@ -130,6 +132,31 @@ assert(
     #dedup.groups[2].members == 1 and dedup.groups[2].members[1] == "Dup-Realm",
     "an explicit name may still be listed again by choice"
 )
+assert(#dedup.duplicates == 1, "an explicit duplicate is reported for destructive callers")
+
+-- Short and full spellings of the same roster member share one identity. A fill
+-- skips the already-listed member, while an explicit duplicate remains visible
+-- and is reported so Apply to Raid can fail before moving anyone.
+local canonicalProviders = {
+    ClassMembers = function()
+        return { "Zed-Realm", "Mage-Realm" }
+    end,
+    ResolveRosterName = function(name)
+        if name == "Zed" or name == "Zed-Realm" then
+            return "Zed-Realm"
+        end
+        return name
+    end,
+}
+local canonicalFill = layout.Resolve(layout.Parse("G: Zed, *MAGE"), canonicalProviders)
+assert(
+    #canonicalFill.groups[1].members == 2 and canonicalFill.groups[1].members[2] == "Mage-Realm",
+    "a class fill dedupes short and full spellings canonically"
+)
+local canonicalDuplicate = layout.Resolve(layout.Parse("G1: Zed; G2: Zed-Realm"), canonicalProviders)
+assert(#canonicalDuplicate.groups[1].members == 1, "the first canonical spelling remains rendered")
+assert(#canonicalDuplicate.groups[2].members == 1, "an explicit duplicate remains rendered")
+assert(#canonicalDuplicate.duplicates == 1, "a short/full explicit duplicate is reported canonically")
 
 -- A slot may hold a {{Variable}}, which is classified after it expands so the
 -- variable can stand in for a name, a priority list, or a class fill.
@@ -160,6 +187,14 @@ assert(
     "an unset variable drops its slot rather than naming a missing player"
 )
 
+providers.Variables.Fill = "*MAGE x5"
+local expandedOverCapacity = layout.Resolve(layout.Parse("G: A, B, C, D, {{Fill}}"), providers)
+assert(
+    expandedOverCapacity.error == "subgroup-oversubscribed",
+    "capacity is enforced after a variable expands to a multi-member fill"
+)
+assert(#expandedOverCapacity.groups[1].members == 4, "an expanded slot that exceeds capacity is not admitted")
+
 assert(layout.ExpandSlotVariables("{{MT}}", nil) == "", "no variable map leaves nothing to place")
 assert(layout.ExpandSlotVariables("Vhez", providers.Variables) == "Vhez", "a slot without a token is untouched")
 providers.Variables = nil
@@ -181,6 +216,33 @@ assert(
     layout.ExtractSource(layout.UpsertSource("", "G1: A, B; G2: C")) == "G1: A, B; G2: C",
     "extract round-trips upsert"
 )
+
+-- JSON-object Vars stay JSON; mixed-case layout keys are read, replaced, and
+-- removed without losing nested or non-string values.
+local jsonVars = "{\"Count\":2,\"Nested\":{\"Enabled\":true},\"$Layout\":\"old\"}"
+assert(layout.ExtractSource(jsonVars) == "old", "extract reads a mixed-case layout key from JSON Vars")
+
+local jsonReplaced = layout.UpsertSource(jsonVars, "G1: A")
+assert(jsonReplaced:match("^%s*{"), "upsert preserves JSON-object storage")
+local decodedReplaced = json.JSON_TryDecode(jsonReplaced)
+assert(decodedReplaced.Count == 2 and decodedReplaced.Nested.Enabled == true, "JSON upsert preserves other values")
+assert(decodedReplaced["$LAYOUT"] == "G1: A", "JSON upsert writes the canonical layout key")
+assert(decodedReplaced["$Layout"] == nil, "JSON upsert removes mixed-case duplicate keys")
+
+local jsonAppended = layout.UpsertSource("{\"MT\":\"Vn\"}", "G1: A")
+assert(json.JSON_TryDecode(jsonAppended)["$LAYOUT"] == "G1: A", "JSON upsert adds a missing layout key")
+
+local jsonRemoved = layout.UpsertSource(jsonVars, "")
+local decodedRemoved = json.JSON_TryDecode(jsonRemoved)
+assert(decodedRemoved["$Layout"] == nil and decodedRemoved["$LAYOUT"] == nil, "JSON removal is case-insensitive")
+assert(decodedRemoved.Count == 2 and decodedRemoved.Nested.Enabled == true, "JSON removal preserves other values")
+assert(layout.UpsertSource("{\"$layout\":\"old\"}", "") == "{}", "removing the only JSON key preserves an object")
+local malformedSource, malformedError = layout.ExtractSource("{")
+assert(malformedSource == nil and malformedError == "invalid-variables", "malformed JSON Vars fail extraction")
+local malformedUpsert, malformedUpsertError = layout.UpsertSource("{", "G1: A")
+assert(malformedUpsert == nil and malformedUpsertError == "invalid-variables", "malformed JSON Vars fail upsert")
+local arrayUpsert, arrayUpsertError = layout.UpsertSource("[]", "G1: A")
+assert(arrayUpsert == nil and arrayUpsertError == "invalid-variables", "JSON-array Vars never become mixed formats")
 
 -- DescribeSlot classifies each slot expression the editor can drag.
 assert(layout.DescribeSlot("Vhez").kind == "name", "a bare name is a name slot")
@@ -298,8 +360,9 @@ assert(removeText == "unknown-drop", "a palette entry cannot be removed")
 local four = layout.Parse("Main/1: A, B, C, D")
 local one = select(2, layout.ApplyDrop(four, { kind = "text", text = "*MAGE" }, { kind = "group", group = 1 }))
 assert(one.groups[1].slots[5] == "*MAGE", "a single-seat fill takes the last free seat")
-local two = select(2, layout.ApplyDrop(four, { kind = "text", text = "*MAGE x2" }, { kind = "group", group = 1 }))
-assert(two == "group-full", "a two-seat fill does not fit one free seat")
+local twoSeatDrop =
+    select(2, layout.ApplyDrop(four, { kind = "text", text = "*MAGE x2" }, { kind = "group", group = 1 }))
+assert(twoSeatDrop == "group-full", "a two-seat fill does not fit one free seat")
 local spare =
     select(2, layout.ApplyDrop(four, { kind = "text", text = "*MAGE x2" }, { kind = "subgroup", subgroup = 5 }))
 assert(spare.groups[2].slots[1] == "*MAGE x2", "the same fill fits an empty subgroup")

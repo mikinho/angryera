@@ -189,6 +189,25 @@ assert(
     not AngryEra:CanReceiveFrom("OfficerMember-Realm", "changeProposal"),
     "An officer without assist should be rejected"
 )
+currentPlayer = "Officer-Realm"
+assert(AngryEra:IsQualifiedAssistant("Officer-Realm"), "An officer with assist should be a qualified assistant")
+assert(
+    AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "A qualified officer assistant should be allowed to apply raid layouts"
+)
+currentPlayer = "OfficerMember-Realm"
+assert(not AngryEra:IsQualifiedAssistant("OfficerMember-Realm"), "An officer without assist should not qualify")
+assert(
+    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "An officer without assist should not be allowed to apply raid layouts"
+)
+currentPlayer = "OrdinaryAssist-Realm"
+assert(not AngryEra:IsQualifiedAssistant("OrdinaryAssist-Realm"), "Raid assist alone should not qualify by default")
+assert(
+    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "Raid assist alone should not allow a layout rearrangement by default"
+)
+currentPlayer = "Viewer-Realm"
 
 config.trustedPublishers = "DirectAssist-Realm"
 SetRoster({
@@ -205,6 +224,12 @@ assert(
 config.trustedPublishers = "DirectAssist-Realm"
 assert(not AngryEra:CanReceiveFrom("DirectAssist-Realm", "pageUpsert"), "Direct trust must not grant commit authority")
 assert(not AngryEra:CanReceiveFrom("DirectAssist-Realm", "display"), "Direct trust must not grant display control")
+currentPlayer = "DirectAssist-Realm"
+assert(
+    AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "A directly trusted raid assistant should be allowed to apply raid layouts"
+)
+currentPlayer = "Viewer-Realm"
 config.trustedPublishers = "DirectMember-Realm"
 assert(not AngryEra:CanReceiveFrom("DirectMember-Realm", "changeProposal"), "Allowlisting must not grant assist rank")
 
@@ -223,6 +248,17 @@ assert(
 )
 assert(not AngryEra:CanReceiveFrom("AnyMember-Realm", "changeProposal"), "The assistant override should reject members")
 assert(not AngryEra:CanReceiveFrom("AnyAssist-Realm", "delete"), "Assistants must never pass destructive actions")
+currentPlayer = "AnyAssist-Realm"
+assert(
+    AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "The explicit assistant override should allow a raid assistant to apply layouts"
+)
+currentPlayer = "AnyMember-Realm"
+assert(
+    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "The explicit assistant override should not allow an ordinary raid member to apply layouts"
+)
+currentPlayer = "Viewer-Realm"
 
 config.receiveMode = "leaderOnly"
 assert(not AngryEra:CanReceiveFrom("AnyAssist-Realm", "changeProposal"), "Leader-only mode should reject assistants")
@@ -240,6 +276,14 @@ assert(AngryEra:CanEditEntityLocally({ LocallyOwned = true }), "Ignore mode must
 config.receiveMode = "standard"
 config.allowAllAssistants = false
 assert(not AngryEra:CanReceiveFrom("Absent-Realm", "changeProposal"), "Players outside the group should be rejected")
+currentPlayer = "PugLeader-Realm"
+assert(AngryEra:CanLocalPlayerApplyRaidLayout(), "The raid leader should always be allowed to apply layouts")
+currentPlayer = "AnyAssist-Realm"
+assert(
+    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "Removing the assistant override should immediately revoke layout application"
+)
+currentPlayer = "Viewer-Realm"
 
 config.trustedPublishers = "TRUSTED"
 SetRoster({

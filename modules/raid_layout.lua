@@ -3,8 +3,8 @@
 --
 -- Applies a group layout to the actual raid by moving members between raid
 -- subgroups. The move planner is pure and deterministic; the driver is gated to
--- the raid leader/assistants, out of combat, and is only ever run on an explicit
--- action (never automatically).
+-- the raid leader or a qualified assistant, out of combat, and is only ever run
+-- on an explicit action (never automatically).
 --
 -- SetRaidSubgroup/SwapRaidSubgroup are #nocombat and cap subgroups at 5, so the
 -- plan uses SetRaidSubgroup into a non-full target and SwapRaidSubgroup
@@ -111,20 +111,23 @@ local function IsInRaidGroup()
     return type(IsInRaid) == "function" and IsInRaid()
 end
 
-local function CanRearrangeRaid()
+local function CanRearrangeRaid(self)
     if not IsInRaidGroup() then
         return false
     end
-    if type(UnitIsGroupLeader) == "function" and UnitIsGroupLeader("player") then
-        return true
+    if type(self.CanLocalPlayerApplyRaidLayout) ~= "function" then
+        return false
     end
-    return type(UnitIsGroupAssistant) == "function" and UnitIsGroupAssistant("player") == true
+    local checked, allowed = pcall(self.CanLocalPlayerApplyRaidLayout, self)
+    return checked and allowed == true
 end
 
 -- Reads the raid roster into index/subgroup maps and layout resolution providers.
 local function BuildRaidState()
     local subgroupByIndex = {}
-    local indexByName = {}
+    local indexByFullName = {}
+    local fullNameByIndex = {}
+    local indicesByShortName = {}
     local classMembers = {}
     local subgroupMembers = {}
     local count = type(GetNumGroupMembers) == "function" and GetNumGroupMembers() or 0
@@ -134,10 +137,12 @@ local function BuildRaidState()
             local fullName = helpers.EnsureUnitFullName(rawName)
             subgroupByIndex[index] = subgroup or 1
             local fullLower = type(fullName) == "string" and fullName:lower() or rawName:lower()
-            indexByName[fullLower] = index
+            indexByFullName[fullLower] = index
+            fullNameByIndex[index] = fullName
             local shortLower = fullLower:match("^([^-]+)")
-            if shortLower and indexByName[shortLower] == nil then
-                indexByName[shortLower] = index
+            if shortLower then
+                indicesByShortName[shortLower] = indicesByShortName[shortLower] or {}
+                indicesByShortName[shortLower][#indicesByShortName[shortLower] + 1] = index
             end
             if online and not isDead and type(class) == "string" then
                 local up = class:upper()
@@ -150,8 +155,42 @@ local function BuildRaidState()
             end
         end
     end
+
+    -- Qualified names are exact. A short name first prefers the player's own
+    -- realm, then falls back only when exactly one roster member has that short
+    -- name. This mirrors priority resolution without ever guessing.
+    local function ResolveRaidMember(name)
+        if type(name) ~= "string" or name == "" then
+            return nil, nil, "invalid-name"
+        end
+        local lower = name:lower()
+        if name:find("-", 1, true) then
+            local exactIndex = indexByFullName[lower]
+            if exactIndex then
+                return fullNameByIndex[exactIndex], exactIndex
+            end
+            return nil, nil, "unknown-member"
+        end
+
+        local ownRealmName = helpers.EnsureUnitFullName(name)
+        local ownRealmIndex = type(ownRealmName) == "string" and indexByFullName[ownRealmName:lower()] or nil
+        if ownRealmIndex then
+            return fullNameByIndex[ownRealmIndex], ownRealmIndex
+        end
+
+        local candidates = indicesByShortName[lower]
+        if type(candidates) == "table" and #candidates == 1 then
+            local index = candidates[1]
+            return fullNameByIndex[index], index
+        end
+        return nil, nil, type(candidates) == "table" and #candidates > 1 and "ambiguous-member" or "unknown-member"
+    end
+
     local providers = {
-        ResolvePriorityValue = roster and roster.ResolvePriorityValue,
+        ResolvePriorityValue = roster and (roster.ResolvePriorityFullName or roster.ResolvePriorityValue),
+        ResolveRosterName = function(name)
+            return (ResolveRaidMember(name))
+        end,
         ClassMembers = function(class)
             return classMembers[class] or {}
         end,
@@ -159,7 +198,7 @@ local function BuildRaidState()
             return subgroupMembers[subgroup] or {}
         end,
     }
-    return subgroupByIndex, indexByName, providers
+    return subgroupByIndex, ResolveRaidMember, providers
 end
 
 local function DisplayedLayoutSource(self)
@@ -192,16 +231,17 @@ local function DisplayedVariables(self)
 end
 
 --- Rearranges the raid subgroups to match the displayed page's `$LAYOUT`.
--- Leader/assist and out-of-combat only, and never automatic. A layout is the
--- eight raid subgroups, so every group in it maps to the subgroup it holds.
+-- Leader/qualified-assistant and out-of-combat only, and never automatic. A
+-- layout is the eight raid subgroups, so every group maps to the subgroup it
+-- holds.
 -- @treturn boolean applied
 -- @treturn number|string movedCountOrReason
 function AngryEra:ApplyGroupLayoutToRaid()
     if not IsInRaidGroup() then
         return false, "not-in-raid"
     end
-    if not CanRearrangeRaid() then
-        return false, "not-raid-leader"
+    if not CanRearrangeRaid(self) then
+        return false, "not-authorized"
     end
     if type(InCombatLockdown) == "function" and InCombatLockdown() then
         return false, "in-combat"
@@ -212,18 +252,28 @@ function AngryEra:ApplyGroupLayoutToRaid()
         return false, "no-layout"
     end
 
-    local subgroupByIndex, indexByName, providers = BuildRaidState()
+    local subgroupByIndex, resolveRaidMember, providers = BuildRaidState()
     providers.Variables = DisplayedVariables(self)
     local resolved = layout.Resolve(layout.Parse(source), providers)
+    if resolved.error then
+        return false, resolved.error
+    end
 
     local want = {}
     local unresolved = 0
+    local duplicate = false
+    local assigned = {}
     for _, group in ipairs(resolved.groups) do
         if type(group.subgroup) == "number" then
             for _, name in ipairs(group.members) do
-                local index = indexByName[name:lower()] or indexByName[(name:lower():match("^([^-]+)") or "")]
+                local _, index = resolveRaidMember(name)
                 if index then
-                    want[index] = group.subgroup
+                    if assigned[index] then
+                        duplicate = true
+                    else
+                        assigned[index] = true
+                        want[index] = group.subgroup
+                    end
                 else
                     unresolved = unresolved + 1
                 end
@@ -231,6 +281,12 @@ function AngryEra:ApplyGroupLayoutToRaid()
         end
     end
 
+    if duplicate or #resolved.duplicates > 0 then
+        return false, "duplicate-member"
+    end
+    if unresolved > 0 then
+        return false, "unresolved-member"
+    end
     if next(want) == nil then
         return false, "no-bound-groups"
     end

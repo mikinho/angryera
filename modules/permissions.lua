@@ -180,10 +180,19 @@ function AngryEra:IsDirectlyAllowlisted(player)
     return false
 end
 
-local function IsQualifiedAssistant(self, player)
-    return self:GetConfig("allowAllAssistants") == true
-        or self:IsDirectlyAllowlisted(player)
-        or self:IsGuildOfficer(player)
+--- Returns whether a current raid assistant satisfies the local qualified-
+-- assistant policy. The role requirement is intentionally part of this helper
+-- so local actions cannot accidentally treat an officer without assist as
+-- authorized.
+-- @tparam string player Player name.
+-- @treturn boolean qualified
+function AngryEra:IsQualifiedAssistant(player)
+    return self:GetGroupRole(player) == "assistant"
+        and (
+            self:GetConfig("allowAllAssistants") == true
+            or self:IsDirectlyAllowlisted(player)
+            or self:IsGuildOfficer(player)
+        )
 end
 
 --- Returns whether this receiver accepts an action from the authenticated sender.
@@ -216,7 +225,7 @@ function AngryEra:CanReceiveFrom(sender, action)
     if role == "leader" then
         return true
     end
-    return role == "assistant" and IsQualifiedAssistant(self, sender)
+    return role == "assistant" and self:IsQualifiedAssistant(sender)
 end
 
 --- Returns whether the local player may publish an action to the current group.
@@ -261,6 +270,21 @@ function AngryEra:CanLocalPlayerOutput()
     end
     local role = self:GetGroupRole(PlayerFullName())
     return role == "leader" or role == "assistant"
+end
+
+--- Returns whether the local player may rearrange raid subgroups from a
+-- resolved layout. Leaders are always allowed. Assistants must satisfy the
+-- same officer/trusted/allow-all policy used for shared page proposals, which
+-- prevents a broadly granted raid assist from enabling this action by default.
+-- @treturn boolean allowed
+function AngryEra:CanLocalPlayerApplyRaidLayout()
+    if not IsInRaid() then
+        return false
+    end
+
+    local player = PlayerFullName()
+    local role = self:GetGroupRole(player)
+    return role == "leader" or (role == "assistant" and self:IsQualifiedAssistant(player))
 end
 
 --- Returns whether an entity may be edited locally or proposed to the leader.

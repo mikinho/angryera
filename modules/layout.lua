@@ -22,6 +22,7 @@ local AngryEra = app.AngryEra
 AngryEra.utils = AngryEra.utils or {}
 AngryEra.utils.layout = {}
 local layout = AngryEra.utils.layout
+local json = AngryEra.utils.json
 
 local MAX_SUBGROUPS = 8
 local MAX_SUBGROUP_SLOTS = 5
@@ -211,15 +212,34 @@ function layout.Parse(text)
     return model
 end
 
+-- Returns the stable roster identity used only for duplicate accounting. The
+-- rendered spelling remains untouched. A provider can resolve short names to a
+-- unique full name; display-only callers without one retain legacy behavior.
+local function RosterIdentityKey(name, providers)
+    if type(name) ~= "string" or name == "" then
+        return nil
+    end
+    if type(providers.ResolveRosterName) == "function" then
+        local canonical = providers.ResolveRosterName(name)
+        if type(canonical) == "string" and canonical ~= "" then
+            return canonical:lower()
+        end
+    end
+    return name:lower()
+end
+
 -- Takes up to `count` present-and-alive, not-yet-placed names from a list.
-local function TakeAvailable(source, count, placed)
+local function TakeAvailable(source, count, placed, providers)
     local taken = {}
-    if type(source) ~= "table" then
+    local selected = {}
+    if type(source) ~= "table" or type(count) ~= "number" or count <= 0 then
         return taken
     end
     for _, name in ipairs(source) do
-        if type(name) == "string" and name ~= "" and not placed[name:lower()] then
+        local identityKey = RosterIdentityKey(name, providers)
+        if identityKey and not placed[identityKey] and not selected[identityKey] then
             taken[#taken + 1] = name
+            selected[identityKey] = true
             if #taken >= count then
                 break
             end
@@ -231,9 +251,9 @@ end
 -- Resolves one slot string to zero or more player names.
 -- A name or priority list yields one; `*CLASS`/`*CLASS xN`/`group:N` may yield
 -- several. `placed` (names already assigned this resolve) is honored for fills.
--- Variables expand first so a slot holding one behaves as whatever it names.
-local function ResolveSlotNames(slot, providers, placed)
-    local text = layout.ExpandSlotVariables(slot, providers.Variables)
+-- Variables are expanded by the caller first so its post-expansion capacity can
+-- be checked before any names are admitted.
+local function ResolveSlotNames(text, providers, placed)
     if text == "" then
         return {}
     end
@@ -243,12 +263,12 @@ local function ResolveSlotNames(slot, providers, placed)
     if info.kind == "subgroup" then
         local members = type(providers.SubgroupMembers) == "function" and providers.SubgroupMembers(info.subgroup)
             or nil
-        return TakeAvailable(members, math.huge, placed)
+        return TakeAvailable(members, math.huge, placed, providers)
     end
 
     if info.kind == "class" then
         local members = type(providers.ClassMembers) == "function" and providers.ClassMembers(info.class) or nil
-        return TakeAvailable(members, info.count, placed)
+        return TakeAvailable(members, info.count, placed, providers)
     end
 
     if info.kind == "priority" then
@@ -268,21 +288,41 @@ end
 -- @tparam table providers `{ ResolvePriorityValue, ClassMembers, SubgroupMembers, Variables }`.
 -- @treturn table resolved `{ groups = { { name, subgroup?, members = {name,...} }, ... } }`.
 function layout.Resolve(model, providers)
-    local resolved = { groups = {} }
+    local resolved = { groups = {}, duplicates = {} }
     if type(model) ~= "table" or type(model.groups) ~= "table" then
         return resolved
     end
     providers = providers or {}
     local placed = {}
-    for _, group in ipairs(model.groups) do
+    for groupIndex, group in ipairs(model.groups) do
         local members = {}
+        local usedWeight = 0
         for _, slot in ipairs(group.slots or {}) do
-            -- Fills (class/subgroup) skip already-placed members via TakeAvailable;
-            -- explicit names and priority lists are always honored, and everything
-            -- marks `placed` so later fills never re-pick the same member.
-            for _, name in ipairs(ResolveSlotNames(slot, providers, placed)) do
-                members[#members + 1] = name
-                placed[name:lower()] = true
+            local text = layout.ExpandSlotVariables(slot, providers.Variables)
+            local weight = text ~= "" and layout.SlotWeight(text) or 0
+            if usedWeight + weight > MAX_SUBGROUP_SLOTS then
+                resolved.error = resolved.error or "subgroup-oversubscribed"
+            else
+                usedWeight = usedWeight + weight
+                -- Fills (class/subgroup) skip already-placed members via TakeAvailable;
+                -- explicit names and priority lists are always honored, and everything
+                -- marks `placed` so later fills never re-pick the same member.
+                for _, name in ipairs(ResolveSlotNames(text, providers, placed)) do
+                    local identityKey = RosterIdentityKey(name, providers)
+                    if identityKey then
+                        local firstGroup = placed[identityKey]
+                        if firstGroup then
+                            resolved.duplicates[#resolved.duplicates + 1] = {
+                                Name = name,
+                                FirstGroup = firstGroup,
+                                Group = groupIndex,
+                            }
+                        else
+                            placed[identityKey] = groupIndex
+                        end
+                    end
+                    members[#members + 1] = name
+                end
             end
         end
         resolved.groups[#resolved.groups + 1] = {
@@ -349,11 +389,58 @@ function layout.SourceFromVars(vars)
     return nil
 end
 
---- Reads the `$LAYOUT` value from a raw Key=Value variable string.
+-- Decodes raw Vars only when it is a JSON object. The second return value
+-- distinguishes JSON-looking input from the legacy Key=Value format so a
+-- malformed object fails closed instead of becoming JSON followed by a
+-- `$LAYOUT=...` line.
+local function DecodeVarsObject(vars)
+    if type(vars) ~= "string" then
+        return nil, false
+    end
+    local firstCharacter = vars:match("^%s*(.)")
+    if firstCharacter ~= "{" and firstCharacter ~= "[" then
+        return nil, false
+    end
+    if
+        firstCharacter ~= "{"
+        or type(json) ~= "table"
+        or type(json.JSON_TryDecode) ~= "function"
+    then
+        return nil, true
+    end
+    local decoded = json.JSON_TryDecode(vars)
+    if type(decoded) ~= "table" or decoded == json.JSON_NULL then
+        return nil, true
+    end
+    for key in pairs(decoded) do
+        if type(key) ~= "string" then
+            return nil, true
+        end
+    end
+    return decoded, true
+end
+
+--- Reads the `$LAYOUT` value from a raw Key=Value or JSON-object Vars string.
 -- @tparam string vars Raw page/category Vars string.
 -- @treturn string|nil source
+-- @treturn string|nil errorCode
 function layout.ExtractSource(vars)
     if type(vars) ~= "string" then
+        return nil
+    end
+    local object, isJson = DecodeVarsObject(vars)
+    if isJson and not object then
+        return nil, "invalid-variables"
+    end
+    if object then
+        if type(object["$LAYOUT"]) == "string" then
+            return object["$LAYOUT"]
+        end
+        for key, value in pairs(object) do
+            if type(key) == "string" and type(value) == "string" and key:upper() == "$LAYOUT" then
+                return value
+            end
+        end
         return nil
     end
     for line in (vars .. "\n"):gmatch("([^\n]*)\n") do
@@ -365,15 +452,36 @@ function layout.ExtractSource(vars)
     return nil
 end
 
---- Returns a Vars string with the `$LAYOUT` line set (or removed when empty).
--- Every other variable line is preserved in order. The layout source is stored
--- on a single line, so callers must join multi-line editing with ";" first.
+--- Returns Vars with `$LAYOUT` set (or removed when empty).
+-- JSON-object Vars remain JSON and legacy Key=Value Vars preserve every other
+-- line in order. The layout source is stored on a single line in the legacy
+-- format, so callers must join multi-line editing with ";" first.
 -- @tparam string vars Existing Vars string.
 -- @tparam string source Compact layout syntax (empty removes the key).
--- @treturn string vars
+-- @treturn string|nil vars
+-- @treturn string|nil errorCode
 function layout.UpsertSource(vars, source)
     vars = type(vars) == "string" and vars or ""
     source = type(source) == "string" and source or ""
+    local object, isJson = DecodeVarsObject(vars)
+    if isJson and not object then
+        return nil, "invalid-variables"
+    end
+    if object then
+        for key in pairs(object) do
+            if type(key) == "string" and key:upper() == "$LAYOUT" then
+                object[key] = nil
+            end
+        end
+        if source ~= "" then
+            object["$LAYOUT"] = source
+        end
+        if next(object) == nil then
+            return "{}"
+        end
+        return json.JSON_Encode(object)
+    end
+
     local out = {}
     local replaced = false
     for line in (vars .. "\n"):gmatch("([^\n]*)\n") do

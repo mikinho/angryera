@@ -77,6 +77,7 @@ local reservedCaseKeys = {
     "AUTOADVANCE",
     "ENCOUNTER",
     "ENCOUNTERID",
+    "LAYOUT",
 }
 for _, key in ipairs(reservedCaseKeys) do
     local lowerKey = key:lower()

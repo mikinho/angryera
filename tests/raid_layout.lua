@@ -1,6 +1,37 @@
 local AngryEra = { utils = {} }
 local app = { AngryEra = AngryEra }
 
+local raidMembers = {}
+AngryEra.utils.helpers = {
+    EnsureUnitFullName = function(name)
+        if type(name) == "string" and not name:find("-", 1, true) then
+            return name .. "-Home"
+        end
+        return name
+    end,
+    IterateGroupMembers = function(callback)
+        for index, member in ipairs(raidMembers) do
+            local fullName = AngryEra.utils.helpers.EnsureUnitFullName(member.Name)
+            if
+                callback(
+                    "raid" .. index,
+                    fullName,
+                    member.Rank or 0,
+                    member.Subgroup or 1,
+                    member.Class or "WARRIOR",
+                    member.Online ~= false,
+                    member.Dead == true,
+                    "raid" .. index
+                )
+            then
+                return
+            end
+        end
+    end,
+}
+
+assert(loadfile("modules/utils/roster.lua"))("AngryEra", app)
+assert(loadfile("modules/layout.lua"))("AngryEra", app)
 assert(loadfile("modules/raid_layout.lua"))("AngryEra", app)
 local rl = AngryEra.utils.raid_layout
 
@@ -79,4 +110,155 @@ assert(not okOver and errOver == "subgroup-oversubscribed", "more than five in o
 local _, okUnknown, errUnknown = rl.PlanSubgroupMoves({ [1] = 1 }, { [99] = 2 })
 assert(not okUnknown and errUnknown == "unknown-member", "an unknown member is rejected")
 
-print("Raid layout planner tests passed.")
+-- Integration coverage for ApplyGroupLayoutToRaid. These globals mirror the
+-- narrow WoW API surface used by the driver and record every destructive call.
+local inRaid = true
+local inCombat = false
+local applyAllowed = true
+local layoutSource
+local layoutVars
+local operations = {}
+
+function _G.IsInRaid()
+    return inRaid
+end
+
+function _G.InCombatLockdown()
+    return inCombat
+end
+
+function _G.GetNumGroupMembers()
+    return #raidMembers
+end
+
+function _G.GetRaidRosterInfo(index)
+    local member = raidMembers[index]
+    if not member then
+        return nil
+    end
+    return member.Name,
+        member.Rank or 0,
+        member.Subgroup or 1,
+        60,
+        member.Class or "WARRIOR",
+        member.Class or "WARRIOR",
+        "",
+        member.Online ~= false,
+        member.Dead == true
+end
+
+function _G.SetRaidSubgroup(index, subgroup)
+    operations[#operations + 1] = { Kind = "set", Index = index, Subgroup = subgroup }
+end
+
+function _G.SwapRaidSubgroup(index1, index2)
+    operations[#operations + 1] = { Kind = "swap", Index1 = index1, Index2 = index2 }
+end
+
+function AngryEra:CanLocalPlayerApplyRaidLayout()
+    return applyAllowed
+end
+
+function AngryEra:GetDisplayedMeta()
+    return { LAYOUT = layoutSource }
+end
+
+function AngryEra:GetDisplayedVars()
+    return layoutVars
+end
+
+local function Apply(members, source, variables, allowed)
+    raidMembers = members
+    layoutSource = source
+    layoutVars = variables
+    applyAllowed = allowed ~= false
+    operations = {}
+    return AngryEra:ApplyGroupLayoutToRaid()
+end
+
+-- The centralized permission helper is authoritative, including for callers
+-- that would otherwise be raid assistants.
+local applied, reason = Apply({ { Name = "A-Home", Subgroup = 1 } }, "G/1: A", nil, false)
+assert(not applied and reason == "not-authorized", "an unauthorized caller cannot apply a layout")
+assert(#operations == 0, "authorization failure performs no raid mutation")
+
+local permissionHelper = AngryEra.CanLocalPlayerApplyRaidLayout
+AngryEra.CanLocalPlayerApplyRaidLayout = nil
+applied, reason = Apply({ { Name = "A-Home", Subgroup = 1 } }, "G/1: A")
+assert(not applied and reason == "not-authorized", "a missing permission helper fails closed")
+assert(#operations == 0, "a missing permission helper performs no raid mutation")
+
+AngryEra.CanLocalPlayerApplyRaidLayout = function()
+    error("permission lookup failed")
+end
+applied, reason = Apply({ { Name = "A-Home", Subgroup = 1 } }, "G/1: A")
+assert(not applied and reason == "not-authorized", "a failing permission helper fails closed")
+assert(#operations == 0, "a failing permission helper performs no raid mutation")
+AngryEra.CanLocalPlayerApplyRaidLayout = permissionHelper
+
+-- A short name prefers the exact same-realm member and never guesses the first
+-- matching short name returned by the raid roster.
+applied, reason = Apply({
+    { Name = "Zed-Other", Subgroup = 1 },
+    { Name = "Zed-Home", Subgroup = 2 },
+}, "Home/2: Zed")
+assert(applied and reason == 0, "a short name resolves to the same-realm member")
+assert(#operations == 0, "the already-seated same-realm member does not move")
+
+-- With no same-realm member, a duplicated short name is ambiguous and Apply
+-- fails closed before any subgroup operation.
+applied, reason = Apply({
+    { Name = "Zed-Other", Subgroup = 1 },
+    { Name = "Zed-Third", Subgroup = 2 },
+}, "Ambiguous/2: Zed")
+assert(not applied and reason == "unresolved-member", "an ambiguous short name is rejected")
+assert(#operations == 0, "an ambiguous name performs no raid mutation")
+
+-- A unique cross-realm short name is safe to resolve canonically.
+applied, reason = Apply({ { Name = "Zed-Other", Subgroup = 1 } }, "Cross/2: Zed")
+assert(applied and reason == 1, "a unique cross-realm short name can be applied")
+assert(
+    #operations == 1 and operations[1].Kind == "set" and operations[1].Index == 1 and operations[1].Subgroup == 2,
+    "the unique canonical member is moved"
+)
+
+-- Priority resolution uses canonical roster names too, so a same-realm primary
+-- is not confused with a cross-realm member of the same short name.
+applied, reason = Apply({
+    { Name = "Zed-Other", Subgroup = 1 },
+    { Name = "Zed-Home", Subgroup = 2 },
+    { Name = "Backup-Home", Subgroup = 1 },
+}, "Priority/2: Zed > Backup")
+assert(applied and reason == 0, "priority resolution targets the canonical same-realm member")
+assert(#operations == 0, "an already-correct priority target does not move")
+
+-- Explicit short/full duplicates are rejected as one canonical raid member.
+applied, reason = Apply({ { Name = "Zed-Home", Subgroup = 1 } }, "One/1: Zed; Two/2: Zed-Home")
+assert(not applied and reason == "duplicate-member", "canonical duplicate assignments are rejected")
+assert(#operations == 0, "duplicate validation finishes before raid mutation")
+
+-- A typo anywhere makes the entire destructive operation fail closed; valid
+-- assignments earlier in the layout are not partially applied.
+applied, reason = Apply({
+    { Name = "Alice-Home", Subgroup = 1 },
+    { Name = "Bob-Home", Subgroup = 1 },
+}, "Move/2: Alice, Typo; Stay/1: Bob")
+assert(not applied and reason == "unresolved-member", "an unresolved member rejects the whole layout")
+assert(#operations == 0, "unresolved validation prevents a partial apply")
+
+-- Variable expansion is included in five-seat capacity validation.
+applied, reason = Apply({
+    { Name = "A-Home", Subgroup = 2 },
+    { Name = "B-Home", Subgroup = 2 },
+    { Name = "C-Home", Subgroup = 2 },
+    { Name = "D-Home", Subgroup = 2 },
+    { Name = "M1-Home", Subgroup = 1, Class = "MAGE" },
+    { Name = "M2-Home", Subgroup = 1, Class = "MAGE" },
+    { Name = "M3-Home", Subgroup = 1, Class = "MAGE" },
+    { Name = "M4-Home", Subgroup = 1, Class = "MAGE" },
+    { Name = "M5-Home", Subgroup = 1, Class = "MAGE" },
+}, "Over/1: A, B, C, D, {{Fill}}", { Fill = "*MAGE x5" })
+assert(not applied and reason == "subgroup-oversubscribed", "expanded layouts enforce subgroup capacity")
+assert(#operations == 0, "capacity validation finishes before raid mutation")
+
+print("Raid layout planner and apply tests passed.")
