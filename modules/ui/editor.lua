@@ -1475,6 +1475,19 @@ end
 -- ── Context Menus and Tree ──────────────────────────────────────────────────
 
 local PagesDropDownList
+
+-- Entries are addressed by label rather than position so adding one to the menu
+-- above cannot silently renumber the wiring below it. Index 1 holds the page
+-- name and is skipped, since a page could be named after an entry.
+local function PageMenuEntry(text)
+    for index = 2, #PagesDropDownList do
+        local item = PagesDropDownList[index]
+        if item.text == text then
+            return item
+        end
+    end
+end
+
 function AngryEra_PageMenu(pageId)
     local page = AngryAssign_Pages[pageId]
     if not page then
@@ -1554,24 +1567,22 @@ function AngryEra_PageMenu(pageId)
     local permission = AngryEra:CanEditEntityLocally(page)
 
     PagesDropDownList[1].text = page.Name
-    PagesDropDownList[2].arg1 = pageId
-    PagesDropDownList[2].disabled = not permission
-    PagesDropDownList[3].arg1 = pageId
-    PagesDropDownList[4].arg1 = pageId
-    PagesDropDownList[4].disabled = not permission
-    for _, item in ipairs(PagesDropDownList[5].menuList) do
+    for index = 2, #PagesDropDownList do
+        PagesDropDownList[index].arg1 = pageId
+    end
+
+    PageMenuEntry("Rename").disabled = not permission
+    PageMenuEntry("Edit Variables").disabled = not permission
+    PageMenuEntry("Edit Group Layout").disabled = not permission
+
+    for _, item in ipairs(PageMenuEntry("Export").menuList) do
         item.arg1 = pageId
     end
 
     local categories = AngryEra_CategoryMenuList(pageId)
-    if categories ~= nil then
-        PagesDropDownList[6].menuList = categories
-        PagesDropDownList[6].disabled = false
-        PagesDropDownList[6].arg1 = pageId
-    else
-        PagesDropDownList[6].menuList = {}
-        PagesDropDownList[6].disabled = true
-    end
+    local category = PageMenuEntry("Category")
+    category.menuList = categories or {}
+    category.disabled = categories == nil
 
     return PagesDropDownList
 end
