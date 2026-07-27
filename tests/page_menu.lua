@@ -48,6 +48,7 @@ function AngryEra:SetPinned(page, value)
 end
 
 function AngryEra:Print() end
+local treeUpdates = 0
 
 AngryAssign_Pages = {
     [11] = { Id = 11, Name = "Loatheb", CategoryId = 4 },
@@ -58,6 +59,9 @@ AngryAssign_Categories = {
 }
 
 assert(loadfile("modules/ui/editor.lua"))("AngryEra", app)
+function AngryEra:UpdateTree()
+    treeUpdates = treeUpdates + 1
+end
 
 -- Reads the entry a label names, the way a player picks a row by reading it.
 local function Entry(menu, text)
@@ -104,10 +108,12 @@ editable = true
 -- Pinning is local state and the reused menu changes its action to match.
 Entry(menu, "Pin").func(nil, 11)
 assert(pinned[11], "Pin protects the clicked page")
+assert(treeUpdates == 1, "pinning should refresh the tree exactly once")
 menu = AngryEra_PageMenu(11)
 assert(Entry(menu, "Unpin"), "a pinned page offers Unpin")
 Entry(menu, "Unpin").func(nil, 11)
 assert(not pinned[11], "Unpin releases the clicked page")
+assert(treeUpdates == 2, "unpinning should refresh the tree exactly once")
 
 -- The menu is reused between clicks, so a second page must not inherit the
 -- first page's id.

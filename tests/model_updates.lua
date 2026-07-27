@@ -724,10 +724,16 @@ AngryAssign_Pages[51] = {
     Name = "Navigation B",
     Contents = "",
 }
+function AngryEra:IsPinned(candidate)
+    return candidate.Id == 51
+end
 AngryAssign_State.displayed = 50
 local sendsBeforeNextPage = #sentDisplays
 AngryEra:NextPage()
-assert(AngryAssign_State.displayed == 51, "NextPage should activate the next page locally")
+assert(
+    AngryAssign_State.displayed == 51,
+    "NextPage should follow manual order even when the destination is pinned locally"
+)
 assert(
     #sentDisplays == sendsBeforeNextPage + 1
         and sentDisplays[#sentDisplays].Id == 51
@@ -737,7 +743,7 @@ assert(
 
 local sendsBeforePrevPage = #sentDisplays
 AngryEra:PrevPage()
-assert(AngryAssign_State.displayed == 50, "PrevPage should activate the previous page locally")
+assert(AngryAssign_State.displayed == 50, "PrevPage should follow manual order even when the source is pinned locally")
 assert(
     #sentDisplays == sendsBeforePrevPage + 1
         and sentDisplays[#sentDisplays].Id == 50

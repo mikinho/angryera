@@ -67,6 +67,19 @@ function AngryEra:CanEditEntityLocally()
     return editable
 end
 
+local pinned = {}
+function AngryEra:IsPinned(category)
+    return pinned[category.Id] == true
+end
+
+function AngryEra:SetPinned(category, value)
+    pinned[category.Id] = value == true
+    return true
+end
+
+function AngryEra:Print() end
+local treeUpdates = 0
+
 AngryAssign_Pages = {}
 AngryAssign_Categories = {
     [4] = { Id = 4, Name = "Naxxramas" },
@@ -74,6 +87,9 @@ AngryAssign_Categories = {
 }
 
 assert(loadfile("modules/ui/editor.lua"))("AngryEra", app)
+function AngryEra:UpdateTree()
+    treeUpdates = treeUpdates + 1
+end
 
 -- Reads the entry a label names, the way a player picks a row by reading it.
 local function Entry(menu, text)
@@ -92,6 +108,7 @@ local labels = {
     "Rename",
     "Save as Template",
     "Delete",
+    "Pin",
     "Edit Variables",
     "Edit Group Layout",
     "Export",
@@ -126,6 +143,16 @@ for _, label in ipairs({ "Rename", "Edit Variables", "Edit Group Layout" }) do
     assert(Entry(menu, label).disabled == true, label .. " is closed to a read-only category")
 end
 assert(Entry(menu, "Export").disabled ~= true, "a read-only category can still be exported")
+assert(Entry(menu, "Pin").disabled ~= true, "a read-only category can still be pinned locally")
+
+Entry(menu, "Pin").func(nil, 4)
+assert(pinned[4], "Pin protects the clicked category")
+assert(treeUpdates == 1, "pinning a category should refresh the tree exactly once")
+menu = AngryEra_CategoryMenu(4)
+assert(Entry(menu, "Unpin"), "a pinned category offers Unpin")
+Entry(menu, "Unpin").func(nil, 4)
+assert(not pinned[4], "Unpin releases the clicked category")
+assert(treeUpdates == 2, "unpinning a category should refresh the tree exactly once")
 editable = true
 
 -- The menu is reused between clicks, so a second category must not inherit the

@@ -51,12 +51,35 @@ local recv1 = AddReceived(901, 1, "Received 1")
 local recv2 = AddReceived(902, 2, "Received 2")
 local recvPinned = AddReceived(903, 3, "Received Pinned")
 local recvDisplayed = AddReceived(904, 4, "Received Displayed")
+local pinnedCategory = AngryEra:NewLocalCategoryRecord({ Name = "Pinned Category" })
+AngryAssign_Categories[pinnedCategory.Id] = pinnedCategory
+local nestedCategory = AngryEra:NewLocalCategoryRecord({
+    Name = "Nested Category",
+    CategoryId = pinnedCategory.Id,
+})
+AngryAssign_Categories[nestedCategory.Id] = nestedCategory
+local recvCategoryProtected = AddReceived(907, 7, "Received in Pinned Category")
+recvCategoryProtected.CategoryId = nestedCategory.Id
+local recvUnsafeHierarchy = AddReceived(908, 8, "Received with Missing Category")
+recvUnsafeHierarchy.CategoryId = 9999
+local cycleCategoryA = AngryEra:NewLocalCategoryRecord({ Name = "Cycle A" })
+local cycleCategoryB = AngryEra:NewLocalCategoryRecord({ Name = "Cycle B" })
+cycleCategoryA.CategoryId = cycleCategoryB.Id
+cycleCategoryB.CategoryId = cycleCategoryA.Id
+AngryAssign_Categories[cycleCategoryA.Id] = cycleCategoryA
+AngryAssign_Categories[cycleCategoryB.Id] = cycleCategoryB
+local recvCyclicHierarchy = AddReceived(909, 9, "Received in Category Cycle")
+recvCyclicHierarchy.CategoryId = cycleCategoryA.Id
 assert(not AngryEra:IsLocallyOwned(recv1), "received pages are not locally owned")
 
 assert(AngryEra:SetPinned(recvPinned, true), "a received page can be pinned locally")
+assert(AngryEra:SetPinned(pinnedCategory, true), "a category can be pinned locally")
 AngryAssign_State.displayed = recvDisplayed.Id
 
-assert(AngryEra:CountReceivedPages() == 2, "only unpinned, non-displayed received pages are eligible")
+assert(
+    AngryEra:CountReceivedPages() == 2,
+    "only unpinned, non-displayed received pages outside pinned categories are eligible"
+)
 
 local removed = AngryEra:CleanReceivedPages()
 assert(removed == 2, "the two eligible received pages should be removed")
@@ -64,9 +87,17 @@ assert(AngryAssign_Pages[recv1.Id] == nil and AngryAssign_Pages[recv2.Id] == nil
 assert(AngryAssign_Pages[ownedA.Id] and AngryAssign_Pages[ownedB.Id], "locally owned pages are kept")
 assert(AngryAssign_Pages[recvPinned.Id], "a pinned received page is kept")
 assert(AngryAssign_Pages[recvDisplayed.Id], "the displayed received page is kept")
+assert(AngryAssign_Pages[recvCategoryProtected.Id], "a pinned category protects received pages in its subtree")
+assert(AngryAssign_Pages[recvUnsafeHierarchy.Id], "cleanup should fail closed for an invalid category chain")
+assert(AngryAssign_Pages[recvCyclicHierarchy.Id], "cleanup should fail closed for a cyclic category chain")
 
 assert(AngryAssign_Meta.EntityLocal[recv1.SyncId] == nil, "a removed received page leaves no tombstone")
 assert(AngryAssign_Meta.EntityLocal[recv2.SyncId] == nil, "a removed received page leaves no tombstone")
+
+assert(AngryEra:SetPinned(pinnedCategory, false), "a category can be unpinned locally")
+assert(AngryEra:CountReceivedPages() == 1, "unpinning a category releases its received descendants")
+assert(AngryEra:CleanReceivedPages() == 1, "cleanup removes a released category descendant")
+assert(AngryAssign_Pages[recvCategoryProtected.Id] == nil, "the released received page is removed")
 
 assert(AngryEra:CleanReceivedPages() == 0, "cleanup is idempotent")
 assert(AngryEra:CountReceivedPages() == 0, "no eligible received pages remain")

@@ -601,7 +601,8 @@ function AngryEra:NextPage(reverse)
         end
     end
 
-    -- Use the same sort order as the Tree
+    -- Navigation follows saved manual order; local pin sections affect only the
+    -- editor tree and must not change encounter progression.
     table.sort(siblings, function(a, b)
         local ia = a.Index
         local ib = b.Index
@@ -649,7 +650,7 @@ function AngryEra:FirstPage()
         return
     end
 
-    -- Use the same sort order as the Tree
+    -- First means the first saved manual page, independent of local pin state.
     table.sort(siblings, function(a, b)
         local ia = a.Index
         local ib = b.Index

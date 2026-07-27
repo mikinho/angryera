@@ -698,7 +698,7 @@ function AngryEra:OnInitialize()
                         type = "toggle",
                         order = 1,
                         name = "Auto-Clean Received Pages on Login",
-                        desc = "At login, remove pages received from others. Pinned pages and the current display are always kept; pages you created or imported are never removed.",
+                        desc = "At login, remove pages received from others. Pinned pages, pages inside pinned categories, and the current display are always kept; pages you created or imported are never removed.",
                         get = function(info)
                             return self:GetConfig("autoCleanReceivedPages")
                         end,
@@ -710,13 +710,13 @@ function AngryEra:OnInitialize()
                         type = "execute",
                         order = 2,
                         name = "Clean Received Pages Now",
-                        desc = "Remove pages received from others, keeping pinned pages and the current display",
+                        desc = "Remove pages received from others, keeping pins, pages inside pinned categories, and the current display",
                         confirm = function()
                             local count = self:CountReceivedPages()
                             if count == 0 then
                                 return "There are no received pages to remove."
                             end
-                            return ("Remove %d received %s? Pinned pages and the current display are kept."):format(
+                            return ("Remove %d received %s? Pins, pages inside pinned categories, and the current display are kept."):format(
                                 count,
                                 count == 1 and "page" or "pages"
                             )

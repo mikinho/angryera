@@ -2544,6 +2544,21 @@ local function MenuEntryByKey(list, key)
     end
 end
 
+local function TogglePinnedEntity(entity)
+    if type(entity) ~= "table" or type(AngryEra.IsPinned) ~= "function" or type(AngryEra.SetPinned) ~= "function" then
+        return false
+    end
+    local pinned = AngryEra:IsPinned(entity)
+    if not AngryEra:SetPinned(entity, not pinned) then
+        return false
+    end
+    if type(AngryEra.UpdateTree) == "function" then
+        AngryEra:UpdateTree()
+    end
+    AngryEra:Print((pinned and "Unpinned " or "Pinned ") .. entity.Name .. ".")
+    return true
+end
+
 function AngryEra_PageMenu(pageId)
     local page = AngryAssign_Pages[pageId]
     if not page then
@@ -2573,17 +2588,7 @@ function AngryEra_PageMenu(pageId)
                 notCheckable = true,
                 func = function(_, clickedPageId)
                     local clickedPage = AngryAssign_Pages[clickedPageId]
-                    if
-                        not clickedPage
-                        or type(AngryEra.IsPinned) ~= "function"
-                        or type(AngryEra.SetPinned) ~= "function"
-                    then
-                        return
-                    end
-                    local pinned = AngryEra:IsPinned(clickedPage)
-                    if AngryEra:SetPinned(clickedPage, not pinned) then
-                        AngryEra:Print((pinned and "Unpinned " or "Pinned ") .. clickedPage.Name .. ".")
-                    end
+                    TogglePinnedEntity(clickedPage)
                 end,
             },
             {
@@ -2698,6 +2703,15 @@ function AngryEra_CategoryMenu(catId)
                 end,
             },
             {
+                text = "Pin",
+                key = "pin",
+                notCheckable = true,
+                func = function(_, clickedCategoryId)
+                    local clickedCategory = AngryAssign_Categories[clickedCategoryId]
+                    TogglePinnedEntity(clickedCategory)
+                end,
+            },
+            {
                 text = "Edit Variables",
                 notCheckable = true,
                 func = function(_, clickedCategoryId)
@@ -2760,6 +2774,10 @@ function AngryEra_CategoryMenu(catId)
     MenuEntry(CategoriesDropDownList, "Rename").disabled = not permission
     MenuEntry(CategoriesDropDownList, "Edit Variables").disabled = not permission
     MenuEntry(CategoriesDropDownList, "Edit Group Layout").disabled = not permission
+    local pin = MenuEntryByKey(CategoriesDropDownList, "pin")
+    local pinned = type(AngryEra.IsPinned) == "function" and AngryEra:IsPinned(cat)
+    pin.text = pinned and "Unpin" or "Pin"
+    pin.disabled = type(AngryEra.SetPinned) ~= "function"
 
     for _, item in ipairs(MenuEntry(CategoriesDropDownList, "Export").menuList) do
         item.arg1 = catId
@@ -2778,6 +2796,9 @@ local clickValue = nil
 local function AngryEra_TreeClick(widget, event, value, selected, button)
     HideDropDownMenu(1)
     local selectedId = selectedLastValue(value)
+    if not selectedId then
+        return false
+    end
 
     if button == "LeftButton" and selectedId > 0 then
         if clickValue == value and (GetTime() - clickTime) < 0.3 then
@@ -2817,6 +2838,9 @@ local function AngryEra_TreeMenuClick(widget, event, uniquevalue)
     -- But AngryTreeGroup fires button.uniquevalue.
     -- Wait, selectedLastValue(value) parses it.
     local selectedId = selectedLastValue(uniquevalue)
+    if not selectedId then
+        return
+    end
 
     if not AngryEra_DropDown then
         AngryEra_DropDown = CreateFrame("Frame", "AngryEraMenuFrame", UIParent, "UIDropDownMenuTemplate")
@@ -3229,32 +3253,99 @@ end
 -- ── Tree building ───────────────────────────────────────────────────────────
 
 local GetTree_Sort = helpers.CompareIndexedEntries
+local TREE_SEPARATOR_VALUE = "__angryera_unpinned_separator__"
 
-local function GetTree_InsertPage(tree, page)
+local function GetTree_StableSort(left, right)
+    if GetTree_Sort(left, right) then
+        return true
+    end
+    if GetTree_Sort(right, left) then
+        return false
+    end
+    if left.entityType ~= right.entityType then
+        return left.entityType == "category"
+    end
+    return (left.entityId or 0) < (right.entityId or 0)
+end
+
+local function GetTree_IsPinned(entity)
+    return type(AngryEra.IsPinned) == "function" and AngryEra:IsPinned(entity) or false
+end
+
+local function GetTree_OrderEntries(entries)
+    local pinnedCategories = {}
+    local pinnedPages = {}
+    local unpinned = {}
+
+    for _, entry in ipairs(entries) do
+        if entry.pinned then
+            local bucket = entry.entityType == "category" and pinnedCategories or pinnedPages
+            bucket[#bucket + 1] = entry
+        else
+            unpinned[#unpinned + 1] = entry
+        end
+    end
+
+    table.sort(pinnedCategories, GetTree_StableSort)
+    table.sort(pinnedPages, GetTree_StableSort)
+    table.sort(unpinned, GetTree_StableSort)
+
+    local tree = {}
+    for _, entry in ipairs(pinnedCategories) do
+        tree[#tree + 1] = entry
+    end
+    for _, entry in ipairs(pinnedPages) do
+        tree[#tree + 1] = entry
+    end
+    if #tree > 0 and #unpinned > 0 then
+        tree[#tree + 1] = {
+            value = TREE_SEPARATOR_VALUE,
+            text = "",
+            disabled = true,
+            separator = true,
+            visible = false,
+        }
+    end
+    for _, entry in ipairs(unpinned) do
+        tree[#tree + 1] = entry
+    end
+    return tree
+end
+
+local function GetTree_PageEntry(page)
     local name = page.Name
     if page.Vars and page.Vars ~= "{}" and page.Vars ~= "" then
         name = name .. " |cffaaaaaa‡|r"
     end
-    -- Use page.Index
-    local item = { value = page.Id, text = name, index = page.Index }
+    local item = {
+        value = page.Id,
+        text = name,
+        index = page.Index,
+        entityId = page.Id,
+        entityType = "page",
+        pinned = GetTree_IsPinned(page),
+    }
     if page.Id == AngryAssign_State.displayed then
         item.icon = "Interface\\BUTTONS\\UI-GuildButton-MOTD-Up"
     end
-    table.insert(tree, item)
+    return item
 end
 
 local function GetTree_InsertChildren(categoryId, displayedPages)
-    local tree = {}
+    local entries = {}
     for _, cat in pairs(AngryAssign_Categories) do
         if cat.CategoryId == categoryId then
             local name = cat.Name
             if cat.Vars and cat.Vars ~= "{}" and cat.Vars ~= "" then
                 name = name .. " |cffaaaaaa‡|r"
             end
-            table.insert(tree, {
+            table.insert(entries, {
                 value = -cat.Id,
                 text = name,
                 index = cat.Index,
+                entityId = cat.Id,
+                entityType = "category",
+                pinned = GetTree_IsPinned(cat),
                 children = GetTree_InsertChildren(cat.Id, displayedPages),
             })
         end
@@ -3263,16 +3354,15 @@ local function GetTree_InsertChildren(categoryId, displayedPages)
     for _, page in pairs(AngryAssign_Pages) do
         if page.CategoryId == categoryId then
             displayedPages[page.Id] = true
-            GetTree_InsertPage(tree, page)
+            entries[#entries + 1] = GetTree_PageEntry(page)
         end
     end
 
-    table.sort(tree, GetTree_Sort)
-    return tree
+    return GetTree_OrderEntries(entries)
 end
 
 function AngryEra:GetTree()
-    local tree = {}
+    local entries = {}
     local displayedPages = {}
 
     for _, cat in pairs(AngryAssign_Categories) do
@@ -3281,10 +3371,13 @@ function AngryEra:GetTree()
             if cat.Vars and cat.Vars ~= "{}" and cat.Vars ~= "" then
                 name = name .. " |cffaaaaaa‡|r"
             end
-            table.insert(tree, {
+            table.insert(entries, {
                 value = -cat.Id,
                 text = name,
                 index = cat.Index,
+                entityId = cat.Id,
+                entityType = "category",
+                pinned = GetTree_IsPinned(cat),
                 children = GetTree_InsertChildren(cat.Id, displayedPages),
             })
         end
@@ -3292,13 +3385,18 @@ function AngryEra:GetTree()
 
     for _, page in pairs(AngryAssign_Pages) do
         if not page.CategoryId or not displayedPages[page.Id] then
-            GetTree_InsertPage(tree, page)
+            entries[#entries + 1] = GetTree_PageEntry(page)
         end
     end
 
-    table.sort(tree, GetTree_Sort)
+    return GetTree_OrderEntries(entries)
+end
 
-    return tree
+local function GetTree_PinBucket(entity, entityType)
+    if not GetTree_IsPinned(entity) then
+        return "unpinned"
+    end
+    return entityType == "category" and "pinned-category" or "pinned-page"
 end
 
 function AngryEra:MoveItem(sourceValue, targetValue, position)
@@ -3311,6 +3409,9 @@ function AngryEra:MoveItem(sourceValue, targetValue, position)
 
     local sourceId = selectedLastValue(sourceValue)
     local targetId = selectedLastValue(targetValue)
+    if not sourceId or not targetId then
+        return
+    end
     if sourceId == targetId then
         return
     end
@@ -3339,8 +3440,18 @@ function AngryEra:MoveItem(sourceValue, targetValue, position)
         return
     end
 
-    local newParentId, newIndex
     position = position or "after"
+    if
+        (position == "before" or position == "after")
+        and GetTree_PinBucket(sourceObj, sourceType) ~= GetTree_PinBucket(targetObj, targetType)
+    then
+        self:Print(
+            "Pinned categories, pinned pages, and unpinned items have fixed sections. Pin or unpin an item before ordering it across sections."
+        )
+        return
+    end
+
+    local newParentId, newIndex
 
     if position == "into" and targetType == "category" then
         newParentId = targetObj.Id

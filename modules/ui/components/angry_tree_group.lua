@@ -3,7 +3,7 @@
 -- a visible resize handle over the base AceGUI TreeGroup behavior.
 -- @module AngryTreeGroup
 
-local Type, Version = "AngryTreeGroup", 4
+local Type, Version = "AngryTreeGroup", 5
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -70,6 +70,9 @@ end
 -- @tparam boolean isExpanded Whether children are currently expanded.
 local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
     local self = button.obj
+    if GameTooltip:IsOwned(button) then
+        GameTooltip:Hide()
+    end
     local toggle = button.toggle
     local text = treeline.text or ""
     local icon = treeline.icon
@@ -78,6 +81,8 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
     local value = treeline.value
     local uniquevalue = treeline.uniquevalue
     local disabled = treeline.disabled
+    local pinned = treeline.pinned
+    local separator = treeline.separator
 
     button.treeline = treeline
     button.value = value
@@ -92,6 +97,23 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
     button.level = level
 
     local indent = (level - 1) * 7 + 2
+    if separator then
+        button:UnlockHighlight()
+        button.selected = false
+        button.separatorLine:ClearAllPoints()
+        button.separatorLine:SetPoint("LEFT", button, "LEFT", indent + 5, 0)
+        button.separatorLine:SetPoint("RIGHT", button, "RIGHT", -8, 0)
+        button.separatorLine:Show()
+        button.icon:SetTexture(nil)
+        button.pinBadge:Hide()
+        button.menuBtn:Hide()
+        button.text:SetText("")
+        toggle:Hide()
+        button:EnableMouse(false)
+        return
+    end
+    button.separatorLine:Hide()
+
     toggle:ClearAllPoints()
     toggle:SetPoint("LEFT", indent, 1)
 
@@ -107,8 +129,13 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
         button.text:SetPoint("LEFT", toggle, "RIGHT", 2, 0)
     end
 
-    -- Ensure text doesn't overlap Menu Button
-    button.text:SetPoint("RIGHT", button.menuBtn, "LEFT", -2, 0)
+    if pinned then
+        button.pinBadge:Show()
+        button.text:SetPoint("RIGHT", button.pinBadge, "LEFT", -3, 0)
+    else
+        button.pinBadge:Hide()
+        button.text:SetPoint("RIGHT", button.menuBtn, "LEFT", -2, 0)
+    end
 
     if disabled then
         button:EnableMouse(false)
@@ -133,7 +160,7 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
         end
     end
 
-    if value < 0 then
+    if type(value) == "number" and value < 0 then
         button:SetNormalFontObject("GameFontNormal")
         button:SetHighlightFontObject("GameFontHighlight")
     else
@@ -196,6 +223,8 @@ local function addLine(self, v, tree, level, parent)
     line.icon = v.icon
     line.iconCoords = v.iconCoords
     line.disabled = v.disabled
+    line.pinned = v.pinned
+    line.separator = v.separator
     line.tree = tree
     line.level = level
     line.parent = parent
@@ -234,6 +263,9 @@ Scripts
 -------------------------------------------------------------------------------]]
 local function Expand_OnClick(frame)
     local button = frame.button
+    if button.treeline and button.treeline.separator then
+        return
+    end
     local self = button.obj
     local status = (self.status or self.localstatus).groups
     status[button.uniquevalue] = not status[button.uniquevalue]
@@ -273,7 +305,7 @@ local function Drag_OnUpdate(frame)
     local button = GetButtonFromFrame(focus)
     local line = self.draggerLine
 
-    if button and button.obj == self then
+    if button and button.obj == self and not button.treeline.separator then
         local top = button:GetTop()
         local bottom = button:GetBottom()
         if not top or not bottom then
@@ -300,7 +332,8 @@ local function Drag_OnUpdate(frame)
         elseif ratio < 0.25 then
             local isExpanded = false
             if
-                button.treeline.value < 0
+                type(button.treeline.value) == "number"
+                and button.treeline.value < 0
                 and self.status
                 and self.status.groups
                 and self.status.groups[button.uniquevalue]
@@ -320,7 +353,7 @@ local function Drag_OnUpdate(frame)
                 line:SetHeight(2)
             end
         else
-            if button.treeline.value < 0 then
+            if type(button.treeline.value) == "number" and button.treeline.value < 0 then
                 self.dragPosition = "into"
                 line:SetPoint("CENTER", button, "CENTER", 0, 0)
                 line:SetColorTexture(0, 1, 0, 0.3)
@@ -339,6 +372,9 @@ local function Drag_OnUpdate(frame)
 end
 
 local function Button_OnDragStart(button)
+    if button.treeline and button.treeline.separator then
+        return
+    end
     local self = button.obj
     self.dragging = button.uniquevalue
     CloseDropDownMenus()
@@ -348,6 +384,7 @@ end
 
 local function Button_OnDragStop(button)
     local self = button.obj
+    local source = self.dragging
     self.dragging = nil
     SetCursor(nil)
     self.treeframe:SetScript("OnUpdate", nil)
@@ -358,13 +395,23 @@ local function Button_OnDragStop(button)
     local focus = GetMouseFocus()
     local target = GetButtonFromFrame(focus)
 
-    if target and target.obj == self then
-        self:Fire("OnTreeDragDrop", button.uniquevalue, target.uniquevalue, self.dragPosition)
+    if
+        source
+        and target
+        and target.obj == self
+        and target.treeline
+        and not target.treeline.separator
+        and self.dragPosition
+    then
+        self:Fire("OnTreeDragDrop", source, target.uniquevalue, self.dragPosition)
     end
     self.dragPosition = nil
 end
 
 local function Button_OnClick(frame, button)
+    if frame.treeline and frame.treeline.separator then
+        return false
+    end
     local self = frame.obj
     local result = self:Fire("OnClick", frame.uniquevalue, frame.selected, button)
     if result ~= false and not frame.selected then
@@ -377,6 +424,9 @@ local function Button_OnClick(frame, button)
 end
 
 local function Button_OnEnter(frame)
+    if frame.treeline and frame.treeline.separator then
+        return
+    end
     local self = frame.obj
     self:Fire("OnButtonEnter", frame.uniquevalue, frame)
 
@@ -388,12 +438,18 @@ local function Button_OnEnter(frame)
         GameTooltip:SetOwner(frame, "ANCHOR_NONE")
         GameTooltip:SetPoint("LEFT", frame, "RIGHT")
         GameTooltip:SetText(frame.text:GetText() or "")
+        if frame.treeline and frame.treeline.pinned then
+            GameTooltip:AddLine("Pinned locally", 1, 0.82, 0)
+        end
 
         GameTooltip:Show()
     end
 end
 
 local function Button_OnLeave(frame)
+    if frame.treeline and frame.treeline.separator then
+        return
+    end
     local self = frame.obj
     self:Fire("OnButtonLeave", frame.uniquevalue, frame)
 
@@ -519,6 +575,12 @@ local methods = {
         icon:SetHeight(14)
         button.icon = icon
 
+        local separatorLine = button:CreateTexture(nil, "ARTWORK")
+        separatorLine:SetHeight(1)
+        separatorLine:SetColorTexture(0.45, 0.45, 0.45, 0.8)
+        separatorLine:Hide()
+        button.separatorLine = separatorLine
+
         -- Menu Button
         local menuBtn = CreateFrame("Button", nil, button)
         menuBtn:SetWidth(12)
@@ -526,6 +588,9 @@ local methods = {
         menuBtn:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
         menuBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
         menuBtn:SetScript("OnClick", function(this)
+            if button.treeline and button.treeline.separator then
+                return
+            end
             self:Fire("OnButtonMenu", button.uniquevalue)
         end)
         menuBtn:SetScript("OnEnter", function(this)
@@ -541,6 +606,15 @@ local methods = {
         end)
         menuBtn:SetPoint("RIGHT", button, "RIGHT", -9, 1)
         button.menuBtn = menuBtn
+
+        local pinBadge = button:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        pinBadge:SetWidth(20)
+        pinBadge:SetJustifyH("RIGHT")
+        pinBadge:SetPoint("RIGHT", menuBtn, "LEFT", -2, 0)
+        pinBadge:SetText("PIN")
+        pinBadge:SetTextColor(1, 0.82, 0)
+        pinBadge:Hide()
+        button.pinBadge = pinBadge
 
         button:RegisterForDrag("LeftButton")
         button:SetScript("OnDragStart", Button_OnDragStart)

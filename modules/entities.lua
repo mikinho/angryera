@@ -693,8 +693,29 @@ function AngryEra:RemovePageRecord(id)
 end
 
 -- Collects the ids of pages received from others that are safe to remove.
--- Pinned pages and the currently displayed page are always excluded; pages this
--- installation created or imported are locally owned and never returned.
+-- Pinned pages, descendants of pinned categories, and the currently displayed
+-- page are always excluded; pages this installation created or imported are
+-- locally owned and never returned. Invalid category chains fail closed.
+local function HasPinnedOrUnsafeCategoryAncestor(self, page)
+    local categoryId = type(page) == "table" and page.CategoryId or nil
+    local visited = {}
+    while categoryId do
+        if visited[categoryId] then
+            return true
+        end
+        visited[categoryId] = true
+        local category = type(AngryAssign_Categories) == "table" and AngryAssign_Categories[categoryId] or nil
+        if type(category) ~= "table" then
+            return true
+        end
+        if self:IsPinned(category) then
+            return true
+        end
+        categoryId = category.CategoryId
+    end
+    return false
+end
+
 local function CollectReceivedPageIds(self)
     local ids = {}
     if type(AngryAssign_Pages) ~= "table" then
@@ -710,7 +731,13 @@ local function CollectReceivedPageIds(self)
             and page.OwnerId == syncInstallationId
             and type(AngryAssign_Meta) == "table"
             and syncInstallationId ~= AngryAssign_Meta.InstallationId
-        if type(page) == "table" and id ~= displayedId and positivelyRemoteOwned and not self:IsPinned(page) then
+        if
+            type(page) == "table"
+            and id ~= displayedId
+            and positivelyRemoteOwned
+            and not self:IsPinned(page)
+            and not HasPinnedOrUnsafeCategoryAncestor(self, page)
+        then
             ids[#ids + 1] = id
         end
     end
