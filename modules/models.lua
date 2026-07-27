@@ -685,11 +685,23 @@ function AngryEra:FirstPage()
 end
 
 function AngryEra:SelectedId()
-    return selectedLastValue(AngryAssign_State.tree.selected)
+    local tree = type(AngryAssign_State) == "table" and AngryAssign_State.tree or nil
+    return selectedLastValue(type(tree) == "table" and tree.selected or nil)
 end
 
 function AngryEra:SetSelectedId(selectedId)
     local page = AngryAssign_Pages[selectedId]
+    if not self.window or not self.window.tree then
+        if type(AngryAssign_State) == "table" then
+            if type(AngryAssign_State.tree) ~= "table" then
+                AngryAssign_State.tree = {}
+            end
+            if selectedId == nil then
+                AngryAssign_State.tree.selected = nil
+            end
+        end
+        return false
+    end
     if page then
         if page.CategoryId then
             local chain = AngryEra.utils.variables.CollectCategoryChain(AngryAssign_Categories, page.CategoryId)
@@ -753,10 +765,11 @@ end
 -- @tparam[opt] number categoryId Parent category id.
 -- @tparam[opt] number index Sort index override.
 -- @tparam[opt=false] boolean suppressDisplayRefresh Defer active-page order republishing to a bulk operation.
+-- @tparam[opt=""] string initialVars Initial page variables, applied before the first revision is published.
 -- @treturn boolean ok
 -- @treturn string|nil err Error message on failure.
 -- @treturn number|nil id New page id on success.
-function AngryEra:CreatePage(nameOrFrame, content, categoryId, index, suppressDisplayRefresh)
+function AngryEra:CreatePage(nameOrFrame, content, categoryId, index, suppressDisplayRefresh, initialVars)
     -- Validate and Clean Input
     local name, err = ExtractAndValidateName(nameOrFrame)
     if not name then
@@ -766,13 +779,17 @@ function AngryEra:CreatePage(nameOrFrame, content, categoryId, index, suppressDi
     if content and type(content) ~= "string" then
         content = ""
     end
+    if type(initialVars) ~= "string" then
+        initialVars = ""
+    end
 
     -- Original Business Logic
     local page = self:NewLocalPageRecord({
         Updated = time(),
-        UpdateId = self:Hash(name, content or ""),
+        UpdateId = self:Hash(name, content or "", initialVars),
         Name = name,
         Contents = content or "",
+        Vars = initialVars,
         CategoryId = categoryId,
         Index = index,
     })

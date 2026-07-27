@@ -100,6 +100,18 @@ AngryAssign_Pages = {
     [10] = { Id = 10, CategoryId = 1 },
 }
 
+local editorWindow = AngryEra.window
+AngryEra.window = nil
+AngryAssign_State.tree.selected = 10
+assert(AngryEra:SelectedId() == 10, "Persisted selection should be readable before the editor exists")
+assert(not AngryEra:SetSelectedId(nil), "Clearing selection without an editor should report no widget selection")
+assert(AngryAssign_State.tree.selected == nil, "Clearing selection before editor creation should update saved state")
+AngryAssign_State.tree = nil
+assert(AngryEra:SelectedId() == nil, "A missing saved tree should have no selected page")
+assert(not AngryEra:SetSelectedId(nil), "Clearing a missing saved tree should remain safe")
+assert(type(AngryAssign_State.tree) == "table", "Selection clearing should repair the saved tree container")
+AngryEra.window = editorWindow
+
 local selected = AngryEra:SetSelectedId(10)
 assert(not selected, "Selecting through a cyclic hierarchy should fail safely")
 assert(selectedValue == 10 and selectedPath == nil, "Cycle fallback should select the page without walking parents")
