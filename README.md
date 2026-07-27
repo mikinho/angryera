@@ -8,9 +8,9 @@ Supported game clients:
 - Burning Crusade Anniversary 2.5.6
 
 > [!IMPORTANT]
-> **BREAKING CHANGE:** This release cannot share assignments or displayed pages with earlier AngryEra or AngryAssignments versions. Update everyone who needs shared assignments before the raid. Existing local pages and settings are migrated automatically, but downgrading after opening this version is unsupported unless you restore a SavedVariables backup.
+> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.1 and newer can continue sharing ordinary pages with each other, but every viewer needs v3.3 or newer to render group layouts. Existing local pages and settings are migrated automatically; downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
 
-Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not run a mixed-version raid.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on group layouts in a mixed pre-v3.3 raid.
 
 ## What is new
 
@@ -24,6 +24,9 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Displayed-note API:** WeakAuras and other addons can read the active note, resolved variables, metadata, and hierarchy.
 - **Safer restore workflow:** choosing an older page version loads it as a draft; nothing changes until you click **Save**.
 - **Safer imports and migration:** imported data is bounded and validated, and existing pages and settings are migrated automatically.
+- **Priority assignments:** `Primary > Backup` selects the first listed player who is present and alive.
+- **Optional received-page cleanup:** remove pages received from other leaders at login or on demand while retaining protected local data.
+- **Raid group layouts:** build inherited, roster-aware subgroup plans, render them inside notes, and apply validated layouts out of combat.
 
 ## Quick start
 
@@ -49,17 +52,19 @@ Only the current party or raid leader selects and clears the shared display. Lea
 
 ### For raid assistants
 
-Raid assistants can output assignments to chat. They can also edit the exact active shared page when the leader's permission settings accept them. See [Shared pages and permissions](#shared-pages-and-permissions).
+Raid assistants can output assignments to chat. Qualified assistants can also edit the exact active shared page when the leader's permission settings accept them and apply a validated raid layout out of combat. Raid assist alone does not enable either action by default. See [Shared pages and permissions](#shared-pages-and-permissions).
 
 ## Shared pages and permissions
 
 ### What AngryEra shares
 
-AngryEra shares the active assignment page and the category-variable context needed to render it correctly. It does not broadcast your entire page library.
+AngryEra shares the active assignment page and the category-variable context needed to render it correctly. This context includes inherited metadata such as `$LAYOUT`; it does not broadcast your category records or entire page library.
 
 Your local pages, categories, placement, imports, exports, and private organization remain yours. To give someone a complete page or category for their own library, use **Export > Encoded AA** and have them import it.
 
 If a displayed page is new to your installation, it appears unfiled. You may organize or delete that received page locally; later shared revisions preserve your local placement. If the leader displays a page you deleted, AngryEra can receive it again.
+
+To keep a received page during cleanup, right-click it and choose **Pin**. Pinning is local to your installation and does not change the shared page; right-click it again and choose **Unpin** to remove that protection.
 
 Shared page changes are fast and ordered. If the leader rapidly presses Previous and Next, followers move to the final selection instead of replaying obsolete intermediate pages.
 
@@ -104,7 +109,7 @@ The **Menu** button provides:
 - **Manage Pages**
 - **Clear Page**, which clears the current display
 
-Right-click a page or category to rename it, delete it, edit variables, export it, or change its category placement. Categories can also be saved as reusable templates.
+Right-click a page or category to rename it, delete it, edit variables, export it, or change its category placement. Categories can also be saved as reusable templates. A saved template retains that category's variables and each page's variables, including a category layout and page-specific layout overrides.
 
 ### Editor controls
 
@@ -188,6 +193,15 @@ Tank={{MT}}
 ```
 
 If a page later sets `MT=Roselea`, `{{Tank}}` resolves to `Roselea`.
+
+A priority assignment uses `>` to select the first listed player who is both present and alive. It re-resolves when the roster or player state changes:
+
+```text
+MAIN_TANK=Roselea > Zessy > Backup
+$SKULL={{MAIN_TANK}}
+```
+
+Use `Name-Realm` when two group members may share the same short name.
 
 ### Roster templates
 
@@ -280,7 +294,7 @@ A `$LAYOUT` names the eight raid subgroups and the player slots in them — resi
 
 It is metadata like any other, so it inherits. Put the raid's standard arrangement on the category and every page under it has it, then give a page its own only where the fight moves people. The nearest one wins, so a page's layout replaces its category's for that page alone.
 
-`$LAYOUT` is a single line. Groups are separated by `;`; each group is `Label: slot, slot, ...`, and `Label/N` is raid subgroup N. A group written without one takes the lowest subgroup still free, so naming every group is enough to lay out a raid. A slot is a name, a priority list `A > B > C` (first present-and-alive), a class fill `*MAGE` or `*MAGE x2`, or `group:2` (the current members of subgroup 2). Auto-fill never assigns the same player twice. A raid has eight subgroups of five, so a ninth group or a sixth slot is dropped.
+`$LAYOUT` is a single line. Groups are separated by `;`; each group is `Label: slot, slot, ...`, and `Label/N` is raid subgroup N. A group written without one takes the lowest subgroup still free, so naming every group is enough to lay out a raid. A slot is a name, a priority list `A > B > C` (first present-and-alive), a class fill `*MAGE` or `*MAGE x2`, or `group:2` (the current members of subgroup 2). Auto-fill never assigns the same player twice. A raid has eight subgroups of five, so the text parser keeps only the first eight groups and first five literal slots in each group. If variable, class, or roster expansion would resolve a subgroup above five members, Apply rejects the whole plan before moving anyone.
 
 ```text
 $LAYOUT=Tanks/1: MT, OT1; Spores: Lock1 > Lock2, *WARLOCK x2; Kite/8: group:3
@@ -300,13 +314,19 @@ Spore soakers:
 {layout Spores}
 ```
 
-Edit it from the page's or the category's right-click menu → **Edit Group Layout**. The editor opens on a visual grid: the eight raid subgroup boxes in two columns, with everyone the layout has not placed listed beside them. Drag a name from that list into a box to place it, drag between boxes to move it, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the list, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone.
+Edit it from the page's or the category's right-click menu → **Edit Group Layout**. The editor opens on a visual grid: the eight raid subgroup boxes in two columns, with roster members the resolved layout has not placed listed beside them. Drag a name from that list into a box to place it, drag between boxes to move it, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the list, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone.
 
 You can also type instead of drag. Click a box title to name that group — Spores, Resist, Kite — click a member to edit their slot expression, and click an empty row to add one — a name, a priority list, a class fill, or a `{{Variable}}` — so a layout can be built solo, before there is any roster to drag from. Right-clicking a box title removes the group after a confirmation.
 
 Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` keep auto-filling after you rearrange the grid. Tick **Edit as text** to switch the same layout to one group per line, which is also where roster names insert at the cursor. Both views write the same `$LAYOUT`. Groups left empty are dropped when you save, unless you named one — naming Spores before anyone is dragged into it is the point of naming it.
 
-**Save** writes the layout — a category's is saved locally and never sent to anyone, so a standard arrangement costs the raid no traffic. As the raid leader or an assistant, out of combat, **Apply to Raid** moves everyone into the subgroup their group holds in the layout the display currently resolves to.
+**Save** writes the layout. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
+
+Out of combat, **Apply to Raid** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected.
+
+The raid leader may always apply it. A raid assistant must also be an officer in the current raid leader's guild, be listed in **Trusted Assistants** on that installation, or have **Allow All Raid Assistants** enabled there. This local check means routinely granting assist to an entire raid does not enable the action for everyone by default.
+
+The editor button saves and applies only the exact page currently displayed. After editing a category layout, display a descendant page that inherits it and use `/aa applylayout`, or open that displayed page's layout editor. `/aa applylayout` always applies the layout resolved by the actively displayed page.
 
 ### Custom metadata
 
@@ -329,6 +349,8 @@ The **AngryEra | Smart Markers** section in the game's keybinding menu contains:
 - **Clear All Raid Targets**.
 
 Assigning a marker that is already on the selected unit leaves it in place rather than toggling it off.
+
+Mouseover keybindings mark a live hostile unit under the cursor and fall back to your current target when the mouseover is not valid. Enable **Allow Friendly Smart Markers** in `/aa` if you intentionally want those bindings to mark friendly players too.
 
 ## Importing, exporting, and backups
 
@@ -406,8 +428,10 @@ Open `/aa` to configure:
 - display backdrop and colors;
 - update-notification glow color;
 - font face, size, outline, colors, and line spacing;
-- whether the edit box uses the display font; and
-- chat output format.
+- whether the edit box uses the display font;
+- chat output format;
+- whether Smart Marker mouseover bindings may mark friendly units; and
+- automatic or on-demand cleanup of received pages.
 
 Adding `Group` to **Highlight** emphasizes your current group token, such as `G2`, when it appears in a displayed assignment.
 
@@ -424,6 +448,7 @@ Adding `Group` to **Highlight** emphasizes your current group token, such as `G2
 | `/aa clear` | Clear the shared display as leader, or the local display otherwise. |
 | `/aa first` | Toggle to or from the first page in the active category. |
 | `/aa output` | Output the actively displayed page to group chat. |
+| `/aa applylayout` | Apply the displayed page's validated group layout to the raid. Available to the raid leader and qualified raid assistants while out of combat. |
 | `/aa version` | Check AngryEra versions in the current party or raid. Available to the leader and raid assistants. |
 | `/aa resetposition` | Reset the assignment display position and size. |
 | `/aa defaults` | Restore configuration defaults after confirmation. |
@@ -436,7 +461,7 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 
 ### A raider does not receive the displayed page
 
-1. Confirm every client is running this release; prior versions are incompatible.
+1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Group layouts require v3.3 or newer on every viewer.
 2. Confirm the sender is the current party or raid leader.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
 4. Have the leader or a raid assistant run `/aa version` in the group.
