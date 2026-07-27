@@ -1,9 +1,9 @@
 --- Custom AceGUI widget that edits a raid group layout by dragging members.
--- Renders the eight raid subgroup boxes and any free-form groups in two columns
--- with the roster palette beside them, and reports every gesture as a drag/drop
--- descriptor pair for `AngryEra.utils.layout.ApplyDrop` to resolve. Clicks
--- report their position instead, separately for a box title, a filled slot, and
--- an unused row.
+-- Renders the eight raid subgroup boxes and any free-form groups in two
+-- columns, with a palette of unrostered members beside them, and reports every
+-- gesture as a drag/drop descriptor pair for `AngryEra.utils.layout.ApplyDrop`
+-- to resolve. Clicks report their position instead, separately for a box title,
+-- a filled slot, and an unused row.
 -- @module AngryLayoutGrid
 
 local Type, Version = "AngryLayoutGrid", 3
@@ -349,8 +349,33 @@ end
 --[[-----------------------------------------------------------------------------
 Rendering
 -------------------------------------------------------------------------------]]
+-- Every name the layout already spells out, keyed case-insensitively so a typed
+-- slot matches the roster spelling.
+local function PlacedNames(model)
+    local placed = {}
+    for _, group in ipairs(model.groups or {}) do
+        for _, slot in ipairs(group.slots or {}) do
+            placed[slot:lower()] = true
+        end
+    end
+    return placed
+end
+
+-- The palette offers only members the layout has not named, so a raid change or
+-- a placement shows up without hunting through the boxes.
+local function UnrosteredNames(self, model)
+    local placed = PlacedNames(model)
+    local names = {}
+    for _, name in ipairs(self.roster) do
+        if not placed[name:lower()] then
+            names[#names + 1] = name
+        end
+    end
+    return names
+end
+
 -- Describes every box to draw: the eight subgroup boxes, then free groups, then
--- the roster palette. Boxes are plain descriptors so the draw pass stays dumb.
+-- the palette. Boxes are plain descriptors so the draw pass stays dumb.
 local function BuildBoxPlan(self)
     local layout = self.layout
     local model = self.model or { groups = {} }
@@ -380,14 +405,15 @@ local function BuildBoxPlan(self)
         }
     end
 
-    if #self.roster > 0 then
-        plan[#plan + 1] = {
-            title = "Roster",
-            palette = true,
-            slots = self.roster,
-            rows = #self.roster,
-        }
-    end
+    -- Drawn even while empty, so the column keeps its place and a member always
+    -- has somewhere to be dragged back to.
+    local unrostered = UnrosteredNames(self, model)
+    plan[#plan + 1] = {
+        title = "Unrostered",
+        palette = true,
+        slots = unrostered,
+        rows = max(#unrostered, 1),
+    }
 
     return plan
 end
@@ -499,7 +525,7 @@ local methods = {
         self:Refresh()
     end,
 
-    --- Replaces the roster palette entries.
+    --- Replaces the roster the palette draws from.
     -- @tparam table names Array of short names.
     ["SetRoster"] = function(self, names)
         self.roster = type(names) == "table" and names or {}

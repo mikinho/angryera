@@ -254,6 +254,16 @@ grid:SetRoster({ "Vhez", "Kaza" })
 grid:SetWidth(400)
 grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
 
+-- The palette is always the last box drawn, so the count of free groups above it
+-- never has to be counted out here.
+local function PaletteBox()
+    for index = #grid.boxes, 1, -1 do
+        if grid.boxes[index]:IsShown() then
+            return grid.boxes[index]
+        end
+    end
+end
+
 -- The grid always draws eight subgroup boxes, then free groups, then the palette.
 local visible = 0
 for _, box in ipairs(grid.boxes) do
@@ -265,12 +275,13 @@ assert(visible == 10, "eight subgroup boxes plus one free group plus the palette
 assert(grid.boxes[1].header.label:GetText() == "Main", "a bound group titles its subgroup box")
 assert(grid.boxes[2].header.label:GetText() == "Group 2", "an unclaimed subgroup box is titled by number")
 assert(grid.boxes[9].header.label:GetText() == "Spores", "free groups follow the subgroup boxes")
-assert(grid.boxes[10].header.label:GetText() == "Roster", "the palette is drawn last")
+assert(PaletteBox() == grid.boxes[10], "the palette is drawn last")
+assert(PaletteBox().header.label:GetText() == "Unrostered", "the palette holds whoever the layout has not placed")
 assert(grid.frame:GetHeight() > 0, "the grid reports a height for its container")
 
 -- Groups run two to a row, odd on the left and even on the right, with the
 -- palette standing in a third column beside them.
-local palette = grid.boxes[10]
+local palette = PaletteBox()
 assert(grid.boxes[1]:GetLeft() == grid.frame:GetLeft(), "the first group opens the left column")
 assert(grid.boxes[2]:GetLeft() > grid.boxes[1]:GetLeft(), "an even-numbered group stands in the right column")
 assert(grid.boxes[3]:GetLeft() == grid.boxes[1]:GetLeft(), "an odd-numbered group returns to the left column")
@@ -429,6 +440,21 @@ assert(drop and drop.kind == "remove", "a release away from the grid removes the
 
 drag, drop = GestureTo(palette.rows[1], awayX, grid.frame:GetTop())
 assert(drag == nil, "a palette entry released over nothing is not a removal")
+
+-- The palette offers only members the layout has not named, matched however the
+-- slot happens to be spelled.
+grid:SetLayoutModel(layout.Parse("Main/1: vhez"))
+palette = PaletteBox()
+assert(palette.rows[1].layoutTarget.text == "Kaza", "a placed member leaves the palette")
+assert(not palette.rows[2]:IsShown(), "the palette shrinks to whoever is left")
+
+grid:SetRoster({ "Vhez", "Kaza", "Ghoal" })
+palette = PaletteBox()
+assert(palette.rows[2].layoutTarget.text == "Ghoal", "a member joining the raid reaches the palette")
+
+grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores: X"))
+palette = PaletteBox()
+assert(palette.rows[3].layoutTarget.text == "Ghoal", "clearing a slot returns its member to the palette")
 
 -- A container that re-applies the width after every redraw, the way AceGUI's
 -- flow layout does, must settle rather than recurse.
