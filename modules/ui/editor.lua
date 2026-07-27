@@ -1200,6 +1200,22 @@ local function AngryEra_LayoutConfirmPopup(data)
     StaticPopup_Show(popup_name, nil, nil, data)
 end
 
+--- Hangs an explanatory tooltip off an AceGUI widget.
+-- @tparam table widget AceGUI widget to describe.
+-- @tparam string title Heading, normally the widget's own label.
+-- @tparam string body Wrapped sentence saying what the widget is for.
+local function DescribeWidget(widget, title, body)
+    widget:SetCallback("OnEnter", function()
+        GameTooltip:SetOwner(widget.frame, "ANCHOR_RIGHT")
+        GameTooltip:SetText(title)
+        GameTooltip:AddLine(body, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    widget:SetCallback("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+end
+
 --- Opens a dedicated editor for a page's `$LAYOUT` group layout.
 -- The visual view drags members between raid subgroup boxes, free-form group
 -- boxes, and the roster palette; the text view edits the same layout one group
@@ -1511,6 +1527,13 @@ function AngryEra:ShowGroupLayoutEditor(id)
             end,
         })
     end)
+    DescribeWidget(
+        newGroup,
+        "New Group",
+        "Adds a group of your own beside the eight raid subgroups, for a spore rotation, a kite team, a resist group. "
+            .. "It shows up wherever the note says {layout}, and Apply to Raid leaves it alone. "
+            .. "Name a group Label/3 instead to bind it to raid subgroup 3."
+    )
     frame:AddChild(newGroup)
 
     frame:AddChild(body)
@@ -1538,6 +1561,13 @@ function AngryEra:ShowGroupLayoutEditor(id)
             self:Print("Could not apply the layout: " .. tostring(result))
         end
     end)
+    DescribeWidget(
+        applyButton,
+        "Apply to Raid",
+        "Saves the layout, then moves raid members into the subgroups it binds with Label/N. "
+            .. "Groups of your own are display only and nobody is moved for them. "
+            .. "Needs raid lead or assist, and will not run in combat."
+    )
     frame:AddChild(applyButton)
 end
 
