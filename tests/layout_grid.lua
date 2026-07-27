@@ -4,14 +4,126 @@ local app = { AngryEra = AngryEra }
 assert(loadfile("modules/layout.lua"))("AngryEra", app)
 local layout = AngryEra.utils.layout
 
--- Stubbed frame API. Regions record only what the widget reads back: size,
--- visibility, text, drag registration, and the parent chain the hit-test walks.
-local function NewRegion(parent)
-    local region = { parent = parent, shown = true, width = 0, height = 0, dragButtons = {}, scripts = {} }
+-- Which edge each anchor point pins, per axis. A point that pins neither edge of
+-- an axis (a centred one) resolves to nothing there, the way the client leaves
+-- it to the region's own size.
+local HORIZONTAL = {
+    LEFT = "left",
+    TOPLEFT = "left",
+    BOTTOMLEFT = "left",
+    RIGHT = "right",
+    TOPRIGHT = "right",
+    BOTTOMRIGHT = "right",
+}
 
-    function region:SetPoint() end
-    function region:ClearAllPoints() end
-    function region:SetAllPoints() end
+local VERTICAL = {
+    TOP = "top",
+    TOPLEFT = "top",
+    TOPRIGHT = "top",
+    BOTTOM = "bottom",
+    BOTTOMLEFT = "bottom",
+    BOTTOMRIGHT = "bottom",
+}
+
+local AXIS = { left = HORIZONTAL, right = HORIZONTAL, top = VERTICAL, bottom = VERTICAL }
+local OPPOSITE = { left = "right", right = "left", top = "bottom", bottom = "top" }
+local SIZE = { left = "width", right = "width", top = "height", bottom = "height" }
+local SHIFT = { left = "x", right = "x", top = "y", bottom = "y" }
+-- Stepping from an edge to its opposite runs right and up.
+local DIRECTION = { left = -1, right = 1, top = 1, bottom = -1 }
+
+local EdgeOf
+
+-- Where one anchor point of `region` lands on the axis `edge` belongs to.
+local function PointOf(region, point, edge)
+    local named = AXIS[edge][point]
+    if not named then
+        return nil
+    end
+    return EdgeOf(region, named)
+end
+
+-- Resolves an edge from whichever anchor pins it, falling back to the opposite
+-- edge and the region's own size. A region nothing has placed reports nothing,
+-- the way an unplaced frame does in-game.
+function EdgeOf(region, edge, derived)
+    if region.rect then
+        return region.rect[edge]
+    end
+
+    for point, anchor in pairs(region.points) do
+        if AXIS[edge][point] == edge then
+            local base = PointOf(anchor.relativeTo, anchor.relativePoint, edge)
+            if base then
+                return base + anchor[SHIFT[edge]]
+            end
+        end
+    end
+
+    if derived then
+        return nil
+    end
+
+    local opposite = EdgeOf(region, OPPOSITE[edge], true)
+    if not opposite then
+        return nil
+    end
+    return opposite + (DIRECTION[edge] * region[SIZE[edge]])
+end
+
+-- Stubbed frame API. Regions record what the widget reads back: size,
+-- visibility, text, frame level, and enough of the anchor graph for the
+-- geometry hit-test to resolve real edges.
+local function NewRegion(parent)
+    local region = {
+        parent = parent,
+        shown = true,
+        width = 0,
+        height = 0,
+        frameLevel = parent and (parent.frameLevel or 0) + 1 or 0,
+        points = {},
+        scripts = {},
+    }
+
+    -- SetPoint(point) / (point, x, y) / (point, relativeTo, relativePoint[, x, y]).
+    function region:SetPoint(point, a, b, c, d)
+        if a == nil or type(a) == "number" then
+            self.points[point] = { relativeTo = self.parent, relativePoint = point, x = a or 0, y = b or 0 }
+            return
+        end
+        self.points[point] = { relativeTo = a, relativePoint = b or point, x = c or 0, y = d or 0 }
+    end
+    function region:ClearAllPoints()
+        self.points = {}
+    end
+    function region:SetAllPoints(relative)
+        local target = relative or self.parent
+        self.points = {
+            TOPLEFT = { relativeTo = target, relativePoint = "TOPLEFT", x = 0, y = 0 },
+            BOTTOMRIGHT = { relativeTo = target, relativePoint = "BOTTOMRIGHT", x = 0, y = 0 },
+        }
+    end
+    function region:GetLeft()
+        return EdgeOf(self, "left")
+    end
+    function region:GetRight()
+        return EdgeOf(self, "right")
+    end
+    function region:GetTop()
+        return EdgeOf(self, "top")
+    end
+    function region:GetBottom()
+        return EdgeOf(self, "bottom")
+    end
+    function region:GetEffectiveScale()
+        return 1
+    end
+    function region:SetFrameLevel(level)
+        self.frameLevel = level
+    end
+    function region:GetFrameLevel()
+        return self.frameLevel
+    end
     function region:SetJustifyH() end
     function region:SetBackdrop() end
     function region:SetBackdropColor() end
@@ -48,17 +160,11 @@ local function NewRegion(parent)
     function region:IsShown()
         return self.shown
     end
-    function region:IsMouseOver()
-        return self.mouseOver == true
-    end
     function region:GetParent()
         return self.parent
     end
     function region:SetParent(value)
         self.parent = value
-    end
-    function region:RegisterForDrag(...)
-        self.dragButtons = { ... }
     end
     function region:SetScript(name, handler)
         self.scripts[name] = handler
@@ -77,15 +183,22 @@ local function NewRegion(parent)
 end
 
 _G.UIParent = NewRegion(nil)
+_G.UIParent.rect = { left = 0, bottom = 0, right = 1024, top = 768 }
+
 function _G.CreateFrame(_, _, parent)
     return NewRegion(parent or _G.UIParent)
 end
 function _G.SetCursor() end
 function _G.CloseDropDownMenus() end
 
-local hovered
-function _G.GetMouseFocus()
-    return hovered
+local cursorX, cursorY = 0, 0
+local mouseDown = false
+
+function _G.GetCursorPosition()
+    return cursorX, cursorY
+end
+function _G.IsMouseButtonDown()
+    return mouseDown
 end
 
 -- Stubbed AceGUI: capture the constructor and provide the widget base methods
@@ -135,6 +248,7 @@ assert(type(constructor) == "function", "the grid widget registers itself with A
 
 local grid = constructor()
 grid:OnAcquire()
+grid.frame:SetPoint("TOPLEFT", _G.UIParent, "TOPLEFT", 0, 0)
 grid:SetLayoutEngine(layout)
 grid:SetRoster({ "Vhez", "Kaza" })
 grid:SetWidth(400)
@@ -154,39 +268,57 @@ assert(grid.boxes[9].header.label:GetText() == "Spores", "free groups follow the
 assert(grid.boxes[10].header.label:GetText() == "Roster", "the palette is drawn last")
 assert(grid.frame:GetHeight() > 0, "the grid reports a height for its container")
 
--- Rows carry the drop target the hit-test reads, and only filled rows drag.
+local palette = grid.boxes[10]
+
+-- Rows carry the target the hit-test reads back.
 local filled = grid.boxes[1].rows[1]
 assert(filled.label:GetText() == "A" and filled.layoutTarget.kind == "slot", "a filled row targets its slot")
 assert(filled.layoutTarget.group == 1 and filled.layoutTarget.slot == 1, "a filled row knows its position")
-assert(#filled.dragButtons == 1, "a filled row can start a drag")
 
 local blank = grid.boxes[1].rows[3]
 assert(blank.label:GetText() == "" and blank.layoutTarget.kind == "empty", "an empty row targets its group")
 assert(blank.layoutTarget.group == 1, "an empty row in a claimed box appends to that group")
-assert(#blank.dragButtons == 0, "an empty row cannot start a drag")
 
 local unclaimed = grid.boxes[2].rows[1]
 assert(unclaimed.layoutTarget.group == nil, "an unclaimed box has no group yet")
 assert(unclaimed.layoutTarget.subgroup == 2, "an unclaimed box targets its subgroup")
 
-local paletteTarget = grid.boxes[10].rows[1].layoutTarget
+local paletteTarget = palette.rows[1].layoutTarget
 assert(paletteTarget.kind == "palette" and paletteTarget.text == "Vhez", "the palette carries names")
+
+-- The middle of a region, where a gesture aimed at it starts or lands.
+local function CentreOf(region)
+    return (region:GetLeft() + region:GetRight()) / 2, (region:GetTop() + region:GetBottom()) / 2
+end
+
+-- Presses and releases without moving, which is what separates a click from a
+-- drag now that both arrive on the same two handlers.
+local function Click(target, button)
+    cursorX, cursorY = CentreOf(target)
+    mouseDown = true
+    target:GetScript("OnMouseDown")(target, button)
+    mouseDown = false
+    target:GetScript("OnMouseUp")(target, button)
+end
 
 -- Clicks report their position so the host can act on a row without a drag.
 local clicked
 grid:SetCallback("OnSlotClick", function(_, group, slot, button)
     clicked = { group = group, slot = slot, button = button }
 end)
-filled:GetScript("OnClick")(filled, "RightButton")
+Click(filled, "RightButton")
 assert(clicked.group == 1 and clicked.slot == 1, "a slot click reports its position")
 assert(clicked.button == "RightButton", "a slot click reports the mouse button")
+
+clicked = nil
+Click(filled, "LeftButton")
+assert(clicked and clicked.button == "LeftButton", "a press and release that stays put is a click")
 
 local headerClicked
 grid:SetCallback("OnGroupClick", function(_, group, subgroup)
     headerClicked = { group = group, subgroup = subgroup }
 end)
-local header = grid.boxes[2].header
-header:GetScript("OnClick")(header, "LeftButton")
+Click(grid.boxes[2].header, "LeftButton")
 assert(headerClicked.group == nil and headerClicked.subgroup == 2, "a header click reports its subgroup")
 
 local emptyClicked
@@ -194,63 +326,98 @@ grid:SetCallback("OnEmptyClick", function(_, group, subgroup)
     emptyClicked = { group = group, subgroup = subgroup }
 end)
 headerClicked = nil
-blank:GetScript("OnClick")(blank, "LeftButton")
+Click(blank, "LeftButton")
 assert(emptyClicked.group == 1 and emptyClicked.subgroup == 1, "an empty row click reports its box")
 assert(not headerClicked, "clicking blank space does not act on the group itself")
 
--- Drives one drag gesture and returns the descriptors the widget reported.
-local function Drag(source, target, mouseOver)
+-- Drives one press-drag-release gesture to a point and returns what it reported.
+local function GestureTo(source, x, y)
     local drag, drop
     grid:SetCallback("OnLayoutDrop", function(_, firedDrag, firedDrop)
         drag, drop = firedDrag, firedDrop
     end)
-    hovered = source
-    source:GetScript("OnDragStart")(source)
-    hovered = target
-    grid.frame.mouseOver = mouseOver == true
+
+    cursorX, cursorY = CentreOf(source)
+    mouseDown = true
+    source:GetScript("OnMouseDown")(source, "LeftButton")
+
+    cursorX, cursorY = x, y
     local update = grid.frame:GetScript("OnUpdate")
     if update then
         update(grid.frame)
     end
-    source:GetScript("OnDragStop")(source)
-    hovered = nil
+
+    mouseDown = false
+    source:GetScript("OnMouseUp")(source, "LeftButton")
     return drag, drop
 end
 
+local function DragTo(source, target)
+    return GestureTo(source, CentreOf(target))
+end
+
+-- The regression that made dragging look dead in-game: the marker sat on the
+-- widget frame's own draw layer, which a child frame always covers, so a drag
+-- gave no feedback at all.
+local marked = grid.boxes[1].rows[2]
+cursorX, cursorY = CentreOf(grid.boxes[9].rows[1])
+mouseDown = true
+grid.boxes[9].rows[1]:GetScript("OnMouseDown")(grid.boxes[9].rows[1], "LeftButton")
+assert(not grid.dropMarker:IsShown(), "a press on its own marks nothing")
+cursorX, cursorY = CentreOf(marked)
+grid.frame:GetScript("OnUpdate")(grid.frame)
+assert(grid.dropMarker:IsShown(), "a drag marks where a release would land")
+assert(grid.dropMarker:GetTop() == marked:GetTop(), "the marker covers the row under the cursor")
+assert(grid.dropMarker:GetFrameLevel() > grid.boxes[1].rows[2]:GetFrameLevel(), "the marker draws above the rows")
+mouseDown = false
+grid.boxes[9].rows[1]:GetScript("OnMouseUp")(grid.boxes[9].rows[1], "LeftButton")
+assert(not grid.dropMarker:IsShown(), "the marker clears when the gesture ends")
+
 -- Dragging a member onto another group's slot reports a slot-to-slot move.
-local drag, drop = Drag(grid.boxes[9].rows[1], grid.boxes[1].rows[2])
+local drag, drop = DragTo(grid.boxes[9].rows[1], grid.boxes[1].rows[2])
 assert(drag.kind == "slot" and drag.group == 2 and drag.slot == 1, "the drag reports the source slot")
 assert(drop.kind == "slot" and drop.group == 1 and drop.slot == 2, "the drop reports the destination slot")
 local ok, moved = layout.ApplyDrop(grid.model, drag, drop)
 assert(ok and table.concat(moved.groups[1].slots, ",") == "A,X,B", "the reported gesture inserts at the target")
 
 -- Dropping into an unclaimed subgroup box reports the subgroup to create.
-drag, drop = Drag(grid.boxes[9].rows[1], grid.boxes[3].rows[1])
+drag, drop = DragTo(grid.boxes[9].rows[1], grid.boxes[3].rows[1])
 assert(drop.kind == "subgroup" and drop.subgroup == 3, "an unclaimed box reports its subgroup")
 ok, moved = layout.ApplyDrop(grid.model, drag, drop)
 assert(ok and moved.groups[3].subgroup == 3 and moved.groups[3].slots[1] == "X", "the gesture creates the bound group")
 
 -- Dropping onto a claimed box's empty row appends to that group.
-drag, drop = Drag(grid.boxes[9].rows[1], grid.boxes[1].rows[3])
+drag, drop = DragTo(grid.boxes[9].rows[1], blank)
 assert(drop.kind == "group" and drop.group == 1, "an empty row in a claimed box appends to it")
 
 -- A palette entry drags in as raw text, and dragging back onto the palette removes.
-drag, drop = Drag(grid.boxes[10].rows[2], grid.boxes[1].rows[3])
+drag, drop = DragTo(palette.rows[2], blank)
 assert(drag.kind == "text" and drag.text == "Kaza", "the palette drags a name as text")
 
-drag, drop = Drag(grid.boxes[1].rows[1], grid.boxes[10].rows[1])
+drag, drop = DragTo(filled, palette.rows[1])
 assert(drop.kind == "remove", "dropping onto the palette removes the slot")
 ok, moved = layout.ApplyDrop(grid.model, drag, drop)
 assert(ok and table.concat(moved.groups[1].slots, ",") == "B", "the reported gesture removes the slot")
 
+-- An unused row has nothing to pick up, and travelling off it is not a click on
+-- it either.
+emptyClicked = nil
+drag, drop = DragTo(blank, grid.boxes[2].rows[1])
+assert(drag == nil and drop == nil, "an unused row cannot start a drag")
+assert(not emptyClicked, "a press that travelled off a row is not a click on it")
+
 -- Releasing on empty space inside the grid cancels; releasing away from it removes.
-drag, drop = Drag(grid.boxes[1].rows[1], nil, true)
+local insideX = select(1, CentreOf(grid.boxes[2]))
+local insideY = select(2, CentreOf(grid.boxes[9]))
+assert(insideX > grid.boxes[9]:GetRight(), "the cancel point clears the last row of boxes")
+drag, drop = GestureTo(filled, insideX, insideY)
 assert(drag == nil and drop == nil, "a release inside the grid over no target is cancelled")
 
-drag, drop = Drag(grid.boxes[1].rows[1], nil, false)
+local awayX = grid.frame:GetRight() + 50
+drag, drop = GestureTo(filled, awayX, grid.frame:GetTop())
 assert(drop and drop.kind == "remove", "a release away from the grid removes the slot")
 
-drag, drop = Drag(grid.boxes[10].rows[1], nil, false)
+drag, drop = GestureTo(palette.rows[1], awayX, grid.frame:GetTop())
 assert(drag == nil, "a palette entry released over nothing is not a removal")
 
 -- A container that re-applies the width after every redraw, the way AceGUI's
@@ -268,9 +435,10 @@ assert(passes == 2, "a width change redraws once more and then settles")
 assert(grid.frame:GetWidth() == 360, "the grid keeps the width its container assigned")
 grid.parent = nil
 
--- Release clears the drag state so a stale gesture cannot fire later.
+-- Release clears the gesture so a stale press cannot fire later.
 grid:OnRelease()
-assert(grid.dragging == nil and grid.dropTarget == nil, "release clears the pending drag")
+assert(grid.pressed == nil and grid.dragging == nil, "release clears the pending gesture")
+assert(grid.dropTarget == nil, "release clears the pending drop")
 assert(grid.frame:GetScript("OnUpdate") == nil, "release stops the drag update loop")
 
 print("Layout grid tests passed.")

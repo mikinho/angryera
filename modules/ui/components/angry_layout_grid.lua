@@ -5,7 +5,7 @@
 -- instead, separately for a box title, a filled slot, and an unused row.
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 2
+local Type, Version = "AngryLayoutGrid", 3
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -20,7 +20,7 @@ local CreateFrame, UIParent = CreateFrame, UIParent
 
 -- Global vars/functions that we don't upvalue since they might get hooked, or upgraded
 -- List them here for Mikk's FindGlobals script
--- GLOBALS: GetMouseFocus, GetMouseFoci, SetCursor, CloseDropDownMenus, BackdropTemplateMixin
+-- GLOBALS: GetCursorPosition, IsMouseButtonDown, SetCursor, CloseDropDownMenus, BackdropTemplateMixin
 
 local MAX_SUBGROUPS = 8
 local MAX_SUBGROUP_SLOTS = 5
@@ -30,6 +30,8 @@ local HEADER_HEIGHT = 16
 local BOX_PADDING = 6
 local BOX_SPACING = 4
 local SECTION_SPACING = 8
+local DRAG_THRESHOLD = 4
+local MARKER_LEVEL = 20
 
 local PaneBackdrop = {
     bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -57,23 +59,46 @@ local function SetSolidColor(texture, r, g, b, a)
     texture:SetTexture(r, g, b, a)
 end
 
-local function GetMouseFocus()
-    if _G.GetMouseFocus then
-        return _G.GetMouseFocus()
+-- Reads the cursor in the same space frame edges are reported in.
+local function CursorPosition()
+    local x, y = GetCursorPosition()
+    local scale = UIParent:GetEffectiveScale()
+    if not scale or scale == 0 then
+        return x, y
     end
-    local foci = _G.GetMouseFoci and _G.GetMouseFoci()
-    return foci and foci[1]
+    return x / scale, y / scale
 end
 
--- Walks up from the hovered frame to the nearest frame carrying a drop target.
-local function GetTargetFromFrame(frame)
-    while frame do
-        if frame.obj and frame.layoutTarget then
-            return frame
+-- A frame reports edges only once it has been placed, so an unplaced one holds
+-- nothing.
+local function FrameContains(frame, x, y)
+    local left, right = frame:GetLeft(), frame:GetRight()
+    local bottom, top = frame:GetBottom(), frame:GetTop()
+    if not left or not right or not bottom or not top then
+        return false
+    end
+    return x >= left and x <= right and y >= bottom and y <= top
+end
+
+-- The row or title under the cursor within one box.
+local function BoxTargetAt(box, x, y)
+    for _, row in ipairs(box.rows) do
+        if row:IsShown() and FrameContains(row, x, y) then
+            return row
         end
-        frame = frame:GetParent()
-        if frame == UIParent then
-            break
+    end
+    if FrameContains(box.header, x, y) then
+        return box.header
+    end
+    return nil
+end
+
+-- Hit-testing walks our own boxes rather than asking the client what the mouse
+-- is over, so a drop resolves the same way on every client version.
+local function TargetAt(self, x, y)
+    for _, box in ipairs(self.boxes) do
+        if box:IsShown() and FrameContains(box, x, y) then
+            return BoxTargetAt(box, x, y)
         end
     end
     return nil
@@ -98,79 +123,21 @@ local function DropFromTarget(target)
 end
 
 -- Translates a pressed frame's target into a drag descriptor for ApplyDrop.
+-- Titles, unused rows, and unused palette space have nothing to pick up.
 local function DragFromTarget(target)
     if target.kind == "slot" then
         return { kind = "slot", group = target.group, slot = target.slot }
     end
-    if target.kind == "palette" then
+    if target.kind == "palette" and target.text then
         return { kind = "text", text = target.text }
     end
     return nil
 end
 
-local function Drag_OnUpdate(frame)
-    local self = frame.obj
-    if not self.dragging then
+local function FireClick(self, target, button)
+    if not target then
         return
     end
-
-    local hovered = GetTargetFromFrame(GetMouseFocus())
-    local marker = self.dropMarker
-    if not hovered or hovered.obj ~= self then
-        marker:Hide()
-        self.dropTarget = nil
-        return
-    end
-
-    self.dropTarget = DropFromTarget(hovered.layoutTarget)
-    if not self.dropTarget then
-        marker:Hide()
-        return
-    end
-
-    marker:ClearAllPoints()
-    marker:SetAllPoints(hovered)
-    marker:Show()
-end
-
-local function Slot_OnDragStart(frame)
-    local self = frame.obj
-    local drag = DragFromTarget(frame.layoutTarget)
-    if not drag then
-        return
-    end
-    self.dragging = drag
-    self.dropTarget = nil
-    CloseDropDownMenus()
-    SetCursor("Interface\\CURSOR\\Point.blp")
-    self.frame:SetScript("OnUpdate", Drag_OnUpdate)
-end
-
-local function Slot_OnDragStop(frame)
-    local self = frame.obj
-    local drag, drop = self.dragging, self.dropTarget
-    self.dragging, self.dropTarget = nil, nil
-    SetCursor(nil)
-    self.frame:SetScript("OnUpdate", nil)
-    self.dropMarker:Hide()
-
-    if not drag then
-        return
-    end
-    -- Releasing away from the grid discards the slot; releasing on unused space
-    -- inside it cancels, so a misaimed drag never silently drops a member.
-    if not drop then
-        if self.frame:IsMouseOver() or drag.kind ~= "slot" then
-            return
-        end
-        drop = { kind = "remove" }
-    end
-    self:Fire("OnLayoutDrop", drag, drop)
-end
-
-local function Slot_OnClick(frame, button)
-    local self = frame.obj
-    local target = frame.layoutTarget
     if target.kind == "slot" then
         self:Fire("OnSlotClick", target.group, target.slot, button)
         return
@@ -184,6 +151,119 @@ local function Slot_OnClick(frame, button)
     if target.kind == "header" then
         self:Fire("OnGroupClick", target.group, target.subgroup, button)
     end
+end
+
+-- Marks where a release would land. The marker rides a frame of its own because
+-- a child frame draws over every layer of its parent, so a texture on the
+-- widget frame would sit under the boxes it is meant to highlight.
+local function UpdateMarker(self, x, y)
+    local hovered = TargetAt(self, x, y)
+    local drop = hovered and DropFromTarget(hovered.layoutTarget)
+    self.dropTarget = drop
+    if not drop then
+        self.dropMarker:Hide()
+        return
+    end
+    self.dropMarker:ClearAllPoints()
+    self.dropMarker:SetAllPoints(hovered)
+    self.dropMarker:Show()
+end
+
+-- Travel past a few pixels is what separates a drag from a click on the row it
+-- started over.
+local function Travelled(pressed, x, y)
+    local dx, dy = x - pressed.x, y - pressed.y
+    return (dx * dx) + (dy * dy) >= (DRAG_THRESHOLD * DRAG_THRESHOLD)
+end
+
+-- Ends the gesture, reporting a drop when the press travelled and a click when
+-- it stayed put.
+local function FinishPress(self, x, y)
+    local pressed, dragging = self.pressed, self.dragging
+    if not pressed then
+        return
+    end
+    if dragging then
+        UpdateMarker(self, x, y)
+    end
+
+    local drop = self.dropTarget
+    self.pressed, self.dragging, self.dropTarget = nil, nil, nil
+    self.frame:SetScript("OnUpdate", nil)
+    self.dropMarker:Hide()
+    SetCursor(nil)
+
+    if not dragging then
+        if FrameContains(pressed.frame, x, y) then
+            FireClick(self, pressed.target, "LeftButton")
+        end
+        return
+    end
+
+    -- Releasing away from the grid discards the slot; releasing on unused space
+    -- inside it cancels, so a misaimed drag never silently drops a member.
+    if not drop then
+        if FrameContains(self.frame, x, y) or dragging.kind ~= "slot" then
+            return
+        end
+        drop = { kind = "remove" }
+    end
+    self:Fire("OnLayoutDrop", dragging, drop)
+end
+
+local function Drag_OnUpdate(frame)
+    local self = frame.obj
+    local pressed = self.pressed
+    if not pressed then
+        frame:SetScript("OnUpdate", nil)
+        return
+    end
+
+    local x, y = CursorPosition()
+    if not self.dragging and pressed.drag and Travelled(pressed, x, y) then
+        self.dragging = pressed.drag
+        CloseDropDownMenus()
+        SetCursor("Interface\\CURSOR\\Point.blp")
+    end
+
+    if self.dragging then
+        UpdateMarker(self, x, y)
+    end
+
+    if IsMouseButtonDown("LeftButton") then
+        return
+    end
+    -- The pressed frame reports the release itself; this catches one the client
+    -- swallowed, so a lost button never strands the cursor mid-drag.
+    FinishPress(self, x, y)
+end
+
+-- Tracking the press ourselves rather than through RegisterForDrag keeps the
+-- gesture identical on every client, and lets a row that cannot be dragged
+-- still resolve as a click.
+local function Target_OnMouseDown(frame, button)
+    if button ~= "LeftButton" then
+        return
+    end
+    local target = frame.layoutTarget
+    if not target then
+        return
+    end
+
+    local self = frame.obj
+    local x, y = CursorPosition()
+    self.pressed = { frame = frame, target = target, drag = DragFromTarget(target), x = x, y = y }
+    self.dragging, self.dropTarget = nil, nil
+    self.frame:SetScript("OnUpdate", Drag_OnUpdate)
+end
+
+local function Target_OnMouseUp(frame, button)
+    local self = frame.obj
+    if button ~= "LeftButton" then
+        FireClick(self, frame.layoutTarget, button)
+        return
+    end
+    FinishPress(self, CursorPosition())
 end
 
 --[[-----------------------------------------------------------------------------
@@ -208,8 +288,9 @@ local function AcquireBox(self, index)
     header:SetHeight(HEADER_HEIGHT)
     header:SetPoint("TOPLEFT", BOX_PADDING, -BOX_PADDING)
     header:SetPoint("TOPRIGHT", -BOX_PADDING, -BOX_PADDING)
-    header:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    header:SetScript("OnClick", Slot_OnClick)
+    header:RegisterForClicks("AnyDown", "AnyUp")
+    header:SetScript("OnMouseDown", Target_OnMouseDown)
+    header:SetScript("OnMouseUp", Target_OnMouseUp)
     header.obj = self
 
     local label = header:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
@@ -241,11 +322,9 @@ local function AcquireRow(self, box, index)
 
     row = CreateFrame("Button", nil, box)
     row:SetHeight(ROW_HEIGHT)
-    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    row:RegisterForDrag("LeftButton")
-    row:SetScript("OnClick", Slot_OnClick)
-    row:SetScript("OnDragStart", Slot_OnDragStart)
-    row:SetScript("OnDragStop", Slot_OnDragStop)
+    row:RegisterForClicks("AnyDown", "AnyUp")
+    row:SetScript("OnMouseDown", Target_OnMouseDown)
+    row:SetScript("OnMouseUp", Target_OnMouseUp)
     row.obj = self
 
     local background = row:CreateTexture(nil, "BACKGROUND")
@@ -314,16 +393,10 @@ local function BuildBoxPlan(self)
     return plan
 end
 
--- Empty rows accept drops but must never start one.
 local function FillRow(row, text, target)
     row.layoutTarget = target
     row.label:SetText(text or "")
     row.background:SetShown(text ~= nil)
-    if text then
-        row:RegisterForDrag("LeftButton")
-        return
-    end
-    row:RegisterForDrag()
 end
 
 local function BoxHeight(rows)
@@ -397,6 +470,7 @@ local methods = {
         self.layout = nil
         self.model = nil
         self.roster = {}
+        self.pressed = nil
         self.dragging = nil
         self.dropTarget = nil
         self.drawing = nil
@@ -413,6 +487,7 @@ local methods = {
         self.layout = nil
         self.model = nil
         self.roster = {}
+        self.pressed = nil
         self.dragging = nil
         self.dropTarget = nil
         self.drawing = nil
@@ -516,13 +591,17 @@ local function Constructor()
     local frame = CreateFrame("Frame", nil, UIParent)
     frame:Hide()
 
-    local dropMarker = frame:CreateTexture(nil, "OVERLAY")
-    SetSolidColor(dropMarker, 0, 1, 0, 0.35)
-    dropMarker:Hide()
+    local marker = CreateFrame("Frame", nil, frame)
+    marker:SetFrameLevel(frame:GetFrameLevel() + MARKER_LEVEL)
+    marker:Hide()
+
+    local markerFill = marker:CreateTexture(nil, "OVERLAY")
+    markerFill:SetAllPoints(marker)
+    SetSolidColor(markerFill, 0, 1, 0, 0.35)
 
     local widget = {
         frame = frame,
-        dropMarker = dropMarker,
+        dropMarker = marker,
         boxes = {},
         roster = {},
         type = Type,
