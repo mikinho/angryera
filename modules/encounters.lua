@@ -48,8 +48,8 @@ local function GetMetaValue(meta, canonicalKey)
     return nil
 end
 
-local function IsTruthyFlag(value)
-    return value == true or value == 1 or (type(value) == "string" and value:lower() == "true")
+local function IsEnabledFlag(value)
+    return value == true
 end
 
 local function NormalizedName(value)
@@ -474,7 +474,7 @@ function AngryEra:AdvanceDisplayedPageAfterEncounter(encounterId, encounterName)
     if not anchor then
         return false, anchorError or "no-anchor-page"
     end
-    if not IsTruthyFlag(GetMetaValue(meta, "AUTOADVANCE")) then
+    if not IsEnabledFlag(GetMetaValue(meta, "AUTOADVANCE")) then
         return false, "auto-advance-disabled"
     end
 

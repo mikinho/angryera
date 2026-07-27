@@ -21,7 +21,7 @@ AngryAssign_Categories = {
     [1] = {
         Id = 1,
         Name = "Root",
-        Vars = "root=yes\n$AUTOAPPLYLAYOUT=true",
+        Vars = "root=yes\n$AUTOAPPLYLAYOUT=$true",
     },
     [2] = {
         Id = 2,
@@ -118,7 +118,7 @@ end
 local exported = serialization.GetCategoryExportData(AngryEra, 1)
 assert(exported and exported.VariablesIncluded == nil, "Full category exports should retain the legacy payload shape")
 assert(
-    exported.Vars == "root=yes\n$AUTOAPPLYLAYOUT=true",
+    exported.Vars == "root=yes\n$AUTOAPPLYLAYOUT=$true",
     "Root category variables and metadata should be exported exactly"
 )
 assert(exported.Children[1].Type == "Page", "Encoded children should retain deterministic ordering")

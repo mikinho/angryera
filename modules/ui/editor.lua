@@ -1264,7 +1264,7 @@ local function AngryEra_EditVariables(id, entityType)
     frame:AddChild(importStatus)
 
     local editBox = AceGUI:Create("MultiLineEditBox")
-    editBox:SetLabel("Variables (JSON or Key=Value pairs)")
+    editBox:SetLabel("Variables (JSON or Key=Value; Key=Value booleans: $true / $false)")
     editBox:SetNumLines(14)
     editBox:SetText(vars)
     editBox:SetFullWidth(true)

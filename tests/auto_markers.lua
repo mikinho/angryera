@@ -197,6 +197,35 @@ local applied = AngryEra_ApplyAutoMarkers(markerMeta, publicVars)
 assert(applied == 1, "the production marker bridge should apply one marker, got " .. tostring(applied))
 assert(FindAssignment(6) == "raid1", "square should land on the same-realm exact match")
 
+-- Bare true/false values are player names in Key=Value storage. Only the
+-- collision-safe $true/$false literals become non-string booleans.
+Reset()
+raidRoster[#raidRoster + 1] = { name = "True", rank = 0 }
+raidRoster[#raidRoster + 1] = { name = "False", rank = 0 }
+merged, mergeError = variables.MergeVariableLayers({}, "$SQUARE=true\n$SKULL=false")
+assert(merged and not mergeError, "boolean-looking marker names should merge as strings")
+publicVars, markerMeta, partitionError = variables.PartitionResolvedVariables(merged)
+assert(publicVars and markerMeta and not partitionError, "boolean-looking marker names should partition")
+assert(markerMeta.SQUARE == "true" and markerMeta.SKULL == "false", "marker player names should stay strings")
+applied = AngryEra_ApplyAutoMarkers(markerMeta, publicVars)
+assert(applied == 2, "boolean-looking player names should both receive their requested markers")
+assert(FindAssignment(6) == "raid9", "square should resolve the player named True")
+assert(FindAssignment(8) == "raid10", "skull should resolve the player named False")
+
+Reset()
+raidRoster[#raidRoster + 1] = { name = "True", rank = 0 }
+raidRoster[#raidRoster + 1] = { name = "False", rank = 0 }
+merged, mergeError = variables.MergeVariableLayers({}, "$SQUARE=$true\n$SKULL=$false")
+assert(merged and not mergeError, "typed marker booleans should merge")
+publicVars, markerMeta, partitionError = variables.PartitionResolvedVariables(merged)
+assert(publicVars and markerMeta and not partitionError, "typed marker booleans should partition")
+assert(
+    markerMeta.SQUARE == true and markerMeta.SKULL == false,
+    "exact $true/$false marker values should remain typed booleans"
+)
+applied = AngryEra_ApplyAutoMarkers(markerMeta, publicVars)
+assert(applied == 0 and #assignments == 0, "typed booleans should never be mistaken for player names")
+
 -- Realm-qualified names match cross-realm members exactly.
 Reset()
 applied = AngryEra_ApplyAutoMarkers({

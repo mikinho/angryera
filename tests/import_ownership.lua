@@ -289,7 +289,7 @@ AngryAssign_Pages[6] = {
     Id = 6,
     Name = "Local Variables",
     Contents = "old",
-    Vars = "KEEP=local\n$AUTOADVANCE=true",
+    Vars = "KEEP=local\n$AUTOADVANCE=$true",
     SyncId = "local:page:6",
     LocallyOwned = true,
 }
@@ -310,7 +310,7 @@ local variablesExcludedPageId = AngryEra:DoImportPage(
 assert(variablesExcludedPageId == 6, "A variable-free page import should still replace an editable root")
 assert(AngryAssign_Pages[6].Contents == "new", "A variable-free page import should still replace content")
 assert(
-    AngryAssign_Pages[6].Vars == "KEEP=local\n$AUTOADVANCE=true",
+    AngryAssign_Pages[6].Vars == "KEEP=local\n$AUTOADVANCE=$true",
     "An explicit variable-free import should preserve overwritten root variables"
 )
 
@@ -338,7 +338,7 @@ assert(
 AngryAssign_Categories[7] = {
     Id = 7,
     Name = "Existing Root",
-    Vars = "KEEP=root\n$AUTOAPPLYLAYOUT=true",
+    Vars = "KEEP=root\n$AUTOAPPLYLAYOUT=$true",
     SyncId = "local:category:7",
     LocallyOwned = true,
 }
@@ -378,7 +378,7 @@ local replacedVariableFreeCategoryId = AngryEra:DoImportCategory(
 )
 assert(replacedVariableFreeCategoryId == 7, "A payload flag should not prevent category replacement")
 assert(
-    AngryAssign_Categories[7].Vars == "KEEP=root\n$AUTOAPPLYLAYOUT=true",
+    AngryAssign_Categories[7].Vars == "KEEP=root\n$AUTOAPPLYLAYOUT=$true",
     "A false payload flag should preserve overwritten root variables"
 )
 

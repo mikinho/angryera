@@ -413,9 +413,9 @@ function json.ParseVariables(str)
                 if n then
                     obj[key] = n
                 end
-                if val == "true" then
+                if val == "$true" then
                     obj[key] = true
-                elseif val == "false" then
+                elseif val == "$false" then
                     obj[key] = false
                 end
             end
@@ -507,6 +507,10 @@ function json.ResolveVariableReferences(variables, maxDepth, maxOutputBytes, max
                     or type(referenceValue) == "number"
                     or type(referenceValue) == "boolean"
                 then
+                    if type(referenceValue) == "boolean" and referenceStart == 1 and referenceEnd == #value then
+                        resolving[key] = nil
+                        return StoreResolved(key, referenceValue)
+                    end
                     replacement = tostring(referenceValue)
                 else
                     replacement = "{{" .. reference .. "}}"

@@ -199,6 +199,17 @@ assert(layout.ExpandSlotVariables("{{MT}}", nil) == "", "no variable map leaves 
 assert(layout.ExpandSlotVariables("Vhez", providers.Variables) == "Vhez", "a slot without a token is untouched")
 providers.Variables = nil
 
+local booleanNameVariables = json.ParseVariables("LOWER=true\nTITLE=True\nENABLED=$true")
+assert(
+    layout.ExpandSlotVariables("{{LOWER}}", booleanNameVariables) == "true"
+        and layout.ExpandSlotVariables("{{TITLE}}", booleanNameVariables) == "True",
+    "boolean-looking player names should remain usable layout slots"
+)
+assert(
+    layout.ExpandSlotVariables("{{ENABLED}}", booleanNameVariables) == "",
+    "a typed boolean should not become a player slot"
+)
+
 -- Vars source round-trip: extract, upsert (replace, append, preserve, remove).
 assert(layout.ExtractSource("MT=Vn\n$LAYOUT=G1: A, B\nOT=Zed") == "G1: A, B", "extracts the layout line")
 assert(layout.ExtractSource("MT=Vn") == nil, "no layout line yields nil")

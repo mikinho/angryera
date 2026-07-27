@@ -223,8 +223,8 @@ local function MetadataValue(meta, canonicalKey)
     return nil
 end
 
-local function TruthyMetadataFlag(value)
-    return value == true or value == 1 or (type(value) == "string" and value:lower() == "true")
+local function MetadataFlagEnabled(value)
+    return value == true
 end
 
 local function DisplayedMetadata(self)
@@ -238,11 +238,11 @@ end
 -- The accepted snapshot is authoritative during a display transition,
 -- including inherited context sent with a remote page. Later authorization
 -- checks re-read the current displayed snapshot so combat-queued work cannot
--- outlive a nearer `$AUTOAPPLYLAYOUT=false` override.
+-- outlive a nearer `$AUTOAPPLYLAYOUT=$false` override.
 local function AutoApplyEnabled(self, snapshot)
     local meta = type(snapshot) == "table" and type(snapshot.Meta) == "table" and snapshot.Meta
         or DisplayedMetadata(self)
-    return TruthyMetadataFlag(MetadataValue(meta, "AUTOAPPLYLAYOUT"))
+    return MetadataFlagEnabled(MetadataValue(meta, "AUTOAPPLYLAYOUT"))
 end
 
 local function IsLocalRaidLeader(self)

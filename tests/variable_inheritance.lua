@@ -91,23 +91,33 @@ for _, key in ipairs(reservedCaseKeys) do
 end
 
 merged, mergeError = variables.MergeVariableLayers({
-    { Vars = "$AUTOAPPLYLAYOUT=true" },
+    { Vars = "$AUTOAPPLYLAYOUT=$true" },
 }, "")
 assert(merged and not mergeError, "inherited automatic layout metadata should merge")
 assert(merged["$AUTOAPPLYLAYOUT"] == true, "automatic layout metadata should inherit from a category")
 
 merged, mergeError = variables.MergeVariableLayers({
-    { Vars = "$AUTOAPPLYLAYOUT=true" },
-}, "$autoapplylayout=false")
+    { Vars = "$AUTOAPPLYLAYOUT=$true" },
+}, "$autoapplylayout=$false")
 assert(merged and not mergeError, "a page should override inherited automatic layout metadata")
 assert(merged["$AUTOAPPLYLAYOUT"] == nil, "the inherited automatic layout spelling should be removed")
 assert(merged["$autoapplylayout"] == false, "a page should be able to disable inherited automatic layout application")
 
 merged, mergeError = variables.MergeVariableLayers({
-    { Vars = "$AUTOAPPLYLAYOUT=false" },
-}, "$autoapplylayout=true")
+    { Vars = "$AUTOAPPLYLAYOUT=$false" },
+}, "$autoapplylayout=$true")
 assert(merged and not mergeError, "a page should enable automatic layouts above an inherited false")
 assert(merged["$autoapplylayout"] == true, "the nearest automatic layout metadata should win")
+
+merged, mergeError = variables.MergeVariableLayers(
+    {},
+    "AUTOMATION_ENABLED=$true\n$AUTOADVANCE={{AUTOMATION_ENABLED}}\n$AUTOAPPLYLAYOUT={{AUTOMATION_ENABLED}}"
+)
+assert(merged and not mergeError, "referenced typed automation metadata should merge")
+assert(
+    merged["$AUTOADVANCE"] == true and merged["$AUTOAPPLYLAYOUT"] == true,
+    "an exact reference should preserve the boolean type required by automation"
+)
 
 merged, mergeError = variables.MergeVariableLayers({
     { Vars = "$CROSS=ancestor" },
@@ -127,9 +137,9 @@ assert(merged["$custom"] == "lower-page", "Exact custom metadata keys should sti
 merged, mergeError = variables.MergeVariableLayers({}, "$CROSS=Alice\n$X=Bob")
 AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer marker alias conflict")
 
-merged, mergeError = variables.MergeVariableLayers({}, "$AUTOADVANCE=true\n$autoadvance=false")
+merged, mergeError = variables.MergeVariableLayers({}, "$AUTOADVANCE=$true\n$autoadvance=$false")
 AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer reserved case conflict")
-merged, mergeError = variables.MergeVariableLayers({}, "$AUTOAPPLYLAYOUT=true\n$autoapplylayout=false")
+merged, mergeError = variables.MergeVariableLayers({}, "$AUTOAPPLYLAYOUT=$true\n$autoapplylayout=$false")
 AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer automatic layout case conflict")
 
 local emptyLayers, emptyLayerError = variables.ValidateAncestorVariableLayers({}, nil)
@@ -311,11 +321,16 @@ EMPTY1=
 SAME1=Roselea
 SAME2=Roselea
 NUMBER1=7
-BOOLEAN1=true
+BOOLEAN1=$true
+NAME1=true
+NAME2=false
+NAME3=True
+NAME4=False
 DRUID1=DruidOne
 STABLE*=EMPTY*,DRUID1
 DUPLICATE*=SAME*
 STRING_ONLY*=NUMBER*,BOOLEAN*,DRUID1
+BOOLEAN_NAMES*=NAME*
 ]]
 )
 assert(merged and not mergeError, "family member filtering should resolve")
@@ -330,6 +345,13 @@ assert(
 assert(
     merged.STRING_ONLY1 == "DruidOne" and merged.STRING_ONLY2 == nil,
     "numeric and boolean source values should not become role-family members"
+)
+assert(
+    merged.BOOLEAN_NAMES1 == "true"
+        and merged.BOOLEAN_NAMES2 == "false"
+        and merged.BOOLEAN_NAMES3 == "True"
+        and merged.BOOLEAN_NAMES4 == "False",
+    "boolean-looking player names should remain ordered string family members"
 )
 
 merged, mergeError =

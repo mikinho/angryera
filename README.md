@@ -8,9 +8,9 @@ Supported game clients:
 - Burning Crusade Anniversary 2.5.6
 
 > [!IMPORTANT]
-> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.1 and newer can continue sharing pages that use only their common features, but every viewer needs v3.3 or newer to render group layouts, variable families, or imported raid-role variables. Existing local pages and settings are migrated automatically; downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
+> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.1 and newer can continue sharing pages that use only their common features, but every viewer needs v3.3 or newer to render group layouts, variable families, imported raid-role variables, or the Key=Value `$true`/`$false` boolean literals. Existing local pages and settings are migrated automatically for the v3.1 data model, but Key=Value automation flags are not rewritten: replace legacy `=true` and `=false` flag values with `=$true` and `=$false`, respectively. Downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
 
-Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on group layouts, variable families, or imported raid-role variables in a mixed pre-v3.3 raid.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on group layouts, variable families, imported raid-role variables, or Key=Value boolean metadata in a mixed pre-v3.3 raid.
 
 ## What is new
 
@@ -171,6 +171,8 @@ OT1=Kwayteow
 HEALER=Eblis
 ```
 
+In Key=Value storage, booleans use the exact lowercase literals `$true` and `$false`. Plain `true`, `false`, `True`, and `False` are strings so they remain valid player names. An exact whole-value reference to a boolean, such as `$AUTOADVANCE={{ENABLED}}`, keeps the boolean type; a boolean embedded in other text renders as `true` or `false`. JSON keeps its native boolean syntax: use `true` or `false` without quotes for a boolean, and quotes for a string or player name. The new Key=Value literals require AngryEra v3.3 or newer on every client that needs to interpret them.
+
 Use them in page text with Mustache syntax:
 
 ```text
@@ -283,7 +285,7 @@ Suppose every encounter uses the same basic subgroup shape, but the people chang
 TANK*=RAID_TANK*
 HEALER*=RAID_HEALER*
 DPS*=RAID_DPS*
-$AUTOAPPLYLAYOUT=true
+$AUTOAPPLYLAYOUT=$true
 ```
 
 Build this category layout visually, or put its full Key=Value line in **Edit Variables**:
@@ -433,7 +435,7 @@ To advance assignments after boss kills:
 2. Right-click the category, choose **Edit Variables**, and add:
 
    ```text
-   $AUTOADVANCE=true
+   $AUTOADVANCE=$true
    ```
 
 3. Name each page after its encounter, or add an explicit page binding:
@@ -451,7 +453,7 @@ To advance assignments after boss kills:
 4. To stop after a particular page, override the inherited setting on that page:
 
    ```text
-   $AUTOADVANCE=false
+   $AUTOADVANCE=$false
    ```
 
 Only the current group leader advances the shared display. Successful kills advance; wipes do not. Auto-advance uses locally owned sibling pages inside one category; it does not infer a sequence from root-level, unfiled, or received remote-owned pages. Advancement stops when there is no next page. Duplicate encounter names or IDs are treated as ambiguous and do not advance.
@@ -513,10 +515,10 @@ Raid subgroup changes are protected during combat. If you use **Apply to Raid** 
 To apply layouts automatically as pages change, right-click a page or category, choose **Edit Variables**, and add:
 
 ```text
-$AUTOAPPLYLAYOUT=true
+$AUTOAPPLYLAYOUT=$true
 ```
 
-`$AUTOAPPLYLAYOUT` inherits like `$LAYOUT` and is off when absent or false. Put it on a category to enable automatic layouts for its descendants, or set `$AUTOAPPLYLAYOUT=false` on a page or nearer category to disable it there. When a different page with an effective true value becomes the shared display, the raid leader automatically requests that destination page's effective layout using the same combat queue and validation.
+`$AUTOAPPLYLAYOUT` inherits like `$LAYOUT` and is off when absent or `$false`. Put it on a category to enable automatic layouts for its descendants, or set `$AUTOAPPLYLAYOUT=$false` on a page or nearer category to disable it there. When a different page with an effective `$true` value becomes the shared display, the raid leader automatically requests that destination page's effective layout using the same combat queue and validation.
 
 AngryEra first records an initial display state. After that, transitioning from no displayed page or another page to a page with a different identity can apply the destination layout. The initial state itself does not rearrange the raid, and saving, rerendering, or receiving a new revision of that same page does not trigger automatic application. After editing the current layout, use **Apply to Raid** if it should move the raid immediately. A destination page without an effective `$LAYOUT` is a quiet no-op. Qualified raid assistants remain manual-only and must use **Apply to Raid** or `/aa applylayout`.
 
@@ -701,7 +703,7 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 
 ### Automatic group layouts do not run
 
-- Add `$AUTOAPPLYLAYOUT=true` to the destination page or one of its ancestor categories; this is metadata, not an account setting.
+- Add `$AUTOAPPLYLAYOUT=$true` to the destination page or one of its ancestor categories; this is metadata, not an account setting.
 - Confirm the destination page also has an effective `$LAYOUT`.
 - Only the raid leader applies layouts automatically. Qualified assistants remain manual-only.
 - After AngryEra records its initial display state, transition from no page or another page to a page with a different identity. Saving, rerendering, and receiving a newer revision of the same page do not auto-apply.
@@ -719,7 +721,7 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 - Confirm the encounter ended successfully; wipes never advance.
 - Confirm the current client is the group leader.
 - Confirm the page is inside a category with a next sibling page.
-- Confirm the displayed page inherits `$AUTOADVANCE=true`.
+- Confirm the displayed page inherits `$AUTOADVANCE=$true`.
 - Match the page name to the encounter or add `$ENCOUNTER` or `$ENCOUNTERID`.
 - Remove duplicate encounter bindings.
 

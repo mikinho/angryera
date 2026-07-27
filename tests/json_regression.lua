@@ -122,6 +122,59 @@ do
     assert_equal(parsed.y, "a\nb", "Expected ParseVariables JSON path to decode escaped newline")
 end
 
+-- Key=Value booleans use collision-safe $ literals. Bare words remain strings
+-- so valid character names such as True and False are never coerced.
+do
+    local parsed = json.ParseVariables([[
+LowerTrue=true
+LowerFalse=false
+TitleTrue=True
+TitleFalse=False
+UpperTrue=TRUE
+UpperFalse=FALSE
+Enabled=$true
+Disabled=$false
+DollarTitle=$True
+]])
+    assert_equal(parsed.LowerTrue, "true", "Expected bare lowercase true to remain a string")
+    assert_equal(parsed.LowerFalse, "false", "Expected bare lowercase false to remain a string")
+    assert_equal(parsed.TitleTrue, "True", "Expected title-case True to remain a string")
+    assert_equal(parsed.TitleFalse, "False", "Expected title-case False to remain a string")
+    assert_equal(parsed.UpperTrue, "TRUE", "Expected uppercase TRUE to remain a string")
+    assert_equal(parsed.UpperFalse, "FALSE", "Expected uppercase FALSE to remain a string")
+    assert_equal(parsed.Enabled, true, "Expected exact $true to decode as boolean true")
+    assert_equal(parsed.Disabled, false, "Expected exact $false to decode as boolean false")
+    assert_equal(parsed.DollarTitle, "$True", "Expected non-canonical $True to remain a string")
+end
+
+-- JSON retains standard boolean syntax and does not reinterpret quoted strings.
+do
+    local parsed = json.ParseVariables([[{"Enabled":true,"Disabled":false,"Name":"true","Dollar":"$true"}]])
+    assert_equal(parsed.Enabled, true, "Expected native JSON true to remain boolean")
+    assert_equal(parsed.Disabled, false, "Expected native JSON false to remain boolean")
+    assert_equal(parsed.Name, "true", "Expected a quoted JSON player name to remain a string")
+    assert_equal(parsed.Dollar, "$true", "Expected a quoted JSON $true value to remain a string")
+end
+
+-- An exact reference to a typed boolean preserves its type. Embedded references
+-- still interpolate text, and references to boolean-looking names stay strings.
+do
+    local resolved = json.ResolveVariableReferences({
+        Enabled = true,
+        Disabled = false,
+        AutoAdvance = "{{Enabled}}",
+        AutoApply = "{{Disabled}}",
+        Label = "Enabled: {{Enabled}}",
+        Player = "true",
+        Marker = "{{Player}}",
+    })
+
+    assert_equal(resolved.AutoAdvance, true, "Expected an exact true reference to preserve its boolean type")
+    assert_equal(resolved.AutoApply, false, "Expected an exact false reference to preserve its boolean type")
+    assert_equal(resolved.Label, "Enabled: true", "Expected an embedded boolean reference to interpolate as text")
+    assert_equal(resolved.Marker, "true", "Expected a referenced boolean-looking player name to remain a string")
+end
+
 -- Variable references should resolve recursively while preserving invalid references.
 do
     local resolved = json.ResolveVariableReferences({

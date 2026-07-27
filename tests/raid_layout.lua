@@ -616,7 +616,7 @@ Setup({
     { Name = "Alice-Home", Subgroup = 1 },
     { Name = "Bob-Home", Subgroup = 1 },
 }, "Old/2: Alice")
-autoApplyLayoutValue = 1
+autoApplyLayoutValue = true
 localRaidLeader = true
 AngryEra:ObserveDisplayedRaidLayout(activeReference)
 autoAcknowledgeRaidApi = false
@@ -755,9 +755,22 @@ assert(
     "page swaps do not apply layouts without effective $AUTOAPPLYLAYOUT metadata"
 )
 
+for _, legacyValue in ipairs({ "true", "TRUE", 1 }) do
+    Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
+    autoApplyLayoutValue = legacyValue
+    localRaidLeader = true
+    AngryEra:ObserveDisplayedRaidLayout(activeReference)
+    activeReference = Reference("page-b", 1, "revision-b", "context-b")
+    applied, reason = AngryEra:ObserveDisplayedRaidLayout(activeReference)
+    assert(
+        not applied and reason == "auto-disabled" and #operations == 0,
+        "untyped automatic-layout values should remain disabled"
+    )
+end
+
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
 autoApplyLayoutKey = "autoapplylayout"
-autoApplyLayoutValue = "TRUE"
+autoApplyLayoutValue = true
 localRaidLeader = true
 AngryEra:ObserveDisplayedRaidLayout(activeReference)
 activeReference = Reference("page-b", 1, "revision-b", "context-b")

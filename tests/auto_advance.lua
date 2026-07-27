@@ -119,7 +119,7 @@ _G.AngryAssign_Categories = {
         Name = "Molten Core",
         SyncId = CategorySyncId(1),
         OwnerId = localInstallationId,
-        Vars = "$AUTOADVANCE=true",
+        Vars = "$AUTOADVANCE=$true",
     },
     [2] = {
         Id = 2,
@@ -133,7 +133,7 @@ _G.AngryAssign_Categories = {
         Name = "Alternate",
         SyncId = CategorySyncId(3),
         OwnerId = localInstallationId,
-        Vars = "$AUTOADVANCE=true",
+        Vars = "$AUTOADVANCE=$true",
     },
 }
 
@@ -154,7 +154,7 @@ _G.AngryAssign_Pages = {
     [10] = LocalPage(10, "Lucifron", 1, 1),
     [11] = LocalPage(11, "Magmadar", 1, 2),
     [12] = LocalPage(12, "Patch", 1, 3, "$ENCOUNTERID=1112"),
-    [13] = LocalPage(13, "Ragnaros", 1, 4, "$AUTOADVANCE=false"),
+    [13] = LocalPage(13, "Ragnaros", 1, 4, "$AUTOADVANCE=$false"),
     [14] = LocalPage(14, "Loot", 1, 5),
     [20] = LocalPage(20, "Onyxia", 2, 1),
     [21] = LocalPage(21, "Whelps", 2, 2),
@@ -220,6 +220,17 @@ assert(
     "encounter auto-advance should force immediate publication"
 )
 
+-- Automation flags require typed booleans. Bare text and numeric values must
+-- not retain the old truthy behavior.
+for _, legacyValue in ipairs({ "true", "TRUE", 1 }) do
+    Reset(10, { AUTOADVANCE = legacyValue })
+    advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
+    assert(
+        advanced == false and result == "auto-advance-disabled",
+        "untyped auto-advance values should remain disabled"
+    )
+end
+
 -- Wipes never advance.
 Reset(10, { AUTOADVANCE = true })
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 0)
@@ -245,12 +256,12 @@ assert(advanced == true and result == 13, "$ENCOUNTERID should anchor the advanc
 
 -- The exact displayed snapshot wins over receiver-local metadata changes.
 local originalCategoryVars = AngryAssign_Categories[1].Vars
-AngryAssign_Categories[1].Vars = "$AUTOADVANCE=false"
+AngryAssign_Categories[1].Vars = "$AUTOADVANCE=$false"
 Reset(10, { AUTOADVANCE = true })
 SetExactActiveContext({
     {
         SyncId = CategorySyncId(1),
-        Vars = "$AUTOADVANCE=true",
+        Vars = "$AUTOADVANCE=$true",
     },
 })
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
@@ -261,7 +272,7 @@ Reset(12, { AUTOADVANCE = true, ENCOUNTERID = 1112 })
 SetExactActiveContext({
     {
         SyncId = CategorySyncId(1),
-        Vars = "$AUTOADVANCE=true",
+        Vars = "$AUTOADVANCE=$true",
     },
 })
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
@@ -270,10 +281,10 @@ AngryAssign_Categories[1].Vars = originalCategoryVars
 
 -- A rendered page-level false value stops the chain even if local data says true.
 Reset(13, { AUTOADVANCE = false })
-AngryAssign_Pages[13].Vars = "$AUTOADVANCE=true"
+AngryAssign_Pages[13].Vars = "$AUTOADVANCE=$true"
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 672, "Ragnaros", 9, 40, 1)
 assert(advanced == false and result == "auto-advance-disabled", "the exact rendered false flag should stop the chain")
-AngryAssign_Pages[13].Vars = "$AUTOADVANCE=false"
+AngryAssign_Pages[13].Vars = "$AUTOADVANCE=$false"
 
 -- Categories without $AUTOADVANCE never advance.
 Reset(20, {})
@@ -345,7 +356,7 @@ AngryAssign_Categories[7] = {
     Name = "Search Bound",
     SyncId = CategorySyncId(7),
     OwnerId = localInstallationId,
-    Vars = "$AUTOADVANCE=true",
+    Vars = "$AUTOADVANCE=$true",
 }
 for index = 1, 65 do
     local id = 7000 + index
@@ -384,7 +395,7 @@ AngryAssign_Categories[8] = {
     Name = "Oversized",
     SyncId = CategorySyncId(8),
     OwnerId = localInstallationId,
-    Vars = "$AUTOADVANCE=true",
+    Vars = "$AUTOADVANCE=$true",
 }
 for index = 1, 513 do
     local id = 8000 + index
@@ -404,7 +415,7 @@ AngryAssign_Categories[9] = {
     Name = "Heavy",
     SyncId = CategorySyncId(9),
     OwnerId = localInstallationId,
-    Vars = "$AUTOADVANCE=true",
+    Vars = "$AUTOADVANCE=$true",
 }
 for index = 1, 60 do
     local id = 9000 + index
@@ -513,13 +524,13 @@ assert(advanced == false and result == "encounter-not-defeated", "a wipe must no
 assert(#syncTraces == 1 and syncTraces[1].Text:find("encounter%-not%-defeated"), "a wipe outcome should be traced")
 
 syncTraces = {}
-advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
+advanced = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
 assert(advanced == true, "a kill should advance")
 assert(#syncTraces == 1 and syncTraces[1].Text:find("advanced=true"), "a successful advance should be traced")
 
 syncDebugEnabled = false
 syncTraces = {}
-advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 0)
+AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 0)
 assert(#syncTraces == 0, "tracing must stay silent when debug is disabled")
 
 print("Auto advance tests passed.")
