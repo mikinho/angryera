@@ -181,6 +181,8 @@ OT1=Kwayteow
 HEALER=Eblis
 ```
 
+The Edit Variables window owns its own Escape key: pressing Escape or its close button leaves the main AngryEra window open. If the current draft differs from the last opened or successfully saved value, AngryEra asks before discarding it.
+
 In Key=Value storage, booleans use the exact lowercase literals `$true` and `$false`. Plain `true`, `false`, `True`, and `False` are strings so they remain valid player names. An exact whole-value reference to a boolean, such as `$AUTOADVANCE={{ENABLED}}`, keeps the boolean type; a boolean embedded in other text renders as `true` or `false`. JSON keeps its native boolean syntax: use `true` or `false` without quotes for a boolean, and quotes for a string or player name. The new Key=Value literals require AngryEra v3.2.1 or newer on every client that needs to interpret them.
 
 Use them in page text with Mustache syntax:
@@ -534,6 +536,8 @@ Spore soakers:
 ```
 
 Edit it from the page's or the category's right-click menu → **Edit Group Layout**. The editor opens on a fixed visual grid: all eight raid subgroup boxes stay visible in two columns. **Unrostered** is the third column, and **Variables** is the fourth column to its right; each list scrolls independently when needed without moving the subgroup boxes.
+
+Escape and the close button dismiss only the Group Layout editor, leaving the main AngryEra window open. If its layout or inheritance choice has unsaved changes, AngryEra asks before discarding them; canceling keeps the draft intact.
 
 The Variables column shows the unused effective string variables inherited by the page or category being edited. For an actively displayed received page, AngryEra uses the leader's authoritative shared inheritance context rather than that page's placement in your local tree. Dragging one into a subgroup stores its exact token, such as `{{MT}}`, rather than the player name it currently resolves to, so the layout stays dynamic when that variable changes. Once a token is used, it disappears from the column; other variables that currently resolve to the same assigned player disappear too. Moving the slot keeps those entries unavailable, while removing it makes eligible variables available again. Manually typed and text-mode layouts are validated against the same no-duplicate rule when saved. Numeric variables are not offered as whole-slot entries, but remain available inside expressions you type manually, such as `*MAGE x{{Count}}`.
 

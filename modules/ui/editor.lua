@@ -1221,6 +1221,126 @@ function layoutEditor.ImportAssignedRoles(rawVariables)
         }
 end
 
+local DEFAULT_VARS_TEMPLATE = "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK="
+local auxiliaryEditorSequence = 0
+local auxiliaryEditorEscape = {
+    Stack = {},
+    Generation = 0,
+    SessionActive = false,
+    MainWasRegistered = false,
+}
+local CloseLayoutModal
+local AngryEra_LayoutConfirmPopup
+local AttachEditorCloseGuard
+
+local function NormalizeVariableEditorDraft(text)
+    text = type(text) == "string" and text:gsub("\r\n", "\n"):gsub("\r", "\n") or ""
+    if text == "" or text == DEFAULT_VARS_TEMPLATE then
+        return nil
+    end
+    return text
+end
+
+layoutEditor.NormalizeVariableEditorDraft = NormalizeVariableEditorDraft
+
+local function RemoveSpecialFrameName(name)
+    local removed = false
+    if type(UISpecialFrames) ~= "table" then
+        return removed
+    end
+    for index = #UISpecialFrames, 1, -1 do
+        if UISpecialFrames[index] == name then
+            table.remove(UISpecialFrames, index)
+            removed = true
+        end
+    end
+    return removed
+end
+
+local function AddSpecialFrameName(name)
+    if type(UISpecialFrames) ~= "table" or type(name) ~= "string" or name == "" then
+        return
+    end
+    for _, registered in ipairs(UISpecialFrames) do
+        if registered == name then
+            return
+        end
+    end
+    table.insert(UISpecialFrames, name)
+end
+
+-- Only the newest auxiliary editor participates in Blizzard's Escape pass.
+-- The main AngryEra window is suspended until the last child closes, and a
+-- previous child/main registration is restored on the next frame so the same
+-- Escape traversal cannot immediately hide it too.
+local function ActivateAuxiliaryEscapeFrame()
+    RemoveSpecialFrameName("AngryEra_Window")
+    for _, entry in ipairs(auxiliaryEditorEscape.Stack) do
+        RemoveSpecialFrameName(entry.Name)
+    end
+
+    local top = auxiliaryEditorEscape.Stack[#auxiliaryEditorEscape.Stack]
+    if top then
+        AddSpecialFrameName(top.Name)
+        return
+    end
+    if auxiliaryEditorEscape.SessionActive and auxiliaryEditorEscape.MainWasRegistered then
+        AddSpecialFrameName("AngryEra_Window")
+    end
+    auxiliaryEditorEscape.SessionActive = false
+    auxiliaryEditorEscape.MainWasRegistered = false
+end
+
+local function ScheduleAuxiliaryEscapeRefresh()
+    auxiliaryEditorEscape.Generation = auxiliaryEditorEscape.Generation + 1
+    local generation = auxiliaryEditorEscape.Generation
+    local function Refresh()
+        if generation == auxiliaryEditorEscape.Generation then
+            ActivateAuxiliaryEscapeFrame()
+        end
+    end
+    if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+        C_Timer.After(0, Refresh)
+    else
+        Refresh()
+    end
+end
+
+local function RegisterAuxiliaryEscapeFrame(frame)
+    if not auxiliaryEditorEscape.SessionActive then
+        auxiliaryEditorEscape.SessionActive = true
+        auxiliaryEditorEscape.MainWasRegistered = RemoveSpecialFrameName("AngryEra_Window")
+    end
+
+    auxiliaryEditorSequence = auxiliaryEditorSequence + 1
+    local entry = {
+        Frame = frame,
+        Name = "AngryEra_AuxiliaryEditor_Window_" .. auxiliaryEditorSequence,
+    }
+    _G[entry.Name] = frame
+    auxiliaryEditorEscape.Stack[#auxiliaryEditorEscape.Stack + 1] = entry
+    auxiliaryEditorEscape.Generation = auxiliaryEditorEscape.Generation + 1
+    ActivateAuxiliaryEscapeFrame()
+    return entry
+end
+
+local function UnregisterAuxiliaryEscapeFrame(entry)
+    if type(entry) ~= "table" then
+        return
+    end
+    RemoveSpecialFrameName(entry.Name)
+    if _G[entry.Name] == entry.Frame then
+        _G[entry.Name] = nil
+    end
+    for index = #auxiliaryEditorEscape.Stack, 1, -1 do
+        if auxiliaryEditorEscape.Stack[index] == entry then
+            table.remove(auxiliaryEditorEscape.Stack, index)
+            break
+        end
+    end
+    ScheduleAuxiliaryEscapeRefresh()
+end
+
 local function AngryEra_EditVariables(id, entityType)
     entityType = entityType == "category" and "category" or "page"
     local reference = type(layoutEditor.ReferenceEntity) == "function" and layoutEditor.ReferenceEntity(id, entityType)
@@ -1241,10 +1361,10 @@ local function AngryEra_EditVariables(id, entityType)
     end
     local expectedVariables = type(vars) == "string" and vars or ""
 
-    local DEFAULT_VARS_TEMPLATE = "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK="
     if not vars or vars == "" or vars == "{}" then
         vars = DEFAULT_VARS_TEMPLATE
     end
+    local cleanDraft = NormalizeVariableEditorDraft(vars)
 
     local frame = AceGUI:Create("Window")
     frame:SetTitle("Edit Template Variables")
@@ -1252,8 +1372,6 @@ local function AngryEra_EditVariables(id, entityType)
     frame:SetWidth(430)
     frame:SetHeight(390)
     frame:EnableResize(true)
-    _G["AngryEra_EditVars_Window"] = frame.frame
-    table.insert(UISpecialFrames, "AngryEra_EditVars_Window")
 
     local importButton = AceGUI:Create("Button")
     importButton:SetText("Import Assigned Raid Roles")
@@ -1271,6 +1389,7 @@ local function AngryEra_EditVariables(id, entityType)
     editBox:SetText(vars)
     editBox:SetFullWidth(true)
     editBox:DisableButton(false)
+    local closeGuard
     importButton:SetCallback("OnClick", function()
         local updatedVariables, summaryOrError = layoutEditor.ImportAssignedRoles(editBox:GetText())
         if not updatedVariables then
@@ -1287,15 +1406,7 @@ local function AngryEra_EditVariables(id, entityType)
         AngryEra:Print(summaryMessage)
     end)
     editBox:SetCallback("OnEnterPressed", function(widget, event, text)
-        -- Normalize Line Endings
-        text = text:gsub("\r\n", "\n"):gsub("\r", "\n")
-
-        -- Don't save if unmodified default template
-        if text == "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK=" then
-            text = nil
-        elseif text == "" then
-            text = nil
-        end
+        text = NormalizeVariableEditorDraft(text)
 
         local saved, saveError, proposed = layoutEditor.SaveVariableSource(reference, text, expectedVariables)
         if not saved then
@@ -1313,14 +1424,27 @@ local function AngryEra_EditVariables(id, entityType)
         -- editor draft unchanged until the leader commits a new revision.
         if proposed then
             expectedVariables = type(text) == "string" and text or ""
+            cleanDraft = NormalizeVariableEditorDraft(editBox:GetText())
             return
         end
-        frame:Hide()
+        cleanDraft = NormalizeVariableEditorDraft(editBox:GetText())
+        closeGuard:Finish()
         AngryEra:UpdateDisplayed()
     end)
     frame:AddChild(editBox)
-    frame:SetCallback("OnClose", function(widget)
-        AceGUI:Release(widget)
+    closeGuard = AttachEditorCloseGuard({
+        Owner = frame.frame,
+        IsDirty = function()
+            return NormalizeVariableEditorDraft(editBox:GetText()) ~= cleanDraft
+        end,
+        Prompt = "Discard unsaved variable changes and close?",
+        OnFinish = function()
+            frame:Hide()
+            AceGUI:Release(frame)
+        end,
+    })
+    frame:SetCallback("OnClose", function()
+        closeGuard:Request()
     end)
 end
 
@@ -1334,31 +1458,6 @@ local LAYOUT_BODY_HEIGHT = 426
 -- AceGUI Flow supplies the gap above the buttons; this leaves the same visible
 -- clearance between their artwork and the window's lower dialog edge.
 local LAYOUT_WINDOW_HEIGHT = 524
-local layoutWindowSequence = 0
-
-local function RegisterLayoutEscapeFrame(frame)
-    layoutWindowSequence = layoutWindowSequence + 1
-    local name = "AngryEra_LayoutEditor_Window_" .. layoutWindowSequence
-    _G[name] = frame
-    if type(UISpecialFrames) == "table" then
-        tinsert(UISpecialFrames, name)
-    end
-    return name
-end
-
-local function UnregisterLayoutEscapeFrame(name, frame)
-    if _G[name] == frame then
-        _G[name] = nil
-    end
-    if type(UISpecialFrames) ~= "table" then
-        return
-    end
-    for index = #UISpecialFrames, 1, -1 do
-        if UISpecialFrames[index] == name then
-            table.remove(UISpecialFrames, index)
-        end
-    end
-end
 
 --- Collects the current group in roster order without throwing realm identity
 -- away. Same-realm names stay short for readability, cross-realm names stay
@@ -1572,13 +1671,14 @@ local function BeginLayoutModal(popup, owner)
     blocker:Show()
 end
 
-local function CloseLayoutModal(owner)
+CloseLayoutModal = function(owner)
     local popup = activeLayoutModals[owner]
     if not popup then
-        return
+        return false
     end
     popup:Hide()
     EndLayoutModal(popup)
+    return true
 end
 
 layoutEditor.CloseModal = CloseLayoutModal
@@ -1633,7 +1733,7 @@ end
 
 --- Confirms a layout edit that throws work away before running it.
 -- @tparam table data Prompt, Owner frame, and an OnAccept() callback.
-local function AngryEra_LayoutConfirmPopup(data)
+AngryEra_LayoutConfirmPopup = function(data)
     local popup_name = "AngryEra_LayoutConfirm"
     if StaticPopupDialogs[popup_name] == nil then
         StaticPopupDialogs[popup_name] = {
@@ -1645,6 +1745,9 @@ local function AngryEra_LayoutConfirmPopup(data)
             preferredIndex = 3,
             OnHide = function(self)
                 EndLayoutModal(self)
+                if self.data and type(self.data.OnHide) == "function" then
+                    self.data.OnHide()
+                end
             end,
             OnAccept = function(self)
                 self.data.OnAccept()
@@ -1657,8 +1760,135 @@ local function AngryEra_LayoutConfirmPopup(data)
     return popup
 end
 
+-- Owns Escape/X/raw-Hide handling for auxiliary editors. Dirty raw frames are
+-- immediately reshown before the discard prompt, so Blizzard never advances
+-- from the child to the suspended main window during the same Escape pass.
+AttachEditorCloseGuard = function(data)
+    local owner = data.Owner
+    local escapeEntry = RegisterAuxiliaryEscapeFrame(owner)
+    local previousOnHide = owner and owner.GetScript and owner:GetScript("OnHide") or nil
+    local finished = false
+    local discardPromptActive = false
+    local guard = {}
+
+    local function IsDirty()
+        local ok, dirty = pcall(data.IsDirty)
+        return not ok or dirty == true
+    end
+
+    local function EnsureShown()
+        if owner and owner.Show and (not owner.IsShown or not owner:IsShown()) then
+            owner:Show()
+        end
+    end
+
+    function guard:Finish(rawHideFrame, ...)
+        if finished then
+            return
+        end
+        finished = true
+        CloseLayoutModal(owner)
+        if owner and owner.SetScript then
+            owner:SetScript("OnHide", previousOnHide)
+        end
+        UnregisterAuxiliaryEscapeFrame(escapeEntry)
+        if rawHideFrame and previousOnHide then
+            previousOnHide(rawHideFrame, ...)
+        end
+        data.OnFinish()
+    end
+
+    function guard:Request()
+        if finished then
+            return
+        end
+        EnsureShown()
+        if not IsDirty() then
+            self:Finish()
+            return
+        end
+        if discardPromptActive then
+            return
+        end
+        discardPromptActive = true
+        local popup = AngryEra_LayoutConfirmPopup({
+            Prompt = data.Prompt,
+            Owner = owner,
+            OnAccept = function()
+                guard:Finish()
+            end,
+            OnHide = function()
+                discardPromptActive = false
+            end,
+        })
+        if not popup then
+            discardPromptActive = false
+        end
+    end
+
+    if owner and owner.SetScript then
+        owner:SetScript("OnHide", function(rawFrame, ...)
+            if finished then
+                return
+            end
+            if CloseLayoutModal(owner) then
+                EnsureShown()
+                return
+            end
+            if IsDirty() then
+                EnsureShown()
+                guard:Request()
+                return
+            end
+            guard:Finish(rawFrame, ...)
+        end)
+    end
+
+    return guard
+end
+
+layoutEditor.AttachEditorCloseGuard = AttachEditorCloseGuard
 layoutEditor.ShowTextPopup = AngryEra_LayoutTextPopup
 layoutEditor.ShowConfirmPopup = AngryEra_LayoutConfirmPopup
+
+local function NormalizeLayoutTextDraft(text)
+    return type(text) == "string" and text:gsub("\r\n", "\n"):gsub("\r", "\n") or ""
+end
+
+--- Reports whether a group-layout editor differs semantically from its saved
+-- opening state. Inherited layouts are clean only while inheritance remains
+-- selected; direct layouts additionally compare their canonical source. Raw
+-- text is compared too because parsing intentionally ignores malformed or
+-- over-capacity input that must still count as an unsaved draft.
+-- @tparam boolean initialHadDirectLayout Whether the editor opened on an override.
+-- @tparam string initialCanonicalSource Canonical effective source at open/save.
+-- @tparam boolean inheritLayout Whether the current draft inherits its layout.
+-- @tparam string currentCanonicalSource Canonical source of the current draft.
+-- @tparam[opt] string currentTextDraft Raw text currently visible in text mode.
+-- @tparam[opt] string cleanTextDraft Raw text used to seed the current text view.
+-- @treturn boolean
+local function GroupLayoutDraftIsDirty(
+    initialHadDirectLayout,
+    initialCanonicalSource,
+    inheritLayout,
+    currentCanonicalSource,
+    currentTextDraft,
+    cleanTextDraft
+)
+    if inheritLayout ~= not initialHadDirectLayout then
+        return true
+    end
+    if
+        currentTextDraft ~= nil
+        and cleanTextDraft ~= nil
+        and NormalizeLayoutTextDraft(currentTextDraft) ~= NormalizeLayoutTextDraft(cleanTextDraft)
+    then
+        return true
+    end
+    return not inheritLayout and currentCanonicalSource ~= initialCanonicalSource
+end
+
+layoutEditor.GroupLayoutDraftIsDirty = GroupLayoutDraftIsDirty
 
 --- Hangs an explanatory tooltip off an AceGUI widget.
 -- @tparam table widget AceGUI widget to describe.
@@ -2060,6 +2290,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     local visibleContextSignature = EffectiveLayoutContextSignature(reference, entity, currentVars)
     local textMode = false
     local editBox, grid, closed
+    local cleanTextDraft
     local lastVariableError
 
     local function ReportVariableError(variableError)
@@ -2111,7 +2342,6 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     frame:SetHeight(LAYOUT_WINDOW_HEIGHT)
     frame:EnableResize(false)
     DarkenWindow(frame.frame)
-    local escapeFrameName = RegisterLayoutEscapeFrame(frame.frame)
     -- The palette mirrors the live raid, so someone joining or leaving while the
     -- editor sits open has to reach it. The window listens for itself because
     -- the addon's own roster handler is already bound to another method, and an
@@ -2129,35 +2359,6 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         RefreshLayoutContext(true)
     end)
 
-    -- A prompt can still be active when the window is hidden programmatically,
-    -- so closing the editor dismisses it before AceGUI recycles either widget.
-    -- UISpecialFrames closes the raw Blizzard frame with Hide(), which does not
-    -- necessarily fire AceGUI's OnClose callback. Bridge that path while the
-    -- widget is alive, then restore AceGUI's original script before releasing it
-    -- so a pooled Window does not retain this editor's closure.
-    local previousOnHide = frame.frame:GetScript("OnHide")
-    local function CloseLayoutEditor(widget)
-        if closed then
-            return
-        end
-        closed = true
-        CloseLayoutModal(frame.frame)
-        frame.frame:SetScript("OnHide", previousOnHide)
-        watcher:UnregisterAllEvents()
-        watcher:SetScript("OnEvent", nil)
-        UnregisterLayoutEscapeFrame(escapeFrameName, frame.frame)
-        AceGUI:Release(widget)
-    end
-    frame:SetCallback("OnClose", CloseLayoutEditor)
-    frame.frame:SetScript("OnHide", function(rawFrame, ...)
-        if previousOnHide then
-            previousOnHide(rawFrame, ...)
-        end
-        if not closed then
-            CloseLayoutEditor(frame)
-        end
-    end)
-
     -- Whichever view is showing owns the layout; the other is rebuilt from it
     -- on every switch so the two never drift apart.
     local function CurrentSource()
@@ -2167,6 +2368,31 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         local text = editBox and editBox:GetText() or ""
         return (text:gsub("[\r\n]+", ";"):gsub("%s*;%s*", ";"):gsub("^;+", ""):gsub(";+$", ""))
     end
+
+    local closeGuard = AttachEditorCloseGuard({
+        Owner = frame.frame,
+        IsDirty = function()
+            return GroupLayoutDraftIsDirty(
+                initialHadDirectLayout,
+                initialCanonicalSource,
+                inheritLayout,
+                CanonicalLayoutSource(CurrentSource()),
+                textMode and editBox and editBox:GetText() or nil,
+                textMode and cleanTextDraft or nil
+            )
+        end,
+        Prompt = "Discard unsaved group layout changes and close?",
+        OnFinish = function()
+            closed = true
+            watcher:UnregisterAllEvents()
+            watcher:SetScript("OnEvent", nil)
+            frame:Hide()
+            AceGUI:Release(frame)
+        end,
+    })
+    frame:SetCallback("OnClose", function()
+        closeGuard:Request()
+    end)
 
     -- A group nobody filled is kept while editing so its box stays draggable,
     -- but dropped on save rather than persisted as an empty line.
@@ -2246,6 +2472,12 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         inheritedPreviewSource = savedInheritedSource or ""
         previewedInheritedCanonicalSource = CanonicalLayoutSource(inheritedPreviewSource)
         customDraftSource = inheritLayout and (savedEffectiveSource or "") or (savedDirectSource or "")
+        if textMode and editBox then
+            model = layout.Parse(savedEffectiveSource or "")
+            local savedTextDraft = layout.Serialize(model):gsub("%s*;%s*", "\n")
+            editBox:SetText(savedTextDraft)
+            cleanTextDraft = NormalizeLayoutTextDraft(savedTextDraft)
+        end
 
         local refreshed, _, _, _, savedSignature = RefreshLayoutContext(true)
         if refreshed then
@@ -2323,7 +2555,9 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         editBox = AceGUI:Create("MultiLineEditBox")
         editBox:SetLabel("Groups, one per line:  Label/N: name, A > B, *MAGE x2, group:2")
         editBox:SetNumLines(10)
-        editBox:SetText((layout.Serialize(model):gsub("%s*;%s*", "\n")))
+        local textDraft = layout.Serialize(model):gsub("%s*;%s*", "\n")
+        editBox:SetText(textDraft)
+        cleanTextDraft = NormalizeLayoutTextDraft(textDraft)
         editBox:SetFullWidth(true)
         editBox:DisableButton(false)
         editBox:SetDisabled(inheritLayout)
@@ -2535,6 +2769,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     local function BuildBody()
         body:ReleaseChildren()
         editBox, grid = nil, nil
+        cleanTextDraft = nil
         if textMode then
             BuildTextView()
             return

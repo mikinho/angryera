@@ -170,6 +170,57 @@ assert(AngryEra_CategoryMenu(99) == nil, "a missing category has no menu")
 -- newest Vars rather than the table that happened to be open originally.
 local layoutEditor = AngryEra.utils.layout_editor
 assert(type(layoutEditor) == "table", "layout editor internals are available")
+assert(
+    layoutEditor.NormalizeVariableEditorDraft("") == nil
+        and layoutEditor.NormalizeVariableEditorDraft("MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK=") == nil,
+    "an empty variable draft and its untouched starter template are equivalent"
+)
+assert(
+    layoutEditor.NormalizeVariableEditorDraft("ONE=1\r\nTWO=2") == "ONE=1\nTWO=2",
+    "variable dirty checks normalize platform line endings"
+)
+assert(
+    not layoutEditor.GroupLayoutDraftIsDirty(true, "Tanks/1: MT", false, "Tanks/1: MT"),
+    "an unchanged direct group layout is clean"
+)
+assert(
+    layoutEditor.GroupLayoutDraftIsDirty(true, "Tanks/1: MT", false, "Tanks/1: OT"),
+    "a changed direct group layout is dirty"
+)
+assert(
+    layoutEditor.GroupLayoutDraftIsDirty(true, "Tanks/1: MT", true, "Inherited/1: MT"),
+    "selecting inheritance from a direct layout is dirty"
+)
+assert(
+    not layoutEditor.GroupLayoutDraftIsDirty(false, "Inherited/1: MT", true, "Inherited/1: MT"),
+    "an unchanged inherited group layout is clean"
+)
+assert(
+    layoutEditor.GroupLayoutDraftIsDirty(false, "Inherited/1: MT", false, "Inherited/1: MT"),
+    "creating a direct override is dirty even when its visible source matches inheritance"
+)
+assert(
+    layoutEditor.GroupLayoutDraftIsDirty(
+        true,
+        "Tanks/1: MT",
+        false,
+        "Tanks/1: MT",
+        "Tanks/1: MT\nunfinished text",
+        "Tanks/1: MT"
+    ),
+    "raw text that parsing would discard still counts as an unsaved group-layout change"
+)
+assert(
+    not layoutEditor.GroupLayoutDraftIsDirty(
+        true,
+        "Tanks/1: MT",
+        false,
+        "Tanks/1: MT",
+        "Tanks/1: MT\r\nHealers/2: Eblis",
+        "Tanks/1: MT\nHealers/2: Eblis"
+    ),
+    "line-ending normalization alone does not dirty the group-layout text view"
+)
 
 local importedRoleSource, importedRoleSummary = layoutEditor.ImportAssignedRoles("KEEP=yes\nHEALERS*=RAID_HEALER*")
 assert(
@@ -313,6 +364,11 @@ assert(
     importButtonWidget and variableEditWidget and variableWindowWidget,
     "the variable editor should build its controls"
 )
+local variableEscapeName = UISpecialFrames[1]
+assert(
+    variableEscapeName and variableEscapeName:match("^AngryEra_AuxiliaryEditor_Window_"),
+    "the variable editor owns one temporary Escape registration"
+)
 importButtonWidget.callbacks.OnClick()
 assert(AngryAssign_Categories[5].Vars == nil, "Import Assigned Raid Roles should change only the open editor draft")
 assert(
@@ -327,6 +383,8 @@ assert(
         and variableWindowWidget.hidden,
     "Save should commit the imported draft to the exact category and close the window"
 )
+assert(#UISpecialFrames == 0, "saving removes the variable editor's Escape registration")
+assert(_G[variableEscapeName] == nil, "saving releases the variable editor's temporary global frame")
 AngryAssign_Categories[5].Vars = nil
 
 local providers = layoutEditor.BuildLayoutProviders({

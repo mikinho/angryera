@@ -33,6 +33,21 @@ _G.OKAY = "Okay"
 _G.CANCEL = "Cancel"
 _G.YES = "Yes"
 _G.NO = "No"
+_G.UISpecialFrames = { "AngryEra_Window" }
+local deferredCallbacks = {}
+_G.C_Timer = {
+    After = function(_, callback)
+        deferredCallbacks[#deferredCallbacks + 1] = callback
+    end,
+}
+
+local function RunDeferredCallbacks()
+    local callbacks = deferredCallbacks
+    deferredCallbacks = {}
+    for _, callback in ipairs(callbacks) do
+        callback()
+    end
+end
 
 local function NewFrame(parent)
     local frame = {
@@ -104,8 +119,12 @@ local function NewFrame(parent)
     end
 
     function frame:Hide()
+        local wasShown = self.shown
         self.shown = false
-        if self.dialogInfo and self.dialogInfo.OnHide then
+        if wasShown and self.scripts.OnHide then
+            self.scripts.OnHide(self)
+        end
+        if wasShown and self.dialogInfo and self.dialogInfo.OnHide then
             self.dialogInfo.OnHide(self)
         end
     end
@@ -129,6 +148,8 @@ local function NewFrame(parent)
 end
 
 _G.UIParent = NewFrame(nil)
+_G.AngryEra_Window = NewFrame(UIParent)
+AngryEra_Window:Show()
 local popup = NewFrame(UIParent)
 popup.frameLevel = 7
 popup.editBox = {
@@ -167,6 +188,7 @@ local layoutEditor = AngryEra.utils.layout_editor
 assert(type(layoutEditor.ShowTextPopup) == "function", "layout text popup is testable")
 assert(type(layoutEditor.ShowConfirmPopup) == "function", "layout confirmation popup is testable")
 assert(type(layoutEditor.CloseModal) == "function", "an editor can explicitly close its active modal")
+assert(type(layoutEditor.AttachEditorCloseGuard) == "function", "auxiliary editors share a close guard")
 
 local ownerOne = NewFrame(UIParent)
 ownerOne.frameLevel = 12
@@ -232,6 +254,159 @@ layoutEditor.CloseModal(ownerOne)
 assert(not popup:IsShown(), "closing an editor also dismisses its active prompt")
 assert(not blocker:IsShown() and blocker.allPoints == nil, "confirmation cleanup releases the editor")
 
+local function HasSpecialFrame(name)
+    for _, registered in ipairs(UISpecialFrames) do
+        if registered == name then
+            return true
+        end
+    end
+    return false
+end
+
+local function PressSpecialFrameEscape()
+    local snapshot = {}
+    for index, name in ipairs(UISpecialFrames) do
+        snapshot[index] = name
+    end
+    for _, name in ipairs(snapshot) do
+        local frame = _G[name]
+        if frame and frame.IsShown and frame:IsShown() then
+            frame:Hide()
+        end
+    end
+end
+
+local function AttachTestGuard(owner, isDirty, onFinish)
+    return layoutEditor.AttachEditorCloseGuard({
+        Owner = owner,
+        IsDirty = isDirty,
+        Prompt = "Discard unsaved test changes and close?",
+        OnFinish = function()
+            onFinish()
+            owner:Hide()
+        end,
+    })
+end
+
+-- A clean editor owns Escape by itself. Closing it must not hide the main
+-- window, and the main registration returns only after the current Escape pass.
+local cleanOwner = NewFrame(UIParent)
+cleanOwner:Show()
+local cleanFinished = 0
+local cleanPriorHide = 0
+local cleanGuard
+local cleanOriginalOnHide = function()
+    cleanPriorHide = cleanPriorHide + 1
+    cleanGuard:Request()
+end
+cleanOwner:SetScript("OnHide", cleanOriginalOnHide)
+cleanGuard = AttachTestGuard(cleanOwner, function()
+    return false
+end, function()
+    cleanFinished = cleanFinished + 1
+end)
+local cleanEscapeName = UISpecialFrames[1]
+assert(
+    cleanEscapeName and cleanEscapeName:match("^AngryEra_AuxiliaryEditor_Window_"),
+    "an auxiliary editor becomes the only registered Escape frame"
+)
+assert(not HasSpecialFrame("AngryEra_Window"), "the main window is suspended while an editor owns Escape")
+PressSpecialFrameEscape()
+assert(cleanFinished == 1 and not cleanOwner:IsShown(), "a clean Escape closes only the editor")
+assert(cleanPriorHide == 1, "a clean raw Hide runs the prior AceGUI lifecycle exactly once")
+assert(cleanOwner:GetScript("OnHide") == cleanOriginalOnHide, "a clean close restores the pooled frame's prior script")
+assert(AngryEra_Window:IsShown(), "closing the editor does not hide the main AngryEra window")
+assert(not HasSpecialFrame("AngryEra_Window"), "the main Escape registration is not restored in the same pass")
+RunDeferredCallbacks()
+assert(
+    HasSpecialFrame("AngryEra_Window") and not HasSpecialFrame(cleanEscapeName),
+    "the next frame restores only the main Escape registration"
+)
+assert(_G[cleanEscapeName] == nil, "closing an editor releases its temporary global frame")
+
+-- A dirty raw Hide is reversed before the discard prompt. Cancel keeps both
+-- the window and draft alive; accepting closes exactly once.
+local dirtyOwner = NewFrame(UIParent)
+dirtyOwner:Show()
+local dirty = true
+local dirtyFinished = 0
+local dirtyPriorHide = 0
+local dirtyGuard
+local dirtyOriginalOnHide = function()
+    dirtyPriorHide = dirtyPriorHide + 1
+    dirtyGuard:Request()
+end
+dirtyOwner:SetScript("OnHide", dirtyOriginalOnHide)
+dirtyGuard = AttachTestGuard(dirtyOwner, function()
+    return dirty
+end, function()
+    dirtyFinished = dirtyFinished + 1
+end)
+PressSpecialFrameEscape()
+assert(dirtyOwner:IsShown(), "a dirty Escape immediately restores the editor")
+assert(popup:IsShown(), "a dirty Escape asks before discarding changes")
+assert(dirtyFinished == 0 and AngryEra_Window:IsShown(), "the dirty editor and main window remain open")
+popup:Hide()
+assert(
+    dirtyOwner:IsShown() and dirtyFinished == 0 and dirtyPriorHide == 0,
+    "canceling the warning preserves the dirty draft without running the prior lifecycle"
+)
+dirtyOwner:Hide()
+assert(popup:IsShown(), "the discard warning can be opened again after cancel")
+StaticPopupDialogs.AngryEra_LayoutConfirm.OnAccept(popup)
+assert(dirtyFinished == 1 and not dirtyOwner:IsShown(), "accepting discard closes the dirty editor once")
+assert(dirtyPriorHide == 1, "accepted discard runs the prior AceGUI lifecycle exactly once")
+assert(dirtyOwner:GetScript("OnHide") == dirtyOriginalOnHide, "discard restores the pooled frame's prior script")
+RunDeferredCallbacks()
+assert(HasSpecialFrame("AngryEra_Window"), "discarding restores the main Escape registration")
+
+-- Nested layout prompts consume Escape before their owner. A second Escape can
+-- then close the clean owner, matching the foreground modal behavior in-game.
+local nestedOwner = NewFrame(UIParent)
+nestedOwner:Show()
+local nestedFinished = 0
+AttachTestGuard(nestedOwner, function()
+    return false
+end, function()
+    nestedFinished = nestedFinished + 1
+end)
+layoutEditor.ShowTextPopup({
+    Prompt = "Nested:",
+    Owner = nestedOwner,
+    OnAccept = function() end,
+})
+nestedOwner:Hide()
+assert(nestedOwner:IsShown() and nestedFinished == 0, "Escape closes a nested prompt before its editor")
+assert(not popup:IsShown(), "the nested prompt is gone after the first Escape")
+nestedOwner:Hide()
+assert(nestedFinished == 1 and not nestedOwner:IsShown(), "the next Escape closes the clean editor")
+RunDeferredCallbacks()
+
+-- If two auxiliary editors exist, only the top one is registered. Closing it
+-- reveals the previous editor on the next frame without touching the main UI.
+local lowerOwner = NewFrame(UIParent)
+local upperOwner = NewFrame(UIParent)
+lowerOwner:Show()
+upperOwner:Show()
+local lowerGuard = AttachTestGuard(lowerOwner, function()
+    return false
+end, function() end)
+local lowerEscapeName = UISpecialFrames[1]
+AttachTestGuard(upperOwner, function()
+    return false
+end, function() end)
+local upperEscapeName = UISpecialFrames[1]
+assert(
+    upperEscapeName ~= lowerEscapeName and not HasSpecialFrame(lowerEscapeName),
+    "only the top auxiliary editor participates in Escape"
+)
+upperOwner:Hide()
+RunDeferredCallbacks()
+assert(HasSpecialFrame(lowerEscapeName), "closing the top editor restores the previous editor")
+lowerGuard:Finish()
+RunDeferredCallbacks()
+assert(HasSpecialFrame("AngryEra_Window"), "closing the last editor restores the main window")
+
 popupAvailable = false
 assert(layoutEditor.ShowTextPopup({
     Prompt = "Unavailable:",
@@ -239,5 +414,24 @@ assert(layoutEditor.ShowTextPopup({
     OnAccept = function() end,
 }) == nil, "an unavailable StaticPopup slot returns without opening a modal")
 assert(not blocker:IsShown() and blocker.allPoints == nil, "a failed popup leaves no input blocker behind")
+
+local unavailableOwner = NewFrame(UIParent)
+unavailableOwner:Show()
+local unavailableDirty = true
+local unavailableFinished = 0
+AttachTestGuard(unavailableOwner, function()
+    return unavailableDirty
+end, function()
+    unavailableFinished = unavailableFinished + 1
+end)
+unavailableOwner:Hide()
+assert(
+    unavailableOwner:IsShown() and unavailableFinished == 0,
+    "an unavailable discard popup leaves the dirty editor open"
+)
+unavailableDirty = false
+unavailableOwner:Hide()
+RunDeferredCallbacks()
+assert(unavailableFinished == 1, "the editor can retry closing after an unavailable discard popup")
 
 print("Layout modal tests passed.")

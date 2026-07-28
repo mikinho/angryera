@@ -37,6 +37,7 @@
 * Fix: Raid layouts now move one identity at a time, wait for Classic to acknowledge each change, and resolve fresh raid indices before continuing, preventing roster renumbering and API throttling from targeting the wrong player.
 * Fix: Group Layout editing preserves JSON-form variables, merges into the latest saved variable state, and never applies an older layout while an assistant proposal is pending.
 * Fix: Group Layout editing uses the exact authoritative inheritance context for an actively displayed received page, and saving or applying an unchanged inherited layout no longer creates a page override.
+* Fix: Escape and the close button now dismiss only the Group Layout or Edit Variables child editor, keep the main AngryEra window open, and ask before discarding an unsaved layout, inheritance choice, or variable draft.
 * Fix: The editor applies only the exact displayed page, while category layouts direct the user to display an inheriting page; `/ae applylayout` consistently uses the actively displayed page.
 * Fix: Saved raid templates now round-trip category and page variables, including category layouts and page-specific overrides, without publishing a newly loaded page before its variables are present.
 * Fix: Short player names are now accepted only when unique across the current group; priority assignments, automatic markers, and raid layouts no longer guess the local-realm player when another realm has the same name.
