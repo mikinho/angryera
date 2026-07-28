@@ -1221,6 +1221,131 @@ function layoutEditor.ImportAssignedRoles(rawVariables)
         }
 end
 
+local DIALOG_FOOTER_LAYOUT = "AngryEraDialogFooter"
+local VARIABLE_EDITOR_LAYOUT = "AngryEraVariableEditor"
+local DIALOG_FOOTER_BUTTON_WIDTH = 120
+local DIALOG_FOOTER_HEIGHT = 24
+local DIALOG_FOOTER_GAP = 4
+local VARIABLE_EDITOR_GAP = 3
+-- Window content ends 12 pixels inside the frame while AceGUI's southeast
+-- resize target occupies the outermost 25. Thirteen pixels places Save
+-- immediately beside that target without letting the two hit areas overlap.
+local VARIABLE_EDITOR_RESIZE_GUTTER = 13
+-- AceGUI's Flow layout deliberately lets the Group Layout footer sit three
+-- pixels below the Window content edge. Match that proven visual baseline.
+local VARIABLE_EDITOR_FOOTER_BOTTOM_OFFSET = -VARIABLE_EDITOR_GAP
+local VARIABLE_EDITOR_MIN_WIDTH = 320
+local VARIABLE_EDITOR_MIN_HEIGHT = 320
+local ACEGUI_WINDOW_DEFAULT_MIN_SIZE = 240
+local VARIABLE_EDITOR_MIN_BODY_HEIGHT = 80
+
+local function WidgetFrameHeight(widget)
+    local frame = widget and widget.frame
+    if not frame then
+        return 0
+    end
+    return frame.height or (frame.GetHeight and frame:GetHeight()) or 0
+end
+
+local function AnchorFullWidthWidget(widget, content, topOffset, width)
+    widget:SetWidth(width)
+    if widget.DoLayout then
+        widget:DoLayout()
+    end
+    local frame = widget.frame
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -topOffset)
+    frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -topOffset)
+    frame:Show()
+end
+
+local function DialogFooterLayout(content, children)
+    local owner = content.obj
+    local rightInset = owner and owner.GetUserData and owner:GetUserData("rightInset") or 0
+    local leftOffset = 0
+    local rightOffset = type(rightInset) == "number" and math.max(0, rightInset) or 0
+
+    for _, child in ipairs(children) do
+        child:SetWidth(DIALOG_FOOTER_BUTTON_WIDTH)
+        child:SetHeight(DIALOG_FOOTER_HEIGHT)
+    end
+
+    for _, child in ipairs(children) do
+        if child.GetUserData and child:GetUserData("side") == "left" then
+            local frame = child.frame
+            frame:ClearAllPoints()
+            frame:SetPoint("TOPLEFT", content, "TOPLEFT", leftOffset, 0)
+            frame:Show()
+            leftOffset = leftOffset + DIALOG_FOOTER_BUTTON_WIDTH + DIALOG_FOOTER_GAP
+        end
+    end
+
+    for index = #children, 1, -1 do
+        local child = children[index]
+        if not child.GetUserData or child:GetUserData("side") ~= "left" then
+            local frame = child.frame
+            frame:ClearAllPoints()
+            frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", -rightOffset, 0)
+            frame:Show()
+            rightOffset = rightOffset + DIALOG_FOOTER_BUTTON_WIDTH + DIALOG_FOOTER_GAP
+        end
+    end
+
+    if owner and owner.LayoutFinished then
+        owner:LayoutFinished(nil, DIALOG_FOOTER_HEIGHT)
+    end
+end
+
+local function VariableEditorLayout(content, children)
+    -- AceGUI Window's cached content dimensions exclude ten/twelve more pixels
+    -- than its actual anchored content frame. Using the live dimensions avoids
+    -- leaving that difference as a visible gap above the footer.
+    local width = (content.GetWidth and content:GetWidth()) or content.width or 0
+    local height = (content.GetHeight and content:GetHeight()) or content.height or 0
+    local importButton, importStatus, editBox, footer = children[1], children[2], children[3], children[4]
+    local topOffset = 0
+
+    if importButton then
+        AnchorFullWidthWidget(importButton, content, topOffset, width)
+        topOffset = topOffset + WidgetFrameHeight(importButton) + VARIABLE_EDITOR_GAP
+    end
+    if importStatus then
+        AnchorFullWidthWidget(importStatus, content, topOffset, width)
+        topOffset = topOffset + WidgetFrameHeight(importStatus) + VARIABLE_EDITOR_GAP
+    end
+
+    local footerHeight = 0
+    if footer then
+        footer:SetWidth(width)
+        footer:SetHeight(DIALOG_FOOTER_HEIGHT)
+        footer.frame:ClearAllPoints()
+        footer.frame:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, VARIABLE_EDITOR_FOOTER_BOTTOM_OFFSET)
+        footer.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, VARIABLE_EDITOR_FOOTER_BOTTOM_OFFSET)
+        footer.frame:Show()
+        if footer.DoLayout then
+            footer:DoLayout()
+        end
+        footerHeight = DIALOG_FOOTER_HEIGHT + VARIABLE_EDITOR_GAP + VARIABLE_EDITOR_FOOTER_BOTTOM_OFFSET
+    end
+
+    if editBox then
+        AnchorFullWidthWidget(editBox, content, topOffset, width)
+        editBox:SetHeight(math.max(VARIABLE_EDITOR_MIN_BODY_HEIGHT, height - topOffset - footerHeight))
+    end
+
+    if content.obj and content.obj.LayoutFinished then
+        content.obj:LayoutFinished(nil, height)
+    end
+end
+
+if type(AceGUI.RegisterLayout) == "function" then
+    AceGUI:RegisterLayout(DIALOG_FOOTER_LAYOUT, DialogFooterLayout)
+    AceGUI:RegisterLayout(VARIABLE_EDITOR_LAYOUT, VariableEditorLayout)
+end
+
+layoutEditor.DialogFooterLayout = DialogFooterLayout
+layoutEditor.VariableEditorLayout = VariableEditorLayout
+
 local DEFAULT_VARS_TEMPLATE = "MT=\nOT1=\nOT2=\nOT3=\nOT4=\nOT5=\nMARK="
 local auxiliaryEditorSequence = 0
 local auxiliaryEditorEscape = {
@@ -1372,6 +1497,11 @@ local function AngryEra_EditVariables(id, entityType)
     frame:SetWidth(430)
     frame:SetHeight(390)
     frame:EnableResize(true)
+    if frame.frame.SetResizeBounds then
+        frame.frame:SetResizeBounds(VARIABLE_EDITOR_MIN_WIDTH, VARIABLE_EDITOR_MIN_HEIGHT)
+    elseif frame.frame.SetMinResize then
+        frame.frame:SetMinResize(VARIABLE_EDITOR_MIN_WIDTH, VARIABLE_EDITOR_MIN_HEIGHT)
+    end
 
     local importButton = AceGUI:Create("Button")
     importButton:SetText("Import Assigned Raid Roles")
@@ -1382,30 +1512,35 @@ local function AngryEra_EditVariables(id, entityType)
     importStatus:SetText("Creates RAID_TANK1...N, RAID_HEALER1...N, and RAID_DPS1...N from Blizzard-assigned roles.")
     importStatus:SetFullWidth(true)
     frame:AddChild(importStatus)
+    local function SetImportStatus(text)
+        importStatus:SetText(text)
+        frame:DoLayout()
+    end
 
     local editBox = AceGUI:Create("MultiLineEditBox")
     editBox:SetLabel("Variables (JSON or Key=Value; Key=Value booleans: $true / $false)")
     editBox:SetNumLines(14)
     editBox:SetText(vars)
     editBox:SetFullWidth(true)
-    editBox:DisableButton(false)
+    editBox:DisableButton(true)
     local closeGuard
     importButton:SetCallback("OnClick", function()
         local updatedVariables, summaryOrError = layoutEditor.ImportAssignedRoles(editBox:GetText())
         if not updatedVariables then
             local errorMessage = VARIABLE_SAVE_ERRORS[summaryOrError]
                 or ("Could not import assigned roles (" .. tostring(summaryOrError) .. ").")
-            importStatus:SetText(errorMessage)
+            SetImportStatus(errorMessage)
             AngryEra:Print(errorMessage)
             return
         end
 
         editBox:SetText(updatedVariables)
         local summaryMessage = FormatAssignedRoleSummary(summaryOrError)
-        importStatus:SetText(summaryMessage)
+        SetImportStatus(summaryMessage)
         AngryEra:Print(summaryMessage)
     end)
-    editBox:SetCallback("OnEnterPressed", function(widget, event, text)
+
+    local function SaveVariables(text)
         text = NormalizeVariableEditorDraft(text)
 
         local saved, saveError, proposed = layoutEditor.SaveVariableSource(reference, text, expectedVariables)
@@ -1430,8 +1565,35 @@ local function AngryEra_EditVariables(id, entityType)
         cleanDraft = NormalizeVariableEditorDraft(editBox:GetText())
         closeGuard:Finish()
         AngryEra:UpdateDisplayed()
+    end
+    editBox:SetCallback("OnEnterPressed", function(_, _, text)
+        SaveVariables(text)
     end)
     frame:AddChild(editBox)
+
+    local footer = AceGUI:Create("SimpleGroup")
+    footer:SetLayout(DIALOG_FOOTER_LAYOUT)
+    footer:SetFullWidth(true)
+    footer:SetHeight(DIALOG_FOOTER_HEIGHT)
+    footer:SetUserData("rightInset", VARIABLE_EDITOR_RESIZE_GUTTER)
+
+    local cancelButton = AceGUI:Create("Button")
+    cancelButton:SetText("Cancel")
+    cancelButton:SetWidth(DIALOG_FOOTER_BUTTON_WIDTH)
+    cancelButton:SetCallback("OnClick", function()
+        closeGuard:Request()
+    end)
+    footer:AddChild(cancelButton)
+
+    local saveButton = AceGUI:Create("Button")
+    saveButton:SetText("Save")
+    saveButton:SetWidth(DIALOG_FOOTER_BUTTON_WIDTH)
+    saveButton:SetCallback("OnClick", function()
+        SaveVariables(editBox:GetText())
+    end)
+    footer:AddChild(saveButton)
+    frame:AddChild(footer)
+
     closeGuard = AttachEditorCloseGuard({
         Owner = frame.frame,
         IsDirty = function()
@@ -1440,12 +1602,19 @@ local function AngryEra_EditVariables(id, entityType)
         Prompt = "Discard unsaved variable changes and close?",
         OnFinish = function()
             frame:Hide()
+            if frame.frame.SetResizeBounds then
+                frame.frame:SetResizeBounds(ACEGUI_WINDOW_DEFAULT_MIN_SIZE, ACEGUI_WINDOW_DEFAULT_MIN_SIZE)
+            elseif frame.frame.SetMinResize then
+                frame.frame:SetMinResize(ACEGUI_WINDOW_DEFAULT_MIN_SIZE, ACEGUI_WINDOW_DEFAULT_MIN_SIZE)
+            end
             AceGUI:Release(frame)
         end,
     })
     frame:SetCallback("OnClose", function()
         closeGuard:Request()
     end)
+    frame:SetLayout(VARIABLE_EDITOR_LAYOUT)
+    frame:DoLayout()
 end
 
 -- Four fixed rows of two subgroup boxes occupy 424 pixels in the visual grid,
@@ -2831,17 +3000,15 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     frame:AddChild(body)
     BuildBody()
 
-    local saveButton = AceGUI:Create("Button")
-    saveButton:SetText("Save")
-    saveButton:SetWidth(120)
-    saveButton:SetCallback("OnClick", function()
-        SaveLayout()
-    end)
-    frame:AddChild(saveButton)
+    local footer = AceGUI:Create("SimpleGroup")
+    footer:SetLayout(DIALOG_FOOTER_LAYOUT)
+    footer:SetFullWidth(true)
+    footer:SetHeight(DIALOG_FOOTER_HEIGHT)
 
     local applyButton = AceGUI:Create("Button")
-    applyButton:SetText("Apply to Raid")
-    applyButton:SetWidth(150)
+    applyButton:SetText("Apply")
+    applyButton:SetWidth(DIALOG_FOOTER_BUTTON_WIDTH)
+    applyButton:SetUserData("side", "left")
     applyButton:SetCallback("OnClick", function()
         local viewCurrent, viewError = LayoutViewIsCurrent()
         if not viewCurrent then
@@ -2886,13 +3053,31 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     end)
     DescribeWidget(
         applyButton,
-        "Apply to Raid",
+        "Apply",
         reference.EntityType == "category"
                 and "Category layouts are inherited. Display a descendant page, then apply the resolved layout from that page's editor."
             or "Saves this displayed page's layout, then moves raid members into the subgroups it defines. "
                 .. "Requires the raid leader or a qualified raid assistant. During combat, the exact page waits until combat ends; changing pages cancels it."
     )
-    frame:AddChild(applyButton)
+    footer:AddChild(applyButton)
+
+    local cancelButton = AceGUI:Create("Button")
+    cancelButton:SetText("Cancel")
+    cancelButton:SetWidth(DIALOG_FOOTER_BUTTON_WIDTH)
+    cancelButton:SetCallback("OnClick", function()
+        closeGuard:Request()
+    end)
+    footer:AddChild(cancelButton)
+
+    local saveButton = AceGUI:Create("Button")
+    saveButton:SetText("Save")
+    saveButton:SetWidth(DIALOG_FOOTER_BUTTON_WIDTH)
+    saveButton:SetCallback("OnClick", function()
+        SaveLayout()
+    end)
+    footer:AddChild(saveButton)
+
+    frame:AddChild(footer)
 end
 
 -- ── Context Menus and Tree ──────────────────────────────────────────────────

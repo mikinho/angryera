@@ -222,6 +222,154 @@ assert(
     "line-ending normalization alone does not dirty the group-layout text view"
 )
 
+local function LayoutTestFrame(width, height)
+    local frame = {
+        width = width or 0,
+        height = height or 0,
+        points = {},
+    }
+    function frame:GetWidth()
+        return self.width
+    end
+    function frame:GetHeight()
+        return self.height
+    end
+    function frame:ClearAllPoints()
+        self.points = {}
+    end
+    function frame:SetPoint(...)
+        self.points[#self.points + 1] = { ... }
+    end
+    function frame:Show()
+        self.shown = true
+    end
+    return frame
+end
+
+local function LayoutTestWidget(width, height, side)
+    local widget = {
+        frame = LayoutTestFrame(width, height),
+        userdata = {
+            side = side,
+        },
+    }
+    function widget:SetWidth(value)
+        self.width = value
+        self.frame.width = value
+    end
+    function widget:SetHeight(value)
+        self.height = value
+        self.frame.height = value
+    end
+    function widget:GetUserData(key)
+        return self.userdata[key]
+    end
+    function widget:DoLayout()
+        self.layoutCount = (self.layoutCount or 0) + 1
+    end
+    return widget
+end
+
+-- Both dialogs share one exact button geometry. Group Layout leaves Apply at
+-- the left, while Variables reserves only the resize target at the far right.
+local footerOwner = {
+    userdata = {},
+}
+function footerOwner:GetUserData(key)
+    return self.userdata[key]
+end
+function footerOwner:LayoutFinished(_, height)
+    self.layoutHeight = height
+end
+local footerContent = {
+    obj = footerOwner,
+}
+local footerApply = LayoutTestWidget(1, 1, "left")
+local footerCancel = LayoutTestWidget(1, 1)
+local footerSave = LayoutTestWidget(1, 1)
+layoutEditor.DialogFooterLayout(footerContent, { footerApply, footerCancel, footerSave })
+assert(
+    footerApply.width == 120
+        and footerCancel.width == 120
+        and footerSave.width == 120
+        and footerApply.height == 24
+        and footerCancel.height == 24
+        and footerSave.height == 24,
+    "dialog footers should standardize every action to 120 by 24 pixels"
+)
+assert(
+    footerApply.frame.points[1][1] == "TOPLEFT" and footerApply.frame.points[1][5] == 0,
+    "Apply should anchor at the far left"
+)
+assert(
+    footerSave.frame.points[1][1] == "TOPRIGHT" and footerSave.frame.points[1][4] == 0,
+    "Group Layout Save should anchor at the far right"
+)
+assert(
+    footerCancel.frame.points[1][1] == "TOPRIGHT" and footerCancel.frame.points[1][4] == -124,
+    "Group Layout Cancel should sit one standardized gap to the left of Save"
+)
+footerOwner.userdata.rightInset = 13
+layoutEditor.DialogFooterLayout(footerContent, { footerApply, footerCancel, footerSave })
+assert(
+    footerSave.frame.points[1][1] == "TOPRIGHT" and footerSave.frame.points[1][4] == -13,
+    "Save should stop immediately before the variable editor resize target"
+)
+assert(
+    footerCancel.frame.points[1][1] == "TOPRIGHT" and footerCancel.frame.points[1][4] == -137,
+    "Cancel should sit one standardized gap to the left of Save"
+)
+assert(footerOwner.layoutHeight == 24, "the shared footer should report its fixed height")
+
+-- AceGUI caches smaller Window content dimensions than the frame actually
+-- occupies. The variable layout must use the live size or it leaves a visible
+-- strip above the footer.
+local variableLayoutOwner = {}
+function variableLayoutOwner:LayoutFinished(_, height)
+    self.layoutHeight = height
+end
+local variableLayoutContent = LayoutTestFrame(406, 345)
+variableLayoutContent.width = 396
+variableLayoutContent.height = 333
+variableLayoutContent.obj = variableLayoutOwner
+function variableLayoutContent:GetWidth()
+    return 406
+end
+function variableLayoutContent:GetHeight()
+    return 345
+end
+local variableImport = LayoutTestWidget(1, 24)
+local variableStatus = LayoutTestWidget(1, 20)
+local variableBody = LayoutTestWidget(1, 1)
+local variableFooter = LayoutTestWidget(1, 24)
+layoutEditor.VariableEditorLayout(
+    variableLayoutContent,
+    { variableImport, variableStatus, variableBody, variableFooter }
+)
+assert(
+    variableImport.width == 406
+        and variableStatus.width == 406
+        and variableBody.width == 406
+        and variableFooter.width == 406,
+    "the variable editor should fill the live Window content width"
+)
+assert(variableBody.height == 271, "the variable body should fill all space above its footer")
+assert(
+    variableFooter.frame.points[1][1] == "BOTTOMLEFT"
+        and variableFooter.frame.points[1][4] == 0
+        and variableFooter.frame.points[1][5] == -3
+        and variableFooter.frame.points[2][1] == "BOTTOMRIGHT"
+        and variableFooter.frame.points[2][5] == -3,
+    "the variable footer should share Group Layout's three-pixel bottom overhang"
+)
+local variableBodyBottom = 24 + 3 + 20 + 3 + variableBody.height
+local variableFooterTop = 345 + 3 - 24
+assert(
+    variableFooterTop - variableBodyBottom == 3,
+    "the variable body and footer should retain the same three-pixel visual gap"
+)
+assert(variableLayoutOwner.layoutHeight == 345, "the variable editor should report its live content height")
+
 local importedRoleSource, importedRoleSummary = layoutEditor.ImportAssignedRoles("KEEP=yes\nHEALERS*=RAID_HEALER*")
 assert(
     importedRoleSource and type(importedRoleSummary) == "table",
@@ -299,9 +447,14 @@ function app.libs.AceGUI.Create(_, widgetType)
         Type = widgetType,
         callbacks = {},
         children = {},
+        frame = {},
+        userdata = {},
     }
     if widgetType == "Window" then
-        widget.frame = {}
+        widget.frame.resizeBounds = {}
+        function widget.frame:SetResizeBounds(width, height)
+            self.resizeBounds[#self.resizeBounds + 1] = { width, height }
+        end
     end
     function widget:SetText(text)
         self.text = text
@@ -318,23 +471,39 @@ function app.libs.AceGUI.Create(_, widgetType)
     function widget:Hide()
         self.hidden = true
     end
-    for _, method in ipairs({
-        "SetTitle",
-        "SetLayout",
-        "SetWidth",
-        "SetHeight",
-        "EnableResize",
-        "SetFullWidth",
-        "SetLabel",
-        "SetNumLines",
-        "DisableButton",
-    }) do
+    function widget:SetLayout(value)
+        self.layout = value
+    end
+    function widget:SetWidth(value)
+        self.width = value
+    end
+    function widget:SetHeight(value)
+        self.height = value
+    end
+    function widget:SetFullWidth(value)
+        self.fullWidth = value
+    end
+    function widget:DisableButton(value)
+        self.buttonDisabled = value
+    end
+    function widget:SetUserData(key, value)
+        self.userdata[key] = value
+    end
+    function widget:GetUserData(key)
+        return self.userdata[key]
+    end
+    function widget:DoLayout()
+        self.layoutCount = (self.layoutCount or 0) + 1
+    end
+    for _, method in ipairs({ "SetTitle", "EnableResize", "SetLabel", "SetNumLines" }) do
         widget[method] = function() end
     end
     createdWidgets[#createdWidgets + 1] = widget
     return widget
 end
-function app.libs.AceGUI:Release() end
+function app.libs.AceGUI:Release(widget)
+    widget.released = true
+end
 
 _G.UISpecialFrames = {}
 local categoryWindowSave
@@ -349,39 +518,89 @@ end
 
 Entry(AngryEra_CategoryMenu(5), "Edit Variables").func(nil, 5)
 local importButtonWidget
+local variableCancelWidget
+local variableSaveWidget
 local variableEditWidget
 local variableWindowWidget
+local variableFooterWidget
 for _, widget in ipairs(createdWidgets) do
-    if widget.Type == "Button" then
+    if widget.Type == "Button" and widget.text == "Import Assigned Raid Roles" then
         importButtonWidget = widget
+    elseif widget.Type == "Button" and widget.text == "Cancel" then
+        variableCancelWidget = widget
+    elseif widget.Type == "Button" and widget.text == "Save" then
+        variableSaveWidget = widget
     elseif widget.Type == "MultiLineEditBox" then
         variableEditWidget = widget
     elseif widget.Type == "Window" then
         variableWindowWidget = widget
+    elseif widget.Type == "SimpleGroup" and widget.userdata.rightInset then
+        variableFooterWidget = widget
     end
 end
 assert(
-    importButtonWidget and variableEditWidget and variableWindowWidget,
+    importButtonWidget
+        and variableCancelWidget
+        and variableSaveWidget
+        and variableEditWidget
+        and variableWindowWidget
+        and variableFooterWidget,
     "the variable editor should build its controls"
+)
+assert(
+    variableCancelWidget.width == 120
+        and variableSaveWidget.width == 120
+        and variableFooterWidget.height == 24
+        and variableFooterWidget.userdata.rightInset == 13,
+    "the variable editor should use the standardized footer geometry"
+)
+assert(variableEditWidget.buttonDisabled == true, "the variable editor should hide its legacy Accept button")
+assert(
+    variableWindowWidget.layout == "AngryEraVariableEditor" and variableWindowWidget.layoutCount == 1,
+    "the variable editor should install and immediately run its responsive layout"
+)
+assert(
+    variableWindowWidget.frame.resizeBounds[1][1] == 320 and variableWindowWidget.frame.resizeBounds[1][2] == 320,
+    "the variable editor should retain a usable minimum size"
 )
 local variableEscapeName = UISpecialFrames[1]
 assert(
     variableEscapeName and variableEscapeName:match("^AngryEra_AuxiliaryEditor_Window_"),
     "the variable editor owns one temporary Escape registration"
 )
+local layoutCountBeforeImport = variableWindowWidget.layoutCount
 importButtonWidget.callbacks.OnClick()
+assert(
+    variableWindowWidget.layoutCount == layoutCountBeforeImport + 1,
+    "changing the import status should immediately reflow the variable editor"
+)
 assert(AngryAssign_Categories[5].Vars == nil, "Import Assigned Raid Roles should change only the open editor draft")
 assert(
     variableEditWidget:GetText():find(AngryEra.utils.variables.RAID_ROSTER_DIRECTIVE, 1, true),
     "the import button should place the managed roster in the editor"
 )
-variableEditWidget.callbacks.OnEnterPressed(variableEditWidget, "OnEnterPressed", variableEditWidget:GetText())
+assignedRoleError = "no-assigned-roles"
+local importedDraft = variableEditWidget:GetText()
+layoutCountBeforeImport = variableWindowWidget.layoutCount
+importButtonWidget.callbacks.OnClick()
+assert(
+    variableEditWidget:GetText() == importedDraft and variableWindowWidget.layoutCount == layoutCountBeforeImport + 1,
+    "a failed role import should preserve the draft and reflow its error status"
+)
+assignedRoleError = nil
+variableSaveWidget.callbacks.OnClick()
 assert(
     categoryWindowSave == 5
         and AngryAssign_Categories[5].Vars == variableEditWidget:GetText()
         and displayedAfterVariableSave
-        and variableWindowWidget.hidden,
+        and variableWindowWidget.hidden
+        and variableWindowWidget.released,
     "Save should commit the imported draft to the exact category and close the window"
+)
+local restoredBounds = variableWindowWidget.frame.resizeBounds[#variableWindowWidget.frame.resizeBounds]
+assert(
+    restoredBounds[1] == 240 and restoredBounds[2] == 240,
+    "closing the variable editor should restore the pooled Window's default resize bounds"
 )
 assert(#UISpecialFrames == 0, "saving removes the variable editor's Escape registration")
 assert(_G[variableEscapeName] == nil, "saving releases the variable editor's temporary global frame")
