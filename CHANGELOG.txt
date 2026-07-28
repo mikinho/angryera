@@ -1,6 +1,6 @@
-## v3.2.1
+## v3.2.1-beta
 
-* Compatibility: Priority assignments require AngryEra v3.2.0-beta or newer on every viewer. Group layouts, variable families, imported raid-role variables, automatic raid-tank and raid-assistant assignments, and Key=Value boolean metadata require v3.2.1 or newer. Pages using only features common to v3.1 remain compatible with v3.1.x and v3.2.0-beta clients.
+* Compatibility: Priority assignments require AngryEra v3.2.0-beta or newer on every viewer. Group layouts, variable families, imported raid-role variables, automatic raid-tank and raid-assistant assignments, and Key=Value boolean metadata require v3.2.1-beta or newer. Pages using only features common to v3.1 remain compatible with v3.1.x and v3.2.0-beta clients.
 * New Feature: Added priority assignments. A variable or `$` marker value written as `Name > Name > Name` resolves to the first listed player who is present and alive, so raid markers and displayed text follow whoever is available. Assignments re-resolve when the group roster or player state changes.
 * New Feature: Mouseover marker keybindings now mark a hostile unit under the cursor and fall back to your current target when there is no valid unit. A new Smart Markers setting can relax the restriction to mark any live unit, including friendly players.
 * New Feature: Added optional display auto-hide. The assignment fades out when the mouse is away, fades back in over its rendered area, and remains visible for three seconds after the page or displayed content changes.
