@@ -3,7 +3,7 @@
 -- a visible resize handle over the base AceGUI TreeGroup behavior.
 -- @module AngryTreeGroup
 
-local Type, Version = "AngryTreeGroup", 5
+local Type, Version = "AngryTreeGroup", 6
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -105,7 +105,7 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
         button.separatorLine:SetPoint("RIGHT", button, "RIGHT", -8, 0)
         button.separatorLine:Show()
         button.icon:SetTexture(nil)
-        button.pinBadge:Hide()
+        button.pinIcon:Hide()
         button.menuBtn:Hide()
         button.text:SetText("")
         toggle:Hide()
@@ -130,10 +130,10 @@ local function UpdateButton(button, treeline, selected, canExpand, isExpanded)
     end
 
     if pinned then
-        button.pinBadge:Show()
-        button.text:SetPoint("RIGHT", button.pinBadge, "LEFT", -3, 0)
+        button.pinIcon:Show()
+        button.text:SetPoint("RIGHT", button.pinIcon, "LEFT", -3, 0)
     else
-        button.pinBadge:Hide()
+        button.pinIcon:Hide()
         button.text:SetPoint("RIGHT", button.menuBtn, "LEFT", -2, 0)
     end
 
@@ -607,14 +607,12 @@ local methods = {
         menuBtn:SetPoint("RIGHT", button, "RIGHT", -9, 1)
         button.menuBtn = menuBtn
 
-        local pinBadge = button:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        pinBadge:SetWidth(20)
-        pinBadge:SetJustifyH("RIGHT")
-        pinBadge:SetPoint("RIGHT", menuBtn, "LEFT", -2, 0)
-        pinBadge:SetText("PIN")
-        pinBadge:SetTextColor(1, 0.82, 0)
-        pinBadge:Hide()
-        button.pinBadge = pinBadge
+        local pinIcon = button:CreateTexture(nil, "OVERLAY")
+        pinIcon:SetSize(12, 12)
+        pinIcon:SetPoint("RIGHT", menuBtn, "LEFT", -2, 0)
+        pinIcon:SetAtlas("auctionhouse-icon-favorite", false)
+        pinIcon:Hide()
+        button.pinIcon = pinIcon
 
         button:RegisterForDrag("LeftButton")
         button:SetScript("OnDragStart", Button_OnDragStart)

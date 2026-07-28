@@ -68,7 +68,7 @@ If a displayed page is new to your installation, it appears unfiled. You may org
 
 To keep a received page during cleanup, right-click it and choose **Pin**. You can also pin a category, which protects received pages anywhere in that category's subtree. Pinning is local to your installation and does not change shared data; right-click the item again and choose **Unpin** to remove that protection.
 
-Every pinned item carries a gold **PIN** badge. At each level of the tree, pinned categories appear first, followed by pinned pages, then a divider and the remaining unpinned items in their existing manual order. Nested pages remain inside their categories. The gray `‡` suffix means that an item has variables or metadata; it is not the pin indicator. Pin or unpin an item before dragging it across these fixed sections; dropping into a category remains available. Pin sorting changes only the library view—Previous, Next, and First continue to follow the saved manual page order.
+Every pinned item carries a gold favorite-star icon. At each level of the tree, pinned categories appear first, followed by pinned pages, then a divider and the remaining unpinned items in their existing manual order. Nested pages remain inside their categories. The gray `‡` suffix means that an item has variables or metadata; it is not the pin indicator. Pin or unpin an item before dragging it across these fixed sections; dropping into a category remains available. Pin sorting changes only the library view—Previous, Next, and First continue to follow the saved manual page order.
 
 Shared page changes are fast and ordered. If the leader rapidly presses Previous and Next, followers move to the final selection instead of replaying obsolete intermediate pages.
 
