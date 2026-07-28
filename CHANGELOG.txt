@@ -4,6 +4,7 @@
 * New Feature: Added priority assignments. A variable or `$` marker value written as `Name > Name > Name` resolves to the first listed player who is present and alive, so raid markers and displayed text follow whoever is available. Assignments re-resolve when the group roster or player state changes.
 * New Feature: Mouseover marker keybindings now mark a hostile unit under the cursor and fall back to your current target when there is no valid unit. A new Smart Markers setting can relax the restriction to mark any live unit, including friendly players.
 * New Feature: Added optional display auto-hide. The assignment fades out when the mouse is away, fades back in over its rendered area, and remains visible for three seconds after the page or displayed content changes.
+* Improvement: **Fade in Combat** replaces the old hide-on-combat behavior. When enabled, a visible assignment stays at 10% opacity during combat without changing its manual hidden state; leaving combat restores the exact prior opacity, auto-hide progress, and page-reveal state.
 * Improvement: `/ae` is now the canonical slash command throughout AngryEra. `/aa` remains a temporary compatibility alias and prints a local deprecation notice once per login.
 * New Feature: Added inheritable raid group layouts. Put a standard `$LAYOUT` on a category, override only the encounter pages that differ, render up to eight named raid subgroups with `{layout}`, and optionally apply the same plan to the live raid.
 * New Feature: Layout slots fill from the live roster: a name, a priority list `A > B > C`, a class fill `*MAGE`/`*MAGE x2`, or `group:2`. Auto-fill picks present-and-alive members and never assigns anyone twice.
@@ -47,6 +48,11 @@
 * Improvement: Group Layout preserves slot order in the editor and rendered note. Apply guarantees subgroup membership, but does not force physical row order because Blizzard exposes no direct safe within-subgroup position operation.
 * Fix: Edit Variables no longer shadows Lua's `type()` function while saving, and a stale dialog cannot report success, write through a deleted/replaced/newly read-only page or category, or overwrite a newer variable edit.
 * Fix: Received-page cleanup now fails closed when ownership metadata is missing or corrupt, and repaired identity counters no longer reuse pruned page identifiers.
+* Fix: Startup now sanitizes corrupt saved settings and window/display state, repairs invalid hierarchy links and cycles, and rehomes affected pages or categories instead of allowing malformed data to break the editor.
+* Fix: Oversized or invalid local edits and imports are rejected before AngryEra allocates identifiers, mutates the page library, or publishes a change.
+* Fix: Version checks and display recovery no longer repeat redundant requests, stale group-session work is discarded, and long-running request tracking remains bounded through roster and leadership changes.
+* Fix: Disabling and re-enabling AngryEra now tears down pending work and auxiliary editors cleanly, closes import/export windows, and reuses the existing assignment display instead of leaking UI state.
+* Packaging: Corrected package-metadata YAML and Markdown changelog handling, normalized embedded-library path case, restored the canonical `Bindings.xml` filename, made the root embed manifest valid XML, pinned Git externals to tested commits, and added the project's BSD 3-Clause license.
 
 ## v3.1.1
 

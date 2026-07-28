@@ -32,6 +32,7 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Pinned page library:** local favorites stay above a clear divider, and the first v3.2.1 upgrade pins existing locally owned category roots when no pin choices already exist.
 - **Optional received-page cleanup:** remove pages received from other leaders at login or on demand while retaining protected local data.
 - **Optional hover auto-hide:** fade the assignment away when idle and reveal it on hover or whenever displayed content changes.
+- **Optional combat fade:** keep a visible assignment at 10% opacity in combat without changing its manual visibility or interrupting the current auto-hide and page-reveal state.
 - **Raid group layouts:** build inherited, roster-aware subgroup plans, render them inside notes, and apply or safely queue validated layouts—including leader-only display-transition application through `$AUTOAPPLYLAYOUT`.
 
 ## Quick start
@@ -549,15 +550,15 @@ Slots hold the expression, not the resolved player, so `*MAGE x2` and `A > B` ke
 
 Tick **Inherit layout** to preview and use the nearest ancestor category layout. The inherited layout remains visible but read-only. Checking the box changes only the editor state; nothing is removed until you save. Saving a previously custom layout while checked removes only this page or category's local `$LAYOUT` override, making the inherited default effective again. Uncheck it to create an editable custom override, initially copied from the inherited layout.
 
-**Save** changes the stored layout choice; it does not rearrange the live raid. On a displayed page, **Apply to Raid** saves first and then attempts the rearrangement. While **Inherit layout** remains checked, neither action creates a page override, so later category changes continue to flow through. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
+**Save** changes the stored layout choice; it does not rearrange the live raid. On a displayed page, **Apply** saves first and then attempts to rearrange the raid. While **Inherit layout** remains checked, neither action creates a page override, so later category changes continue to flow through. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
 
-**Apply to Raid** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected. It then moves one identity at a time, waits for Classic to acknowledge the change, and resolves fresh raid indices before continuing so roster renumbering cannot redirect a later move.
+**Apply** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected. It then moves one identity at a time, waits for Classic to acknowledge the change, and resolves fresh raid indices before continuing so roster renumbering cannot redirect a later move.
 
 The raid leader may always apply it. A raid assistant must also be an officer in the current raid leader's guild, be listed in **Trusted Assistants** on that installation, or have **Allow All Raid Assistants** enabled there. This local check means routinely granting assist to an entire raid does not enable the action for everyone by default.
 
 The editor button saves and applies only the exact page currently displayed. After editing a category layout, display a descendant page that inherits it and use `/ae applylayout`, or open that displayed page's layout editor. `/ae applylayout` always applies the layout resolved by the actively displayed page.
 
-Raid subgroup changes are protected during combat. If you use **Apply to Raid** or `/ae applylayout` in combat, AngryEra queues that exact displayed page instead of attempting the move. Displaying another page, receiving a newer revision, or changing the inherited layout context cancels the queued request; returning to the page later does not revive it. When combat ends, AngryEra resolves the layout again against the live roster, rechecks permission, and applies it once.
+Raid subgroup changes are protected during combat. If you use **Apply** or `/ae applylayout` in combat, AngryEra queues that exact displayed page instead of attempting the move. Displaying another page, receiving a newer revision, or changing the inherited layout context cancels the queued request; returning to the page later does not revive it. When combat ends, AngryEra resolves the layout again against the live roster, rechecks permission, and applies it once.
 
 To apply layouts automatically as pages change, right-click a page or category, choose **Edit Variables**, and add:
 
@@ -567,7 +568,7 @@ $AUTOAPPLYLAYOUT=$true
 
 `$AUTOAPPLYLAYOUT` inherits like `$LAYOUT` and is off when absent or `$false`. Put it on a category to enable automatic layouts for its descendants, or set `$AUTOAPPLYLAYOUT=$false` on a page or nearer category to disable it there. When a different page with an effective `$true` value becomes the shared display, the raid leader automatically requests that destination page's effective layout using the same combat queue and validation.
 
-AngryEra first records an initial display state. After that, transitioning from no displayed page or another page to a page with a different identity can apply the destination layout. The initial state itself does not rearrange the raid, and saving, rerendering, or receiving a new revision of that same page does not trigger automatic application. After editing the current layout, use **Apply to Raid** if it should move the raid immediately. A destination page without an effective `$LAYOUT` is a quiet no-op. Qualified raid assistants remain manual-only and must use **Apply to Raid** or `/ae applylayout`.
+AngryEra first records an initial display state. After that, transitioning from no displayed page or another page to a page with a different identity can apply the destination layout. The initial state itself does not rearrange the raid, and saving, rerendering, or receiving a new revision of that same page does not trigger automatic application. After editing the current layout, use **Apply** if it should move the raid immediately. A destination page without an effective `$LAYOUT` is a quiet no-op. Qualified raid assistants remain manual-only and must use **Apply** or `/ae applylayout`.
 
 During combat, only the exact current page, revision, and inherited context remain queued. Selecting another enabled page discards the older queued layout and queues the newer one; selecting a page where `$AUTOAPPLYLAYOUT` is false cancels the older request without replacing it.
 
@@ -674,7 +675,7 @@ Named raid targets become native `{rt1}` through `{rt8}` tokens when output to c
 Open `/ae` to configure:
 
 - highlighted words and the special `Group` keyword;
-- hide-on-combat behavior;
+- optional **Fade in Combat**, which caps a visible assignment at 10% opacity and restores its exact prior visibility, opacity, auto-hide, and page-reveal state after combat;
 - optional hover auto-hide, with a three-second reveal after page or displayed-content changes;
 - editor scale;
 - display backdrop and colors;
@@ -745,7 +746,7 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 ### A group layout does not apply
 
 - Confirm you are in a raid and the page whose effective layout you want is the exact shared display.
-- **Save** stores the layout but does not move anyone. Use **Apply to Raid** or `/ae applylayout`.
+- **Save** stores the layout but does not move anyone. Use **Apply** or `/ae applylayout`.
 - Confirm the caller is the raid leader or a qualified raid assistant.
 - Ensure every explicit or priority-selected name resolves uniquely in the current raid. Use `Name-Realm` when a short name is ambiguous.
 - Ensure the same player is not produced twice and every subgroup remains at or below five players after variables, class fills, and `group:N` slots resolve.
@@ -857,8 +858,12 @@ make check-strict
 
 Generated API documentation is written under `docs/ldoc/`; remove it with `make docs-clean`.
 
+LDoc 1.5.0 predates Lua 5.5 and otherwise crashes while rendering. The `make docs` target applies a narrow repo-local compatibility loader matching tested upstream revision `b8b574c8a67019e26a423af1b8c141d306ab58b2`; it does not modify installed LuaRocks files. Using that exact LDoc revision directly is also supported.
+
 ## Credits
 
 AngryEra is based on AngryAssignments by Ermad.
 
 Maintained by **Eblis/Zessy/Kwayteow** on Pagle (Classic Era).
+
+AngryEra is distributed under the [BSD 3-Clause License](LICENSE).

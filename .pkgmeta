@@ -1,58 +1,62 @@
 package-as: AngryEra
 
-manual-changelog: CHANGELOG.txt
+manual-changelog:
+  filename: CHANGELOG.txt
+  markup-type: markdown
 
 externals:
-	libs/AceAddon-3.0:
-		url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceAddon-3.0
-		tag: latest
-	libs/AceConfig-3.0:
-		url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceConfig-3.0
-		tag: latest
-	libs/AceConsole-3.0:
-		url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceConsole-3.0
-		tag: latest
-	libs/AceEvent-3.0:
-		url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceEvent-3.0
-		tag: latest
-	libs/AceGUI-3.0:
-		url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceGUI-3.0
-		tag: latest
-	libs/AceTimer-3.0:
-		url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceTimer-3.0
-		tag: latest
-	libs/AceComm-3.0:
-		url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceComm-3.0
-		tag: latest
-	libs/AceSerializer-3.0:
-		url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceSerializer-3.0
-		tag: latest
-	libs/LibCompress:
-		url: svn://svn.wowace.com/wow/libcompress/mainline/trunk
-		tag: latest
-	libs/CallbackHandler-1.0:
-		url: svn://svn.wowace.com/wow/callbackhandler/mainline/trunk/CallbackHandler-1.0
-		tag: latest
-	libs/LibWindow-1.1:
-		url: svn://svn.wowace.com/wow/libwindow-1-1/mainline/trunk
-		tag: latest
-	libs/LibSharedMedia-3.0:
-		url: svn://svn.wowace.com/wow/libsharedmedia-3-0/mainline/trunk
-		tag: latest
-	libs/AceGUI-3.0-SharedMediaWidgets:
-		url: svn://svn.wowace.com/wow/ace-gui-3-0-shared-media-widgets/mainline/trunk
-		tag: latest
-	libs/LibStub:
-		url: svn://svn.wowace.com/wow/libstub/mainline/trunk
-		tag: latest
-	libs/LibMustache:
-		url: https://github.com/mikinho/libmustache
-	libs/LibDropDownMenu:
-		url: https://github.com/HizurosWoWAddOns/LibDropDownMenu
-		tag: latest
-	libs/LibDeflate:
-		url: https://github.com/SafeteeWoW/LibDeflate
-		tag: latest
+  libs/AceAddon-3.0:
+    url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceAddon-3.0
+    tag: latest
+  libs/AceConfig-3.0:
+    url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceConfig-3.0
+    tag: latest
+  libs/AceConsole-3.0:
+    url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceConsole-3.0
+    tag: latest
+  libs/AceEvent-3.0:
+    url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceEvent-3.0
+    tag: latest
+  libs/AceGUI-3.0:
+    url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceGUI-3.0
+    tag: latest
+  libs/AceTimer-3.0:
+    url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceTimer-3.0
+    tag: latest
+  libs/AceComm-3.0:
+    url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceComm-3.0
+    tag: latest
+  libs/AceSerializer-3.0:
+    url: svn://svn.wowace.com/wow/ace3/mainline/trunk/AceSerializer-3.0
+    tag: latest
+  libs/LibCompress:
+    url: svn://svn.wowace.com/wow/libcompress/mainline/trunk
+    tag: latest
+  libs/CallbackHandler-1.0:
+    url: svn://svn.wowace.com/wow/callbackhandler/mainline/trunk/CallbackHandler-1.0
+    tag: latest
+  libs/LibWindow-1.1:
+    url: svn://svn.wowace.com/wow/libwindow-1-1/mainline/trunk
+    tag: latest
+  libs/LibSharedMedia-3.0:
+    url: svn://svn.wowace.com/wow/libsharedmedia-3-0/mainline/trunk
+    tag: latest
+  libs/AceGUI-3.0-SharedMediaWidgets:
+    url: svn://svn.wowace.com/wow/ace-gui-3-0-shared-media-widgets/mainline/trunk
+    tag: latest
+  libs/LibStub:
+    url: svn://svn.wowace.com/wow/libstub/mainline/trunk
+    tag: latest
+  # Git externals are pinned to the tested release revisions.
+  libs/LibMustache:
+    url: https://github.com/mikinho/libmustache
+    commit: 49a5a1cfcc3e8f1e0b0326bec59a41379fd4ab69
+  libs/LibDropDownMenu:
+    url: https://github.com/HizurosWoWAddOns/LibDropDownMenu
+    commit: d1246a0f546bf343338c88902b9b5ffc95d0061a
+  libs/LibDeflate:
+    url: https://github.com/SafeteeWoW/LibDeflate
+    commit: 6831edcaa915154e7769d622e0de72ee5d25a882
 
 enable-nolib-creation: no
 
@@ -65,6 +69,7 @@ ignore:
   - libs/LibDeflate/tests
   - libs/LibDeflate/tools
   - libs/LibDeflate/*.md
-  - /docs
-  - /tests
+  - docs
+  - tests
+  - tools
   - Makefile

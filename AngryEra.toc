@@ -2,6 +2,7 @@
 ## Title: Angry Era
 ## Author: Mikinho
 ## X-Original-Author: Ermad
+## X-License: BSD-3-Clause
 ## Notes: Powerful raid assignment tool for Classic Era. Features dynamic templates, drag-and-drop organization, and markdown support.
 ## Version: @project-version@
 ## X-Timestamp: @project-date-integer@
@@ -10,8 +11,8 @@
 
 embeds.xml
 
-Libs\LibDropDownMenu\LibDropDownMenu.xml
-Libs\LibMustache\LibMustache.xml
+libs\LibDropDownMenu\LibDropDownMenu.xml
+libs\LibMustache\LibMustache.xml
 
 modules\core\core.xml
 Templates.lua

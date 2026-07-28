@@ -2,6 +2,7 @@
 
 LDOC ?= ldoc
 LDOC_CONFIG ?= .ldoc
+LDOC_LUA_INIT ?= $(abspath tools/ldoc_lua55_compat.lua)
 DOCS_DIR ?= docs/ldoc
 LUA ?= luac
 LUACHECK ?= luacheck
@@ -13,7 +14,7 @@ LUAJIT_RUN ?= luajit
 LUA_FILES := $(shell rg --files -g '*.lua' 2>/dev/null || find . -maxdepth 1 -type f -name '*.lua' -print | sed 's|^\./||')
 
 docs:
-	$(LDOC) -c $(LDOC_CONFIG) .
+	LUA_INIT="@$(LDOC_LUA_INIT)" LUA_INIT_5_5="@$(LDOC_LUA_INIT)" $(LDOC) -c $(LDOC_CONFIG) .
 
 docs-clean:
 	rm -rf $(DOCS_DIR) doc
