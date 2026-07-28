@@ -259,10 +259,6 @@ _G.GameFontHighlightSmall = "GameFontHighlightSmall"
 function _G.CreateFrame(_, _, parent)
     return NewRegion(parent or _G.UIParent)
 end
-local cursorTexture
-function _G.SetCursor(value)
-    cursorTexture = value
-end
 function _G.CloseDropDownMenus() end
 
 local cursorX, cursorY = 0, 0
@@ -426,6 +422,8 @@ assert(
 -- two palettes standing beside them.
 local palette = PaletteBox()
 local variablesPalette = VariablesBox()
+local fixedGridHeight = grid.frame:GetHeight()
+local gridTopInset = grid.frame:GetTop() - grid.boxes[1]:GetTop()
 assert(grid.boxes[1]:GetLeft() == grid.frame:GetLeft(), "the first group opens the left column")
 assert(grid.boxes[2]:GetLeft() > grid.boxes[1]:GetLeft(), "an even-numbered group stands in the right column")
 assert(grid.boxes[3]:GetLeft() == grid.boxes[1]:GetLeft(), "an odd-numbered group returns to the left column")
@@ -434,10 +432,19 @@ assert(grid.boxes[3]:GetTop() < grid.boxes[1]:GetTop(), "the second row of group
 assert(palette:GetLeft() >= grid.boxes[2]:GetRight(), "the palette clears both group columns")
 assert(variablesPalette:GetLeft() >= palette:GetRight(), "Variables stands to the right of Unrostered")
 assert(variablesPalette:GetRight() <= grid.frame:GetRight(), "the variables palette stays inside the grid")
-assert(palette:GetTop() == grid.frame:GetTop(), "the palette starts at the top of the grid")
-assert(variablesPalette:GetTop() == grid.frame:GetTop(), "the variables palette starts at the top of the grid")
-assert(palette:GetHeight() == grid.frame:GetHeight(), "the palette is fixed to the complete subgroup canvas")
-assert(variablesPalette:GetHeight() == grid.frame:GetHeight(), "Variables shares the fixed subgroup canvas")
+assert(gridTopInset == 2, "the first-row pane border has a small protected top inset")
+assert(palette:GetTop() == grid.boxes[1]:GetTop(), "the palette shares the inset content top")
+assert(variablesPalette:GetTop() == grid.boxes[1]:GetTop(), "Variables shares the inset content top")
+assert(palette:GetHeight() == fixedGridHeight - gridTopInset, "the palette fills only the subgroup canvas")
+assert(variablesPalette:GetHeight() == palette:GetHeight(), "Variables shares the fixed subgroup canvas")
+assert(palette:GetBottom() == grid.frame:GetBottom(), "the inset palette still ends at the grid bottom")
+assert(variablesPalette:GetBottom() == grid.frame:GetBottom(), "Variables still ends at the grid bottom")
+assert(grid.boxes[7]:GetBottom() == grid.frame:GetBottom(), "the last left group remains fully visible")
+assert(grid.boxes[8]:GetBottom() == grid.frame:GetBottom(), "the last right group remains fully visible")
+for index = 1, 10 do
+    assert(grid.boxes[index]:GetTop() <= grid.frame:GetTop(), "every pane stays below the protected top edge")
+    assert(grid.boxes[index]:GetBottom() >= grid.frame:GetBottom(), "every pane stays inside the fixed canvas")
+end
 assert(not palette.scrollbar:IsShown(), "a short unrostered list needs no scrollbar")
 assert(not variablesPalette.scrollbar:IsShown(), "an empty variables list needs no scrollbar")
 
@@ -530,6 +537,21 @@ local function GestureTo(source, x, y)
     end
 
     source:GetScript("OnDragStop")(source)
+    assert(
+        grid.dragging == nil
+            and grid.dropTarget == nil
+            and grid.dragSource == nil
+            and grid.dragGrabX == nil
+            and grid.dragGrabY == nil
+            and grid.frame:GetScript("OnUpdate") == nil
+            and not grid.dropMarker:IsShown()
+            and not grid.dragGhost:IsShown()
+            and grid.dragGhost.label:GetText() == ""
+            and not next(grid.dragGhost.points)
+            and not grid.dragSourcePlaceholder:IsShown()
+            and not next(grid.dragSourcePlaceholder.points),
+        "every completed or cancelled gesture clears its carried-cell visuals"
+    )
     return drag, drop
 end
 
@@ -547,7 +569,10 @@ Click(blank, "LeftButton")
 assert(not clicked and not headerClicked and not emptyClicked, "disabled layouts suppress every click mutation")
 local disabledDrag, disabledDrop = DragTo(filled, grid.boxes[3].rows[1])
 assert(disabledDrag == nil and disabledDrop == nil, "disabled layouts suppress drag/drop mutations")
-assert(cursorTexture == nil and not grid.dropMarker:IsShown(), "disabled dragging never captures the cursor or marker")
+assert(
+    not grid.dropMarker:IsShown() and not grid.dragGhost:IsShown(),
+    "disabled dragging never captures the marker or carried cell"
+)
 grid:SetDisabled(false)
 assert(not grid.disabled and grid.frame:GetAlpha() == 1, "an override can re-enable the layout editor")
 Click(filled, "LeftButton")
@@ -556,15 +581,26 @@ assert(clicked and clicked.button == "LeftButton", "re-enabled layouts emit edit
 -- Checking Inherit while a drag is already active cancels it immediately.
 cursorX, cursorY = CentreOf(grid.boxes[3].rows[1])
 grid.boxes[3].rows[1]:GetScript("OnDragStart")(grid.boxes[3].rows[1])
-assert(cursorTexture ~= nil and grid.frame:GetScript("OnUpdate"), "the fixture starts a live drag")
+assert(
+    grid.frame:GetScript("OnUpdate") and grid.dragGhost:IsShown() and grid.dragSourcePlaceholder:IsShown(),
+    "a live slot drag carries the cell"
+)
+cursorX, cursorY = CentreOf(grid.boxes[1].rows[2])
+grid.frame:GetScript("OnUpdate")(grid.frame)
+assert(grid.dropMarker:IsShown() and grid.dropTarget.kind == "slot", "the disable fixture acquires a live target")
 grid:SetDisabled(true)
 assert(
-    cursorTexture == nil
-        and grid.frame:GetScript("OnUpdate") == nil
+    grid.frame:GetScript("OnUpdate") == nil
         and not grid.dropMarker:IsShown()
+        and grid.dropTarget == nil
+        and not grid.dragGhost:IsShown()
+        and grid.dragGhost.label:GetText() == ""
+        and not grid.dragSourcePlaceholder:IsShown()
         and grid.dragging == nil,
     "switching to inherited mode cancels a live drag"
 )
+grid.boxes[3].rows[1]:GetScript("OnDragStop")(grid.boxes[3].rows[1])
+assert(not grid.dragGhost:IsShown(), "a late drag-stop cannot revive a disabled drag")
 grid:SetDisabled(false)
 
 -- The regression that made dragging look dead in-game: the marker sat on the
@@ -573,10 +609,55 @@ grid:SetDisabled(false)
 local marked = grid.boxes[1].rows[2]
 local source = grid.boxes[3].rows[1]
 cursorX, cursorY = CentreOf(source)
+local sourceCursorX, sourceCursorY = cursorX, cursorY
 source:GetScript("OnDragStart")(source)
 assert(not grid.dropMarker:IsShown(), "a gesture that has not moved yet marks nothing")
-cursorX, cursorY = CentreOf(marked)
+assert(grid.dragGhost:IsShown(), "a live gesture immediately shows the carried cell")
+assert(grid.dragGhost.label:GetText() == source.label:GetText(), "the carried cell copies the source expression")
+assert(not grid.dragGhost.mouseEnabled, "the carried cell cannot steal the drag target")
+assert(grid.dragGhost:GetFrameLevel() > source:GetFrameLevel(), "the carried cell draws above its source row")
+assert(
+    grid.dragSourcePlaceholder:GetFrameLevel() > source:GetFrameLevel(),
+    "the Empty placeholder draws above the stationary source"
+)
+assert(
+    grid.dragGhost:GetWidth() == source:GetRight() - source:GetLeft()
+        and grid.dragGhost.background.texture == "Interface\\RaidFrame\\UI-RaidFrame-GroupButton",
+    "the carried cell copies the source width with native raid-row art"
+)
+assert(grid.dragGhost:GetLeft() == source:GetLeft(), "the carried cell preserves the horizontal grab point")
+assert(grid.dragGhost:GetTop() == source:GetTop(), "the carried cell preserves the vertical grab point")
+assert(
+    grid.dragSourcePlaceholder:IsShown()
+        and grid.dragSourcePlaceholder.label:GetText() == "Localized Empty"
+        and grid.dragSourcePlaceholder:GetLeft() == source:GetLeft(),
+    "moving a placed slot reveals an Empty placeholder at its source"
+)
+local sourceGhostLeft, sourceGhostTop = grid.dragGhost:GetLeft(), grid.dragGhost:GetTop()
+cursorX, cursorY = marked:GetLeft() + 2, select(2, CentreOf(marked))
 grid.frame:GetScript("OnUpdate")(grid.frame)
+assert(
+    grid.dragGhost:GetLeft() - sourceGhostLeft == cursorX - sourceCursorX
+        and grid.dragGhost:GetTop() - sourceGhostTop == cursorY - sourceCursorY,
+    "the carried cell reaches an off-center point without snapping"
+)
+local firstCursorX = cursorX
+local firstGhostLeft, firstGhostTop = grid.dragGhost:GetLeft(), grid.dragGhost:GetTop()
+cursorX = marked:GetRight() - 2
+grid.frame:GetScript("OnUpdate")(grid.frame)
+assert(
+    grid.dragGhost:GetLeft() - firstGhostLeft == cursorX - firstCursorX
+        and grid.dragGhost:GetTop() == firstGhostTop
+        and grid.dropMarker:GetTop() == marked:GetTop(),
+    "the carried cell follows horizontal movement within one unchanged target"
+)
+local secondCursorY, secondGhostTop = cursorY, grid.dragGhost:GetTop()
+cursorY = marked:GetTop() - 2
+grid.frame:GetScript("OnUpdate")(grid.frame)
+assert(
+    grid.dragGhost:GetTop() - secondGhostTop == cursorY - secondCursorY and grid.dropMarker:GetTop() == marked:GetTop(),
+    "the carried cell follows vertical movement within one unchanged target"
+)
 assert(grid.dropMarker:IsShown(), "a drag marks where a release would land")
 assert(grid.dropMarker:GetTop() == marked:GetTop(), "the marker covers the row under the cursor")
 assert(grid.dropMarker:GetFrameLevel() > marked:GetFrameLevel(), "the marker draws above the row it covers")
@@ -588,8 +669,35 @@ assert(
 assert(markerFill.texCoord[3] == 0.5 and markerFill.texCoord[4] == 0.9375, "the drop marker uses the highlight art")
 assert(markerFill.blendMode == "ADD", "the native drop marker adds its gold highlight over the target")
 assert(markerFill:GetHeight() == 14, "the drop marker matches the native slot art height")
+assert(
+    grid.dropMarker:GetFrameLevel() > grid.dragGhost:GetFrameLevel(),
+    "the gold target remains above the carried cell"
+)
 source:GetScript("OnDragStop")(source)
 assert(not grid.dropMarker:IsShown(), "the marker clears when the gesture ends")
+assert(not grid.dragGhost:IsShown(), "the carried cell clears when the gesture ends")
+assert(not grid.dragSourcePlaceholder:IsShown(), "the source placeholder clears when the gesture ends")
+
+-- A live roster/context redraw cancels the gesture before pooled rows can be
+-- relabelled underneath stale drag visuals.
+cursorX, cursorY = CentreOf(source)
+source:GetScript("OnDragStart")(source)
+assert(grid.dragGhost:IsShown(), "the redraw fixture begins with a carried cell")
+cursorX, cursorY = CentreOf(marked)
+grid.frame:GetScript("OnUpdate")(grid.frame)
+assert(grid.dropMarker:IsShown() and grid.dropTarget.kind == "slot", "the redraw fixture acquires a live target")
+grid:SetRoster({ "Vhez", "Kaza" })
+assert(
+    grid.dragging == nil
+        and grid.dropTarget == nil
+        and not grid.dropMarker:IsShown()
+        and not grid.dragGhost:IsShown()
+        and not grid.dragSourcePlaceholder:IsShown()
+        and grid.frame:GetScript("OnUpdate") == nil,
+    "a redraw safely cancels a live carried cell"
+)
+source:GetScript("OnDragStop")(source)
+assert(not grid.dragGhost:IsShown(), "a late stop after redraw cannot revive the carried cell")
 
 -- Dragging a member onto another group's slot reports a slot-to-slot move.
 local drag, drop = DragTo(grid.boxes[3].rows[1], grid.boxes[1].rows[2])
@@ -714,6 +822,17 @@ assert(
     "a variable row carries its exact reusable token"
 )
 
+cursorX, cursorY = CentreOf(variablesPalette.rows[3])
+variablesPalette.rows[3]:GetScript("OnDragStart")(variablesPalette.rows[3])
+assert(
+    grid.dragGhost:IsShown()
+        and grid.dragGhost.label:GetText() == "{{FLEX}}"
+        and not grid.dragSourcePlaceholder:IsShown(),
+    "a variable carries only its inserted token and leaves its reusable source visible"
+)
+variablesPalette.rows[3]:GetScript("OnDragStop")(variablesPalette.rows[3])
+assert(not grid.dragGhost:IsShown(), "cancelling a variable drag clears its carried token")
+
 local variableDrag, variableDrop = DragTo(variablesPalette.rows[3], blank)
 assert(variableDrag.kind == "text" and variableDrag.text == "{{FLEX}}", "dragging uses the token, not its value")
 assert(variableDrop.kind == "group" and variableDrop.group == 1, "a variable can be dropped into a layout group")
@@ -805,7 +924,7 @@ assert(reports == 0, "a layout with more groups in it is the same eight boxes")
 
 grid:SetRoster({})
 palette = PaletteBox()
-assert(grid.frame:GetHeight() == 424, "an empty palette keeps all eight subgroup boxes visible")
+assert(grid.frame:GetHeight() == fixedGridHeight, "an empty palette keeps all eight subgroup boxes visible")
 assert(not palette.scrollbar:IsShown(), "an empty palette hides its scrollbar")
 
 local crowd = {}
@@ -815,7 +934,7 @@ end
 grid:SetRoster(crowd)
 palette = PaletteBox()
 assert(reports == 0 and measured == nil, "a tall palette never asks the outer window to grow")
-assert(grid.frame:GetHeight() == 424, "thirty unrostered members keep the subgroup canvas fixed")
+assert(grid.frame:GetHeight() == fixedGridHeight, "thirty unrostered members keep the subgroup canvas fixed")
 assert(palette.scrollbar:IsShown(), "a palette taller than its viewport shows its own scrollbar")
 local minimum, maximum = palette.scrollbar:GetMinMaxValues()
 assert(minimum == 0 and maximum == 4, "the scrollbar exposes every hidden palette row")
@@ -849,7 +968,7 @@ assert(minimum == 0 and maximum == 14, "a full raid-sized palette remains indepe
 palette.scrollbar:SetValue(maximum)
 assert(palette.rows[1].layoutTarget.text == "Spare15", "the full palette scrolls to its final viewport")
 assert(palette.rows[26].layoutTarget.text == "Spare40", "the fortieth member is reachable without outer scrolling")
-assert(grid.frame:GetHeight() == 424, "forty unrostered members still keep every subgroup visible")
+assert(grid.frame:GetHeight() == fixedGridHeight, "forty unrostered members still keep every subgroup visible")
 grid:SetDisabled(true)
 palette.rows[1]:GetScript("OnMouseWheel")(palette.rows[1], 1)
 assert(palette.scrollbar:GetValue() == maximum - 3, "an inherited preview remains scrollable without becoming editable")
@@ -950,12 +1069,19 @@ grid.parent = nil
 -- Release clears the gesture so a stale press cannot fire later.
 cursorX, cursorY = CentreOf(grid.boxes[2].rows[1])
 grid.boxes[2].rows[1]:GetScript("OnDragStart")(grid.boxes[2].rows[1])
-assert(cursorTexture ~= nil, "a live drag owns the custom cursor")
+assert(grid.dragGhost:IsShown(), "a live drag owns a carried cell")
+cursorX, cursorY = CentreOf(grid.boxes[1].rows[1])
+grid.frame:GetScript("OnUpdate")(grid.frame)
+assert(grid.dropMarker:IsShown() and grid.dropTarget.kind == "slot", "the release fixture acquires a live target")
 grid:OnRelease()
 assert(grid.pressed == nil and grid.dragging == nil, "release clears the pending gesture")
-assert(cursorTexture == nil, "release restores the cursor when a drag was active")
 assert(grid.dropTarget == nil, "release clears the pending drop")
+assert(not grid.dropMarker:IsShown(), "release clears the visible drop target")
 assert(grid.frame:GetScript("OnUpdate") == nil, "release stops the drag update loop")
+assert(
+    not grid.dragGhost:IsShown() and grid.dragGhost.label:GetText() == "" and not grid.dragSourcePlaceholder:IsShown(),
+    "release clears every carried-cell visual"
+)
 assert(grid.measuredHeight == nil, "release forgets the measured height so a reused grid reports to its new host")
 assert(next(grid.paletteOffsets) == nil, "release forgets both palette offsets")
 assert(

@@ -4,7 +4,8 @@
 -- gesture as a drag/drop descriptor pair for
 -- `AngryEra.utils.layout.ApplyDrop` to resolve. Clicks report their position
 -- instead, separately for a box title, a filled slot, and an unused row. The
--- grid is always exactly as tall as its eight subgroup boxes.
+-- grid keeps a fixed eight-subgroup canvas with a small top inset so the first
+-- pane's border remains visible.
 --
 -- Every callback below is delivered the AceGUI way, as
 -- `(widget, event, ...)` -- a handler that reads its first argument as the
@@ -19,7 +20,7 @@
 --
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 11
+local Type, Version = "AngryLayoutGrid", 12
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -35,7 +36,7 @@ local CreateFrame, UIParent = CreateFrame, UIParent
 
 -- Global vars/functions that we don't upvalue since they might get hooked, or upgraded
 -- List them here for Mikk's FindGlobals script
--- GLOBALS: GetCursorPosition, SetCursor, CloseDropDownMenus, BackdropTemplateMixin
+-- GLOBALS: GetCursorPosition, CloseDropDownMenus, BackdropTemplateMixin
 -- GLOBALS: EMPTY, GameFontDarkGraySmall, GameFontHighlightSmall
 
 local MAX_SUBGROUPS = 8
@@ -49,6 +50,8 @@ local HEADER_HEIGHT = 16
 local BOX_PADDING = 6
 local BOX_SPACING = 4
 local ROW_TEXT_PADDING = 8
+local GRID_TOP_INSET = 2
+local GHOST_LEVEL = 10
 local MARKER_LEVEL = 20
 local SCROLLBAR_WIDTH = 16
 local SCROLLBAR_GAP = 4
@@ -56,8 +59,9 @@ local SCROLLBAR_END_PADDING = 18
 local PALETTE_WHEEL_ROWS = 3
 local GROUP_BOX_HEIGHT = HEADER_HEIGHT + (MAX_SUBGROUP_SLOTS * ROW_HEIGHT) + (BOX_PADDING * 2)
 local GROUP_ROWS = MAX_SUBGROUPS / GROUP_COLUMNS
-local GRID_HEIGHT = (GROUP_ROWS * GROUP_BOX_HEIGHT) + ((GROUP_ROWS - 1) * BOX_SPACING)
-local PALETTE_VISIBLE_ROWS = floor((GRID_HEIGHT - HEADER_HEIGHT - (BOX_PADDING * 2)) / ROW_HEIGHT)
+local GRID_CONTENT_HEIGHT = (GROUP_ROWS * GROUP_BOX_HEIGHT) + ((GROUP_ROWS - 1) * BOX_SPACING)
+local GRID_HEIGHT = GRID_TOP_INSET + GRID_CONTENT_HEIGHT
+local PALETTE_VISIBLE_ROWS = floor((GRID_CONTENT_HEIGHT - HEADER_HEIGHT - (BOX_PADDING * 2)) / ROW_HEIGHT)
 local widgetSequence = 0
 local EMPTY_ROW_LABEL = EMPTY or "Empty"
 local RAID_ROW_TEXTURE = "Interface\\RaidFrame\\UI-RaidFrame-GroupButton"
@@ -88,6 +92,16 @@ local function SetSolidColor(texture, r, g, b, a)
     texture:SetTexture(r, g, b, a)
 end
 
+local function StyleRaidRowTexture(texture, highlight)
+    texture:ClearAllPoints()
+    texture:SetPoint("TOPLEFT")
+    texture:SetPoint("TOPRIGHT")
+    texture:SetHeight(RAID_ROW_HEIGHT)
+    texture:SetTexture(RAID_ROW_TEXTURE)
+    texture:SetTexCoord(0, 0.640625, highlight and 0.5 or 0, highlight and 0.9375 or 0.4375)
+    texture:SetBlendMode(highlight and "ADD" or "BLEND")
+end
+
 -- Reads the cursor in the same space frame edges are reported in.
 local function CursorPosition()
     local x, y = GetCursorPosition()
@@ -107,6 +121,80 @@ local function FrameContains(frame, x, y)
         return false
     end
     return x >= left and x <= right and y >= bottom and y <= top
+end
+
+local function HideDragVisuals(self)
+    if self.dragGhost then
+        self.dragGhost:Hide()
+        self.dragGhost.label:SetText("")
+        self.dragGhost:ClearAllPoints()
+    end
+    if self.dragSourcePlaceholder then
+        self.dragSourcePlaceholder:Hide()
+        self.dragSourcePlaceholder:ClearAllPoints()
+    end
+    self.dragSource = nil
+    self.dragGrabX = nil
+    self.dragGrabY = nil
+end
+
+local function CancelDrag(self)
+    self.dragging = nil
+    self.dropTarget = nil
+    self.frame:SetScript("OnUpdate", nil)
+    self.dropMarker:Hide()
+    HideDragVisuals(self)
+end
+
+local function PositionDragGhost(self, x, y)
+    local ghost = self.dragGhost
+    if not ghost or not ghost:IsShown() then
+        return
+    end
+    local rootLeft = UIParent:GetLeft() or 0
+    local rootBottom = UIParent:GetBottom() or 0
+    ghost:ClearAllPoints()
+    ghost:SetPoint(
+        "TOPLEFT",
+        UIParent,
+        "BOTTOMLEFT",
+        x - (self.dragGrabX or 0) - rootLeft,
+        y + (self.dragGrabY or 0) - rootBottom
+    )
+end
+
+local function ShowDragVisuals(self, source, dragging, x, y)
+    local left, right = source:GetLeft(), source:GetRight()
+    local top = source:GetTop()
+    local width = left and right and right - left or source:GetWidth()
+    width = width and width > 0 and width or 1
+    left = left or (x - (width / 2))
+    top = top or (y + (ROW_HEIGHT / 2))
+
+    self.dragSource = source
+    self.dragGrabX = x - left
+    self.dragGrabY = top - y
+
+    local ghost = self.dragGhost
+    ghost:SetWidth(width)
+    ghost:SetHeight(ROW_HEIGHT)
+    ghost:SetFrameLevel(source:GetFrameLevel() + GHOST_LEVEL)
+    local ghostText = dragging.kind == "text" and dragging.text or source.label:GetText()
+    if dragging.kind == "text" and type(ghostText) == "string" then
+        ghostText = ghostText:gsub("|", "||")
+    end
+    ghost.label:SetText(ghostText)
+    ghost:Show()
+    PositionDragGhost(self, x, y)
+
+    local placeholder = self.dragSourcePlaceholder
+    placeholder:Hide()
+    placeholder:ClearAllPoints()
+    if dragging.kind == "slot" then
+        placeholder:SetAllPoints(source)
+        placeholder:SetFrameLevel(source:GetFrameLevel() + GHOST_LEVEL - 1)
+        placeholder:Show()
+    end
 end
 
 -- The row or title under the cursor within one box.
@@ -213,10 +301,7 @@ local function FinishDrag(self, x, y)
     UpdateMarker(self, x, y)
 
     local drop = self.dropTarget
-    self.dragging, self.dropTarget = nil, nil
-    self.frame:SetScript("OnUpdate", nil)
-    self.dropMarker:Hide()
-    SetCursor(nil)
+    CancelDrag(self)
 
     -- Releasing away from the grid discards the slot; releasing on unused space
     -- inside it cancels, so a misaimed drag never silently drops a member.
@@ -239,10 +324,12 @@ end
 local function Drag_OnUpdate(frame)
     local self = frame.obj
     if not self.dragging then
-        frame:SetScript("OnUpdate", nil)
+        CancelDrag(self)
         return
     end
-    UpdateMarker(self, CursorPosition())
+    local x, y = CursorPosition()
+    PositionDragGhost(self, x, y)
+    UpdateMarker(self, x, y)
 end
 
 -- The client owns the press-to-drag gesture; only the hit-test is ours, so a
@@ -257,9 +344,11 @@ local function Target_OnDragStart(frame)
         return
     end
 
+    CancelDrag(self)
     self.dragging, self.dropTarget = dragging, nil
     CloseDropDownMenus()
-    SetCursor("Interface\\CURSOR\\Point.blp")
+    local x, y = CursorPosition()
+    ShowDragVisuals(self, frame, dragging, x, y)
     self.frame:SetScript("OnUpdate", Drag_OnUpdate)
 end
 
@@ -415,8 +504,8 @@ local function AcquireRow(self, box, index)
     row.background = background
 
     local label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    label:SetPoint("LEFT", ROW_TEXT_PADDING, 0)
-    label:SetPoint("RIGHT", -ROW_TEXT_PADDING, 0)
+    label:SetPoint("LEFT", background, "LEFT", ROW_TEXT_PADDING, 0)
+    label:SetPoint("RIGHT", background, "RIGHT", -ROW_TEXT_PADDING, 0)
     label:SetHeight(ROW_HEIGHT)
     label:SetJustifyH("LEFT")
     if label.SetWordWrap then
@@ -694,26 +783,16 @@ end
 -- Only a row holding something registers for dragging, so an unused one still
 -- resolves as a click rather than starting a gesture that carries nothing.
 local function StyleRow(row, raidStyle)
-    row.background:ClearAllPoints()
-    row.highlight:ClearAllPoints()
     if raidStyle then
-        row.background:SetPoint("TOPLEFT")
-        row.background:SetPoint("TOPRIGHT")
-        row.background:SetHeight(RAID_ROW_HEIGHT)
-        row.background:SetTexture(RAID_ROW_TEXTURE)
-        row.background:SetTexCoord(0, 0.640625, 0, 0.4375)
-
-        row.highlight:SetPoint("TOPLEFT")
-        row.highlight:SetPoint("TOPRIGHT")
-        row.highlight:SetHeight(RAID_ROW_HEIGHT)
-        row.highlight:SetTexture(RAID_ROW_TEXTURE)
-        row.highlight:SetTexCoord(0, 0.640625, 0.5, 0.9375)
-        row.highlight:SetBlendMode("ADD")
+        StyleRaidRowTexture(row.background, false)
+        StyleRaidRowTexture(row.highlight, true)
         return
     end
 
+    row.background:ClearAllPoints()
     row.background:SetAllPoints(row)
     SetSolidColor(row.background, 1, 1, 1, 0.05)
+    row.highlight:ClearAllPoints()
     row.highlight:SetAllPoints(row)
     SetSolidColor(row.highlight, 1, 1, 1, 0.2)
     row.highlight:SetBlendMode("BLEND")
@@ -841,7 +920,7 @@ local function DrawPalette(self, box, entry)
         row:EnableMouseWheel(true)
         row.paletteBox = box
         row:SetScript("OnMouseWheel", PaletteChild_OnMouseWheel)
-    end, rightInset, GRID_HEIGHT)
+    end, rightInset, GRID_CONTENT_HEIGHT)
 end
 
 --[[-----------------------------------------------------------------------------
@@ -849,7 +928,7 @@ Methods
 -------------------------------------------------------------------------------]]
 local methods = {
     ["OnAcquire"] = function(self)
-        local wasDragging = self.dragging ~= nil
+        CancelDrag(self)
         self.layout = nil
         self.model = nil
         self.roster = {}
@@ -861,9 +940,7 @@ local methods = {
         self.measuredHeight = nil
         self.safeDropFrame = nil
         self.disabled = false
-        self.frame:SetScript("OnUpdate", nil)
         self.frame:SetAlpha(1)
-        self.dropMarker:Hide()
         for _, box in ipairs(self.boxes) do
             if box.scrollbar then
                 box.scrollbar:SetValue(0)
@@ -872,17 +949,12 @@ local methods = {
         end
         self.paletteOffsets = {}
         self.drawing = nil
-        if wasDragging then
-            SetCursor(nil)
-        end
         self:SetWidth(400)
         self:SetHeight(GRID_HEIGHT)
     end,
 
     ["OnRelease"] = function(self)
-        local wasDragging = self.dragging ~= nil
-        self.frame:SetScript("OnUpdate", nil)
-        self.dropMarker:Hide()
+        CancelDrag(self)
         self.layout = nil
         self.model = nil
         self.roster = {}
@@ -904,9 +976,6 @@ local methods = {
         end
         self.paletteOffsets = {}
         self.drawing = nil
-        if wasDragging then
-            SetCursor(nil)
-        end
     end,
 
     -- Supplies the layout engine the widget reads grid structure from.
@@ -954,10 +1023,7 @@ local methods = {
         end
         self.disabled = disabled
         if disabled and self.dragging then
-            self.dragging, self.dropTarget = nil, nil
-            self.frame:SetScript("OnUpdate", nil)
-            self.dropMarker:Hide()
-            SetCursor(nil)
+            CancelDrag(self)
         end
         self.frame:SetAlpha(disabled and 0.55 or 1)
     end,
@@ -979,6 +1045,9 @@ local methods = {
         if not self.layout or self.drawing then
             return
         end
+        if self.dragging then
+            CancelDrag(self)
+        end
 
         local width = self.frame:GetWidth()
         if not width or width < 1 then
@@ -989,7 +1058,7 @@ local methods = {
         local plan = BuildBoxPlan(self)
         local columnWidth = (width - ((TOTAL_COLUMNS - 1) * BOX_SPACING)) / TOTAL_COLUMNS
         local step = columnWidth + BOX_SPACING
-        local placed, auxiliary, top, rowHeight = 0, 0, 0, 0
+        local placed, auxiliary, top, rowHeight = 0, 0, GRID_TOP_INSET, 0
 
         for index, entry in ipairs(plan) do
             local box = AcquireBox(self, index)
@@ -997,7 +1066,7 @@ local methods = {
             box:SetWidth(columnWidth)
 
             if entry.palette then
-                box:SetPoint("TOPLEFT", self.frame, "TOPLEFT", (GROUP_COLUMNS + auxiliary) * step, 0)
+                box:SetPoint("TOPLEFT", self.frame, "TOPLEFT", (GROUP_COLUMNS + auxiliary) * step, -GRID_TOP_INSET)
                 DrawPalette(self, box, entry)
                 auxiliary = auxiliary + 1
             else
@@ -1040,17 +1109,54 @@ local function Constructor()
     marker:Hide()
 
     local markerFill = marker:CreateTexture(nil, "OVERLAY")
-    markerFill:SetPoint("TOPLEFT")
-    markerFill:SetPoint("TOPRIGHT")
-    markerFill:SetHeight(RAID_ROW_HEIGHT)
-    markerFill:SetTexture(RAID_ROW_TEXTURE)
-    markerFill:SetTexCoord(0, 0.640625, 0.5, 0.9375)
-    markerFill:SetBlendMode("ADD")
+    StyleRaidRowTexture(markerFill, true)
     marker.fill = markerFill
+
+    local ghost = CreateFrame("Frame", nil, frame)
+    ghost:Hide()
+    ghost:EnableMouse(false)
+    ghost:SetAlpha(0.9)
+    ghost:SetHeight(ROW_HEIGHT)
+    local ghostBackground = ghost:CreateTexture(nil, "BACKGROUND")
+    StyleRaidRowTexture(ghostBackground, false)
+    ghost.background = ghostBackground
+    local ghostLabel = ghost:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    ghostLabel:SetPoint("LEFT", ghostBackground, "LEFT", ROW_TEXT_PADDING, 0)
+    ghostLabel:SetPoint("RIGHT", ghostBackground, "RIGHT", -ROW_TEXT_PADDING, 0)
+    ghostLabel:SetHeight(RAID_ROW_HEIGHT)
+    ghostLabel:SetJustifyH("LEFT")
+    ghostLabel:SetFontObject(GameFontHighlightSmall)
+    if ghostLabel.SetWordWrap then
+        ghostLabel:SetWordWrap(false)
+    end
+    if ghostLabel.SetNonSpaceWrap then
+        ghostLabel:SetNonSpaceWrap(false)
+    end
+    if ghostLabel.SetMaxLines then
+        ghostLabel:SetMaxLines(1)
+    end
+    ghost.label = ghostLabel
+
+    local placeholder = CreateFrame("Frame", nil, frame)
+    placeholder:Hide()
+    placeholder:EnableMouse(false)
+    local placeholderBackground = placeholder:CreateTexture(nil, "BACKGROUND")
+    StyleRaidRowTexture(placeholderBackground, false)
+    placeholder.background = placeholderBackground
+    local placeholderLabel = placeholder:CreateFontString(nil, "ARTWORK", "GameFontDarkGraySmall")
+    placeholderLabel:SetPoint("LEFT", placeholderBackground, "LEFT")
+    placeholderLabel:SetPoint("RIGHT", placeholderBackground, "RIGHT")
+    placeholderLabel:SetHeight(RAID_ROW_HEIGHT)
+    placeholderLabel:SetJustifyH("CENTER")
+    placeholderLabel:SetFontObject(GameFontDarkGraySmall)
+    placeholderLabel:SetText(EMPTY_ROW_LABEL)
+    placeholder.label = placeholderLabel
 
     local widget = {
         frame = frame,
         dropMarker = marker,
+        dragGhost = ghost,
+        dragSourcePlaceholder = placeholder,
         boxes = {},
         roster = {},
         sequence = widgetSequence,

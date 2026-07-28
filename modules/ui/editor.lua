@@ -1324,13 +1324,14 @@ local function AngryEra_EditVariables(id, entityType)
     end)
 end
 
--- Four fixed rows of two subgroup boxes occupy 424 pixels in the visual grid.
+-- Four fixed rows of two subgroup boxes occupy 424 pixels in the visual grid,
+-- with two more pixels above them so the first pane's border is not clipped.
 -- The window leaves that whole canvas visible; the Unrostered and Variables
 -- columns scroll independently. Text mode receives its own nested scroller
 -- inside the same body.
 local LAYOUT_WINDOW_WIDTH = 630
-local LAYOUT_BODY_HEIGHT = 424
-local LAYOUT_WINDOW_HEIGHT = 540
+local LAYOUT_BODY_HEIGHT = 426
+local LAYOUT_WINDOW_HEIGHT = 542
 local layoutWindowSequence = 0
 
 local function RegisterLayoutEscapeFrame(frame)
