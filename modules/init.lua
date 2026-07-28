@@ -66,6 +66,7 @@ local raidAssignmentErrors = {
     ["role-api-failed"] = "Classic's assigned-role state is temporarily unavailable.",
     ["role-api-unavailable"] = "This client does not expose Blizzard's assigned-role API.",
     ["roster-unavailable"] = "Classic's raid roster is temporarily unavailable; assignments will retry.",
+    ["tank-role-unavailable"] = "Classic will not allow one of the $TANKS players to use the assigned Tank role.",
     ["timer-unavailable"] = "The raid-assignment worker could not schedule its next step.",
     ["unknown-assignment-member"] = "Every $TANKS and $ASSISTS name must resolve to a current raid member.",
 }

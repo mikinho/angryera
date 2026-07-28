@@ -43,6 +43,10 @@ local roleReadFailures = 0
 local invalidRoleRead = false
 local everyoneStateFailures = 0
 local synchronousRoleEvents = false
+local softRoleSuggestions = true
+local ineligibleTankUnits = {}
+local roleAvailabilityFailures = 0
+local roleAvailabilityReads = 0
 
 local function MemberByUnit(unit)
     local index = type(unit) == "string" and tonumber(unit:match("^raid(%d+)$")) or nil
@@ -113,11 +117,24 @@ function _G.UnitSetRole(unit, role)
     if ignoreRoleCalls then
         return true
     end
-    MemberByUnit(unit).Role = role == "NONE" and "NONE" or role
+    MemberByUnit(unit).Role = (role == nil or role == "NONE") and "NONE" or role
     if synchronousRoleEvents then
         AngryEra:RetryDisplayedRaidAssignments()
     end
     return true
+end
+
+function _G.AreClassRolesSoftSuggestions()
+    return softRoleSuggestions
+end
+
+function _G.UnitGetAvailableRoles(unit)
+    roleAvailabilityReads = roleAvailabilityReads + 1
+    if roleAvailabilityFailures > 0 then
+        roleAvailabilityFailures = roleAvailabilityFailures - 1
+        return
+    end
+    return ineligibleTankUnits[unit] ~= true, true, true
 end
 
 local partyInfo = {
@@ -245,6 +262,10 @@ local function Reset()
     invalidRoleRead = false
     everyoneStateFailures = 0
     synchronousRoleEvents = false
+    softRoleSuggestions = true
+    ineligibleTankUnits = {}
+    roleAvailabilityFailures = 0
+    roleAvailabilityReads = 0
 end
 
 local names = assert(raidAssignments.ParseNameList(" Tank , Assist-Home "))
@@ -455,22 +476,32 @@ DrainTimers()
 assert(#calls == 0, "invalid assigned-role reads must fail before mutation")
 assert(#finished == 1 and finished[1].Result == "role-api-failed", "invalid role reads should fail closed")
 
--- Prefer the modern enum APIs when available, including nil for clearing None
--- and the enum-only readback path.
+-- Prefer the modern enum APIs in the mixed environment exposed by current
+-- Classic, including the real Tank=0 and no-role=-1 values.
 local savedEnum = _G.Enum
+local savedConstants = _G.Constants
 local savedRoleGetter = _G.UnitGroupRolesAssigned
 local savedRoleSetter = _G.UnitSetRole
 local savedEnumRoleGetter = _G.UnitGroupRolesAssignedEnum
 local savedEnumRoleSetter = _G.UnitSetRoleEnum
 _G.Enum = {
     LFGRole = {
-        Tank = 1,
-        Healer = 2,
-        Damage = 3,
+        Tank = 0,
+        Healer = 1,
+        Damage = 2,
     },
 }
-_G.UnitGroupRolesAssigned = nil
-_G.UnitGroupRolesAssignedEnum = function(unit)
+_G.Constants = {
+    LFG_ROLEConstants = {
+        LFG_ROLE_NO_ROLE = -1,
+    },
+}
+local enumRoleReads = 0
+_G.UnitGroupRolesAssigned = function()
+    error("the valid enum getter should be preferred")
+end
+local function ReadMockEnumRole(unit)
+    enumRoleReads = enumRoleReads + 1
     local role = assert(MemberByUnit(unit)).Role
     if role == "TANK" then
         return Enum.LFGRole.Tank
@@ -481,7 +512,9 @@ _G.UnitGroupRolesAssignedEnum = function(unit)
     if role == "DAMAGER" then
         return Enum.LFGRole.Damage
     end
+    return Constants.LFG_ROLEConstants.LFG_ROLE_NO_ROLE
 end
+_G.UnitGroupRolesAssignedEnum = ReadMockEnumRole
 _G.UnitSetRoleEnum = function(unit, role)
     local member = assert(MemberByUnit(unit))
     calls[#calls + 1] = {
@@ -504,11 +537,130 @@ assert(
     calls[2].Kind == "role-enum" and calls[2].Name == "Tank-Home" and calls[2].Role == nil,
     "the enum API should clear Tank by assigning nil"
 )
+assert(enumRoleReads > 0, "current Classic should read assigned roles through the enum API")
+assert(members[2].Role == "NONE" and members[4].Role == "TANK", "enum readback should confirm the exact Tank set")
+assert(#finished == 1 and finished[1].Success and finished[1].Result == 2, "enum changes should acknowledge")
+
+-- An undocumented nil enum read is transient/invalid, not None. Fall back to a
+-- valid string read instead of planning a destructive role change.
+local stringRoleReads = 0
+_G.UnitGroupRolesAssigned = function(unit)
+    stringRoleReads = stringRoleReads + 1
+    return savedRoleGetter(unit)
+end
+_G.UnitGroupRolesAssignedEnum = function(unit)
+    if unit == "raid2" then
+        return nil
+    end
+    return ReadMockEnumRole(unit)
+end
+Reset()
+currentSnapshot = Reference("enum-nil-read", 1, { TANKS = "Tank" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0 and members[2].Role == "TANK", "a nil enum read must use the valid string fallback")
+assert(stringRoleReads > 0 and #finished == 0, "valid string fallback should settle silently")
+
+-- If the enum wrapper itself errors on a compatibility client, fall back to
+-- the string API. A normal false rejection remains authoritative.
+_G.UnitGroupRolesAssigned = function()
+    error("the restored enum getter should be preferred")
+end
+_G.UnitGroupRolesAssignedEnum = ReadMockEnumRole
+_G.UnitSetRoleEnum = function()
+    error("enum wrapper unavailable")
+end
+Reset()
+currentSnapshot = Reference("enum-error-fallback", 1, { TANKS = "Newtank" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(
+    #calls == 2 and calls[1].Kind == "role" and calls[1].Name == "Newtank-Home",
+    "an enum error should use the string API for the complete exact set"
+)
+assert(members[2].Role == "NONE" and members[4].Role == "TANK", "the string fallback should settle")
+assert(#finished == 1 and finished[1].Success and finished[1].Result == 2, "fallback changes should acknowledge")
+
+_G.UnitSetRoleEnum = function(unit, role)
+    local member = assert(MemberByUnit(unit))
+    calls[#calls + 1] = {
+        Kind = "role-enum",
+        Name = member.Name,
+        Role = role,
+    }
+    return false
+end
+Reset()
+currentSnapshot = Reference("enum-rejected", 1, { TANKS = "Newtank" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 1 and calls[1].Kind == "role-enum", "an enum rejection must not be reissued through another API")
+assert(#finished == 1 and finished[1].Result == "assignment-api-failed", "a false enum result should fail immediately")
+
+_G.UnitSetRoleEnum = function(unit, role)
+    local member = assert(MemberByUnit(unit))
+    calls[#calls + 1] = {
+        Kind = "role-enum",
+        Name = member.Name,
+        Role = role,
+    }
+end
+Reset()
+currentSnapshot = Reference("enum-invalid-return", 1, { TANKS = "Newtank" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 1 and calls[1].Kind == "role-enum", "an invalid enum result must not be retried")
+assert(
+    #finished == 1 and finished[1].Result == "assignment-api-failed",
+    "a missing documented boolean result should fail immediately"
+)
 _G.Enum = savedEnum
+_G.Constants = savedConstants
 _G.UnitGroupRolesAssigned = savedRoleGetter
 _G.UnitSetRole = savedRoleSetter
 _G.UnitGroupRolesAssignedEnum = savedEnumRoleGetter
 _G.UnitSetRoleEnum = savedEnumRoleSetter
+
+-- When Blizzard treats class roles as hard limits, reject an unavailable Tank
+-- before changing raid-assistant authority.
+Reset()
+softRoleSuggestions = false
+ineligibleTankUnits.raid4 = true
+currentSnapshot = Reference("hard-role-limit", 1, {
+    TANKS = "Newtank",
+    ASSISTS = "Assist",
+})
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0, "Tank eligibility must be validated before any assistant mutation")
+assert(members[3].Rank == 1 and members[5].Rank == 0, "a rejected Tank must preserve existing authority")
+assert(
+    #finished == 1 and finished[1].Result == "tank-role-unavailable",
+    "hard class-role rejection should identify the unavailable Tank"
+)
+
+-- A temporarily unavailable role-eligibility read retries and then applies
+-- instead of reporting a permanent class rejection.
+Reset()
+softRoleSuggestions = false
+roleAvailabilityFailures = 1
+currentSnapshot = Reference("transient-role-eligibility", 1, { TANKS = "Newtank" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(members[4].Role == "TANK", "transient role eligibility should retry")
+assert(roleAvailabilityReads >= 2, "transient role eligibility should be read again")
+assert(#finished == 1 and finished[1].Success and finished[1].Result == 2, "retried role changes should settle")
+
+-- Soft role suggestions must not block manual Classic assignments even when
+-- the class availability hint says Tank is unavailable.
+Reset()
+softRoleSuggestions = true
+ineligibleTankUnits.raid4 = true
+currentSnapshot = Reference("soft-role-suggestion", 1, { TANKS = "Newtank" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(members[4].Role == "TANK", "soft role suggestions should allow the explicit Tank assignment")
+assert(#finished == 1 and finished[1].Success and finished[1].Result == 2, "soft-role changes should settle")
 
 -- Combat retains only the newest exact page and applies it after combat.
 Reset()

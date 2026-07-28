@@ -179,6 +179,13 @@ local function InCombat()
     return false
 end
 
+local function Trace(self, stage, formatText, ...)
+    local callback = self and self.SyncDebug
+    if type(callback) == "function" then
+        callback(self, stage, formatText, ...)
+    end
+end
+
 local function IsRaidLeader(self)
     if type(IsInRaid) ~= "function" or IsInRaid() ~= true or type(self.IsPlayerRaidLeader) ~= "function" then
         return false
@@ -199,24 +206,42 @@ local function NormalizeRole(value, enumApi)
         return role == "NONE" and "NONE" or nil
     end
     local roles = type(Enum) == "table" and Enum.LFGRole or nil
-    if enumApi and value == nil then
+    local noRole = type(_G) == "table" and type(_G.LFG_ROLE_NO_ROLE) == "number" and _G.LFG_ROLE_NO_ROLE
+        or type(Constants) == "table" and type(Constants.LFG_ROLEConstants) == "table" and Constants.LFG_ROLEConstants.LFG_ROLE_NO_ROLE
+        or -1
+    if enumApi and (value == noRole or value == -1) then
         return "NONE"
     end
     if enumApi and type(roles) == "table" then
-        if value == roles.Tank or value == roles.TANK then
+        local tank = roles.Tank or roles.TANK
+        local healer = roles.Healer or roles.HEALER
+        local damage = roles.Damage or roles.Damager or roles.Dps or roles.DPS or roles.DAMAGER
+        if tank ~= nil and value == tank then
             return "TANK"
         end
-        if value == roles.Healer or value == roles.HEALER then
+        if healer ~= nil and value == healer then
             return "HEALER"
         end
-        if
-            value == roles.Damage
-            or value == roles.Damager
-            or value == roles.Dps
-            or value == roles.DPS
-            or value == roles.DAMAGER
-        then
+        if damage ~= nil and value == damage then
             return "DAMAGER"
+        end
+    end
+    return nil
+end
+
+local function ReadAssignedRole(unitToken)
+    if type(UnitGroupRolesAssignedEnum) == "function" then
+        local called, value = pcall(UnitGroupRolesAssignedEnum, unitToken)
+        local normalized = called and NormalizeRole(value, true) or nil
+        if normalized then
+            return normalized
+        end
+    end
+    if type(UnitGroupRolesAssigned) == "function" then
+        local called, value = pcall(UnitGroupRolesAssigned, unitToken)
+        local normalized = called and NormalizeRole(value, false) or nil
+        if normalized then
+            return normalized
         end
     end
     return nil
@@ -226,13 +251,7 @@ local function BuildRosterState()
     if type(helpers) ~= "table" or type(helpers.IterateGroupMembers) ~= "function" then
         return nil, "roster-unavailable"
     end
-    local roleFunction = type(UnitGroupRolesAssigned) == "function" and UnitGroupRolesAssigned or nil
-    local enumRoleApi = false
-    if not roleFunction and type(UnitGroupRolesAssignedEnum) == "function" then
-        roleFunction = UnitGroupRolesAssignedEnum
-        enumRoleApi = true
-    end
-    if not roleFunction then
+    if type(UnitGroupRolesAssignedEnum) ~= "function" and type(UnitGroupRolesAssigned) ~= "function" then
         return nil, "role-api-unavailable"
     end
 
@@ -253,11 +272,6 @@ local function BuildRosterState()
             return true
         end
 
-        local roleCalled, role = pcall(roleFunction, unitToken)
-        if not roleCalled then
-            scanError = "role-api-failed"
-            return true
-        end
         local leader = rank == 2
         if type(UnitIsGroupLeader) == "function" then
             local called, result = pcall(UnitIsGroupLeader, unitToken)
@@ -273,7 +287,7 @@ local function BuildRosterState()
             end
         end
 
-        local normalizedRole = NormalizeRole(role, enumRoleApi)
+        local normalizedRole = ReadAssignedRole(unitToken)
         if not normalizedRole then
             scanError = "role-api-failed"
             return true
@@ -382,6 +396,42 @@ local function BuildDesiredState(meta, rosterState)
         end
     end
     return desired
+end
+
+local function ValidateTankEligibility(self, desired, rosterState)
+    if not desired.TanksPresent then
+        return true
+    end
+    if type(AreClassRolesSoftSuggestions) ~= "function" or type(UnitGetAvailableRoles) ~= "function" then
+        return true
+    end
+
+    local called, softSuggestions = pcall(AreClassRolesSoftSuggestions)
+    if not called or type(softSuggestions) ~= "boolean" then
+        return false, "role-api-failed"
+    end
+    if softSuggestions == true then
+        return true
+    end
+
+    for _, member in ipairs(rosterState.Members) do
+        if desired.Tanks[member.Identity] and member.Role ~= "TANK" then
+            local roleCalled, canTank = pcall(UnitGetAvailableRoles, member.Unit)
+            if not roleCalled or type(canTank) ~= "boolean" then
+                return false, "role-api-failed"
+            end
+            if canTank ~= true then
+                Trace(
+                    self,
+                    "raid-assignment-tank-eligibility",
+                    "mode=hard unit=%s allowed=false",
+                    tostring(member.Unit)
+                )
+                return false, "tank-role-unavailable"
+            end
+        end
+    end
+    return true
 end
 
 local function EveryoneIsAssistant()
@@ -502,6 +552,8 @@ local function RetryTransientRead(self, errorCode, bucket)
     local attemptsKey
     if bucket == "desired" then
         attemptsKey = "TransientDesiredAttempts"
+    elseif bucket == "eligibility" then
+        attemptsKey = "TransientEligibilityAttempts"
     elseif bucket == "assistant" then
         attemptsKey = "TransientAssistantAttempts"
     else
@@ -555,19 +607,44 @@ local function OperationAcknowledged(operation, rosterState)
     return false
 end
 
-local function SetTankRole(member, enabled)
+local function SetTankRole(self, member, enabled)
     local enumRoles = type(Enum) == "table" and Enum.LFGRole or nil
     local tankRole = type(enumRoles) == "table" and (enumRoles.Tank or enumRoles.TANK) or nil
     if type(UnitSetRoleEnum) == "function" and tankRole ~= nil then
-        return pcall(UnitSetRoleEnum, member.Unit, enabled and tankRole or nil)
+        local called, accepted = pcall(UnitSetRoleEnum, member.Unit, enabled and tankRole or nil)
+        Trace(
+            self,
+            "raid-assignment-role-call",
+            "api=enum unit=%s role=%s value=%s called=%s accepted=%s",
+            tostring(member.Unit),
+            enabled and "TANK" or "NONE",
+            tostring(enabled and tankRole or nil),
+            tostring(called),
+            tostring(accepted)
+        )
+        if called then
+            return accepted == true
+        end
     end
     if type(UnitSetRole) == "function" then
-        return pcall(UnitSetRole, member.Unit, enabled and "TANK" or "NONE")
+        local role = enabled and "TANK" or "NONE"
+        local called, accepted = pcall(UnitSetRole, member.Unit, role)
+        Trace(
+            self,
+            "raid-assignment-role-call",
+            "api=string unit=%s role=%s value=%s called=%s accepted=%s",
+            tostring(member.Unit),
+            enabled and "TANK" or "NONE",
+            role,
+            tostring(called),
+            tostring(accepted)
+        )
+        return called and accepted == true
     end
     return false
 end
 
-local function IssueOperation(operation, rosterState)
+local function IssueOperation(self, operation, rosterState)
     if operation.Kind == "disable-everyone-assistant" then
         if type(C_PartyInfo) ~= "table" or type(C_PartyInfo.SetEveryoneIsAssistant) ~= "function" then
             return false
@@ -589,12 +666,10 @@ local function IssueOperation(operation, rosterState)
         return type(callback) == "function" and pcall(callback, member.FullName, true)
     end
     if operation.Kind == "set-tank" then
-        local called, result = SetTankRole(member, true)
-        return called and result ~= false
+        return SetTankRole(self, member, true)
     end
     if operation.Kind == "clear-tank" then
-        local called, result = SetTankRole(member, false)
-        return called and result ~= false
+        return SetTankRole(self, member, false)
     end
     return false
 end
@@ -716,6 +791,20 @@ function AngryEra:PollDisplayedRaidAssignments(generation)
     end
     currentIntent.TransientDesiredAttempts = 0
 
+    local eligible, eligibilityError = ValidateTankEligibility(self, desired, rosterState)
+    if not eligible then
+        local retrying, retryStatus = RetryTransientRead(self, eligibilityError, "eligibility")
+        if retrying then
+            return true, retryStatus
+        end
+        if retryStatus then
+            return false, retryStatus
+        end
+        ReportFailure(self, eligibilityError)
+        return false, eligibilityError
+    end
+    currentIntent.TransientEligibilityAttempts = 0
+
     local everyoneAssistant = false
     if desired.AssistsPresent then
         local assistantStateError
@@ -739,6 +828,14 @@ function AngryEra:PollDisplayedRaidAssignments(generation)
     end
 
     local operations = raidAssignments.PlanOperations(rosterState, desired, everyoneAssistant)
+    Trace(
+        self,
+        "raid-assignment-plan",
+        "operations=%d tanks=%s assists=%s",
+        #operations,
+        tostring(desired.TanksPresent),
+        tostring(desired.AssistsPresent)
+    )
     local operation = operations[1]
     if not operation then
         local changed = appliedMutationCount
@@ -775,7 +872,7 @@ function AngryEra:PollDisplayedRaidAssignments(generation)
     operation.SentAt = now
     outstandingOperation = operation
     lastOperationSentAt = now
-    if not IssueOperation(operation, rosterState) then
+    if not IssueOperation(self, operation, rosterState) then
         outstandingOperation = nil
         CancelTimer(self)
         ReportFailure(self, "assignment-api-failed")

@@ -417,7 +417,7 @@ $TANKS={{MT}},{{OT}}
 $ASSISTS={{OT}},{{LOOTER}}
 ```
 
-`$TANKS` means Blizzard's modern assigned **Tank** role. It does not mean the legacy Main Tank raid-frame flag. `$ASSISTS` means actual **raid-assistant rank**, with the same permissions as assigning Assist through Blizzard's raid UI; it does not mean a Main Assist raid-frame flag. One player may appear in both lists.
+`$TANKS` means Blizzard's modern assigned **Tank** role. It does not set Blizzard's separate **Main Tank** flag: the dedicated Main Tank raid-frame row and its target/target-of-target frames will remain unchanged, and the context menu may still offer **Promote to Main Tank**. Blizzard protects that flag behind a secure player action, so an automatic page update cannot apply it. `$ASSISTS` means actual **raid-assistant rank**, with the same permissions as assigning Assist through Blizzard's raid UI; it does not mean a Main Assist raid-frame flag. One player may appear in both lists.
 
 Both values inherit like other metadata. Put the normal roster on a category and override it only on pages that need different assignments. The nearest page or category value wins independently for each key:
 
@@ -768,10 +768,13 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 - Confirm the client displaying the page is the current raid leader; qualified assistants never apply these privileged changes.
 - Confirm `$TANKS` or `$ASSISTS` is present on the page or an ancestor category. An absent key intentionally leaves that dimension unmanaged.
 - Use comma-separated names. Verify each short name is unique in the current raid, or use `Name-Realm`.
+- `$TANKS` assigns the ordinary Tank role; it cannot populate Blizzard's protected Main Tank raid-frame row. Seeing **Promote to Main Tank** in the context menu does not mean the ordinary Tank role failed.
+- If Classic enforces hard class-role limits, every listed Tank must be eligible according to Blizzard's role API.
 - Remove the current raid leader from `$ASSISTS`; the leader cannot also hold assistant rank.
 - If **Everyone Is Assistant** was enabled, `$ASSISTS` disables it before reconciling the exact list.
 - During combat, keep the same exact page active until combat ends. A newer page or inherited context replaces or cancels the queued request.
 - Re-import **Assigned Raid Roles** if `RAID_TANK1...N` should reflect changes made by `$TANKS`; imported variables do not refresh automatically.
+- Run `/ae debug on`, redisplay the page, and look for `raid-assignment-plan` and `raid-assignment-role-call`. A zero-operation plan means the ordinary roles already match; a role call reports the selected API, raid unit, requested role, call status, and returned value without printing the assignment contents.
 
 ### Auto-advance does not run
 
