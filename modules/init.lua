@@ -154,6 +154,7 @@ function AngryEra:OnInitialize()
     self:MigratePermissionConfig()
     self:MigrateEntityIdentities()
     self:MigrateLegacyLocalIds()
+    self:MigrateOwnedCategoryPins()
     self:PruneDeletedLocalIdentities()
     self:AutoCleanReceivedPagesOnLoad()
     local syncRuntimeReady, syncRuntimeResult = self:InitializeSyncRuntimeStorage()
@@ -211,6 +212,17 @@ function AngryEra:OnInitialize()
                 cmdHidden = false,
                 func = function()
                     self:ToggleSyncDebug()
+                end,
+            },
+            migratepins = {
+                type = "execute",
+                order = 97,
+                name = "Re-run Owned Category Pin Migration",
+                desc = "Pin unpinned locally owned category roots without removing any existing pins",
+                hidden = true,
+                cmdHidden = false,
+                func = function()
+                    self:HandleOwnedCategoryPinMigrationCommand()
                 end,
             },
             toggle = {
@@ -770,6 +782,22 @@ function AngryEra:OnInitialize()
     end
 end
 
+--- Re-runs the additive owned-category pin migration for beta testing.
+function AngryEra:HandleOwnedCategoryPinMigrationCommand()
+    local pinned = self:MigrateOwnedCategoryPins(true)
+    if pinned > 0 then
+        self:UpdateTree()
+        self:Print(
+            ("Pin migration added %d locally owned category %s. Existing pins were kept."):format(
+                pinned,
+                pinned == 1 and "pin" or "pins"
+            )
+        )
+        return
+    end
+    self:Print("No additional locally owned categories needed pinning. Existing pins were kept.")
+end
+
 --- Slash command entry point (`/ae`).
 -- @tparam string input Raw slash command arguments.
 function AngryEra:ChatCommand(input)
@@ -783,6 +811,8 @@ function AngryEra:ChatCommand(input)
         local command = input:trim():lower()
         if command == "first" then
             self:FirstPage()
+        elseif command == "migratepins" then
+            self:HandleOwnedCategoryPinMigrationCommand()
         elseif command == "debug" then
             self:HandleSyncDebugCommand("")
         else

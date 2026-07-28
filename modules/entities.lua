@@ -9,6 +9,7 @@ local AngryEra = app.AngryEra
 local identity = AngryEra.identity
 
 local ENTITY_SCHEMA_VERSION = 2
+local OWNED_CATEGORY_PIN_MIGRATION_VERSION = 1
 local MAX_DELETED_LOCAL_TOMBSTONES = 4096
 local IDENTITY_FIELDS = {
     "SyncId",
@@ -402,6 +403,116 @@ function AngryEra:MigrateLegacyLocalIds()
 
     AngryAssign_Meta.Migrations.SequentialLocalIds = LOCAL_ID_MIGRATION_VERSION
     return migrated
+end
+
+local function HasLivePin(self)
+    for _, records in ipairs({ AngryAssign_Categories, AngryAssign_Pages }) do
+        if type(records) == "table" then
+            for _, entity in pairs(records) do
+                if type(entity) == "table" and self:IsPinned(entity) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function HasValidCategoryAncestry(category)
+    local seen = {}
+    local current = category
+    while true do
+        if
+            type(current) ~= "table"
+            or seen[current]
+            or not IsPositiveInteger(current.Id)
+            or not identity.ValidateSyncId(current.SyncId, "category")
+        then
+            return false
+        end
+        local ownerId = identity.ParseSyncId(current.SyncId)
+        if current.OwnerId ~= ownerId then
+            return false
+        end
+        seen[current] = true
+
+        if current.CategoryId == nil then
+            return true
+        end
+        if not IsPositiveInteger(current.CategoryId) then
+            return false
+        end
+        local parentId = current.CategoryId
+        local parent = type(AngryAssign_Categories) == "table" and AngryAssign_Categories[parentId] or nil
+        if type(parent) ~= "table" or parent.Id ~= parentId then
+            return false
+        end
+        current = parent
+    end
+end
+
+local function IsExplicitlyRemoteCategory(self, category, installationId)
+    local state = self:GetLocalEntityState(category)
+    local ownerId, kind = identity.ParseSyncId(category and category.SyncId)
+    return type(state) == "table"
+        and state.OwnedLocally == false
+        and kind == "category"
+        and category.OwnerId == ownerId
+        and ownerId ~= installationId
+end
+
+--- Pins locally owned category roots once when upgrading to the pinned tree.
+-- Normal startup preserves an existing beta pin setup. A forced run is an
+-- additive test/recovery path: it bypasses the completion marker but never
+-- removes an existing pin.
+-- @tparam[opt=false] boolean force Re-run the additive migration.
+-- @treturn number pinned Count of newly pinned categories.
+-- @treturn string status Migration result.
+function AngryEra:MigrateOwnedCategoryPins(force)
+    local meta = self:InitializeIdentityStorage()
+    local migrationVersion = meta.Migrations.OwnedCategoryPins
+    if
+        force ~= true
+        and type(migrationVersion) == "number"
+        and migrationVersion >= OWNED_CATEGORY_PIN_MIGRATION_VERSION
+    then
+        return 0, "already-migrated"
+    end
+
+    if force ~= true and HasLivePin(self) then
+        meta.Migrations.OwnedCategoryPins = OWNED_CATEGORY_PIN_MIGRATION_VERSION
+        return 0, "existing-pins"
+    end
+
+    local candidates = {}
+    if type(AngryAssign_Categories) == "table" then
+        for id, category in pairs(AngryAssign_Categories) do
+            if
+                IsPositiveInteger(id)
+                and type(category) == "table"
+                and category.Id == id
+                and self:IsLocallyOwned(category)
+                and HasValidCategoryAncestry(category)
+            then
+                local parent = category.CategoryId and AngryAssign_Categories[category.CategoryId] or nil
+                if category.CategoryId == nil or IsExplicitlyRemoteCategory(self, parent, meta.InstallationId) then
+                    candidates[#candidates + 1] = category
+                end
+            end
+        end
+    end
+
+    local pinned = 0
+    for _, category in ipairs(candidates) do
+        if not self:IsPinned(category) and self:SetPinned(category, true) then
+            pinned = pinned + 1
+        end
+    end
+
+    if type(migrationVersion) ~= "number" or migrationVersion < OWNED_CATEGORY_PIN_MIGRATION_VERSION then
+        meta.Migrations.OwnedCategoryPins = OWNED_CATEGORY_PIN_MIGRATION_VERSION
+    end
+    return pinned, "migrated"
 end
 
 --- Allocates an unused local numeric UI id.

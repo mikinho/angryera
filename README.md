@@ -68,6 +68,8 @@ If a displayed page is new to your installation, it appears unfiled. You may org
 
 To keep a received page during cleanup, right-click it and choose **Pin**. You can also pin a category, which protects received pages anywhere in that category's subtree. Pinning is local to your installation and does not change shared data; right-click the item again and choose **Unpin** to remove that protection.
 
+On the first upgrade with this feature, AngryEra automatically pins your topmost locally owned categories if you have not already used pins. It does not pin pages, received categories, or redundant locally owned categories nested beneath another one. Existing beta pin choices are left unchanged. Beta testers can safely re-run the additive step with `/ae migratepins`; it never removes an existing pin.
+
 Every pinned item carries a gold favorite-star icon. At each level of the tree, pinned categories appear first, followed by pinned pages, then a divider and the remaining unpinned items in their existing manual order. Nested pages remain inside their categories. The gray `‡` suffix means that an item has variables or metadata; it is not the pin indicator. Pin or unpin an item before dragging it across these fixed sections; dropping into a category remains available. Pin sorting changes only the library view—Previous, Next, and First continue to follow the saved manual page order.
 
 Shared page changes are fast and ordered. If the leader rapidly presses Previous and Next, followers move to the final selection instead of replaying obsolete intermediate pages.
@@ -656,6 +658,7 @@ Adding `Group` to **Highlight** emphasizes your current group token, such as `G2
 | `/ae first` | Toggle to or from the first page in the active category. |
 | `/ae output` | Output the actively displayed page to group chat. |
 | `/ae applylayout` | Apply the exact displayed page's validated group layout. In combat, queue it until combat ends and cancel it if that page, revision, or inherited context changes. |
+| `/ae migratepins` | Safely re-run the additive locally owned category pin migration. Existing pins are never removed. |
 | `/ae version` | Check AngryEra versions in the current party or raid. Available to the leader and raid assistants. |
 | `/ae resetposition` | Reset the assignment display position and size. |
 | `/ae defaults` | Restore configuration defaults after confirmation. |

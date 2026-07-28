@@ -22,6 +22,9 @@ local unitCombat = {}
 local registeredSlashCommands = {}
 local slashRegistrationOrder = {}
 local aceConfigCommandCalls = {}
+local pinMigrationResult = 0
+local pinMigrationForces = {}
+local treeUpdateCount = 0
 
 local function Record(name, value)
     calls[#calls + 1] = {
@@ -76,6 +79,15 @@ assert(loadfile("modules/init.lua"))("AngryEra", app)
 
 function AngryEra:ResetOfficerRank()
     Record("reset-officer-rank")
+end
+
+function AngryEra:MigrateOwnedCategoryPins(force)
+    pinMigrationForces[#pinMigrationForces + 1] = force
+    return pinMigrationResult, "migrated"
+end
+
+function AngryEra:UpdateTree()
+    treeUpdateCount = treeUpdateCount + 1
 end
 
 function AngryEra:ResetGroupLayoutApplyState()
@@ -362,6 +374,36 @@ for _, call in ipairs(calls) do
         "the canonical /ae command must not print a legacy-alias warning"
     )
 end
+
+calls = {}
+pinMigrationResult = 2
+local aceConfigCallsBeforePinMigration = #aceConfigCommandCalls
+AngryEra:ChatCommand(CommandInput("migratepins"))
+assert(
+    #pinMigrationForces == 1 and pinMigrationForces[1] == true,
+    "migratepins should force the additive owned-category migration exactly once"
+)
+assert(treeUpdateCount == 1, "migratepins should refresh the tree when it adds pins")
+assert(
+    #aceConfigCommandCalls == aceConfigCallsBeforePinMigration,
+    "migratepins should dispatch directly instead of falling through to AceConfig"
+)
+assert(
+    calls[#calls].Name == "print"
+        and calls[#calls].Value == "Pin migration added 2 locally owned category pins. Existing pins were kept.",
+    "migratepins should report how many category pins it added"
+)
+
+calls = {}
+pinMigrationResult = 0
+AngryEra:ChatCommand(CommandInput("migratepins"))
+assert(#pinMigrationForces == 2 and pinMigrationForces[2] == true, "migratepins should remain safely repeatable")
+assert(treeUpdateCount == 1, "a no-op migratepins rerun should not refresh the tree")
+assert(
+    calls[#calls].Name == "print"
+        and calls[#calls].Value == "No additional locally owned categories needed pinning. Existing pins were kept.",
+    "a no-op migratepins rerun should explain that no pin was removed"
+)
 
 calls = {}
 AngryEra._legacySlashCommandWarningShown = nil
