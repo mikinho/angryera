@@ -1331,7 +1331,9 @@ end
 -- inside the same body.
 local LAYOUT_WINDOW_WIDTH = 630
 local LAYOUT_BODY_HEIGHT = 426
-local LAYOUT_WINDOW_HEIGHT = 542
+-- AceGUI Flow supplies the gap above the buttons; this leaves the same visible
+-- clearance between their artwork and the window's lower dialog edge.
+local LAYOUT_WINDOW_HEIGHT = 524
 local layoutWindowSequence = 0
 
 local function RegisterLayoutEscapeFrame(frame)
