@@ -413,6 +413,186 @@ local variableFillDrop = select(
 )
 assert(variableFillDrop == "group-full", "a dragged variable cannot hide an oversized fill")
 
+-- Duplicate guards apply to both typed slots and palette drops. They distinguish
+-- variable identity from the member it resolves to, and use roster identity so
+-- a short and realm-qualified spelling cannot occupy two seats.
+local assignmentVariables = {
+    MT = "Vhez",
+    MAIN_TANK = "Vhez-Realm",
+    Open = "{{MISSING}}",
+    OtherOpen = "{{OTHER_MISSING}}",
+    Mage = "*MAGE",
+    Count = 2,
+}
+local assignmentProviders = {
+    Variables = assignmentVariables,
+    ResolveRosterName = function(name)
+        if name == "Vhez" or name == "Vhez-Realm" then
+            return "Vhez-Realm"
+        end
+        return name
+    end,
+    ClassMembers = function(class)
+        return class == "MAGE" and { "Vhez", "Kaza" } or {}
+    end,
+}
+local assigned = layout.Parse("Main/1: {{MT}}; Bench/2: Backup")
+assert(
+    select(
+        2,
+        layout.ApplyDrop(
+            assigned,
+            { kind = "text", text = "{{MT}}" },
+            { kind = "group", group = 2 },
+            assignmentVariables,
+            assignmentProviders
+        )
+    ) == "duplicate-slot",
+    "the same whole-slot variable cannot be dropped twice"
+)
+assert(
+    select(
+        2,
+        layout.ApplyDrop(
+            assigned,
+            { kind = "text", text = "{{MAIN_TANK}}" },
+            { kind = "group", group = 2 },
+            assignmentVariables,
+            assignmentProviders
+        )
+    ) == "duplicate-slot",
+    "a different variable resolving to the same member cannot be dropped"
+)
+assert(
+    select(
+        2,
+        layout.ApplyDrop(
+            assigned,
+            { kind = "text", text = "Vhez-Realm" },
+            { kind = "group", group = 2 },
+            assignmentVariables,
+            assignmentProviders
+        )
+    ) == "duplicate-slot",
+    "short and realm-qualified spellings share one assignment identity"
+)
+assert(
+    select(
+        2,
+        layout.SetSlot(
+            layout.Parse("Main/1: {{MT}}, Backup"),
+            1,
+            2,
+            "{{MAIN_TANK}}",
+            assignmentVariables,
+            assignmentProviders
+        )
+    ) == "duplicate-slot",
+    "typing an alias for an assigned member is also refused"
+)
+
+local aliasRetypeOk, aliasRetype =
+    layout.SetSlot(layout.Parse("Main/1: {{MT}}"), 1, 1, "{{MAIN_TANK}}", assignmentVariables, assignmentProviders)
+assert(
+    aliasRetypeOk and aliasRetype.groups[1].slots[1] == "{{MAIN_TANK}}",
+    "replacing one assignment with an alias for the same member remains valid"
+)
+
+local unresolved = layout.Parse("Main/1: {{Open}}")
+assert(
+    select(
+        2,
+        layout.ApplyDrop(
+            unresolved,
+            { kind = "text", text = "{{Open}}" },
+            { kind = "group", group = 1 },
+            assignmentVariables,
+            assignmentProviders
+        )
+    ) == "duplicate-slot",
+    "the same unresolved whole-slot variable still cannot be repeated"
+)
+local distinctUnresolvedOk, distinctUnresolved = layout.ApplyDrop(
+    unresolved,
+    { kind = "text", text = "{{OtherOpen}}" },
+    { kind = "group", group = 1 },
+    assignmentVariables,
+    assignmentProviders
+)
+assert(
+    distinctUnresolvedOk and distinctUnresolved.groups[1].slots[2] == "{{OtherOpen}}",
+    "different unresolved variables are not guessed to share a target"
+)
+
+local classAssignmentOk, classAssignment = layout.ApplyDrop(
+    layout.Parse("Main/1: Vhez"),
+    { kind = "text", text = "{{Mage}}" },
+    { kind = "group", group = 1 },
+    assignmentVariables,
+    assignmentProviders
+)
+assert(
+    classAssignmentOk and classAssignment.groups[1].slots[2] == "{{Mage}}",
+    "a class variable remains valid when its fill selects a different member"
+)
+local parameterReuse = layout.Parse("Main/1: *MAGE x{{Count}}; Bench/2: *PRIEST x{{Count}}")
+assert(
+    layout.ValidateDuplicateProgress({ groups = {} }, parameterReuse, assignmentVariables, assignmentProviders),
+    "a variable used as an embedded count is not a duplicated player assignment"
+)
+local embeddedReuse = layout.Parse("Main/1: Missing > {{MT}}; Bench/2: {{MT}}")
+assert(
+    select(2, layout.ValidateUniqueAssignments(embeddedReuse, assignmentVariables, assignmentProviders))
+        == "duplicate-slot",
+    "a string player variable cannot be reused inside another slot expression"
+)
+
+-- Legacy duplicates remain movable and removable so the editor can repair them,
+-- but no edit may increase one or trade it for a different duplicate identity.
+local legacyDuplicates = layout.Parse("Main/1: {{MT}}, {{MT}}; Bench/2: Backup")
+assert(
+    select(2, layout.ValidateUniqueAssignments(legacyDuplicates, assignmentVariables, assignmentProviders))
+        == "duplicate-slot",
+    "strict save validation rejects every remaining legacy duplicate"
+)
+local legacyMovedOk, legacyMoved = layout.ApplyDrop(
+    legacyDuplicates,
+    { kind = "slot", group = 1, slot = 2 },
+    { kind = "group", group = 2 },
+    assignmentVariables,
+    assignmentProviders
+)
+assert(
+    legacyMovedOk and legacyMoved.groups[2].slots[2] == "{{MT}}",
+    "a pre-existing duplicate can be moved without worsening it"
+)
+assert(
+    select(
+        2,
+        layout.ApplyDrop(
+            legacyDuplicates,
+            { kind = "text", text = "{{MT}}" },
+            { kind = "group", group = 2 },
+            assignmentVariables,
+            assignmentProviders
+        )
+    ) == "duplicate-slot",
+    "a pre-existing duplicate cannot gain another copy"
+)
+local legacyCleanedOk, legacyCleaned = layout.ApplyDrop(
+    legacyDuplicates,
+    { kind = "slot", group = 1, slot = 2 },
+    { kind = "remove" },
+    assignmentVariables,
+    assignmentProviders
+)
+assert(legacyCleanedOk and #legacyCleaned.groups[1].slots == 1, "a pre-existing duplicate can be removed")
+assert(
+    select(2, layout.SetSlot(legacyDuplicates, 1, 2, "Backup", assignmentVariables, assignmentProviders))
+        == "duplicate-slot",
+    "removing one conflict cannot introduce a different duplicate member"
+)
+
 -- ApplyDrop: malformed gestures are refused without touching the model.
 local refusedDropCases = {
     {

@@ -355,7 +355,7 @@ local function FinishDrag(self, x, y)
         end
         drop = { kind = "remove" }
     end
-    -- Both palettes are reusable sources. Only an existing layout slot can be
+    -- Both palettes are insertion sources. Only an existing layout slot can be
     -- removed by landing on Unrostered; dropping one source onto another is a
     -- harmless cancel instead of an invalid edit callback.
     if drop.kind == "remove" and dragging.kind ~= "slot" then
@@ -757,21 +757,80 @@ local function VariableKeyLess(left, right)
     return left < right
 end
 
--- The Variables palette contains effective inherited/page variables as reusable
--- source expressions. It deliberately retains a token after placement and
--- excludes `$` metadata plus values the layout expander cannot consume.
-local function VariableEntries(self)
+-- Returns the exact, case-sensitive variable keys already referenced by layout
+-- slots. A token stays occupied while its slot is moved, and becomes available
+-- again as soon as that slot is removed.
+local function UsedVariableKeys(model)
+    local used = {}
+    for _, group in ipairs((type(model) == "table" and model.groups) or {}) do
+        for _, slot in ipairs(group.slots or {}) do
+            if type(slot) == "string" then
+                for key in slot:gmatch("{{%s*([^{}]-)%s*}}") do
+                    local normalizedKey = key:match("^%s*(.-)%s*$")
+                    if normalizedKey ~= "" then
+                        used[normalizedKey] = true
+                    end
+                end
+            end
+        end
+    end
+    return used
+end
+
+-- Tests a prospective variable with the resolver itself so aliases, priority
+-- lists, fills, and short/full realm spellings follow the exact same identity
+-- rules as the layout. A probe fill that can select another unplaced member is
+-- still useful and remains available.
+local function VariableWouldRepeatTarget(self, model, token, value, providers)
+    if value == "" then
+        return false
+    end
+
+    local engine = self.layout
+    if type(engine) ~= "table" or type(engine.CopyModel) ~= "function" or type(engine.Resolve) ~= "function" then
+        return false
+    end
+
+    local probe = engine.CopyModel(model)
+    if type(probe) ~= "table" or type(probe.groups) ~= "table" then
+        return false
+    end
+    local probeIndex = #probe.groups + 1
+    probe.groups[probeIndex] = { name = "Variable probe", slots = { token } }
+    local resolvedOk, resolved = pcall(engine.Resolve, probe, providers)
+    if not resolvedOk or type(resolved) ~= "table" then
+        return false
+    end
+    for _, duplicate in ipairs(resolved.duplicates or {}) do
+        if
+            duplicate.Group == probeIndex
+            and type(duplicate.Name) == "string"
+            and not duplicate.Name:find("{{", 1, true)
+        then
+            return true
+        end
+    end
+    return false
+end
+
+-- The Variables palette contains unused effective inherited/page string
+-- variables. A token disappears once referenced, as do aliases that would
+-- resolve to a target already assigned by another slot.
+local function VariableEntries(self, model)
     local providers = type(self.resolveProviders) == "table" and self.resolveProviders or {}
     local values = type(providers.Variables) == "table" and providers.Variables or {}
+    local used = UsedVariableKeys(model)
     local entries = {}
     for key, value in pairs(values) do
-        if IsRepresentableVariable(key, value) then
+        if IsRepresentableVariable(key, value) and not used[key] then
             local token = "{{" .. key .. "}}"
-            entries[#entries + 1] = {
-                Key = key,
-                Text = token,
-                Label = token:gsub("|", "||") .. " = " .. VariablePreview(value),
-            }
+            if not VariableWouldRepeatTarget(self, model, token, value, providers) then
+                entries[#entries + 1] = {
+                    Key = key,
+                    Text = token,
+                    Label = token:gsub("|", "||") .. " = " .. VariablePreview(value),
+                }
+            end
         end
     end
     sort(entries, function(left, right)
@@ -811,7 +870,7 @@ local function BuildBoxPlan(self)
         rows = max(#unrostered, 1),
     }
 
-    local variableEntries = VariableEntries(self)
+    local variableEntries = VariableEntries(self, model)
     plan[#plan + 1] = {
         title = "Variables",
         palette = "variables",

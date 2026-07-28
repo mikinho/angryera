@@ -346,6 +346,19 @@ local function VariablesBox()
     return BoxByTitle("Variables")
 end
 
+local function VariableRow(token)
+    for _, row in ipairs(VariablesBox().rows) do
+        if
+            row:IsShown()
+            and row.layoutTarget
+            and row.layoutTarget.kind == "variable"
+            and row.layoutTarget.text == token
+        then
+            return row
+        end
+    end
+end
+
 local function EdgesAreShown(edges, expected)
     for _, edge in pairs(edges) do
         if edge:IsShown() ~= expected then
@@ -872,9 +885,9 @@ assert(palette.rows[3].layoutTarget.text == "Ghoal", "clearing a slot returns it
 -- The palette follows the resolved layout, not only literal slot spelling.
 -- Priority, class-fill, and variable slots therefore hide the members they
 -- currently place.
-grid:SetResolveProviders({
+local variableProviders = {
     ResolvePriorityValue = function(value)
-        if value == "Missing > Vhez" then
+        if value == "Missing > Vhez" or value == "{{MISSING}} > Vhez" then
             return "Vhez"
         end
         return value
@@ -901,7 +914,8 @@ grid:SetResolveProviders({
         ["Bad;Key"] = "semicolons split groups",
         ["Bad{Key"] = "braces break tokens",
     },
-})
+}
+grid:SetResolveProviders(variableProviders)
 
 variablesPalette = VariablesBox()
 assert(variablesPalette.rows[1].label:GetText() == "{{alpha}} = Vhez", "variables sort by name")
@@ -923,50 +937,127 @@ assert(
 assert(
     variablesPalette.rows[3].layoutTarget.kind == "variable"
         and variablesPalette.rows[3].layoutTarget.text == "{{FLEX}}",
-    "a variable row carries its exact reusable token"
+    "a variable row carries its exact insertion token"
 )
 
-cursorX, cursorY = CentreOf(variablesPalette.rows[3])
-variablesPalette.rows[3]:GetScript("OnDragStart")(variablesPalette.rows[3])
+local flexRow = VariableRow("{{FLEX}}")
+cursorX, cursorY = CentreOf(flexRow)
+flexRow:GetScript("OnDragStart")(flexRow)
 assert(
     grid.dragGhost:IsShown()
         and grid.dragGhost.label:GetText() == "{{FLEX}}"
         and not grid.dragSourcePlaceholder:IsShown(),
-    "a variable carries only its inserted token and leaves its reusable source visible"
+    "a variable carries only its inserted token without a placed-slot placeholder"
 )
-variablesPalette.rows[3]:GetScript("OnDragStop")(variablesPalette.rows[3])
+flexRow:GetScript("OnDragStop")(flexRow)
 assert(not grid.dragGhost:IsShown(), "cancelling a variable drag clears its carried token")
 
-local variableDrag, variableDrop = DragTo(variablesPalette.rows[3], blank)
+local variableDrag, variableDrop = DragTo(flexRow, blank)
 assert(variableDrag.kind == "text" and variableDrag.text == "{{FLEX}}", "dragging uses the token, not its value")
 assert(variableDrop.kind == "group" and variableDrop.group == 1, "a variable can be dropped into a layout group")
-local variableApplied, variableModel = layout.ApplyDrop(grid.model, variableDrag, variableDrop)
+local variableApplied, variableModel =
+    layout.ApplyDrop(grid.model, variableDrag, variableDrop, variableProviders.Variables, variableProviders)
 assert(
     variableApplied and variableModel.groups[1].slots[3] == "{{FLEX}}",
     "dropping a variable stores its dynamic expression"
 )
 grid:SetLayoutModel(variableModel)
-variablesPalette = VariablesBox()
-assert(
-    variablesPalette.rows[3].layoutTarget.text == "{{FLEX}}",
-    "a variable stays in the source catalog after placement"
-)
+assert(not VariableRow("{{FLEX}}"), "a variable leaves the source catalog after placement")
 
-local variableCancelDrag, variableCancelDrop = DragTo(filled, variablesPalette.rows[3])
+variableProviders.Variables.RealmAlias = "Vhez-Realm"
+variableProviders.ResolveRosterName = function(name)
+    if name == "Vhez" or name == "Vhez-Realm" then
+        return "Vhez-Realm"
+    end
+    return name
+end
+grid:SetResolveProviders(variableProviders)
+assert(VariableRow("{{RealmAlias}}"), "a realm-qualified alias starts available before its target is assigned")
+
+local alphaRow = VariableRow("{{alpha}}")
+local variableCancelDrag, variableCancelDrop = DragTo(filled, alphaRow)
 assert(
     variableCancelDrag == nil and variableCancelDrop == nil,
     "dropping a layout slot on Variables cancels instead of deleting it"
 )
-local variableToRosterDrag, variableToRosterDrop = DragTo(variablesPalette.rows[3], PaletteBox().rows[1])
+local variableToRosterDrag, variableToRosterDrop = DragTo(alphaRow, PaletteBox().rows[1])
 assert(
     variableToRosterDrag == nil and variableToRosterDrop == nil,
-    "dropping a reusable variable onto Unrostered cancels"
+    "dropping an available variable onto Unrostered cancels"
 )
-local pipeDrag, pipeDrop = DragTo(variablesPalette.rows[5], grid.boxes[1].rows[4])
-local pipeApplied, pipeModel = layout.ApplyDrop(variableModel, pipeDrag, pipeDrop)
+
+local pipeDrag, pipeDrop = DragTo(VariableRow("{{Pipe|Role}}"), grid.boxes[1].rows[4])
+local pipeApplied, pipeModel =
+    layout.ApplyDrop(variableModel, pipeDrag, pipeDrop, variableProviders.Variables, variableProviders)
 assert(pipeApplied and pipeModel.groups[1].slots[4] == "{{Pipe|Role}}", "pipe-key variables store their raw token")
 grid:SetLayoutModel(pipeModel)
 assert(grid.boxes[1].rows[4].label:GetText() == "{{Pipe||Role}}", "placed pipe tokens render as literal text")
+assert(not VariableRow("{{Pipe|Role}}"), "the exact placed variable is removed from Variables")
+assert(not VariableRow("{{alpha}}"), "an alias resolving to the same assigned member is also removed")
+assert(not VariableRow("{{RealmAlias}}"), "short and realm-qualified aliases use one target identity")
+
+local pipeMoved, movedPipeModel = layout.ApplyDrop(
+    pipeModel,
+    { kind = "slot", group = 1, slot = 4 },
+    { kind = "group", group = 2 },
+    variableProviders.Variables,
+    variableProviders
+)
+assert(pipeMoved, "the alias fixture can move its placed slot")
+grid:SetLayoutModel(movedPipeModel)
+assert(
+    not VariableRow("{{Pipe|Role}}") and not VariableRow("{{alpha}}"),
+    "moving an assignment keeps its variable and same-target aliases unavailable"
+)
+
+local pipeRemoved, removedPipeModel = layout.ApplyDrop(
+    movedPipeModel,
+    { kind = "slot", group = 2, slot = 2 },
+    { kind = "remove" },
+    variableProviders.Variables,
+    variableProviders
+)
+assert(pipeRemoved, "the alias fixture can remove its placed slot")
+grid:SetLayoutModel(removedPipeModel)
+assert(
+    VariableRow("{{Pipe|Role}}") and VariableRow("{{alpha}}") and VariableRow("{{RealmAlias}}"),
+    "removing an assignment returns its variable and same-target aliases"
+)
+
+grid:SetLayoutModel(layout.Parse("Main/1: Vhez"))
+assert(
+    not VariableRow("{{Pipe|Role}}") and not VariableRow("{{alpha}}"),
+    "a literal member assignment also removes variables targeting that member"
+)
+variableProviders.Variables.Fallback = "{{MISSING}} > Vhez"
+grid:SetResolveProviders(variableProviders)
+assert(
+    not VariableRow("{{Fallback}}"),
+    "an unresolved priority alias is removed when its available fallback target is already assigned"
+)
+grid:SetLayoutModel(layout.Parse("Main/1: Missing > {{alpha}}"))
+assert(not VariableRow("{{alpha}}"), "a variable referenced inside a slot expression is treated as used")
+
+-- Exact use hides even a variable whose target cannot resolve yet. Distinct
+-- unresolved variables remain available because the editor must not guess that
+-- their eventual targets will collide.
+variableProviders.Variables.OtherNeedsPage = "{{OTHER_MISSING}}"
+grid:SetResolveProviders(variableProviders)
+grid:SetLayoutModel(layout.Parse("Main/1: {{NeedsPage}}"))
+assert(not VariableRow("{{NeedsPage}}"), "an exact unresolved variable is removed after use")
+assert(VariableRow("{{OtherNeedsPage}}"), "a distinct unresolved variable remains available")
+
+-- Dynamic fills keep their normal resolver behavior: the used token itself is
+-- hidden, while another class variable remains available to select the next
+-- eligible member now or after the roster changes.
+variableProviders.Variables.Mages = "*MAGE"
+variableProviders.Variables.Casters = "*MAGE"
+grid:SetResolveProviders(variableProviders)
+grid:SetLayoutModel(layout.Parse("Main/1: Vhez"))
+assert(VariableRow("{{Mages}}"), "a class variable remains available when it can select an unplaced member")
+grid:SetLayoutModel(layout.Parse("Main/1: {{Mages}}"))
+assert(not VariableRow("{{Mages}}"), "an exact used class variable is removed")
+assert(VariableRow("{{Casters}}"), "a separate class variable remains available for dynamic fill behavior")
 
 grid:SetLayoutModel(layout.Parse("Main/1: Missing > Vhez, *MAGE, {{FLEX}}"))
 palette = PaletteBox()

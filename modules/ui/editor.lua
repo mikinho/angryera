@@ -1465,6 +1465,10 @@ end
 
 layoutEditor.BuildLayoutProviders = BuildEditorLayoutProviders
 
+local LAYOUT_EDIT_ERRORS = {
+    ["duplicate-slot"] = "That variable or resolved raid member is already assigned to another layout slot.",
+}
+
 local RAID_LAYOUT_APPLY_ERRORS = {
     ["not-in-raid"] = "You must be in a raid to rearrange groups.",
     ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
@@ -2073,6 +2077,10 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     end
     ReportVariableError(initialVariableError)
 
+    local function CurrentLayoutProviders()
+        return BuildEditorLayoutProviders(roster, effectiveVariables)
+    end
+
     -- Re-read identity, drafts, authoritative hierarchy, and variables before
     -- every mutation. A visual refresh records exactly what the user has seen;
     -- Apply uses that record to refuse a newer unseen context.
@@ -2090,7 +2098,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         effectiveVariables = variables
         ReportVariableError(variableError)
         if redraw and grid then
-            grid:SetResolveProviders(BuildEditorLayoutProviders(roster, effectiveVariables))
+            grid:SetResolveProviders(CurrentLayoutProviders())
             visibleContextSignature = signature
         end
         return true, nil, currentEntity, vars, signature
@@ -2205,6 +2213,15 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                         tostring(capacityGroup or "?"),
                         tostring(capacityError)
                     )
+                )
+                return false, false, layout.Serialize(compactModel)
+            end
+            local duplicateValid, duplicateError =
+                layout.ValidateUniqueAssignments(compactModel, effectiveVariables, CurrentLayoutProviders())
+            if not duplicateValid then
+                self:Print(
+                    "Could not save the group layout: "
+                        .. (LAYOUT_EDIT_ERRORS[duplicateError] or tostring(duplicateError))
                 )
                 return false, false, layout.Serialize(compactModel)
             end
@@ -2368,7 +2385,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         local contextCurrent = RefreshLayoutContext(true)
         if not contextCurrent then
             effectiveVariables = {}
-            grid:SetResolveProviders(BuildEditorLayoutProviders(roster, effectiveVariables))
+            grid:SetResolveProviders(CurrentLayoutProviders())
         end
         -- Every visual edit runs the same pure mutator the drag path uses and
         -- redraws from the model it returns, so typed and dragged edits cannot
@@ -2380,7 +2397,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                 return
             end
             if not applied then
-                self:Print("Could not change the group layout: " .. tostring(updated))
+                self:Print("Could not change the group layout: " .. (LAYOUT_EDIT_ERRORS[updated] or tostring(updated)))
                 return
             end
             model = updated
@@ -2407,7 +2424,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             if not RefreshLayoutContext(true) then
                 return
             end
-            Commit(layout.ApplyDrop(model, drag, drop, effectiveVariables))
+            Commit(layout.ApplyDrop(model, drag, drop, effectiveVariables, CurrentLayoutProviders()))
         end)
 
         grid:SetCallback("OnSlotClick", function(_, _, group, slot, button)
@@ -2421,7 +2438,8 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                         model,
                         { kind = "slot", group = group, slot = slot },
                         { kind = "remove" },
-                        effectiveVariables
+                        effectiveVariables,
+                        CurrentLayoutProviders()
                     )
                 )
                 return
@@ -2439,7 +2457,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                     if not RefreshLayoutContext(true) then
                         return
                     end
-                    Commit(layout.SetSlot(model, group, slot, text, effectiveVariables))
+                    Commit(layout.SetSlot(model, group, slot, text, effectiveVariables, CurrentLayoutProviders()))
                 end,
             })
         end)
@@ -2458,7 +2476,15 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                     if not RefreshLayoutContext(true) then
                         return
                     end
-                    Commit(layout.ApplyDrop(model, { kind = "text", text = text }, drop, effectiveVariables))
+                    Commit(
+                        layout.ApplyDrop(
+                            model,
+                            { kind = "text", text = text },
+                            drop,
+                            effectiveVariables,
+                            CurrentLayoutProviders()
+                        )
+                    )
                 end,
             })
         end)

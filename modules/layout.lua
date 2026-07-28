@@ -367,6 +367,116 @@ function layout.Resolve(model, providers)
     return resolved
 end
 
+-- Returns the string or unresolved variable keys one slot references. A key is
+-- counted once per slot even if malformed text repeats its token there. Numeric
+-- values are parameters such as `*MAGE x{{Count}}`, not player assignments.
+local function AssignmentVariableKeys(slot, variables)
+    local keys = {}
+    if type(slot) ~= "string" then
+        return keys
+    end
+    for rawKey in slot:gmatch("{{%s*([^{}]-)%s*}}") do
+        local key = Trim(rawKey)
+        local value = type(variables) == "table" and variables[key] or nil
+        if key ~= "" and (value == nil or type(value) == "string") then
+            keys[key] = true
+        end
+    end
+    return keys
+end
+
+-- Supplies effective variables without mutating the editor's provider table.
+-- Callers that only know the variable map still get literal and variable-target
+-- duplicate accounting; roster-aware callers additionally canonicalize short
+-- names and resolve priority lists.
+local function AssignmentProviders(variables, providers)
+    local source = type(providers) == "table" and providers or {}
+    if variables == nil or source.Variables == variables then
+        return source
+    end
+    local combined = {}
+    for key, value in pairs(source) do
+        combined[key] = value
+    end
+    combined.Variables = variables
+    return combined
+end
+
+-- Counts only excess assignments, per conflicting identity. Keeping the
+-- identity separate matters for progressive cleanup: removing one old
+-- duplicate must not grant permission to introduce an unrelated duplicate.
+local function DuplicateAssignmentCounts(model, variables, providers)
+    local conflicts = {}
+    local seenVariables = {}
+    local effectiveProviders = AssignmentProviders(variables, providers)
+    local effectiveVariables = effectiveProviders.Variables
+    for _, group in ipairs((type(model) == "table" and model.groups) or {}) do
+        for _, slot in ipairs(group.slots or {}) do
+            for key in pairs(AssignmentVariableKeys(slot, effectiveVariables)) do
+                local identity = "variable\031" .. key
+                local seen = seenVariables[identity] or 0
+                if seen > 0 then
+                    conflicts[identity] = (conflicts[identity] or 0) + 1
+                end
+                seenVariables[identity] = seen + 1
+            end
+        end
+    end
+
+    local resolved = layout.Resolve(model, effectiveProviders)
+    for _, duplicate in ipairs(resolved.duplicates or {}) do
+        -- Cross-references unresolved by the variable merger are placeholders,
+        -- not player targets. Two distinct tokens that currently expand to the
+        -- same `{{Missing}}` text may become different assignments later.
+        local name = duplicate.Name
+        local identity = type(name) == "string"
+                and not name:find("{{", 1, true)
+                and RosterIdentityKey(name, effectiveProviders)
+            or nil
+        if identity then
+            local key = "member\031" .. identity
+            conflicts[key] = (conflicts[key] or 0) + 1
+        end
+    end
+    return conflicts
+end
+
+--- Rejects a model only when it worsens a variable/member assignment conflict.
+-- Imported layouts may already contain duplicates. They remain loadable and
+-- their slots remain movable; each conflicting identity's excess count may
+-- stay level or decrease, but a mutation cannot increase it.
+-- @tparam table before Original layout model.
+-- @tparam table after Proposed layout model.
+-- @tparam[opt] table variables Effective variables used to expand expressions.
+-- @tparam[opt] table providers Roster-aware providers accepted by `Resolve`.
+-- @treturn boolean valid
+-- @treturn string|nil errorCode
+function layout.ValidateDuplicateProgress(before, after, variables, providers)
+    local original = DuplicateAssignmentCounts(before, variables, providers)
+    local proposed = DuplicateAssignmentCounts(after, variables, providers)
+    for identity, count in pairs(proposed) do
+        if count > (original[identity] or 0) then
+            return false, "duplicate-slot"
+        end
+    end
+    return true
+end
+
+--- Rejects a model containing any repeated variable or resolved member.
+-- Visual editing uses `ValidateDuplicateProgress` so an imported legacy layout
+-- remains repairable; save uses this strict form so no duplicate persists.
+-- @tparam table model Proposed layout model.
+-- @tparam[opt] table variables Effective variables used to expand expressions.
+-- @tparam[opt] table providers Roster-aware providers accepted by `Resolve`.
+-- @treturn boolean valid
+-- @treturn string|nil errorCode
+function layout.ValidateUniqueAssignments(model, variables, providers)
+    if next(DuplicateAssignmentCounts(model, variables, providers)) then
+        return false, "duplicate-slot"
+    end
+    return true
+end
+
 --- Returns a resolved layout containing only groups matching a name query.
 -- @tparam table resolved Resolved layout.
 -- @tparam string query Group name (case-insensitive).
@@ -771,9 +881,10 @@ end
 -- @tparam number slot Slot index.
 -- @tparam string text Slot expression.
 -- @tparam[opt] table variables Effective variables used for capacity validation.
+-- @tparam[opt] table providers Roster-aware providers used for duplicate validation.
 -- @treturn boolean ok
 -- @treturn table|string model on success, reason on failure
-function layout.SetSlot(model, index, slot, text, variables)
+function layout.SetSlot(model, index, slot, text, variables, providers)
     local updated = layout.CopyModel(model)
     local group = updated.groups[index]
     if not group then
@@ -790,6 +901,10 @@ function layout.SetSlot(model, index, slot, text, variables)
         return false, "group-full"
     end
     group.slots[slot] = expression
+    local valid, duplicateError = layout.ValidateDuplicateProgress(model, updated, variables, providers)
+    if not valid then
+        return false, duplicateError
+    end
     return true, updated
 end
 
@@ -870,9 +985,10 @@ end
 -- @tparam table drag Drag descriptor.
 -- @tparam table drop Drop descriptor.
 -- @tparam[opt] table variables Effective variables used for capacity validation.
+-- @tparam[opt] table providers Roster-aware providers used for duplicate validation.
 -- @treturn boolean ok
 -- @treturn table|string model on success, reason on failure
-function layout.ApplyDrop(model, drag, drop, variables)
+function layout.ApplyDrop(model, drag, drop, variables, providers)
     if type(drag) ~= "table" or type(drop) ~= "table" then
         return false, "unknown-drag"
     end
@@ -901,7 +1017,16 @@ function layout.ApplyDrop(model, drag, drop, variables)
     if isMove and drop.kind == "slot" and targetIndex ~= drag.group then
         local occupant = target.slots[drop.slot]
         if occupant and not CanHold(target, layout.ExpandedSlotWeight(text, variables), nil, variables) then
-            return SwapSlots(updated, drag.group, drag.slot, targetIndex, drop.slot, text, occupant, variables)
+            local swapped, result =
+                SwapSlots(updated, drag.group, drag.slot, targetIndex, drop.slot, text, occupant, variables)
+            if not swapped then
+                return false, result
+            end
+            local valid, duplicateError = layout.ValidateDuplicateProgress(model, result, variables, providers)
+            if not valid then
+                return false, duplicateError
+            end
+            return true, result
         end
     end
 
@@ -926,5 +1051,9 @@ function layout.ApplyDrop(model, drag, drop, variables)
         end
     end
     table.insert(target.slots, position, text)
+    local valid, duplicateError = layout.ValidateDuplicateProgress(model, updated, variables, providers)
+    if not valid then
+        return false, duplicateError
+    end
     return true, updated
 end
