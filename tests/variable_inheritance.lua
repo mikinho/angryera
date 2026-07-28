@@ -76,9 +76,11 @@ local reservedCaseKeys = {
     "SKULL",
     "AUTOADVANCE",
     "AUTOAPPLYLAYOUT",
+    "ASSISTS",
     "ENCOUNTER",
     "ENCOUNTERID",
     "LAYOUT",
+    "TANKS",
 }
 for _, key in ipairs(reservedCaseKeys) do
     local lowerKey = key:lower()
@@ -88,6 +90,16 @@ for _, key in ipairs(reservedCaseKeys) do
     assert(merged and not mergeError, key .. " case override should merge")
     assert(merged["$" .. key] == nil, key .. " inherited spelling should be removed")
     assert(merged["$" .. lowerKey] == "page", key .. " should preserve the winning spelling and value")
+end
+
+for _, key in ipairs({ "TANKS", "ASSISTS" }) do
+    local lowerKey = key:lower()
+    merged, mergeError = variables.MergeVariableLayers({
+        { Vars = "$" .. key .. "=ancestor" },
+    }, "$" .. lowerKey .. "=")
+    assert(merged and not mergeError, key .. " explicit-empty override should merge")
+    assert(merged["$" .. key] == nil, key .. " inherited spelling should be removed by an empty override")
+    assert(merged["$" .. lowerKey] == "", key .. " explicit emptiness should remain distinguishable from absence")
 end
 
 merged, mergeError = variables.MergeVariableLayers({
@@ -141,6 +153,10 @@ merged, mergeError = variables.MergeVariableLayers({}, "$AUTOADVANCE=$true\n$aut
 AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer reserved case conflict")
 merged, mergeError = variables.MergeVariableLayers({}, "$AUTOAPPLYLAYOUT=$true\n$autoapplylayout=$false")
 AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer automatic layout case conflict")
+merged, mergeError = variables.MergeVariableLayers({}, "$TANKS=Alpha\n$tanks=Bravo")
+AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer tank metadata case conflict")
+merged, mergeError = variables.MergeVariableLayers({}, "$ASSISTS=Alpha\n$assists=Bravo")
+AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer assistant metadata case conflict")
 
 local emptyLayers, emptyLayerError = variables.ValidateAncestorVariableLayers({}, nil)
 assert(emptyLayers and not emptyLayerError and #emptyLayers == 0, "A root-level page should accept no ancestors")

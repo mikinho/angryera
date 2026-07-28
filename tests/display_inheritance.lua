@@ -278,6 +278,10 @@ AngryEra.UpdateBackdrop = function() end
 AngryEra.ProcessMarkdown = function(_, text)
     return text
 end
+local lastNotificationContext
+AngryEra.NotifyDisplayedNoteChanged = function(_, context)
+    lastNotificationContext = context
+end
 AngryAssign_State.directionUp = false
 AngryAssign_State.displayed = 1
 AngryAssign_Pages[1] = renderedPage
@@ -305,5 +309,25 @@ _G.C_Timer = {
 }
 AngryEra:UpdateDisplayed()
 assert(renderedText == "Render Target", "{page} should resolve from the page being rendered")
+assert(
+    lastNotificationContext and lastNotificationContext.VariableError == nil,
+    "a valid hierarchy should be automation-safe"
+)
+
+AngryEra.GetActiveDisplayReference = nil
+AngryEra.GetActivePageRenderContext = nil
+AngryAssign_Pages[1] = {
+    Name = "Unsafe Fallback",
+    Contents = "Fallback",
+    CategoryId = 99,
+    Vars = "$TANKS=Tank",
+}
+AngryEra:UpdateDisplayed()
+assert(
+    lastNotificationContext
+        and lastNotificationContext.VariableError == "missing-category"
+        and lastNotificationContext.MergedVariables["$TANKS"] == "Tank",
+    "a page-only fallback must carry its hierarchy failure so destructive automation can fail closed"
+)
 
 print("Display inheritance tests passed.")

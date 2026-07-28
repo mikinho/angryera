@@ -48,6 +48,27 @@ local quietRaidLayoutApplyResults = {
     ["not-raid-leader"] = true,
     ["superseded"] = true,
 }
+local raidAssignmentErrors = {
+    ["ambiguous-assignment-member"] = "A $TANKS or $ASSISTS name matches more than one current raid member; use Name-Realm.",
+    ["assignment-api-failed"] = "Classic rejected a raid role or assistant change.",
+    ["assignment-api-timeout"] = "Classic did not confirm a raid role or assistant change in time.",
+    ["assignment-api-unavailable"] = "This client cannot change every raid role or assistant required by the page.",
+    ["assignment-list-too-large"] = "$TANKS and $ASSISTS may contain at most 40 names.",
+    ["assistant-state-failed"] = "Classic's raid-assistant state is temporarily unavailable.",
+    ["assistant-state-unavailable"] = "This client does not expose Blizzard's raid-assistant state.",
+    ["duplicate-assignment-member"] = "$TANKS or $ASSISTS resolves the same raid member more than once.",
+    ["duplicate-assignment-name"] = "$TANKS or $ASSISTS contains the same name more than once.",
+    ["invalid-assignment-list"] = "$TANKS and $ASSISTS must be comma-separated name lists.",
+    ["invalid-assignment-name"] = "$TANKS or $ASSISTS contains an invalid or empty name.",
+    ["invalid-assignment-context"] = "Could not resolve the inherited variables for $TANKS or $ASSISTS.",
+    ["invalid-roster"] = "Classic returned an invalid raid roster; assignments will retry after the roster changes.",
+    ["leader-cannot-be-assistant"] = "The raid leader must not be listed in $ASSISTS.",
+    ["role-api-failed"] = "Classic's assigned-role state is temporarily unavailable.",
+    ["role-api-unavailable"] = "This client does not expose Blizzard's assigned-role API.",
+    ["roster-unavailable"] = "Classic's raid roster is temporarily unavailable; assignments will retry.",
+    ["timer-unavailable"] = "The raid-assignment worker could not schedule its next step.",
+    ["unknown-assignment-member"] = "Every $TANKS and $ASSISTS name must resolve to a current raid member.",
+}
 
 local colors = AngryEra.utils.colors
 local RGBToHex = colors.RGBToHex
@@ -951,6 +972,9 @@ function AngryEra:OnEnable()
     if type(self.ResetGroupLayoutApplyState) == "function" then
         self:ResetGroupLayoutApplyState()
     end
+    if type(self.ResetDisplayedRaidAssignmentState) == "function" then
+        self:ResetDisplayedRaidAssignmentState()
+    end
     self:ResetOfficerRank()
     self:CreateDisplay()
     if type(self.CaptureDisplayAuthorityRecovery) == "function" then
@@ -997,6 +1021,11 @@ function AngryEra:OnEnable()
     self:RegisterEvent("PARTY_LEADER_CHANGED")
     self:RegisterEvent("GROUP_JOINED")
     self:RegisterEvent("GROUP_ROSTER_UPDATE")
+    -- Role events are optional across supported Classic branches. The paced
+    -- readback worker also observes roster updates and its own timer, so an
+    -- unavailable event must not prevent the addon from enabling.
+    pcall(self.RegisterEvent, self, "PLAYER_ROLES_ASSIGNED")
+    pcall(self.RegisterEvent, self, "ROLE_CHANGED_INFORM")
     self:RegisterEvent("UNIT_FLAGS")
 
     if isClassic then
@@ -1053,6 +1082,9 @@ function AngryEra:PARTY_LEADER_CHANGED()
         end
     end
     self:StartProtocolLeadershipRosterReconcile()
+    if type(self.RetryDisplayedRaidAssignments) == "function" then
+        self:RetryDisplayedRaidAssignments()
+    end
 end
 
 function AngryEra:GROUP_JOINED()
@@ -1061,6 +1093,9 @@ function AngryEra:GROUP_JOINED()
     self:CancelProtocolLeadershipRosterReconcile()
     if type(self.ResetGroupLayoutApplyState) == "function" then
         self:ResetGroupLayoutApplyState()
+    end
+    if type(self.ResetDisplayedRaidAssignmentState) == "function" then
+        self:ResetDisplayedRaidAssignmentState()
     end
     if type(self.DiscardDisplayAuthorityRecovery) == "function" then
         self:DiscardDisplayAuthorityRecovery()
@@ -1092,16 +1127,21 @@ function AngryEra:PLAYER_REGEN_DISABLED()
     if type(self.PauseGroupLayoutApplyForCombat) == "function" then
         self:PauseGroupLayoutApplyForCombat()
     end
+    if type(self.PauseDisplayedRaidAssignmentsForCombat) == "function" then
+        self:PauseDisplayedRaidAssignmentsForCombat()
+    end
     if AngryEra:GetConfig("hideoncombat") then
         self:HideDisplay()
     end
 end
 
 function AngryEra:PLAYER_REGEN_ENABLED()
-    if type(self.FlushPendingGroupLayoutApply) ~= "function" then
-        return
+    if type(self.FlushPendingGroupLayoutApply) == "function" then
+        self:FlushPendingGroupLayoutApply()
     end
-    self:FlushPendingGroupLayoutApply()
+    if type(self.FlushDisplayedRaidAssignments) == "function" then
+        self:FlushDisplayedRaidAssignments()
+    end
 end
 
 --- Reports the terminal result of a paced raid-layout apply.
@@ -1120,6 +1160,36 @@ function AngryEra:OnGroupLayoutApplyFinished(success, result)
         return
     end
     self:Print(raidLayoutApplyErrors[result] or ("Could not rearrange the raid: " .. tostring(result)))
+end
+
+--- Reports only actual automatic mutations or one actionable terminal failure.
+-- Zero-change reconciliations stay quiet.
+-- @tparam boolean success
+-- @tparam number|string result Mutation count or stable error code.
+function AngryEra:OnDisplayedRaidAssignmentsFinished(success, result)
+    if success and type(result) == "number" then
+        if result > 0 then
+            self:Print(
+                ("Updated raid tank roles and assistants (%d change%s)."):format(result, result == 1 and "" or "s")
+            )
+        end
+        return
+    end
+    self:Print(
+        raidAssignmentErrors[result] or ("Could not update raid tank roles and assistants: " .. tostring(result))
+    )
+end
+
+function AngryEra:ROLE_CHANGED_INFORM()
+    if type(self.RetryDisplayedRaidAssignments) == "function" then
+        self:RetryDisplayedRaidAssignments()
+    end
+end
+
+function AngryEra:PLAYER_ROLES_ASSIGNED()
+    if type(self.RetryDisplayedRaidAssignments) == "function" then
+        self:RetryDisplayedRaidAssignments()
+    end
 end
 
 --- Rechecks protocol tenure after roster roles have settled.
@@ -1179,6 +1249,9 @@ function AngryEra:ReconcileProtocolLeadershipFromRoster()
         if type(self.RetryObservedGroupLayoutAutoApply) == "function" then
             self:RetryObservedGroupLayoutAutoApply()
         end
+        if type(self.RetryDisplayedRaidAssignments) == "function" then
+            self:RetryDisplayedRaidAssignments()
+        end
     elseif result.PendingDisplayBootstrap ~= true then
         if type(self.CancelDisplayRequestWatchdog) == "function" then
             self:CancelDisplayRequestWatchdog()
@@ -1195,6 +1268,9 @@ function AngryEra:GROUP_ROSTER_UPDATE()
         self:CancelProtocolLeadershipRosterReconcile()
         if type(self.ResetGroupLayoutApplyState) == "function" then
             self:ResetGroupLayoutApplyState()
+        end
+        if type(self.ResetDisplayedRaidAssignmentState) == "function" then
+            self:ResetDisplayedRaidAssignmentState()
         end
         if type(self.DiscardDisplayAuthorityRecovery) == "function" then
             self:DiscardDisplayAuthorityRecovery()
@@ -1214,6 +1290,9 @@ function AngryEra:GROUP_ROSTER_UPDATE()
             self:FlushPendingGroupLayoutApply()
         end
         self:UpdateDisplayedIfNewGroup()
+        if type(self.RetryDisplayedRaidAssignments) == "function" then
+            self:RetryDisplayedRaidAssignments()
+        end
         if type(self.RetryDisplayedNoteMarkers) == "function" then
             self:RetryDisplayedNoteMarkers()
         end
@@ -1245,6 +1324,11 @@ function AngryEra:UNIT_FLAGS(_, unit)
         self:PauseGroupLayoutApplyForCombat()
     elseif not inCombat and type(self.FlushPendingGroupLayoutApply) == "function" then
         self:FlushPendingGroupLayoutApply()
+    end
+    if inCombat and type(self.PauseDisplayedRaidAssignmentsForCombat) == "function" then
+        self:PauseDisplayedRaidAssignmentsForCombat()
+    elseif not inCombat and type(self.FlushDisplayedRaidAssignments) == "function" then
+        self:FlushDisplayedRaidAssignments()
     end
 end
 

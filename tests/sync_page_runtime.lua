@@ -120,6 +120,7 @@ local authorization = {
 local authorizationCalls = {}
 local authorizationHook
 local layoutInvalidations = {}
+local assignmentInvalidations = {}
 function AngryEra:CanReceiveFrom(sender, action)
     authorizationCalls[#authorizationCalls + 1] = {
         Sender = sender,
@@ -133,6 +134,10 @@ end
 
 function AngryEra:InvalidatePendingGroupLayoutApply(reference)
     layoutInvalidations[#layoutInvalidations + 1] = DeepCopy(reference)
+end
+
+function AngryEra:InvalidatePendingDisplayedRaidAssignments(reference)
+    assignmentInvalidations[#assignmentInvalidations + 1] = DeepCopy(reference)
 end
 
 local localPublish = {
@@ -607,6 +612,7 @@ local displayPayload = {
 }
 local displayedBeforeRequest = AngryAssign_State.displayed
 local invalidationsBeforePendingDisplay = #layoutInvalidations
+local assignmentInvalidationsBeforePendingDisplay = #assignmentInvalidations
 accepted, result = AngryEra:AcceptActiveDisplay(Auth(), displayPayload)
 Assert(accepted, result)
 Assert(result.RequestNeeded and not result.Applied, "missing exact render tuple returns request-needed")
@@ -624,6 +630,12 @@ Assert(
         and layoutInvalidations[#layoutInvalidations].SyncId == remotePageSyncId
         and layoutInvalidations[#layoutInvalidations].ContextRevisionId == matchingPayload.ContextRevisionId,
     "an accepted pending display immediately invalidates layout work for the old active tuple"
+)
+Assert(
+    #assignmentInvalidations == assignmentInvalidationsBeforePendingDisplay + 1
+        and assignmentInvalidations[#assignmentInvalidations].SyncId == remotePageSyncId
+        and assignmentInvalidations[#assignmentInvalidations].ContextRevisionId == matchingPayload.ContextRevisionId,
+    "an accepted pending display immediately invalidates raid assignments for the old active tuple"
 )
 
 accepted, result = AngryEra:AcceptActivePageUpsert(Auth(), matchingPayload)
@@ -1664,7 +1676,7 @@ do
     local canonicalBasePayload = assert(activePage.BuildPageUpsertPayload(canonicalWire, {
         {
             SyncId = localCategorySyncId,
-            Vars = "raid=canonical",
+            Vars = "raid=canonical\n$ASSISTS={{ASSIST_SLOT}}",
         },
     }, TestHash))
     local canonicalDisplay = {
@@ -1709,6 +1721,30 @@ do
     Assert(AngryEra._activeDisplayReference == referenceBeforeProposal, "proposal staging preserves the active tuple")
     AssertEqual(pageBeforeProposal.Revision, 1, "proposal staging does not allocate a revision")
 
+    local privilegedProposal
+    privilegedProposal, proposalError = AngryEra:BuildActivePageChangeProposal(1, {
+        Name = "Canonical Assignments",
+        Vars = "page=canonical\n$ASSISTS=Assistant",
+        Contents = "Tank: Alpha",
+    })
+    AssertError(
+        privilegedProposal,
+        proposalError,
+        "privileged-raid-assignment-change",
+        "assistant direct privileged metadata"
+    )
+    privilegedProposal, proposalError = AngryEra:BuildActivePageChangeProposal(1, {
+        Name = "Canonical Assignments",
+        Vars = "page=canonical\nASSIST_SLOT=Assistant",
+        Contents = "Tank: Alpha",
+    })
+    AssertError(
+        privilegedProposal,
+        proposalError,
+        "privileged-raid-assignment-change",
+        "assistant indirect inherited privileged metadata"
+    )
+
     local desiredB = {
         Name = "Canonical Assignments",
         Vars = "page=canonical",
@@ -1729,6 +1765,23 @@ do
         SenderInstallationId = otherInstallationId,
         SenderSessionId = "assistant_proposal_session",
     })
+    local maliciousProposal = DeepCopy(proposalA)
+    maliciousProposal.Vars = "page=canonical\n$TANKS=Assistant"
+    accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, maliciousProposal)
+    AssertError(
+        accepted,
+        result,
+        "privileged-raid-assignment-change",
+        "leader rejects direct privileged metadata proposal"
+    )
+    maliciousProposal.Vars = "page=canonical\nASSIST_SLOT=Assistant"
+    accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, maliciousProposal)
+    AssertError(
+        accepted,
+        result,
+        "privileged-raid-assignment-change",
+        "leader rejects indirect inherited privileged metadata proposal"
+    )
     accepted, result = AngryEra:ApplyActivePageChangeProposal(assistantAuth, proposalA)
     Assert(accepted and result.Status == "applied" and result.Applied, result)
     AssertEqual(result.LocalId, 1, "canonical proposal retains the local page id")
@@ -1750,7 +1803,7 @@ do
     AssertEqual(result.PageUpsertPayload.Page.Order, 1, "canonical commit preserves wire sibling order")
     AssertEqual(
         result.PageUpsertPayload.AncestorVariableLayers[1].Vars,
-        "raid=canonical",
+        "raid=canonical\n$ASSISTS={{ASSIST_SLOT}}",
         "canonical commit preserves inherited ancestor variables"
     )
     local validCanonicalResult, canonicalResultError =

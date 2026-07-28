@@ -18,6 +18,10 @@ local layoutFlushApplied = false
 local layoutFlushResult = "no-pending-layout"
 local layoutFlushCount = 0
 local layoutPauseCount = 0
+local raidAssignmentResetCount = 0
+local raidAssignmentFlushCount = 0
+local raidAssignmentPauseCount = 0
+local raidAssignmentRetryCount = 0
 local unitCombat = {}
 local registeredSlashCommands = {}
 local slashRegistrationOrder = {}
@@ -105,6 +109,22 @@ end
 
 function AngryEra:PauseGroupLayoutApplyForCombat()
     layoutPauseCount = layoutPauseCount + 1
+end
+
+function AngryEra:ResetDisplayedRaidAssignmentState()
+    raidAssignmentResetCount = raidAssignmentResetCount + 1
+end
+
+function AngryEra:FlushDisplayedRaidAssignments()
+    raidAssignmentFlushCount = raidAssignmentFlushCount + 1
+end
+
+function AngryEra:PauseDisplayedRaidAssignmentsForCombat()
+    raidAssignmentPauseCount = raidAssignmentPauseCount + 1
+end
+
+function AngryEra:RetryDisplayedRaidAssignments()
+    raidAssignmentRetryCount = raidAssignmentRetryCount + 1
 end
 
 function AngryEra:GetConfig()
@@ -435,6 +455,7 @@ assert(
 
 AngryEra:OnEnable()
 assert(layoutApplyResetCount == 1, "startup should clear session-local raid-layout apply state")
+assert(raidAssignmentResetCount == 1, "startup should clear session-local raid-assignment state")
 
 local createIndex
 local captureIndex
@@ -497,9 +518,11 @@ assert(
         and registeredEvents.GROUP_ROSTER_UPDATE
         and registeredEvents.PLAYER_REGEN_DISABLED
         and registeredEvents.PLAYER_REGEN_ENABLED
+        and registeredEvents.PLAYER_ROLES_ASSIGNED
+        and registeredEvents.ROLE_CHANGED_INFORM
         and registeredEvents.UNIT_FLAGS
         and not registeredEvents.PARTY_CONVERTED_TO_RAID,
-    "supported group and unit handlers must be active without registering the invalid conversion event"
+    "supported group, role, and unit handlers must be active without registering the invalid conversion event"
 )
 assert(
     sessionIndex < registrationOrder[1].Index
@@ -522,6 +545,7 @@ layoutFlushApplied = true
 layoutFlushResult = 2
 AngryEra:PLAYER_REGEN_ENABLED()
 assert(layoutFlushCount == 1, "leaving combat should flush one queued layout request")
+assert(raidAssignmentFlushCount == 1, "leaving combat should flush the latest queued raid assignments")
 assert(#calls == 0, "the asynchronous completion hook, not the combat event, should report the result")
 AngryEra:OnGroupLayoutApplyFinished(true, 2)
 assert(
@@ -540,23 +564,58 @@ AngryEra:OnGroupLayoutApplyFinished(false, "display-changed")
 assert(#calls == 0, "an expected page-change cancellation should stay silent")
 AngryEra:PLAYER_REGEN_DISABLED()
 assert(layoutPauseCount == 1, "entering combat should pause any not-yet-issued raid-layout operation")
+assert(raidAssignmentPauseCount == 1, "entering combat should pause unissued raid-assignment work")
 unitCombat.raid1 = true
 AngryEra:UNIT_FLAGS(nil, "raid1")
 assert(layoutPauseCount == 1, "a remote raider's combat flag should not pause locally protected layout work")
+assert(
+    raidAssignmentPauseCount == 1,
+    "a remote raider's combat flag should not pause locally protected assignment work"
+)
 unitCombat.raid1 = false
 AngryEra:UNIT_FLAGS(nil, "raid1")
 assert(layoutFlushCount == 2, "a remote raider's combat flag should not flush locally protected layout work")
+assert(
+    raidAssignmentFlushCount == 2,
+    "a remote raider's combat flag should not flush locally protected assignment work"
+)
 unitCombat.player = true
 AngryEra:UNIT_FLAGS(nil, "player")
 assert(layoutPauseCount == 2, "the local player's combat flag should pause layout work")
+assert(raidAssignmentPauseCount == 2, "the local player's combat flag should pause assignment work")
 unitCombat.player = false
 AngryEra:UNIT_FLAGS(nil, "player")
 assert(layoutFlushCount == 3, "the local player's combat flag should retry queued layout work")
+assert(raidAssignmentFlushCount == 3, "the local player's combat flag should retry queued assignment work")
+
+calls = {}
+AngryEra:OnDisplayedRaidAssignmentsFinished(true, 2)
+assert(
+    #calls == 1 and calls[1].Name == "print" and calls[1].Value == "Updated raid tank roles and assistants (2 changes).",
+    "actual automatic raid-assignment changes should report once"
+)
+calls = {}
+AngryEra:OnDisplayedRaidAssignmentsFinished(true, 0)
+assert(#calls == 0, "an already-satisfied automatic assignment should stay silent")
+AngryEra:OnDisplayedRaidAssignmentsFinished(false, "assignment-api-failed")
+assert(
+    #calls == 1 and calls[1].Name == "print" and calls[1].Value == "Classic rejected a raid role or assistant change.",
+    "automatic assignment failures should use their actionable message"
+)
+
+local retriesBeforeRoleEvents = raidAssignmentRetryCount
+AngryEra:ROLE_CHANGED_INFORM()
+AngryEra:PLAYER_ROLES_ASSIGNED()
+assert(
+    raidAssignmentRetryCount == retriesBeforeRoleEvents + 2,
+    "both supported Blizzard role events should recheck the current assignment intent"
+)
 
 calls = {}
 AngryEra._protocolStarted = true
 AngryEra:GROUP_JOINED()
 assert(layoutApplyResetCount == 2, "a group boundary should discard layout work from the prior group")
+assert(raidAssignmentResetCount == 2, "a group boundary should discard assignment work from the prior group")
 assert(
     calls[1].Name == "discard-display-authority-recovery",
     "group join must invalidate a startup display candidate from the prior group"
@@ -636,6 +695,7 @@ assert(
 )
 
 calls = {}
+local retriesBeforeRosterUpdate = raidAssignmentRetryCount
 AngryEra:GROUP_ROSTER_UPDATE()
 local markerRetryCount = 0
 for _, call in ipairs(calls) do
@@ -652,11 +712,20 @@ for _, call in ipairs(calls) do
     )
 end
 assert(markerRetryCount == 1, "a roster update should retry unresolved displayed-note marker targets once")
+assert(
+    raidAssignmentRetryCount == retriesBeforeRosterUpdate + 1,
+    "a roster update should retry the current exact raid-assignment intent once"
+)
 
 calls = {}
 local rotationsBeforeSettledPromotion = tenureRotationCount
+local retriesBeforeLeaderChange = raidAssignmentRetryCount
 AngryEra:PARTY_LEADER_CHANGED()
 assert(layoutApplyCancelCount == 1, "a leader change should cancel layout work authorized under the old leader")
+assert(
+    raidAssignmentRetryCount == retriesBeforeLeaderChange + 1,
+    "a leader change should immediately recheck whether this client may manage assignments"
+)
 for _, call in ipairs(calls) do
     assert(
         call.Name ~= "version-query" and call.Name ~= "restore-display-authority",
@@ -966,10 +1035,15 @@ AngryEra:PARTY_LEADER_CHANGED()
 local departureTimer = LatestTimer("RetryProtocolLeadershipRosterReconcile")
 grouped = false
 calls = {}
+local assignmentResetsBeforeDeparture = raidAssignmentResetCount
 AngryEra:GROUP_ROSTER_UPDATE()
 assert(
     departureTimer.Active == false and AngryEra._leadershipRosterReconcilePending == false,
     "group departure should cancel settled-roster reconciliation"
+)
+assert(
+    raidAssignmentResetCount == assignmentResetsBeforeDeparture + 1,
+    "group departure should discard all page-bound raid-assignment work"
 )
 grouped = true
 calls = {}

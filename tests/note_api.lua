@@ -29,6 +29,8 @@ local categoriesBySyncId = {
 local scanEvents = {}
 local messages = {}
 local layoutObservations = {}
+local assignmentObservations = {}
+local assignmentObservationErrors = {}
 local reference = {
     SyncId = pageSyncId,
     Revision = 1,
@@ -78,6 +80,11 @@ function AngryEra:ObserveDisplayedRaidLayout(snapshot)
     layoutObservations[#layoutObservations + 1] = snapshot or false
 end
 
+function AngryEra:ObserveDisplayedRaidAssignments(snapshot, variableError)
+    assignmentObservations[#assignmentObservations + 1] = snapshot or false
+    assignmentObservationErrors[#assignmentObservationErrors + 1] = variableError or false
+end
+
 local wirePage = {
     SyncId = pageSyncId,
     Revision = 1,
@@ -125,6 +132,12 @@ assert(
         and layoutObservations[1].SyncId == pageSyncId
         and layoutObservations[1].ContextRevisionId == "ctx-1",
     "the exact displayed-note snapshot should also reach the raid-layout observer"
+)
+assert(
+    #assignmentObservations == 1
+        and assignmentObservations[1].SyncId == pageSyncId
+        and assignmentObservations[1].ContextRevisionId == "ctx-1",
+    "the exact displayed-note snapshot should also reach the raid-assignment observer"
 )
 assert(scanEvents[1].event == "ANGRYERA_NOTE_UPDATE", "The WeakAuras event name should match")
 assert(scanEvents[1][1] == pageSyncId, "The event should carry the page sync id")
@@ -194,6 +207,7 @@ structuredMeta.assignments.tanks[1] = "Zessy"
 
 local invalidVariableKey = {}
 local observationsBeforeInvalid = #layoutObservations
+local assignmentObservationsBeforeInvalid = #assignmentObservations
 local rejected, rejectionError = AngryEra:NotifyDisplayedNoteChanged({
     Page = wirePage,
     RenderedText = "PATCHWERK - MT: Zessy",
@@ -210,6 +224,10 @@ assert(#scanEvents == 1 and #messages == 1, "A rejected graph should not publish
 assert(
     #layoutObservations == observationsBeforeInvalid,
     "a rejected graph must not replace the raid-layout display observation"
+)
+assert(
+    #assignmentObservations == assignmentObservationsBeforeInvalid,
+    "a rejected graph must not replace the raid-assignment display observation"
 )
 
 local invalidContextAnnounced, invalidContextError = AngryEra:NotifyDisplayedNoteChanged({})
@@ -228,6 +246,22 @@ assert(#scanEvents == 1 and #messages == 1, "Duplicate renders should not repeat
 assert(
     #layoutObservations == observationsBeforeInvalid + 1,
     "an identical render should still revalidate pending layout work against the active tuple"
+)
+assert(
+    #assignmentObservations == assignmentObservationsBeforeInvalid + 1,
+    "an identical render should still revalidate pending assignment work against the active tuple"
+)
+
+announced = AngryEra:NotifyDisplayedNoteChanged({
+    Page = wirePage,
+    RenderedText = "PATCHWERK - MT: Zessy",
+    MergedVariables = mergedVariables,
+    VariableError = "missing-category",
+})
+assert(announced == false, "an automation-validity change should not alter the public note snapshot")
+assert(
+    assignmentObservationErrors[#assignmentObservationErrors] == "missing-category",
+    "the assignment observer should receive inherited-variable failures out of band"
 )
 
 announced = AngryEra:NotifyDisplayedNoteChanged({
@@ -279,6 +313,10 @@ assert(AngryEra:GetDisplayedMeta().strategy.assignments.tanks[1] == "Thorn", "Ch
 announced = AngryEra:NotifyDisplayedNoteChanged(nil)
 assert(announced == true, "Clearing the display should announce")
 assert(layoutObservations[#layoutObservations] == false, "clearing the display should cancel page-bound layout work")
+assert(
+    assignmentObservations[#assignmentObservations] == false,
+    "clearing the display should cancel page-bound assignment work"
+)
 assert(AngryEra:GetDisplayedNote() == nil, "A cleared display should expose no note")
 assert(AngryEra:GetDisplayedVars() == nil, "A cleared display should expose no variables")
 assert(AngryEra:GetDisplayedMeta() == nil, "A cleared display should expose no metadata")

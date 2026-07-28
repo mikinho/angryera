@@ -8,9 +8,9 @@ Supported game clients:
 - Burning Crusade Anniversary 2.5.6
 
 > [!IMPORTANT]
-> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. Priority assignments require AngryEra v3.2.0-beta or newer on every viewer. Group layouts, variable families, imported raid-role variables, and the Key=Value `$true`/`$false` boolean literals require v3.2.1 or newer. Pages using only features common to v3.1 remain compatible with v3.1.x and v3.2.0-beta clients. Existing local pages and settings are migrated automatically for the v3.1 data model, but Key=Value automation flags are not rewritten: replace legacy `=true` and `=false` flag values with `=$true` and `=$false`, respectively. Downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
+> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. Priority assignments require AngryEra v3.2.0-beta or newer on every viewer. Group layouts, variable families, imported raid-role variables, automatic raid-tank and raid-assistant assignments, and the Key=Value `$true`/`$false` boolean literals require v3.2.1 or newer. Pages using only features common to v3.1 remain compatible with v3.1.x and v3.2.0-beta clients. Existing local pages and settings are migrated automatically for the v3.1 data model, but Key=Value automation flags are not rewritten: replace legacy `=true` and `=false` flag values with `=$true` and `=$false`, respectively. Downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
 
-Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on priority assignments in a mixed pre-v3.2.0-beta raid, or on group layouts, variable families, imported raid-role variables, or Key=Value boolean metadata in a mixed pre-v3.2.1 raid.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on priority assignments in a mixed pre-v3.2.0-beta raid, or on group layouts, variable families, imported raid-role variables, automatic raid-tank or raid-assistant assignments, or Key=Value boolean metadata in a mixed pre-v3.2.1 raid.
 
 ## What is new
 
@@ -20,6 +20,7 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Inherited variables:** variables flow through nested categories to their pages, with the closest category or page value winning.
 - **Composable variable families:** combine numbered class, role, or assignment lists into reusable outputs such as `HEALER1...N` and `MELEE1...N`.
 - **Assigned-role import:** take an on-demand snapshot of Blizzard's Tank, Healer, and Damage assignments as numbered `RAID_TANK1...N`, `RAID_HEALER1...N`, and `RAID_DPS1...N` variables.
+- **Automatic raid roles and permissions:** inherited `$TANKS` and `$ASSISTS` lists let the leader keep Blizzard's assigned Tanks and actual raid assistants synchronized with the displayed page.
 - **Page metadata:** `$` variables can drive automatic raid markers, encounter advancement, WeakAuras, and other addons.
 - **Automatic raid markers:** display a page and AngryEra can mark the assigned players.
 - **Boss-kill auto-advance:** after a successful encounter, the leader can automatically display the next page in the category.
@@ -90,6 +91,8 @@ Officer status without raid assist is not enough. Raid assist alone is not enoug
 The leader processes simultaneous edits in order and shares each accepted result. If the active page changes, the leader changes, or another edit wins, AngryEra keeps the assistant's text visible as a recoverable draft instead of silently discarding it.
 
 Assistant edits are limited to the active page's name, variables, and contents. They do not grant permission to select or clear the display, edit categories or background received pages, reorder shared data, or perform shared deletions. Party sharing is leader-only because parties do not have a raid-assistant role.
+
+`$TANKS` and `$ASSISTS` are privileged metadata because they can change Blizzard raid roles and raid authority. A qualified assistant's proposal cannot change either effective value, including through an ordinary variable referenced by one of them. The current raid leader must make those changes directly.
 
 ### Permission settings
 
@@ -278,6 +281,8 @@ DPS*=RAID_DPS*
 
 The visible `$AE_RAID_ROSTER` line/object is managed by the importer and owns all three `RAID_` role families at that variable layer. A nearer page import replaces an inherited category import as one complete snapshot. An explicit numbered value such as `RAID_HEALER2=Backup` on the same or a nearer layer remains an intentional override. Do not also declare `RAID_TANK*`, `RAID_HEALER*`, or `RAID_DPS*` beside the managed snapshot; compose them into differently named families as shown above. Delete `$AE_RAID_ROSTER` to remove that layer's imported snapshot and resume normal inheritance.
 
+The imported variables remain an on-demand snapshot even when `$TANKS` later changes Blizzard's live Tank assignments. Re-import and save if `RAID_TANK1...N` should reflect the new live roles; AngryEra does not silently rewrite a reviewed variable draft.
+
 A role import knows only Tank, Healer, and Damage. Build narrower families such as melee, ranged, priests, or mages from your own variables because Blizzard's assigned group role does not identify a remote player's specialization.
 
 For a reusable raid template, import roles on the raid's category so every descendant page sees the same snapshot. Import on an individual page only when that page intentionally needs a complete replacement role snapshot.
@@ -396,7 +401,38 @@ Metadata can also appear in page text. It is excluded from automatic word highli
 | `$ENCOUNTER` / `$ENCOUNTERID` | Bind an auto-advance page to an encounter name or numeric ID. |
 | `$LAYOUT` | Define the effective named raid subgroup layout. |
 | `$AUTOAPPLYLAYOUT` | After the initial display state is recorded, let the raid leader apply a different destination page's effective layout. |
+| `$TANKS` | Keep Blizzard's assigned Tank role equal to an inherited comma-separated list. |
+| `$ASSISTS` | Keep actual raid-assistant rank equal to an inherited comma-separated list. |
 | Other custom `$KEY` values | Expose inherited metadata to WeakAuras or another addon. Importer-managed `$AE_RAID_ROSTER` remains private. |
+
+### Automatic raid tanks and assistants
+
+`$TANKS` and `$ASSISTS` let the raid leader apply the roles and authority required by the exact displayed page:
+
+```text
+MT=Roselea
+OT=Zessy
+LOOTER=Eblis
+$TANKS={{MT}},{{OT}}
+$ASSISTS={{OT}},{{LOOTER}}
+```
+
+`$TANKS` means Blizzard's modern assigned **Tank** role. It does not mean the legacy Main Tank raid-frame flag. `$ASSISTS` means actual **raid-assistant rank**, with the same permissions as assigning Assist through Blizzard's raid UI; it does not mean a Main Assist raid-frame flag. One player may appear in both lists.
+
+Both values inherit like other metadata. Put the normal roster on a category and override it only on pages that need different assignments. The nearest page or category value wins independently for each key:
+
+- When a key is absent throughout the effective hierarchy, AngryEra leaves that dimension unmanaged.
+- When a key is present, its comma-separated names are the exact desired set.
+- An explicit empty `$TANKS=` clears every assigned Tank by setting only those players to None; existing Healer and Damage roles are left unchanged.
+- An explicit empty `$ASSISTS=` clears every raid assistant.
+
+When `$TANKS` is present, AngryEra assigns Tank to the listed players and removes Tank from unlisted players. It never replaces an unlisted player's existing Healer or Damage role. When `$ASSISTS` is present, AngryEra first turns off Blizzard's **Everyone Is Assistant** option, then promotes listed players before demoting unlisted assistants until the list matches exactly.
+
+Names may be literal or come from resolved variables. A short name is accepted only when it identifies exactly one current raid member; use `Name-Realm` for a rare duplicate. If any requested name is missing or ambiguous, AngryEra does not guess. If any ancestor or page variable source cannot be resolved completely, both privileged actions fail closed instead of using a page-only fallback. Do not include the current raid leader in `$ASSISTS`; the leader already has raid authority and cannot also hold assistant rank.
+
+Only the current raid leader performs this automation. An already-correct roster stays silent. If the display changes repeatedly, unissued work is superseded by the latest exact page and inherited context. A Blizzard change that was already issued may settle, but AngryEra rechecks and compensates against the newest exact display before continuing. Changes that cannot run during combat wait until combat ends, then apply only if that same page and context are still current; another page replaces or cancels the older unissued request.
+
+`RAID_TANK1...N` variables created by **Import Assigned Raid Roles** are still a manual snapshot. Changing live Tanks through `$TANKS` does not rewrite them; import again and save when you want a fresh snapshot.
 
 ### Automatic raid markers
 
@@ -563,7 +599,7 @@ Mouseover keybindings mark a live hostile unit under the cursor and fall back to
 
 Open the editor and choose **Menu > Import**:
 
-- **Encoded AA** imports an AngryEra page or recursive category export. **Import variables and metadata when included** is checked by default so variable families, assigned-role snapshots, group layouts, marker assignments, encounter automation, and custom `$` metadata round-trip with the content.
+- **Encoded AA** imports an AngryEra page or recursive category export. **Import variables and metadata when included** is checked by default so variable families, assigned-role snapshots, group layouts, raid-tank and raid-assistant automation, marker assignments, encounter automation, and custom `$` metadata round-trip with the content.
 - **JSON** imports structured page or category data.
 - **Markdown** imports plain assignment text. Lines beginning with `# ` create pages inside a category.
 
@@ -676,7 +712,7 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 
 ### A raider does not receive the displayed page
 
-1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Priority assignments require v3.2.0-beta or newer on every viewer; group layouts, variable families, imported raid-role variables, and Key=Value boolean metadata require v3.2.1 or newer.
+1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Priority assignments require v3.2.0-beta or newer on every viewer; group layouts, variable families, imported raid-role variables, automatic raid-tank and raid-assistant assignments, and Key=Value boolean metadata require v3.2.1 or newer.
 2. Confirm the sender is the current party or raid leader.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
 4. Have the leader or a raid assistant run `/ae version` in the group.
@@ -726,6 +762,16 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 - Prefer `Name-Realm`, or verify that the short name is unique in the group.
 - Confirm the metadata key begins with `$`.
 - Confirm the displayed page inherited the expected variable value.
+
+### Automatic raid tanks or assistants do not apply
+
+- Confirm the client displaying the page is the current raid leader; qualified assistants never apply these privileged changes.
+- Confirm `$TANKS` or `$ASSISTS` is present on the page or an ancestor category. An absent key intentionally leaves that dimension unmanaged.
+- Use comma-separated names. Verify each short name is unique in the current raid, or use `Name-Realm`.
+- Remove the current raid leader from `$ASSISTS`; the leader cannot also hold assistant rank.
+- If **Everyone Is Assistant** was enabled, `$ASSISTS` disables it before reconciling the exact list.
+- During combat, keep the same exact page active until combat ends. A newer page or inherited context replaces or cancels the queued request.
+- Re-import **Assigned Raid Roles** if `RAID_TANK1...N` should reflect changes made by `$TANKS`; imported variables do not refresh automatically.
 
 ### Auto-advance does not run
 

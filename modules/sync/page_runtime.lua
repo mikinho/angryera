@@ -11,6 +11,7 @@ local AngryEra = app.AngryEra
 local identity = AngryEra.identity
 local protocol = AngryEra.utils and AngryEra.utils.protocol
 local helpers = AngryEra.utils and AngryEra.utils.helpers
+local variables = AngryEra.utils and AngryEra.utils.variables
 local schema = AngryEra.sync and AngryEra.sync.schema
 local revisions = AngryEra.sync and AngryEra.sync.revisions
 local activePage = AngryEra.sync and AngryEra.sync.activePage
@@ -23,6 +24,13 @@ if not protocol or type(protocol.ValidatePayload) ~= "function" then
 end
 if not helpers or type(helpers.EnsureUnitFullName) ~= "function" then
     error("AngryEra helpers must load before active-page runtime")
+end
+if
+    not variables
+    or type(variables.MergeVariableLayers) ~= "function"
+    or type(variables.PartitionResolvedVariables) ~= "function"
+then
+    error("AngryEra variable helpers must load before active-page runtime")
 end
 if not schema or type(schema.ValidateEntity) ~= "function" then
     error("AngryEra synchronization schema must load before active-page runtime")
@@ -1457,6 +1465,67 @@ local function DesiredMatchesPage(desired, page)
         and desired.Contents == (rawget(page, "Contents") or "")
 end
 
+local function ManagedAssignmentMetaValue(meta, canonicalKey)
+    if type(meta) ~= "table" then
+        return false
+    end
+    if rawget(meta, canonicalKey) ~= nil then
+        return true, rawget(meta, canonicalKey)
+    end
+    for key, value in pairs(meta) do
+        if type(key) == "string" and key:upper() == canonicalKey then
+            return true, value
+        end
+    end
+    return false
+end
+
+local function EffectiveManagedAssignmentValues(ancestorLayers, pageVariables)
+    local merged, mergeError = variables.MergeVariableLayers(ancestorLayers, pageVariables)
+    if not merged then
+        return nil, mergeError
+    end
+    local _, meta, partitionError = variables.PartitionResolvedVariables(merged)
+    if not meta then
+        return nil, partitionError
+    end
+
+    local tanksPresent, tanks = ManagedAssignmentMetaValue(meta, "TANKS")
+    local assistsPresent, assists = ManagedAssignmentMetaValue(meta, "ASSISTS")
+    if tanksPresent and type(tanks) ~= "string" or assistsPresent and type(assists) ~= "string" then
+        return nil, "invalid-raid-assignment-metadata"
+    end
+    return {
+        TanksPresent = tanksPresent,
+        Tanks = tanks,
+        AssistsPresent = assistsPresent,
+        Assists = assists,
+    }
+end
+
+-- Qualified assistants may edit ordinary active-page variables, but they may
+-- not make the leader's client grant raid authority or alter live tank roles.
+-- Compare fully resolved values so changing an ordinary variable referenced by
+-- inherited metadata cannot bypass the boundary.
+local function ManagedAssignmentValuesUnchanged(ancestorLayers, currentVariables, proposedVariables)
+    if currentVariables == proposedVariables then
+        return true
+    end
+    local current, currentError = EffectiveManagedAssignmentValues(ancestorLayers, currentVariables)
+    if not current then
+        return false, currentError
+    end
+    local proposed, proposedError = EffectiveManagedAssignmentValues(ancestorLayers, proposedVariables)
+    if not proposed then
+        return false, proposedError
+    end
+    local unchanged = current.TanksPresent == proposed.TanksPresent
+        and current.Tanks == proposed.Tanks
+        and current.AssistsPresent == proposed.AssistsPresent
+        and current.Assists == proposed.Assists
+    return unchanged, unchanged and nil or "privileged-raid-assignment-change"
+end
+
 local function ActiveProposalContext(capture, syncId, hashCallback)
     local indexed = capture.Indexed.BySyncId[syncId]
     if
@@ -1551,6 +1620,14 @@ function AngryEra:BuildActivePageChangeProposal(pageId, desired)
     if not indexed or indexed.Id ~= pageId then
         return nil, contextError or "page-change-unavailable"
     end
+    local assignmentsUnchanged, assignmentError = ManagedAssignmentValuesUnchanged(
+        basePayload.AncestorVariableLayers,
+        basePayload.Page.Vars or "",
+        safeDesired.Vars
+    )
+    if not assignmentsUnchanged then
+        return nil, assignmentError
+    end
 
     local proposal = {
         AuthorityInstallationId = capture.DisplayReference.SenderInstallationId,
@@ -1639,6 +1716,14 @@ local function ApplyPageChangeProposal(self, auth, proposal)
     end
     if desiredMatches then
         return true, BuildChangeProposalResult("unchanged", safeProposal.SyncId, indexed, currentPayload)
+    end
+    local assignmentsUnchanged, assignmentError = ManagedAssignmentValuesUnchanged(
+        currentPayload.AncestorVariableLayers,
+        currentPage.Vars or "",
+        safeProposal.Vars
+    )
+    if not assignmentsUnchanged then
+        return false, assignmentError
     end
     if capture.SelectedId == indexed.Id and capture.EditorDirty then
         return true, BuildChangeProposalResult("busy", safeProposal.SyncId, indexed, currentPayload)
@@ -2762,6 +2847,9 @@ local function AcceptDisplay(self, auth, payload)
             self._activePendingDisplay = pending
             if type(self.InvalidatePendingGroupLayoutApply) == "function" then
                 pcall(self.InvalidatePendingGroupLayoutApply, self, reference)
+            end
+            if type(self.InvalidatePendingDisplayedRaidAssignments) == "function" then
+                pcall(self.InvalidatePendingDisplayedRaidAssignments, self, reference)
             end
             return true,
                 {

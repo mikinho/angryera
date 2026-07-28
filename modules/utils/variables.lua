@@ -596,6 +596,7 @@ end
 
 local RESERVED_METADATA_IDENTITIES = {
     AE_RAID_ROSTER = true,
+    ASSISTS = true,
     AUTOADVANCE = true,
     AUTOAPPLYLAYOUT = true,
     CIRCLE = true,
@@ -608,6 +609,7 @@ local RESERVED_METADATA_IDENTITIES = {
     SQUARE = true,
     STAR = true,
     TRIANGLE = true,
+    TANKS = true,
     X = true,
 }
 

@@ -456,6 +456,14 @@ function AngryEra:NotifyDisplayedNoteChanged(context)
     if type(self.ObserveDisplayedRaidLayout) == "function" then
         pcall(self.ObserveDisplayedRaidLayout, self, snapshot)
     end
+    if type(self.ObserveDisplayedRaidAssignments) == "function" then
+        pcall(
+            self.ObserveDisplayedRaidAssignments,
+            self,
+            snapshot,
+            type(context) == "table" and context.VariableError or nil
+        )
+    end
     if not SnapshotChanged(previous, snapshot) then
         return false
     end

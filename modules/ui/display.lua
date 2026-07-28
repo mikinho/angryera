@@ -1102,6 +1102,7 @@ function AngryEra:UpdateDisplayed()
                 RenderedText = text,
                 MergedVariables = mergedVars,
                 AncestorVariableLayers = ancestorVariableLayers,
+                VariableError = variableError,
             })
         end
     end
