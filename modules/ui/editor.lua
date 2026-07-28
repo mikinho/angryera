@@ -1270,6 +1270,10 @@ local DIALOG_FOOTER_BUTTON_WIDTH = 120
 local DIALOG_FOOTER_HEIGHT = 24
 local DIALOG_FOOTER_GAP = 4
 local VARIABLE_EDITOR_GAP = 3
+-- AceGUI's MultiLineEditBox keeps its visible backdrop four pixels above the
+-- widget frame when its built-in Accept button is hidden. Let that invisible
+-- portion overlap the footer gap so the visible box matches Group Layout.
+local VARIABLE_EDITOR_HIDDEN_BUTTON_BOTTOM_INSET = 4
 -- Window content ends 12 pixels inside the frame while AceGUI's southeast
 -- resize target occupies the outermost 25. Thirteen pixels places Save
 -- immediately beside that target without letting the two hit areas overlap.
@@ -1281,6 +1285,29 @@ local VARIABLE_EDITOR_MIN_WIDTH = 320
 local VARIABLE_EDITOR_MIN_HEIGHT = 320
 local ACEGUI_WINDOW_DEFAULT_MIN_SIZE = 240
 local VARIABLE_EDITOR_MIN_BODY_HEIGHT = 80
+
+local function EditorDraftIsDirty(isDirty)
+    local ok, dirty = pcall(isDirty)
+    return not ok or dirty == true
+end
+
+local function RefreshSaveCloseButton(button, isDirty)
+    local dirty = EditorDraftIsDirty(isDirty)
+    if button and button.SetText then
+        button:SetText(dirty and "Save" or "Close")
+    end
+    return dirty
+end
+
+local function RunSaveCloseAction(isDirty, save, close)
+    if EditorDraftIsDirty(isDirty) then
+        return save()
+    end
+    return close()
+end
+
+layoutEditor.RefreshSaveCloseButton = RefreshSaveCloseButton
+layoutEditor.RunSaveCloseAction = RunSaveCloseAction
 
 local function WidgetFrameHeight(widget)
     local frame = widget and widget.frame
@@ -1373,7 +1400,12 @@ local function VariableEditorLayout(content, children)
 
     if editBox then
         AnchorFullWidthWidget(editBox, content, topOffset, width)
-        editBox:SetHeight(math.max(VARIABLE_EDITOR_MIN_BODY_HEIGHT, height - topOffset - footerHeight))
+        editBox:SetHeight(
+            math.max(
+                VARIABLE_EDITOR_MIN_BODY_HEIGHT,
+                height - topOffset - footerHeight + VARIABLE_EDITOR_HIDDEN_BUTTON_BOTTOM_INSET
+            )
+        )
     end
 
     if content.obj and content.obj.LayoutFinished then
@@ -1567,6 +1599,13 @@ local function AngryEra_EditVariables(id, entityType)
     editBox:SetFullWidth(true)
     editBox:DisableButton(true)
     local closeGuard
+    local saveButton
+    local function IsVariableDirty()
+        return NormalizeVariableEditorDraft(editBox:GetText()) ~= cleanDraft
+    end
+    local function RefreshPrimaryButton()
+        return RefreshSaveCloseButton(saveButton, IsVariableDirty)
+    end
     importButton:SetCallback("OnClick", function()
         local updatedVariables, summaryOrError = layoutEditor.ImportAssignedRoles(editBox:GetText())
         if not updatedVariables then
@@ -1578,6 +1617,7 @@ local function AngryEra_EditVariables(id, entityType)
         end
 
         editBox:SetText(updatedVariables)
+        RefreshPrimaryButton()
         local summaryMessage = FormatAssignedRoleSummary(summaryOrError)
         SetImportStatus(summaryMessage)
         AngryEra:Print(summaryMessage)
@@ -1596,21 +1636,27 @@ local function AngryEra_EditVariables(id, entityType)
                         or "The target is no longer editable."
                     )
             )
-            return
+            return false
         end
-        -- A shared-page proposal intentionally leaves the canonical page and
-        -- editor draft unchanged until the leader commits a new revision.
-        if proposed then
-            expectedVariables = type(text) == "string" and text or ""
-            cleanDraft = NormalizeVariableEditorDraft(editBox:GetText())
-            return
-        end
+        -- A submitted assistant proposal is locally saved even though the
+        -- canonical page remains unchanged until the leader accepts it.
+        expectedVariables = type(text) == "string" and text or ""
         cleanDraft = NormalizeVariableEditorDraft(editBox:GetText())
-        closeGuard:Finish()
-        AngryEra:UpdateDisplayed()
+        if not proposed then
+            AngryEra:UpdateDisplayed()
+        end
+        return true, proposed
     end
-    editBox:SetCallback("OnEnterPressed", function(_, _, text)
-        SaveVariables(text)
+    local function SaveVariableDraft()
+        local saved, proposed = SaveVariables(editBox:GetText())
+        RefreshPrimaryButton()
+        return saved, proposed
+    end
+    editBox:SetCallback("OnEnterPressed", function()
+        SaveVariableDraft()
+    end)
+    editBox:SetCallback("OnTextChanged", function()
+        RefreshPrimaryButton()
     end)
     frame:AddChild(editBox)
 
@@ -1628,20 +1674,20 @@ local function AngryEra_EditVariables(id, entityType)
     end)
     footer:AddChild(cancelButton)
 
-    local saveButton = AceGUI:Create("Button")
-    saveButton:SetText("Save")
+    saveButton = AceGUI:Create("Button")
+    saveButton:SetText("Close")
     saveButton:SetWidth(DIALOG_FOOTER_BUTTON_WIDTH)
     saveButton:SetCallback("OnClick", function()
-        SaveVariables(editBox:GetText())
+        RunSaveCloseAction(IsVariableDirty, SaveVariableDraft, function()
+            closeGuard:Request()
+        end)
     end)
     footer:AddChild(saveButton)
     frame:AddChild(footer)
 
     closeGuard = AttachEditorCloseGuard({
         Owner = frame.frame,
-        IsDirty = function()
-            return NormalizeVariableEditorDraft(editBox:GetText()) ~= cleanDraft
-        end,
+        IsDirty = IsVariableDirty,
         Prompt = "Discard unsaved variable changes and close?",
         OnFinish = function()
             frame:Hide()
@@ -1658,6 +1704,7 @@ local function AngryEra_EditVariables(id, entityType)
     end)
     frame:SetLayout(VARIABLE_EDITOR_LAYOUT)
     frame:DoLayout()
+    RefreshPrimaryButton()
 end
 
 -- Four fixed rows of two subgroup boxes occupy 424 pixels in the visual grid,
@@ -1985,8 +2032,7 @@ AttachEditorCloseGuard = function(data)
     local guard = {}
 
     local function IsDirty()
-        local ok, dirty = pcall(data.IsDirty)
-        return not ok or dirty == true
+        return EditorDraftIsDirty(data.IsDirty)
     end
 
     local function EnsureShown()
@@ -2546,6 +2592,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     local visibleContextSignature = EffectiveLayoutContextSignature(reference, entity, currentVars)
     local textMode = false
     local editBox, grid, closed
+    local saveButton
     local cleanTextDraft
     local lastVariableError
 
@@ -2625,18 +2672,24 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         return (text:gsub("[\r\n]+", ";"):gsub("%s*;%s*", ";"):gsub("^;+", ""):gsub(";+$", ""))
     end
 
+    local function IsLayoutDirty()
+        return GroupLayoutDraftIsDirty(
+            initialHadDirectLayout,
+            initialCanonicalSource,
+            inheritLayout,
+            CanonicalLayoutSource(CurrentSource()),
+            textMode and editBox and editBox:GetText() or nil,
+            textMode and cleanTextDraft or nil
+        )
+    end
+
+    local function RefreshPrimaryButton()
+        return RefreshSaveCloseButton(saveButton, IsLayoutDirty)
+    end
+
     local closeGuard = AttachEditorCloseGuard({
         Owner = frame.frame,
-        IsDirty = function()
-            return GroupLayoutDraftIsDirty(
-                initialHadDirectLayout,
-                initialCanonicalSource,
-                inheritLayout,
-                CanonicalLayoutSource(CurrentSource()),
-                textMode and editBox and editBox:GetText() or nil,
-                textMode and cleanTextDraft or nil
-            )
-        end,
+        IsDirty = IsLayoutDirty,
         Prompt = "Discard unsaved group layout changes and close?",
         OnFinish = function()
             closed = true
@@ -2749,6 +2802,12 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         return true, false, savedEffectiveSource or ""
     end
 
+    local function SaveLayoutDraft()
+        local saved, proposed, source = SaveLayout()
+        RefreshPrimaryButton()
+        return saved, proposed, source
+    end
+
     local function LayoutViewIsCurrent()
         local contextCurrent, contextError, currentEntity, vars, signature = RefreshLayoutContext(false)
         if not contextCurrent then
@@ -2818,8 +2877,11 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         editBox:SetDisabled(inheritLayout)
         editBox:SetCallback("OnEnterPressed", function()
             if not inheritLayout then
-                SaveLayout()
+                SaveLayoutDraft()
             end
+        end)
+        editBox:SetCallback("OnTextChanged", function()
+            RefreshPrimaryButton()
         end)
         scroll:AddChild(editBox)
 
@@ -2849,9 +2911,11 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                 if position ~= nil then
                     editBox:SetText(text:sub(1, position) .. name .. text:sub(position + 1))
                     inner:SetCursorPosition(position + #name)
+                    RefreshPrimaryButton()
                     return
                 end
                 editBox:SetText(text .. name)
+                RefreshPrimaryButton()
             end)
             palette:AddChild(button)
         end
@@ -2891,6 +2955,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             end
             model = updated
             widget:SetLayoutModel(model)
+            RefreshPrimaryButton()
         end
 
         -- The modal prompt blocks local edits, but roster and synchronized
@@ -3027,9 +3092,10 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         cleanTextDraft = nil
         if textMode then
             BuildTextView()
-            return
+        else
+            BuildVisualView()
         end
-        BuildVisualView()
+        RefreshPrimaryButton()
     end
 
     local inheritToggle = AceGUI:Create("CheckBox")
@@ -3116,7 +3182,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                 return
             end
         end
-        local saved, proposed = SaveLayout()
+        local saved, proposed = SaveLayoutDraft()
         if not saved or proposed then
             return
         end
@@ -3155,15 +3221,18 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
     end)
     footer:AddChild(cancelButton)
 
-    local saveButton = AceGUI:Create("Button")
-    saveButton:SetText("Save")
+    saveButton = AceGUI:Create("Button")
+    saveButton:SetText("Close")
     saveButton:SetWidth(DIALOG_FOOTER_BUTTON_WIDTH)
     saveButton:SetCallback("OnClick", function()
-        SaveLayout()
+        RunSaveCloseAction(IsLayoutDirty, SaveLayoutDraft, function()
+            closeGuard:Request()
+        end)
     end)
     footer:AddChild(saveButton)
 
     frame:AddChild(footer)
+    RefreshPrimaryButton()
 end
 
 -- ── Context Menus and Tree ──────────────────────────────────────────────────

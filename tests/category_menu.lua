@@ -192,6 +192,50 @@ assert(
     layoutEditor.NormalizeVariableEditorDraft("ONE=1\r\nTWO=2") == "ONE=1\nTWO=2",
     "variable dirty checks normalize platform line endings"
 )
+local saveCloseButton = {
+    SetText = function(self, text)
+        self.text = text
+    end,
+}
+local saveCloseDirty = false
+assert(not layoutEditor.RefreshSaveCloseButton(saveCloseButton, function()
+    return saveCloseDirty
+end) and saveCloseButton.text == "Close", "the shared primary action should read Close for a clean editor")
+saveCloseDirty = true
+assert(layoutEditor.RefreshSaveCloseButton(saveCloseButton, function()
+    return saveCloseDirty
+end) and saveCloseButton.text == "Save", "the shared primary action should read Save for a dirty editor")
+local saveCloseSaved, saveCloseClosed = 0, 0
+assert(
+    layoutEditor.RunSaveCloseAction(function()
+        return saveCloseDirty
+    end, function()
+        saveCloseSaved = saveCloseSaved + 1
+        return "saved"
+    end, function()
+        saveCloseClosed = saveCloseClosed + 1
+        return "closed"
+    end)
+            == "saved"
+        and saveCloseSaved == 1
+        and saveCloseClosed == 0,
+    "the shared primary action should save a dirty editor"
+)
+saveCloseDirty = false
+assert(
+    layoutEditor.RunSaveCloseAction(function()
+        return saveCloseDirty
+    end, function()
+        saveCloseSaved = saveCloseSaved + 1
+    end, function()
+        saveCloseClosed = saveCloseClosed + 1
+        return "closed"
+    end)
+            == "closed"
+        and saveCloseSaved == 1
+        and saveCloseClosed == 1,
+    "the shared primary action should close a clean editor"
+)
 assert(
     not layoutEditor.GroupLayoutDraftIsDirty(true, "Tanks/1: MT", false, "Tanks/1: MT"),
     "an unchanged direct group layout is clean"
@@ -366,7 +410,7 @@ assert(
         and variableFooter.width == 406,
     "the variable editor should fill the live Window content width"
 )
-assert(variableBody.height == 271, "the variable body should fill all space above its footer")
+assert(variableBody.height == 275, "the variable body should fill all space above its footer")
 assert(
     variableFooter.frame.points[1][1] == "BOTTOMLEFT"
         and variableFooter.frame.points[1][4] == 0
@@ -375,11 +419,11 @@ assert(
         and variableFooter.frame.points[2][5] == -3,
     "the variable footer should share Group Layout's three-pixel bottom overhang"
 )
-local variableBodyBottom = 24 + 3 + 20 + 3 + variableBody.height
+local variableBodyBottom = 24 + 3 + 20 + 3 + variableBody.height - 4
 local variableFooterTop = 345 + 3 - 24
 assert(
     variableFooterTop - variableBodyBottom == 3,
-    "the variable body and footer should retain the same three-pixel visual gap"
+    "the variable editor's visible text backdrop should retain Group Layout's three-pixel footer gap"
 )
 assert(variableLayoutOwner.layoutHeight == 345, "the variable editor should report its live content height")
 
@@ -534,6 +578,24 @@ function app.libs.AceGUI.Create(_, widgetType)
     function widget:GetValue()
         return self.value
     end
+    function widget:SetDisabled(value)
+        self.disabled = value
+    end
+    function widget:SetLayoutEngine(value)
+        self.layoutEngine = value
+    end
+    function widget:SetSafeDropFrame(value)
+        self.safeDropFrame = value
+    end
+    function widget:SetRoster(value)
+        self.roster = value
+    end
+    function widget:SetResolveProviders(value)
+        self.resolveProviders = value
+    end
+    function widget:SetLayoutModel(value)
+        self.layoutModel = value
+    end
     function widget:ReleaseChildren()
         self.children = {}
     end
@@ -582,7 +644,7 @@ end
 Entry(AngryEra_CategoryMenu(5), "Edit Variables").func(nil, 5)
 local importButtonWidget
 local variableCancelWidget
-local variableSaveWidget
+local variablePrimaryWidget
 local variableEditWidget
 local variableWindowWidget
 local variableFooterWidget
@@ -591,8 +653,8 @@ for _, widget in ipairs(createdWidgets) do
         importButtonWidget = widget
     elseif widget.Type == "Button" and widget.text == "Cancel" then
         variableCancelWidget = widget
-    elseif widget.Type == "Button" and widget.text == "Save" then
-        variableSaveWidget = widget
+    elseif widget.Type == "Button" and widget.text == "Close" then
+        variablePrimaryWidget = widget
     elseif widget.Type == "MultiLineEditBox" then
         variableEditWidget = widget
     elseif widget.Type == "Window" then
@@ -604,7 +666,7 @@ end
 assert(
     importButtonWidget
         and variableCancelWidget
-        and variableSaveWidget
+        and variablePrimaryWidget
         and variableEditWidget
         and variableWindowWidget
         and variableFooterWidget,
@@ -612,11 +674,12 @@ assert(
 )
 assert(
     variableCancelWidget.width == 120
-        and variableSaveWidget.width == 120
+        and variablePrimaryWidget.width == 120
         and variableFooterWidget.height == 24
         and variableFooterWidget.userdata.rightInset == 13,
     "the variable editor should use the standardized footer geometry"
 )
+assert(variablePrimaryWidget.text == "Close", "an unchanged variable editor should offer Close")
 assert(variableEditWidget.buttonDisabled == true, "the variable editor should hide its legacy Accept button")
 assert(
     variableWindowWidget.layout == "AngryEraVariableEditor" and variableWindowWidget.layoutCount == 1,
@@ -637,6 +700,7 @@ assert(
     variableWindowWidget.layoutCount == layoutCountBeforeImport + 1,
     "changing the import status should immediately reflow the variable editor"
 )
+assert(variablePrimaryWidget.text == "Save", "importing assigned roles should mark the variable draft for Save")
 assert(AngryAssign_Categories[5].Vars == nil, "Import Assigned Raid Roles should change only the open editor draft")
 assert(
     variableEditWidget:GetText():find(AngryEra.utils.variables.RAID_ROSTER_DIRECTIVE, 1, true),
@@ -651,23 +715,134 @@ assert(
     "a failed role import should preserve the draft and reflow its error status"
 )
 assignedRoleError = nil
-variableSaveWidget.callbacks.OnClick()
+editable = false
+variablePrimaryWidget.callbacks.OnClick()
+assert(
+    AngryAssign_Categories[5].Vars == nil
+        and not variableWindowWidget.hidden
+        and not variableWindowWidget.released
+        and variablePrimaryWidget.text == "Save",
+    "a failed variable save should keep the draft open with the Save action"
+)
+editable = true
+variablePrimaryWidget.callbacks.OnClick()
 assert(
     categoryWindowSave == 5
         and AngryAssign_Categories[5].Vars == variableEditWidget:GetText()
         and displayedAfterVariableSave
-        and variableWindowWidget.hidden
-        and variableWindowWidget.released,
-    "Save should commit the imported draft to the exact category and close the window"
+        and not variableWindowWidget.hidden
+        and not variableWindowWidget.released
+        and variablePrimaryWidget.text == "Close",
+    "Save should commit the imported draft, keep the window open, and become Close"
+)
+local firstSavedVariables = AngryAssign_Categories[5].Vars
+variableEditWidget:SetText(firstSavedVariables .. "\nEXTRA=yes")
+variableEditWidget.callbacks.OnTextChanged()
+assert(variablePrimaryWidget.text == "Save", "editing after a save should restore the Save action")
+variablePrimaryWidget.callbacks.OnClick()
+assert(
+    AngryAssign_Categories[5].Vars == firstSavedVariables .. "\nEXTRA=yes"
+        and not variableWindowWidget.hidden
+        and not variableWindowWidget.released
+        and variablePrimaryWidget.text == "Close",
+    "the same open variable editor should support another Save against its refreshed baseline"
+)
+variablePrimaryWidget.callbacks.OnClick()
+assert(
+    variableWindowWidget.hidden and variableWindowWidget.released,
+    "clicking the clean variable editor's Close action should release the window"
 )
 local restoredBounds = variableWindowWidget.frame.resizeBounds[#variableWindowWidget.frame.resizeBounds]
 assert(
     restoredBounds[1] == 240 and restoredBounds[2] == 240,
     "closing the variable editor should restore the pooled Window's default resize bounds"
 )
-assert(#UISpecialFrames == 0, "saving removes the variable editor's Escape registration")
-assert(_G[variableEscapeName] == nil, "saving releases the variable editor's temporary global frame")
+assert(#UISpecialFrames == 0, "closing removes the variable editor's Escape registration")
+assert(_G[variableEscapeName] == nil, "closing releases the variable editor's temporary global frame")
 AngryAssign_Categories[5].Vars = nil
+
+-- Exercise Group Layout's use of the same Save -> Close primary action. An
+-- inherited empty layout becomes a direct empty override when inheritance is
+-- unchecked, which gives the test a real dirty/save transition without a live
+-- raid roster.
+local groupLayoutWidgetStart = #createdWidgets + 1
+local previousCreateFrame = CreateFrame
+local groupLayoutWatcher
+_G.CreateFrame = function()
+    groupLayoutWatcher = {
+        events = {},
+        scripts = {},
+    }
+    function groupLayoutWatcher:RegisterEvent(event)
+        self.events[event] = true
+    end
+    function groupLayoutWatcher:UnregisterAllEvents()
+        self.events = {}
+        self.unregistered = true
+    end
+    function groupLayoutWatcher:SetScript(event, callback)
+        self.scripts[event] = callback
+    end
+    return groupLayoutWatcher
+end
+
+AngryEra:ShowGroupLayoutEditor(5, "category")
+local groupLayoutWindow
+local groupLayoutInherit
+local groupLayoutPrimary
+for index = groupLayoutWidgetStart, #createdWidgets do
+    local widget = createdWidgets[index]
+    if widget.Type == "Window" then
+        groupLayoutWindow = widget
+    elseif widget.Type == "CheckBox" and not groupLayoutInherit then
+        groupLayoutInherit = widget
+    elseif widget.Type == "Button" and widget.text == "Close" then
+        groupLayoutPrimary = widget
+    end
+end
+assert(
+    groupLayoutWindow and groupLayoutInherit and groupLayoutPrimary and groupLayoutWatcher,
+    "the Group Layout editor should build its window, inheritance toggle, watcher, and primary action"
+)
+assert(groupLayoutPrimary.text == "Close", "an unchanged Group Layout editor should offer Close")
+groupLayoutInherit.callbacks.OnValueChanged(nil, nil, false)
+assert(groupLayoutPrimary.text == "Save", "changing layout inheritance should change the primary action to Save")
+editable = false
+groupLayoutPrimary.callbacks.OnClick()
+assert(
+    AngryAssign_Categories[5].Vars == nil
+        and not groupLayoutWindow.hidden
+        and not groupLayoutWindow.released
+        and groupLayoutPrimary.text == "Save",
+    "a failed Group Layout save should keep the draft open with the Save action"
+)
+editable = true
+groupLayoutPrimary.callbacks.OnClick()
+assert(
+    AngryAssign_Categories[5].Vars == "$LAYOUT="
+        and not groupLayoutWindow.hidden
+        and not groupLayoutWindow.released
+        and groupLayoutPrimary.text == "Close",
+    "Group Layout Save should persist the draft, remain open, and become Close"
+)
+groupLayoutInherit.callbacks.OnValueChanged(nil, nil, true)
+assert(groupLayoutPrimary.text == "Save", "editing again should restore Group Layout's Save action")
+groupLayoutPrimary.callbacks.OnClick()
+assert(
+    AngryAssign_Categories[5].Vars == ""
+        and not groupLayoutWindow.hidden
+        and not groupLayoutWindow.released
+        and groupLayoutPrimary.text == "Close",
+    "the same Group Layout editor should refresh its baseline after another successful Save"
+)
+groupLayoutPrimary.callbacks.OnClick()
+assert(
+    groupLayoutWindow.hidden and groupLayoutWindow.released and groupLayoutWatcher.unregistered,
+    "Group Layout Close should release its window and roster watcher"
+)
+assert(#UISpecialFrames == 0, "Group Layout Close should release its Escape registration")
+AngryAssign_Categories[5].Vars = nil
+_G.CreateFrame = previousCreateFrame
 
 AngryEra:ShowBulkManagement()
 local firstBulkWindow = AngryEra._bulkManagementWindow
