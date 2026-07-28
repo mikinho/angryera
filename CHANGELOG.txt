@@ -1,6 +1,8 @@
-## v3.3.0-BETA
+## v3.2.1
 
-* Compatibility: Pages that use group layouts, variable families, imported raid-role variables, or Key=Value boolean metadata require AngryEra v3.3 or newer on every viewer. Pages using only earlier shared features and no Key=Value booleans remain compatible with v3.1 and v3.2 clients.
+* Compatibility: Priority assignments require AngryEra v3.2.0-beta or newer on every viewer. Group layouts, variable families, imported raid-role variables, and Key=Value boolean metadata require v3.2.1 or newer. Pages using only features common to v3.1 remain compatible with v3.1.x and v3.2.0-beta clients.
+* New Feature: Added priority assignments. A variable or `$` marker value written as `Name > Name > Name` resolves to the first listed player who is present and alive, so raid markers and displayed text follow whoever is available. Assignments re-resolve when the group roster or player state changes.
+* New Feature: Mouseover marker keybindings now mark a hostile unit under the cursor and fall back to your current target when there is no valid unit. A new Smart Markers setting can relax the restriction to mark any live unit, including friendly players.
 * New Feature: Added optional display auto-hide. The assignment fades out when the mouse is away, fades back in over its rendered area, and remains visible for three seconds after the page or displayed content changes.
 * Improvement: `/ae` is now the canonical slash command throughout AngryEra. `/aa` remains a temporary compatibility alias and prints a local deprecation notice once per login.
 * New Feature: Added inheritable raid group layouts. Put a standard `$LAYOUT` on a category, override only the encounter pages that differ, render up to eight named raid subgroups with `{layout}`, and optionally apply the same plan to the live raid.
@@ -20,8 +22,9 @@
 * Improvement: Applying an already-satisfied raid layout now stays silent instead of repeatedly announcing zero moves; actual moves, combat queues, and errors still report normally.
 * New Feature: Encoded AA export and import now have default-on variables-and-metadata options. Complete exports preserve raw Key=Value or JSON variables, families, assigned-role snapshots, layouts, markers, and automation metadata at every included hierarchy level; content-only exports and imports omit them without erasing an overwritten root page or category's existing setup. Complete exports retain earlier AA Encoding compatibility, while older clients safely reject the new content-only format.
 * New Feature: Pages and categories can be pinned or unpinned from their right-click menus. A pinned category protects received pages throughout its subtree, and every pin remains local to that installation.
-* Improvement: The first upgrade automatically pins topmost locally owned categories when no live pins already exist. Existing beta pin choices are preserved, and `/ae migratepins` safely re-runs the additive step without removing any pins.
+* Improvement: The first upgrade automatically pins topmost locally owned categories when no live pins already exist. Existing prerelease pin choices are preserved, and `/ae migratepins` safely re-runs the additive step without removing any pins.
 * Improvement: The page tree now marks pins with a persistent gold favorite-star icon and orders each sibling level as pinned categories, pinned pages, a divider, then unpinned items in their existing manual order. Nested pages stay in their categories, and raid navigation order is unchanged.
+* New Feature: Added optional cleanup of pages received from others. A Page Library setting removes them automatically at login, and a Clean Received Pages button removes them on demand. Pinned pages, descendants of pinned categories, and the current display are always kept; pages you created or imported are never removed.
 * Fix: Layout application now fails before moving anyone when a name is missing or ambiguous, a player appears twice, or a variable, class, or roster expansion would overfill a subgroup.
 * Fix: A combat-queued layout is bound to the exact displayed page, revision, and inherited context. Changing any of them cancels the request; when combat ends, AngryEra recomputes the plan from the live roster, rechecks permission, and applies it once.
 * Fix: Raid layouts now move one identity at a time, wait for Classic to acknowledge each change, and resolve fresh raid indices before continuing, preventing roster renumbering and API throttling from targeting the wrong player.
@@ -29,19 +32,12 @@
 * Fix: Group Layout editing uses the exact authoritative inheritance context for an actively displayed received page, and saving or applying an unchanged inherited layout no longer creates a page override.
 * Fix: The editor applies only the exact displayed page, while category layouts direct the user to display an inheriting page; `/ae applylayout` consistently uses the actively displayed page.
 * Fix: Saved raid templates now round-trip category and page variables, including category layouts and page-specific overrides, without publishing a newly loaded page before its variables are present.
-* Fix: Priority assignments now re-resolve when a group member dies or revives as well as when the roster changes.
 * Fix: Short player names are now accepted only when unique across the current group; priority assignments, automatic markers, and raid layouts no longer guess the local-realm player when another realm has the same name.
 * Fix: JSON-backed variable edits preserve the distinction between empty objects and empty arrays when managed metadata is inserted or updated.
 * Fix: The Group Layout window is now fixed to show all eight subgroup boxes without outer vertical scrolling; the Unrostered and Variables palettes scroll independently when either exceeds its available column.
 * Improvement: Group Layout preserves slot order in the editor and rendered note. Apply guarantees subgroup membership, but does not force physical row order because Blizzard exposes no direct safe within-subgroup position operation.
 * Fix: Edit Variables no longer shadows Lua's `type()` function while saving, and a stale dialog cannot report success, write through a deleted/replaced/newly read-only page or category, or overwrite a newer variable edit.
 * Fix: Received-page cleanup now fails closed when ownership metadata is missing or corrupt, and repaired identity counters no longer reuse pruned page identifiers.
-
-## v3.2.0-BETA
-
-* New Feature: Added priority assignments. A variable or `$` marker value written as `Name > Name > Name` resolves to the first listed player who is present and alive, so raid markers and displayed text follow whoever is available. Assignments re-resolve when the group roster changes.
-* New Feature: Mouseover marker keybindings now mark a hostile unit under the cursor and fall back to your current target when there is no valid unit. A new Smart Markers setting can relax the restriction to mark any live unit, including friendly players.
-* New Feature: Added optional cleanup of pages received from others. A Page Library setting removes them automatically at login, and a Clean Received Pages button removes them on demand. Pinned pages and the current display are always kept, and pages you created or imported are never removed.
 
 ## v3.1.1
 

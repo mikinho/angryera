@@ -8,9 +8,9 @@ Supported game clients:
 - Burning Crusade Anniversary 2.5.6
 
 > [!IMPORTANT]
-> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.1 and newer can continue sharing pages that use only their common features, but every viewer needs v3.3 or newer to render group layouts, variable families, imported raid-role variables, or the Key=Value `$true`/`$false` boolean literals. Existing local pages and settings are migrated automatically for the v3.1 data model, but Key=Value automation flags are not rewritten: replace legacy `=true` and `=false` flag values with `=$true` and `=$false`, respectively. Downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
+> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. Priority assignments require AngryEra v3.2.0-beta or newer on every viewer. Group layouts, variable families, imported raid-role variables, and the Key=Value `$true`/`$false` boolean literals require v3.2.1 or newer. Pages using only features common to v3.1 remain compatible with v3.1.x and v3.2.0-beta clients. Existing local pages and settings are migrated automatically for the v3.1 data model, but Key=Value automation flags are not rewritten: replace legacy `=true` and `=false` flag values with `=$true` and `=$false`, respectively. Downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
 
-Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on group layouts, variable families, imported raid-role variables, or Key=Value boolean metadata in a mixed pre-v3.3 raid.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on priority assignments in a mixed pre-v3.2.0-beta raid, or on group layouts, variable families, imported raid-role variables, or Key=Value boolean metadata in a mixed pre-v3.2.1 raid.
 
 ## What is new
 
@@ -26,8 +26,11 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Displayed-note API:** WeakAuras and other addons can read the active note, resolved variables, metadata, and hierarchy.
 - **Safer restore workflow:** choosing an older page version loads it as a draft; nothing changes until you click **Save**.
 - **Safer imports and migration:** imported data is bounded and validated, and existing pages and settings are migrated automatically.
+- **Flexible Encoded AA transfers:** complete exports include variables and metadata by default, while content-only transfers can intentionally omit them.
 - **Priority assignments:** `Primary > Backup` selects the first listed player who is present and alive.
+- **Pinned page library:** local favorites stay above a clear divider, and the first v3.2.1 upgrade pins existing locally owned category roots when no pin choices already exist.
 - **Optional received-page cleanup:** remove pages received from other leaders at login or on demand while retaining protected local data.
+- **Optional hover auto-hide:** fade the assignment away when idle and reveal it on hover or whenever displayed content changes.
 - **Raid group layouts:** build inherited, roster-aware subgroup plans, render them inside notes, and apply or safely queue validated layouts—including leader-only display-transition application through `$AUTOAPPLYLAYOUT`.
 
 ## Quick start
@@ -68,7 +71,7 @@ If a displayed page is new to your installation, it appears unfiled. You may org
 
 To keep a received page during cleanup, right-click it and choose **Pin**. You can also pin a category, which protects received pages anywhere in that category's subtree. Pinning is local to your installation and does not change shared data; right-click the item again and choose **Unpin** to remove that protection.
 
-On the first upgrade with this feature, AngryEra automatically pins your topmost locally owned categories if you have not already used pins. It does not pin pages, received categories, or redundant locally owned categories nested beneath another one. Existing beta pin choices are left unchanged. Beta testers can safely re-run the additive step with `/ae migratepins`; it never removes an existing pin.
+On the first upgrade to v3.2.1, AngryEra automatically pins your topmost locally owned categories if you have not already used pins. It does not pin pages, received categories, or redundant locally owned categories nested beneath another one. Existing prerelease pin choices are left unchanged. If you used a prerelease build, you can safely replay the additive step with `/ae migratepins`; it never removes an existing pin.
 
 Every pinned item carries a gold favorite-star icon. At each level of the tree, pinned categories appear first, followed by pinned pages, then a divider and the remaining unpinned items in their existing manual order. Nested pages remain inside their categories. The gray `‡` suffix means that an item has variables or metadata; it is not the pin indicator. Pin or unpin an item before dragging it across these fixed sections; dropping into a category remains available. Pin sorting changes only the library view—Previous, Next, and First continue to follow the saved manual page order.
 
@@ -175,7 +178,7 @@ OT1=Kwayteow
 HEALER=Eblis
 ```
 
-In Key=Value storage, booleans use the exact lowercase literals `$true` and `$false`. Plain `true`, `false`, `True`, and `False` are strings so they remain valid player names. An exact whole-value reference to a boolean, such as `$AUTOADVANCE={{ENABLED}}`, keeps the boolean type; a boolean embedded in other text renders as `true` or `false`. JSON keeps its native boolean syntax: use `true` or `false` without quotes for a boolean, and quotes for a string or player name. The new Key=Value literals require AngryEra v3.3 or newer on every client that needs to interpret them.
+In Key=Value storage, booleans use the exact lowercase literals `$true` and `$false`. Plain `true`, `false`, `True`, and `False` are strings so they remain valid player names. An exact whole-value reference to a boolean, such as `$AUTOADVANCE={{ENABLED}}`, keeps the boolean type; a boolean embedded in other text renders as `true` or `false`. JSON keeps its native boolean syntax: use `true` or `false` without quotes for a boolean, and quotes for a string or player name. The new Key=Value literals require AngryEra v3.2.1 or newer on every client that needs to interpret them.
 
 Use them in page text with Mustache syntax:
 
@@ -566,7 +569,7 @@ Open the editor and choose **Menu > Import**:
 
 Imports are validated and bounded before they change local data. If a matching page or category name exists, AngryEra asks before replacing it.
 
-Uncheck **Import variables and metadata when included** to import only names, page contents, ordering, and hierarchy. A new item then starts without directly defined variables or metadata. Replacing an existing page keeps that page's current direct values; replacing a category keeps the matched root category's values, while its deleted-and-recreated descendants receive none. An export created without variables and metadata is also recognized as content-only. Content-only exports require AngryEra v3.3 or newer to import; older clients reject them rather than risk clearing an existing setup. Complete exports remain compatible with earlier AA Encoding importers.
+Uncheck **Import variables and metadata when included** to import only names, page contents, ordering, and hierarchy. A new item then starts without directly defined variables or metadata. Replacing an existing page keeps that page's current direct values; replacing a category keeps the matched root category's values, while its deleted-and-recreated descendants receive none. An export created without variables and metadata is also recognized as content-only. Content-only exports require AngryEra v3.2.1 or newer to import; older clients reject them rather than risk clearing an existing setup. Complete exports remain compatible with earlier AA Encoding importers.
 
 Read-only received data is protected: choosing **Replace** for an item you cannot edit creates a uniquely named local copy instead. Importing into the exact active shared page follows the same leader and qualified-assistant rules as editing it.
 
@@ -673,7 +676,7 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 
 ### A raider does not receive the displayed page
 
-1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Group layouts, variable families, and imported raid-role variables require v3.3 or newer on every viewer.
+1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Priority assignments require v3.2.0-beta or newer on every viewer; group layouts, variable families, imported raid-role variables, and Key=Value boolean metadata require v3.2.1 or newer.
 2. Confirm the sender is the current party or raid leader.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
 4. Have the leader or a raid assistant run `/ae version` in the group.
