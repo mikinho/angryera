@@ -137,11 +137,36 @@ local function NewRegion(parent)
     function region:EnableMouseWheel(enabled)
         self.mouseWheelEnabled = enabled and true or false
     end
-    function region:SetJustifyH() end
-    function region:SetBackdrop() end
-    function region:SetBackdropColor() end
-    function region:SetBackdropBorderColor() end
-    function region:SetColorTexture() end
+    function region:SetJustifyH(value)
+        self.justifyH = value
+    end
+    function region:SetFontObject(value)
+        self.fontObject = value
+    end
+    function region:SetTextColor(...)
+        self.textColor = { ... }
+    end
+    function region:SetBackdrop(value)
+        self.backdrop = value
+    end
+    function region:SetBackdropColor(...)
+        self.backdropColor = { ... }
+    end
+    function region:SetBackdropBorderColor(...)
+        self.backdropBorderColor = { ... }
+    end
+    function region:SetColorTexture(...)
+        self.color = { ... }
+    end
+    function region:SetTexture(value)
+        self.texture = value
+    end
+    function region:SetTexCoord(...)
+        self.texCoord = { ... }
+    end
+    function region:SetBlendMode(value)
+        self.blendMode = value
+    end
     function region:RegisterForClicks() end
     function region:SetText(text)
         self.text = text or ""
@@ -227,6 +252,9 @@ end
 
 _G.UIParent = NewRegion(nil)
 _G.UIParent.rect = { left = 0, bottom = 0, right = 1024, top = 768 }
+_G.EMPTY = "Localized Empty"
+_G.GameFontDarkGraySmall = "GameFontDarkGraySmall"
+_G.GameFontHighlightSmall = "GameFontHighlightSmall"
 
 function _G.CreateFrame(_, _, parent)
     return NewRegion(parent or _G.UIParent)
@@ -335,6 +363,64 @@ assert(VariablesBox() == grid.boxes[10], "the variables palette is drawn last")
 assert(PaletteBox().header.label:GetText() == "Unrostered", "the palette holds whoever the layout has not placed")
 assert(VariablesBox().header.label:GetText() == "Variables", "the variables palette holds reusable expressions")
 assert(grid.frame:GetHeight() > 0, "the grid reports a height for its container")
+assert(
+    VariablesBox().rows[1].label:GetText() == ""
+        and VariablesBox().rows[1].label.justifyH == "LEFT"
+        and VariablesBox().rows[1].label.fontObject == "GameFontHighlightSmall"
+        and not VariablesBox().rows[1].background:IsShown()
+        and not VariablesBox().rows[1].highlight:IsShown()
+        and #VariablesBox().rows[1].dragButtons == 0,
+    "an empty palette stays blank instead of borrowing the raid Empty treatment"
+)
+for index = 1, 8 do
+    assert(grid.boxes[index].header.label.justifyH == "CENTER", "raid group titles are centered")
+end
+assert(PaletteBox().header.label.justifyH == "LEFT", "the Unrostered title stays list-aligned")
+assert(VariablesBox().header.label.justifyH == "LEFT", "the Variables title stays list-aligned")
+
+-- Raid boxes mirror the native frame's five explicit roster slots. Empty is
+-- display-only: it remains the same non-draggable click/drop target.
+for subgroup = 1, 8 do
+    local shown = 0
+    for _, row in ipairs(grid.boxes[subgroup].rows) do
+        if row:IsShown() then
+            shown = shown + 1
+            if row.layoutTarget.kind == "empty" then
+                assert(row.label:GetText() == "Localized Empty", "unused raid rows use the localized Empty label")
+                assert(row.label.justifyH == "CENTER", "unused raid rows use the native centered label")
+                assert(row.label.fontObject == "GameFontDarkGraySmall", "unused raid rows use the native muted font")
+                assert(row.background:IsShown(), "unused raid rows retain their slot background")
+                assert(
+                    row.background.texture == "Interface\\RaidFrame\\UI-RaidFrame-GroupButton",
+                    "raid rows reuse the native slot texture"
+                )
+                assert(row.background:GetHeight() == 14, "native raid row art leaves a one-pixel slot gap")
+                assert(#row.dragButtons == 0, "the Empty label does not turn an unused row into a drag source")
+            end
+        end
+    end
+    assert(shown == 5, "every raid subgroup shows exactly five slots")
+end
+
+-- The same pooled row fully resets when a slot alternates between occupied and
+-- empty across redraws.
+local pooledRow = grid.boxes[1].rows[5]
+grid:SetLayoutModel(layout.Parse("Full/1: A, B, C, D, E; Spores/3: X"))
+assert(
+    pooledRow.label:GetText() == "E"
+        and pooledRow.label.justifyH == "LEFT"
+        and pooledRow.label.fontObject == "GameFontHighlightSmall"
+        and #pooledRow.dragButtons == 1,
+    "filling a pooled Empty row restores the occupied-row presentation"
+)
+grid:SetLayoutModel(layout.Parse("Main/1: A, B; Spores/3: X"))
+assert(
+    pooledRow.label:GetText() == "Localized Empty"
+        and pooledRow.label.justifyH == "CENTER"
+        and pooledRow.label.fontObject == "GameFontDarkGraySmall"
+        and #pooledRow.dragButtons == 0,
+    "emptying a pooled row restores the native placeholder presentation"
+)
 
 -- Groups run two to a row, odd on the left and even on the right, with the
 -- two palettes standing beside them.
@@ -359,9 +445,15 @@ assert(not variablesPalette.scrollbar:IsShown(), "an empty variables list needs 
 local filled = grid.boxes[1].rows[1]
 assert(filled.label:GetText() == "A" and filled.layoutTarget.kind == "slot", "a filled row targets its slot")
 assert(filled.layoutTarget.group == 1 and filled.layoutTarget.slot == 1, "a filled row knows its position")
+assert(filled.label.justifyH == "LEFT", "filled rows keep names left-aligned")
+assert(filled.label.fontObject == "GameFontHighlightSmall", "filled rows retain the normal roster font")
+assert(filled.label:GetLeft() - filled:GetLeft() == 8, "roster names have a small native-style left inset")
 
 local blank = grid.boxes[1].rows[3]
-assert(blank.label:GetText() == "" and blank.layoutTarget.kind == "empty", "an empty row targets its group")
+assert(
+    blank.label:GetText() == "Localized Empty" and blank.layoutTarget.kind == "empty",
+    "an empty row targets its group"
+)
 assert(blank.layoutTarget.group == 1, "an empty row in a claimed box appends to that group")
 
 local unclaimed = grid.boxes[2].rows[1]
@@ -488,6 +580,14 @@ grid.frame:GetScript("OnUpdate")(grid.frame)
 assert(grid.dropMarker:IsShown(), "a drag marks where a release would land")
 assert(grid.dropMarker:GetTop() == marked:GetTop(), "the marker covers the row under the cursor")
 assert(grid.dropMarker:GetFrameLevel() > marked:GetFrameLevel(), "the marker draws above the row it covers")
+local markerFill = grid.dropMarker.fill
+assert(
+    markerFill.texture == "Interface\\RaidFrame\\UI-RaidFrame-GroupButton",
+    "the drop marker reuses the native raid highlight"
+)
+assert(markerFill.texCoord[3] == 0.5 and markerFill.texCoord[4] == 0.9375, "the drop marker uses the highlight art")
+assert(markerFill.blendMode == "ADD", "the native drop marker adds its gold highlight over the target")
+assert(markerFill:GetHeight() == 14, "the drop marker matches the native slot art height")
 source:GetScript("OnDragStop")(source)
 assert(not grid.dropMarker:IsShown(), "the marker clears when the gesture ends")
 

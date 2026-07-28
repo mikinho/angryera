@@ -19,7 +19,7 @@
 --
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 10
+local Type, Version = "AngryLayoutGrid", 11
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -36,6 +36,7 @@ local CreateFrame, UIParent = CreateFrame, UIParent
 -- Global vars/functions that we don't upvalue since they might get hooked, or upgraded
 -- List them here for Mikk's FindGlobals script
 -- GLOBALS: GetCursorPosition, SetCursor, CloseDropDownMenus, BackdropTemplateMixin
+-- GLOBALS: EMPTY, GameFontDarkGraySmall, GameFontHighlightSmall
 
 local MAX_SUBGROUPS = 8
 local MAX_SUBGROUP_SLOTS = 5
@@ -43,9 +44,11 @@ local GROUP_COLUMNS = 2
 local AUXILIARY_COLUMNS = 2
 local TOTAL_COLUMNS = GROUP_COLUMNS + AUXILIARY_COLUMNS
 local ROW_HEIGHT = 15
+local RAID_ROW_HEIGHT = 14
 local HEADER_HEIGHT = 16
 local BOX_PADDING = 6
 local BOX_SPACING = 4
+local ROW_TEXT_PADDING = 8
 local MARKER_LEVEL = 20
 local SCROLLBAR_WIDTH = 16
 local SCROLLBAR_GAP = 4
@@ -56,6 +59,8 @@ local GROUP_ROWS = MAX_SUBGROUPS / GROUP_COLUMNS
 local GRID_HEIGHT = (GROUP_ROWS * GROUP_BOX_HEIGHT) + ((GROUP_ROWS - 1) * BOX_SPACING)
 local PALETTE_VISIBLE_ROWS = floor((GRID_HEIGHT - HEADER_HEIGHT - (BOX_PADDING * 2)) / ROW_HEIGHT)
 local widgetSequence = 0
+local EMPTY_ROW_LABEL = EMPTY or "Empty"
+local RAID_ROW_TEXTURE = "Interface\\RaidFrame\\UI-RaidFrame-GroupButton"
 
 local PaneBackdrop = {
     bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -410,8 +415,8 @@ local function AcquireRow(self, box, index)
     row.background = background
 
     local label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    label:SetPoint("LEFT", 3, 0)
-    label:SetPoint("RIGHT", -3, 0)
+    label:SetPoint("LEFT", ROW_TEXT_PADDING, 0)
+    label:SetPoint("RIGHT", -ROW_TEXT_PADDING, 0)
     label:SetHeight(ROW_HEIGHT)
     label:SetJustifyH("LEFT")
     if label.SetWordWrap then
@@ -428,6 +433,7 @@ local function AcquireRow(self, box, index)
     local highlight = row:CreateTexture(nil, "HIGHLIGHT")
     highlight:SetAllPoints()
     SetSolidColor(highlight, 1, 1, 1, 0.2)
+    row.highlight = highlight
 
     box.rows[index] = row
     return row
@@ -687,10 +693,42 @@ end
 
 -- Only a row holding something registers for dragging, so an unused one still
 -- resolves as a click rather than starting a gesture that carries nothing.
-local function FillRow(row, text, target)
+local function StyleRow(row, raidStyle)
+    row.background:ClearAllPoints()
+    row.highlight:ClearAllPoints()
+    if raidStyle then
+        row.background:SetPoint("TOPLEFT")
+        row.background:SetPoint("TOPRIGHT")
+        row.background:SetHeight(RAID_ROW_HEIGHT)
+        row.background:SetTexture(RAID_ROW_TEXTURE)
+        row.background:SetTexCoord(0, 0.640625, 0, 0.4375)
+
+        row.highlight:SetPoint("TOPLEFT")
+        row.highlight:SetPoint("TOPRIGHT")
+        row.highlight:SetHeight(RAID_ROW_HEIGHT)
+        row.highlight:SetTexture(RAID_ROW_TEXTURE)
+        row.highlight:SetTexCoord(0, 0.640625, 0.5, 0.9375)
+        row.highlight:SetBlendMode("ADD")
+        return
+    end
+
+    row.background:SetAllPoints(row)
+    SetSolidColor(row.background, 1, 1, 1, 0.05)
+    row.highlight:SetAllPoints(row)
+    SetSolidColor(row.highlight, 1, 1, 1, 0.2)
+    row.highlight:SetBlendMode("BLEND")
+end
+
+local function FillRow(row, text, target, isEmpty, raidStyle)
     row.layoutTarget = target
-    row.label:SetText(text or "")
-    row.background:SetShown(text ~= nil)
+    StyleRow(row, raidStyle)
+    row.label:SetText(isEmpty and EMPTY_ROW_LABEL or text or "")
+    row.label:SetJustifyH(isEmpty and "CENTER" or "LEFT")
+    row.label:SetFontObject(isEmpty and GameFontDarkGraySmall or GameFontHighlightSmall)
+
+    local styled = raidStyle or text ~= nil
+    row.background:SetShown(styled)
+    row.highlight:SetShown(styled)
 
     if DragFromTarget(target) then
         row:RegisterForDrag("LeftButton")
@@ -744,18 +782,26 @@ local function DrawBox(self, box, entry)
     local empty = { kind = "empty", group = entry.group, subgroup = entry.subgroup }
 
     box.header.label:SetText(entry.title)
+    box.header.label:SetJustifyH("CENTER")
     box.header.layoutTarget = { kind = "header", group = entry.group, subgroup = entry.subgroup }
 
     StackRows(self, box, entry.rows, function(row, index)
         local slot = entry.slots[index]
         local displaySlot = type(slot) == "string" and slot:gsub("|", "||") or slot
-        FillRow(row, displaySlot, slot and { kind = "slot", group = entry.group, slot = index } or empty)
+        FillRow(
+            row,
+            displaySlot,
+            slot and { kind = "slot", group = entry.group, slot = index } or empty,
+            slot == nil,
+            true
+        )
     end)
 end
 
 -- Lays either fixed-height palette out with one virtualized entry per row.
 local function DrawPalette(self, box, entry)
     box.header.label:SetText(entry.title)
+    box.header.label:SetJustifyH("LEFT")
     box.header.layoutTarget = { kind = entry.palette == "unrostered" and "palette" or "variable" }
 
     local scrollbar = AcquirePaletteScrollbar(self, box, entry.palette)
@@ -781,10 +827,16 @@ local function DrawPalette(self, box, entry)
     StackRows(self, box, rows, function(row, index)
         local item = entry.slots[offset + index]
         if entry.palette == "variables" then
-            FillRow(row, item and item.Label, { kind = "variable", text = item and item.Text, key = item and item.Key })
+            FillRow(
+                row,
+                item and item.Label,
+                { kind = "variable", text = item and item.Text, key = item and item.Key },
+                false,
+                false
+            )
         else
             local text = item and item.Text
-            FillRow(row, text, { kind = "palette", text = text, fullName = item and item.FullName })
+            FillRow(row, text, { kind = "palette", text = text, fullName = item and item.FullName }, false, false)
         end
         row:EnableMouseWheel(true)
         row.paletteBox = box
@@ -988,8 +1040,13 @@ local function Constructor()
     marker:Hide()
 
     local markerFill = marker:CreateTexture(nil, "OVERLAY")
-    markerFill:SetAllPoints(marker)
-    SetSolidColor(markerFill, 0, 1, 0, 0.35)
+    markerFill:SetPoint("TOPLEFT")
+    markerFill:SetPoint("TOPRIGHT")
+    markerFill:SetHeight(RAID_ROW_HEIGHT)
+    markerFill:SetTexture(RAID_ROW_TEXTURE)
+    markerFill:SetTexCoord(0, 0.640625, 0.5, 0.9375)
+    markerFill:SetBlendMode("ADD")
+    marker.fill = markerFill
 
     local widget = {
         frame = frame,
