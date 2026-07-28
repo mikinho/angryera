@@ -47,16 +47,15 @@ externals:
   libs/LibStub:
     url: svn://svn.wowace.com/wow/libstub/mainline/trunk
     tag: latest
-  # Git externals are pinned to the tested release revisions.
   libs/LibMustache:
     url: https://github.com/mikinho/libmustache
-    commit: 49a5a1cfcc3e8f1e0b0326bec59a41379fd4ab69
+    tag: latest
   libs/LibDropDownMenu:
     url: https://github.com/HizurosWoWAddOns/LibDropDownMenu
-    commit: d1246a0f546bf343338c88902b9b5ffc95d0061a
+    tag: latest
   libs/LibDeflate:
     url: https://github.com/SafeteeWoW/LibDeflate
-    commit: 6831edcaa915154e7769d622e0de72ee5d25a882
+    tag: latest
 
 enable-nolib-creation: no
 
