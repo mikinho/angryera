@@ -102,7 +102,7 @@ end
 
 -- class AngryEraConfig
 -- field scale number Scale of the edit window
--- field hideoncombat boolean Hide display in combat
+-- field hideoncombat boolean Fade a visible display to 10% opacity in combat
 -- field autoHide boolean Fade the assignment display when the mouse is away
 -- field highlight string Comma/space separated words to highlight
 -- field highlightColor string Hex color for highlights
@@ -143,7 +143,9 @@ _G.AngryAssign_Meta = _G.AngryAssign_Meta
 --- Addon initialization hook.
 -- Creates saved variable tables, migrates legacy category data, and registers options.
 function AngryEra:OnInitialize()
-    if type(AngryAssign_State) ~= "table" then
+    if type(self.NormalizeSavedState) == "function" then
+        self:NormalizeSavedState()
+    elseif type(AngryAssign_State) ~= "table" then
         AngryAssign_State =
             { tree = {}, window = {}, display = {}, displayed = nil, locked = false, directionUp = false }
     end
@@ -160,6 +162,9 @@ function AngryEra:OnInitialize()
         AngryAssign_Categories = {}
     end
     self:RemoveInvalidEntityRecords()
+    if type(self.RepairSavedEntityHierarchy) == "function" then
+        self:RepairSavedEntityHierarchy()
+    end
     for _, cat in pairs(AngryAssign_Categories) do
         if type(cat.Children) == "table" then
             for _, pageId in ipairs(cat.Children) do
@@ -174,6 +179,12 @@ function AngryEra:OnInitialize()
 
     self:InitializeIdentityStorage()
     self:MigratePermissionConfig()
+    if type(self.SanitizeSavedConfig) == "function" then
+        self:SanitizeSavedConfig()
+    end
+    if type(self.MigrateCombatFadeVisibility) == "function" then
+        self:MigrateCombatFadeVisibility()
+    end
     self:MigrateEntityIdentities()
     self:MigrateLegacyLocalIds()
     self:MigrateOwnedCategoryPins()
@@ -407,7 +418,7 @@ function AngryEra:OnInitialize()
                 desc = "Displays a list of all users (in the raid) running the addon and the version they're running",
                 func = function()
                     if IsInRaid() or IsInGroup() then
-                        local sent, queryIdOrError = self:SendProtocolVersionQuery(true)
+                        local sent, queryIdOrError = self:SendProtocolVersionQuery()
                         if sent then
                             self:ScheduleTimer("VersionCheckOutput", 3, queryIdOrError)
                             self:Print("Version check running...")
@@ -452,13 +463,16 @@ function AngryEra:OnInitialize()
                     hideoncombat = {
                         type = "toggle",
                         order = 3,
-                        name = "Hide on Combat",
-                        desc = "Enable to hide display frame upon entering combat",
+                        name = "Fade in Combat",
+                        desc = "Make the assignment display nearly transparent while you are in combat. Its prior visibility and opacity return when combat ends.",
                         get = function(info)
                             return self:GetConfig("hideoncombat")
                         end,
                         set = function(info, val)
                             self:SetConfig("hideoncombat", val)
+                            if type(self.RefreshDisplayCombatFade) == "function" then
+                                self:RefreshDisplayCombatFade()
+                            end
                         end,
                     },
                     autoHide = {
@@ -1041,6 +1055,59 @@ function AngryEra:OnEnable()
     end
 end
 
+--- Addon disable hook.
+-- Stops non-Ace callbacks and UI-owned frames explicitly; the embedded Ace
+-- libraries also perform their normal event/comm/timer teardown.
+function AngryEra:OnDisable()
+    self:CancelProtocolLeadershipRosterReconcile()
+    if type(self.ResetGroupLayoutApplyState) == "function" then
+        self:ResetGroupLayoutApplyState()
+    end
+    if type(self.ResetDisplayedRaidAssignmentState) == "function" then
+        self:ResetDisplayedRaidAssignmentState()
+    end
+    if type(self.ResetDisplayPublicationState) == "function" then
+        self:ResetDisplayPublicationState()
+    end
+    if type(self.CancelAllTimers) == "function" then
+        pcall(self.CancelAllTimers, self)
+    end
+    self._priorityRefreshTimer = nil
+    self._guildDisplayRefreshTimer = nil
+    self._protocolStarted = false
+    self._startupDiscoveryRetryNeeded = false
+    self._displayedHasPriority = false
+
+    if type(LSM.UnregisterAllCallbacks) == "function" then
+        pcall(LSM.UnregisterAllCallbacks, self)
+    else
+        if type(LSM.UnregisterCallback) == "function" then
+            pcall(LSM.UnregisterCallback, self, "LibSharedMedia_Registered")
+            pcall(LSM.UnregisterCallback, self, "LibSharedMedia_SetGlobal")
+        end
+    end
+
+    local layoutEditor = self.utils and self.utils.layout_editor
+    if layoutEditor and type(layoutEditor.CloseAllEditors) == "function" then
+        pcall(layoutEditor.CloseAllEditors)
+    end
+    if type(self.CloseImportExportWindows) == "function" then
+        pcall(self.CloseImportExportWindows, self)
+    end
+    if self.window and type(self.window.Hide) == "function" then
+        self.window:Hide()
+    end
+    if type(self.DestroyDisplay) == "function" then
+        self:DestroyDisplay()
+    end
+
+    for _, method in ipairs({ "UnregisterAllEvents", "UnregisterAllMessages", "UnregisterAllComm" }) do
+        if type(self[method]) == "function" then
+            pcall(self[method], self)
+        end
+    end
+end
+
 function AngryEra:PARTY_LEADER_CHANGED()
     if type(self.CancelPendingGroupLayoutApply) == "function" then
         self:CancelPendingGroupLayoutApply()
@@ -1131,12 +1198,15 @@ function AngryEra:PLAYER_REGEN_DISABLED()
     if type(self.PauseDisplayedRaidAssignmentsForCombat) == "function" then
         self:PauseDisplayedRaidAssignmentsForCombat()
     end
-    if AngryEra:GetConfig("hideoncombat") then
-        self:HideDisplay()
+    if type(self.SetDisplayCombatFade) == "function" then
+        self:SetDisplayCombatFade(AngryEra:GetConfig("hideoncombat") == true)
     end
 end
 
 function AngryEra:PLAYER_REGEN_ENABLED()
+    if type(self.SetDisplayCombatFade) == "function" then
+        self:SetDisplayCombatFade(false)
+    end
     if type(self.FlushPendingGroupLayoutApply) == "function" then
         self:FlushPendingGroupLayoutApply()
     end

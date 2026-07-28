@@ -37,12 +37,129 @@ _G.WOW_PROJECT_WRATH_CLASSIC = 3
 AngryAssign_Config = {}
 
 assert(loadfile("modules/core/constants.lua"))("AngryEra", app)
+assert(loadfile("modules/utils/colors.lua"))("AngryEra", app)
 assert(loadfile("modules/ui/settings.lua"))("AngryEra", app)
 assert(loadfile("modules/ui/display.lua"))("AngryEra", app)
 
 local AngryEra = app.AngryEra
 assert(AngryEra.core.configDefaults.autoHide == false, "auto-hide must remain opt-in by default")
 assert(AngryEra:GetConfig("autoHide") == false, "a fresh configuration should use the disabled default")
+
+AngryAssign_State = {
+    tree = "corrupt",
+    window = false,
+    display = {
+        hidden = "yes",
+        width = math.huge,
+    },
+    displayed = "page",
+    locked = 1,
+    directionUp = {},
+}
+local normalizedState = AngryEra:NormalizeSavedState()
+assert(
+    type(normalizedState.tree) == "table"
+        and type(normalizedState.window) == "table"
+        and type(normalizedState.display) == "table",
+    "state normalization should restore every nested UI status table"
+)
+assert(
+    normalizedState.display.hidden == false
+        and normalizedState.display.width == nil
+        and normalizedState.displayed == nil
+        and normalizedState.locked == false
+        and normalizedState.directionUp == false,
+    "state normalization should discard hostile persisted scalar values"
+)
+AngryAssign_State = {
+    tree = {
+        groups = {
+            good = true,
+            bad = "yes",
+            [{}] = true,
+        },
+        scrollvalue = "bottom",
+        selected = {},
+        treesizable = "yes",
+        treewidth = math.huge,
+    },
+    window = {
+        height = {},
+        left = 0 / 0,
+        top = "top",
+        width = "wide",
+    },
+    display = {
+        hidden = false,
+        point = "MIDDLEISH",
+        scale = -1,
+        width = "wide",
+        x = math.huge,
+        y = {},
+    },
+}
+normalizedState = AngryEra:NormalizeSavedState()
+assert(
+    normalizedState.tree.groups.good == true
+        and normalizedState.tree.groups.bad == nil
+        and next(normalizedState.window) == nil
+        and normalizedState.display.hidden == false
+        and normalizedState.display.point == nil
+        and normalizedState.display.x == nil,
+    "nested AceGUI and LibWindow state should be rebuilt from safe typed fields only"
+)
+
+AngryAssign_Config = {
+    autoHide = "yes",
+    backdropColor = "zzzzzzzz",
+    color = true,
+    fontHeight = 1000,
+    fontFlags = "GLOW",
+    lineSpacing = -2,
+    receiveMode = "everyone",
+    scale = 0 / 0,
+    trustedPublishers = {},
+}
+assert(AngryEra:SanitizeSavedConfig() == 9, "every invalid known config value should be reset")
+assert(
+    AngryEra:GetConfig("autoHide") == false
+        and AngryEra:GetConfig("backdropColor") == "00000080"
+        and AngryEra:GetConfig("color") == "ffffff"
+        and AngryEra:GetConfig("fontHeight") == 12
+        and AngryEra:GetConfig("receiveMode") == "standard",
+    "sanitized settings should fall back to safe defaults"
+)
+AngryEra:SetConfig("autoHide", false)
+assert(AngryAssign_Config.autoHide == nil, "default-equivalent false booleans should remain compact")
+AngryEra:SetConfig("autoHide", true)
+assert(AngryAssign_Config.autoHide == true, "valid non-default booleans should persist")
+AngryEra:SetConfig("fontHeight", "large")
+assert(AngryAssign_Config.fontHeight == nil, "SetConfig should reject invalid values too")
+AngryAssign_Config.glowColor = "ff0000"
+assert(
+    AngryEra:SanitizeSavedConfig() == 0 and AngryAssign_Config.glowColor == nil,
+    "case-only color defaults should be canonicalized without a redundant persisted override"
+)
+AngryAssign_Config.hideoncombat = true
+AngryAssign_State.display.hidden = true
+AngryAssign_Meta = { Migrations = {} }
+assert(
+    AngryEra:MigrateCombatFadeVisibility()
+        and AngryAssign_State.display.hidden == false
+        and AngryAssign_Meta.Migrations.CombatFadeVisibility == 1,
+    "the combat-fade upgrade should repair the old automatic persisted hide once"
+)
+AngryAssign_State.display.hidden = true
+assert(
+    not AngryEra:MigrateCombatFadeVisibility() and AngryAssign_State.display.hidden == true,
+    "the durable migration marker should preserve later manual hides"
+)
+local invalidRed, invalidGreen, invalidBlue, invalidAlpha = AngryEra.utils.colors.HexToRGB(true)
+assert(
+    invalidRed == 1 and invalidGreen == 1 and invalidBlue == 1 and invalidAlpha == nil,
+    "direct color conversion should fail safe even outside config access"
+)
+AngryAssign_Config = {}
 
 local function NewFrame(shown, alpha)
     local frame = {
@@ -235,6 +352,45 @@ driver:RunUpdate(0.2)
 assert(display:IsShown() and not AngryAssign_State.display.hidden, "ShowDisplay should restore manual visibility")
 assert(display:GetAlpha() == 1, "ShowDisplay should reveal an already auto-hidden assignment")
 
+AngryAssign_Config.autoHide = true
+hover.hovered = false
+AngryEra._displayAutoHideState.HoldRemaining = 0
+driver:RunUpdate(0.1)
+assert(display:GetAlpha() == 0.5, "the combat regression should begin from a partially faded assignment")
+assert(AngryEra:SetDisplayCombatFade(true), "combat fade should activate without hiding the assignment")
+assert(
+    display:IsShown()
+        and AngryAssign_State.display.hidden == false
+        and display:GetAlpha() == 0.1
+        and mover:GetAlpha() == 0.1,
+    "combat fade should cap opacity without persisting or changing visibility"
+)
+assert(driver.scripts.OnUpdate == nil, "combat fade should pause the auto-hide opacity driver")
+assert(not AngryEra:SetDisplayCombatFade(false), "leaving combat should clear the temporary fade")
+assert(display:GetAlpha() == 0.5, "leaving combat should restore the exact pre-combat opacity")
+assert(type(driver.scripts.OnUpdate) == "function", "leaving combat should resume auto-hide")
+assert(AngryEra:SetDisplayCombatFade(true), "combat fade should be safely repeatable")
+assert(AngryEra:RevealDisplayForAutoHide(), "page changes should retain a reveal while combat fade is active")
+assert(display:GetAlpha() == 0.1, "page changes must not punch through the combat opacity cap")
+AngryEra:SetDisplayCombatFade(false)
+assert(
+    display:GetAlpha() == 1,
+    "a page reveal queued during combat should be fully visible afterward (alpha "
+        .. tostring(display:GetAlpha())
+        .. ")"
+)
+
+AngryEra:SetDisplayCombatFade(true)
+AngryEra:HideDisplay()
+assert(not display:IsShown() and AngryAssign_State.display.hidden, "manual hide should still work during combat")
+AngryEra:SetDisplayCombatFade(false)
+assert(not display:IsShown() and AngryAssign_State.display.hidden, "combat exit must preserve a manual hide")
+AngryEra:SetDisplayCombatFade(true)
+AngryEra:ShowDisplay()
+assert(display:IsShown() and display:GetAlpha() == 0.1, "manual show in combat should retain the opacity cap")
+AngryEra:SetDisplayCombatFade(false)
+assert(display:IsShown() and not AngryAssign_State.display.hidden, "combat exit must preserve a manual show")
+
 app.libs.lwin.RegisterConfig = function() end
 app.libs.lwin.RestorePosition = function() end
 AngryEra.frame = {
@@ -264,9 +420,15 @@ _G.LibStub = function()
     }
 end
 display:SetAlpha(0)
+AngryAssign_Config.hideoncombat = true
+AngryEra:SetDisplayCombatFade(true)
+assert(display:GetAlpha() == 0.1, "the restore-defaults regression should begin combat-faded")
 AngryEra:RestoreDefaults()
 assert(AngryEra:GetConfig("autoHide") == false, "RestoreDefaults should disable auto-hide")
-assert(display:GetAlpha() == 1 and mover:GetAlpha() == 1, "disabling auto-hide should restore full opacity")
+assert(
+    AngryEra:GetConfig("hideoncombat") == false and display:GetAlpha() == 1 and mover:GetAlpha() == 1,
+    "restoring defaults in combat should clear combat fade and restore full opacity"
+)
 assert(driver.scripts.OnUpdate == nil, "disabling auto-hide should stop its update driver")
 AngryEra.UpdateMedia = updateMedia
 AngryEra.UpdateDisplayed = updateDisplayed
@@ -341,5 +503,78 @@ display:Show()
 AngryAssign_Config.autoHide = false
 AngryEra:UpdateBackdrop()
 assert(not hover:IsShown(), "disabling auto-hide should remove the transparent hover sensor")
+
+local retainedFrame = AngryEra.frame
+retainedFrame.shown = true
+function retainedFrame:Show()
+    self.shown = true
+end
+function retainedFrame:Hide()
+    self.shown = false
+end
+local retainedDisplay = AngryEra.display_text
+local retainedMover = AngryEra.mover
+local retainedDriver = AngryEra.display_auto_hide_driver
+local retainedHover = AngryEra.display_auto_hide_hover
+local animationGroupCount = 0
+local stoppedAnimationGroups = 0
+local function NewGlow()
+    return {
+        CreateAnimationGroup = function()
+            animationGroupCount = animationGroupCount + 1
+            local group = {}
+            function group:CreateAnimation()
+                return setmetatable({}, {
+                    __index = function()
+                        return function() end
+                    end,
+                })
+            end
+            function group:Play() end
+            function group:Stop()
+                stoppedAnimationGroups = stoppedAnimationGroups + 1
+            end
+            return group
+        end,
+    }
+end
+AngryEra.display_glow = NewGlow()
+AngryEra.display_glow2 = NewGlow()
+AngryEra:DisplayUpdateNotification()
+assert(animationGroupCount == 2, "the first display notification should create one animation group per glow")
+AngryAssign_Config.autoHide = true
+local retainedUpdateDirection = AngryEra.UpdateDirection
+AngryEra.UpdateDirection = function() end
+retainedDriver:SetScript("OnUpdate", function() end)
+AngryEra:DestroyDisplay()
+assert(
+    AngryEra.frame == retainedFrame
+        and AngryEra.display_text == retainedDisplay
+        and AngryEra.mover == retainedMover
+        and AngryEra.display_auto_hide_driver == retainedDriver
+        and not retainedFrame.shown
+        and retainedDriver.scripts.OnUpdate == nil,
+    "disable teardown should stop scripts and retain the non-destroyable WoW frames"
+)
+assert(stoppedAnimationGroups == 2, "disable teardown should stop both retained notification animations")
+AngryEra:CreateDisplay()
+AngryEra:DisplayUpdateNotification()
+assert(
+    AngryEra.frame == retainedFrame
+        and AngryEra.display_text == retainedDisplay
+        and AngryEra.display_auto_hide_hover == retainedHover
+        and retainedFrame.shown
+        and retainedHover:IsShown()
+        and animationGroupCount == 2,
+    "re-enable should reuse its frames/animations and restore the auto-hide hover bounds"
+)
+AngryEra:DestroyDisplay()
+AngryEra:CreateDisplay()
+AngryEra:DisplayUpdateNotification()
+assert(
+    AngryEra.frame == retainedFrame and retainedFrame.shown and animationGroupCount == 2,
+    "a second disable/enable cycle should remain idempotent and animation-leak-free"
+)
+AngryEra.UpdateDirection = retainedUpdateDirection
 
 print("Display auto-hide tests passed.")

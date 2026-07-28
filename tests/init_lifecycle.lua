@@ -74,6 +74,10 @@ local app = {
             RegisterCallback = function(_, _, method)
                 Record("media-callback", method)
             end,
+            UnregisterAllCallbacks = function(owner)
+                assert(owner == AngryEra, "LibSharedMedia teardown should unregister callbacks owned by the addon")
+                Record("media-callbacks-cleared")
+            end,
         },
     },
 }
@@ -142,6 +146,24 @@ function AngryEra:CreateDisplay()
     Record("create-display")
 end
 
+function AngryEra:DestroyDisplay()
+    Record("destroy-display")
+end
+
+function AngryEra:SetDisplayCombatFade(active)
+    Record("combat-fade", active)
+end
+
+function AngryEra:CloseImportExportWindows()
+    Record("close-import-export")
+end
+
+AngryEra.utils.layout_editor = {
+    CloseAllEditors = function()
+        Record("close-auxiliary-editors")
+    end,
+}
+
 function AngryEra:CaptureDisplayAuthorityRecovery()
     Record("capture-display-authority-recovery")
     return true, 7
@@ -200,6 +222,25 @@ function AngryEra:CancelTimer(timer)
     end
     timer.Active = false
     return true
+end
+
+function AngryEra:CancelAllTimers()
+    for _, timer in ipairs(scheduledTimers) do
+        timer.Active = false
+    end
+    Record("cancel-all-timers")
+end
+
+function AngryEra:UnregisterAllEvents()
+    Record("unregister-all-events")
+end
+
+function AngryEra:UnregisterAllMessages()
+    Record("unregister-all-messages")
+end
+
+function AngryEra:UnregisterAllComm()
+    Record("unregister-all-comm")
 end
 
 function AngryEra:RegisterEvent(event)
@@ -546,7 +587,11 @@ layoutFlushResult = 2
 AngryEra:PLAYER_REGEN_ENABLED()
 assert(layoutFlushCount == 1, "leaving combat should flush one queued layout request")
 assert(raidAssignmentFlushCount == 1, "leaving combat should flush the latest queued raid assignments")
-assert(#calls == 0, "the asynchronous completion hook, not the combat event, should report the result")
+assert(
+    #calls == 1 and calls[1].Name == "combat-fade" and calls[1].Value == false,
+    "leaving combat should restore the display without reporting the queued layout result"
+)
+calls = {}
 AngryEra:OnGroupLayoutApplyFinished(true, 2)
 assert(
     #calls == 1 and calls[1].Name == "print" and calls[1].Value == "Rearranged the raid to the layout (2 moves).",
@@ -559,12 +604,20 @@ calls = {}
 layoutFlushApplied = false
 layoutFlushResult = "no-pending-layout"
 AngryEra:PLAYER_REGEN_ENABLED()
-assert(layoutFlushCount == 2 and #calls == 0, "leaving combat with no queued layout should stay silent")
+assert(
+    layoutFlushCount == 2 and #calls == 1 and calls[1].Name == "combat-fade" and calls[1].Value == false,
+    "leaving combat with no queued layout should only restore the display"
+)
+calls = {}
 AngryEra:OnGroupLayoutApplyFinished(false, "display-changed")
 assert(#calls == 0, "an expected page-change cancellation should stay silent")
 AngryEra:PLAYER_REGEN_DISABLED()
 assert(layoutPauseCount == 1, "entering combat should pause any not-yet-issued raid-layout operation")
 assert(raidAssignmentPauseCount == 1, "entering combat should pause unissued raid-assignment work")
+assert(
+    #calls == 1 and calls[1].Name == "combat-fade" and calls[1].Value == false,
+    "entering combat with combat fade disabled should preserve the current display opacity"
+)
 unitCombat.raid1 = true
 AngryEra:UNIT_FLAGS(nil, "raid1")
 assert(layoutPauseCount == 1, "a remote raider's combat flag should not pause locally protected layout work")
@@ -1279,6 +1332,34 @@ do
     )
     assert(AngryEra:CancelTimer(AngryEra._guildDisplayRefreshTimer), "the refresh timer must be cancelable on disable")
     AngryEra._guildDisplayRefreshTimer = nil
+end
+
+do
+    calls = {}
+    local createCountBeforeCycles = CountCalls("create-display")
+    AngryEra:OnDisable()
+    assert(not AngryEra._protocolStarted, "disable should retire the active transport flag")
+    assert(
+        CountCalls("destroy-display") == 1
+            and CountCalls("close-import-export") == 1
+            and CountCalls("close-auxiliary-editors") == 1
+            and CountCalls("media-callbacks-cleared") == 1
+            and CountCalls("cancel-all-timers") == 1
+            and CountCalls("unregister-all-events") == 1
+            and CountCalls("unregister-all-messages") == 1
+            and CountCalls("unregister-all-comm") == 1,
+        "disable should tear down every non-Ace and embedded lifecycle surface exactly once"
+    )
+
+    AngryEra:OnEnable()
+    AngryEra:OnDisable()
+    AngryEra:OnEnable()
+    assert(
+        CountCalls("create-display") == createCountBeforeCycles + 2
+            and CountCalls("destroy-display") == 2
+            and AngryEra._protocolStarted,
+        "two disable/enable cycles should rebuild lifecycle state without accumulating teardown work"
+    )
 end
 
 print("Initialization lifecycle tests passed.")

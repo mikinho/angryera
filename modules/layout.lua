@@ -7,7 +7,7 @@
 --
 -- A layout is the raid itself: eight subgroups of five, named. Every group is
 -- bound to one of them, so a spore rotation written on a page is a real seating
--- Apply to Raid can move people into, not a list beside the raid.
+-- Apply can move people into, not a list beside the raid.
 --
 -- Compact syntax (stored as the `$LAYOUT` variable value):
 --   Group 1/1: Vhez, Mage1 > Mage2, *MAGE; Spores/2: Lock1, Lock2, Lock3

@@ -13,6 +13,100 @@ local ExtractAndValidateName = helpers.ExtractAndValidateName
 local unpackValues = unpack or rawget(table, "unpack")
 
 local libC = app.libs.libC
+local syncSchema = AngryEra.sync and AngryEra.sync.schema
+local editableLimits = syncSchema and syncSchema.LIMITS
+    or {
+        HierarchyDepth = 32,
+        NameBytes = 100,
+        ContentsBytes = 20000,
+        VarsBytes = 5000,
+    }
+
+local EDITABLE_ENTITY_ERRORS = {
+    ["invalid-entity"] = "The page or category data is invalid.",
+    ["invalid-entity-kind"] = "The page or category type is invalid.",
+    ["invalid-name"] = ("Names must be 1-%d bytes, trimmed, and contain no control characters."):format(
+        editableLimits.NameBytes
+    ),
+    ["invalid-contents"] = ("Page contents cannot exceed %d bytes."):format(editableLimits.ContentsBytes),
+    ["invalid-vars"] = ("Variables and metadata cannot exceed %d bytes."):format(editableLimits.VarsBytes),
+}
+
+local function ContainsControlByte(value)
+    for index = 1, #value do
+        local byte = value:byte(index)
+        if byte < 32 or byte == 127 then
+            return true
+        end
+    end
+    return false
+end
+
+local function FallbackEditableEntityValidation(kind, fields)
+    if kind ~= "page" and kind ~= "category" then
+        return false, "invalid-entity-kind"
+    end
+    if type(fields) ~= "table" then
+        return false, "invalid-entity"
+    end
+    local name = fields.Name
+    if
+        type(name) ~= "string"
+        or name == ""
+        or #name > editableLimits.NameBytes
+        or name ~= name:match("^%s*(.-)%s*$")
+        or ContainsControlByte(name)
+    then
+        return false, "invalid-name"
+    end
+    if type(fields.Vars) ~= "string" or #fields.Vars > editableLimits.VarsBytes then
+        return false, "invalid-vars"
+    end
+    if kind == "page" and (type(fields.Contents) ~= "string" or #fields.Contents > editableLimits.ContentsBytes) then
+        return false, "invalid-contents"
+    end
+    return true
+end
+
+--- Validates local editable fields against the same limits used on the wire.
+-- Callers use this before mutating SavedVariables so a page cannot appear to
+-- save successfully and then fail only when it is displayed.
+-- @tparam string kind `"page"` or `"category"`.
+-- @tparam table fields Name, Vars, and optional Contents.
+-- @treturn boolean valid
+-- @treturn string|nil userError
+-- @treturn string|nil errorCode
+function AngryEra:ValidateLocalEntityFields(kind, fields)
+    local validator = syncSchema and syncSchema.ValidateEditableEntityFields
+    local valid, errorCode
+    if type(validator) == "function" then
+        valid, errorCode = validator(kind, fields)
+    else
+        valid, errorCode = FallbackEditableEntityValidation(kind, fields)
+    end
+    if valid then
+        return true
+    end
+    return false, EDITABLE_ENTITY_ERRORS[errorCode] or "The page or category data is invalid.", errorCode
+end
+
+local function CategoryDepth(categoryId)
+    local depth = 0
+    local visited = {}
+    while categoryId ~= nil do
+        if visited[categoryId] then
+            return nil, "category-cycle"
+        end
+        visited[categoryId] = true
+        local category = AngryAssign_Categories[categoryId]
+        if type(category) ~= "table" then
+            return nil, "missing-category"
+        end
+        depth = depth + 1
+        categoryId = category.CategoryId
+    end
+    return depth
+end
 
 local function PublishPageRevision(self, id)
     if AngryAssign_State.displayed == id and self:CanLocalPlayerPublish("display") then
@@ -777,19 +871,45 @@ function AngryEra:CreatePage(nameOrFrame, content, categoryId, index, suppressDi
         return false, err
     end
 
-    if content and type(content) ~= "string" then
-        content = ""
+    if content ~= nil and type(content) ~= "string" then
+        return false, "Page contents must be text."
     end
-    if type(initialVars) ~= "string" then
-        initialVars = ""
+    if initialVars ~= nil and type(initialVars) ~= "string" then
+        return false, "Variables and metadata must be text."
+    end
+    content = content or ""
+    initialVars = initialVars or ""
+
+    local valid, validationError = self:ValidateLocalEntityFields("page", {
+        Name = name,
+        Contents = content,
+        Vars = initialVars,
+    })
+    if not valid then
+        return false, validationError
+    end
+    if categoryId ~= nil then
+        local parentDepth, parentError = CategoryDepth(categoryId)
+        if not parentDepth then
+            return false,
+                parentError == "category-cycle"
+                        and "Cannot create the page because the category hierarchy contains a cycle."
+                    or "Cannot create the page because its parent category does not exist."
+        end
+        if parentDepth + 1 > editableLimits.HierarchyDepth then
+            return false,
+                ("Cannot create the page: category hierarchy cannot exceed %d levels."):format(
+                    editableLimits.HierarchyDepth
+                )
+        end
     end
 
     -- Original Business Logic
     local page = self:NewLocalPageRecord({
         Updated = time(),
-        UpdateId = self:Hash(name, content or "", initialVars),
+        UpdateId = self:Hash(name, content, initialVars),
         Name = name,
-        Contents = content or "",
+        Contents = content,
         Vars = initialVars,
         CategoryId = categoryId,
         Index = index,
@@ -835,6 +955,14 @@ function AngryEra:RenamePage(id, nameOrFrame)
     local name, err = ExtractAndValidateName(nameOrFrame)
     if not name then
         return false, err, false
+    end
+    local valid, validationError = self:ValidateLocalEntityFields("page", {
+        Name = name,
+        Contents = type(page.Contents) == "string" and page.Contents or "",
+        Vars = type(page.Vars) == "string" and page.Vars or "",
+    })
+    if not valid then
+        return false, validationError, false
     end
 
     local submitted, submitResult, proposed, retainedDesired = SubmitSharedPageMutation(self, id, page, "Name", name)
@@ -903,6 +1031,13 @@ function AngryEra:CreateCategory(nameOrFrame)
     if not name then
         return false, err
     end
+    local valid, validationError = self:ValidateLocalEntityFields("category", {
+        Name = name,
+        Vars = "",
+    })
+    if not valid then
+        return false, validationError
+    end
 
     -- Generate ID and Save
     local category = self:NewLocalCategoryRecord({ Name = name })
@@ -936,6 +1071,13 @@ function AngryEra:RenameCategory(id, nameOrFrame)
     local name, err = ExtractAndValidateName(nameOrFrame)
     if not name then
         return false, err
+    end
+    local valid, validationError = self:ValidateLocalEntityFields("category", {
+        Name = name,
+        Vars = type(cat.Vars) == "string" and cat.Vars or "",
+    })
+    if not valid then
+        return false, validationError
     end
 
     if cat.Name == name then
@@ -1010,6 +1152,46 @@ function AngryEra:DeleteCategoryAndChildren(id)
     return true
 end
 
+local function CategorySubtreeHeight(categoryId, path)
+    path = path or {}
+    if path[categoryId] then
+        return nil, "category-cycle"
+    end
+    path[categoryId] = true
+    local maximumChildHeight = 0
+    for id, category in pairs(AngryAssign_Categories) do
+        if type(category) == "table" and category.CategoryId == categoryId then
+            local childHeight, childError = CategorySubtreeHeight(id, path)
+            if not childHeight then
+                path[categoryId] = nil
+                return nil, childError
+            end
+            maximumChildHeight = math.max(maximumChildHeight, childHeight)
+        end
+    end
+    path[categoryId] = nil
+    return maximumChildHeight + 1
+end
+
+local function ValidateCategoryMoveDepth(page, category, parentId)
+    local parentDepth, parentError = CategoryDepth(parentId)
+    if not parentDepth then
+        return false, parentError
+    end
+    if page then
+        return parentDepth + 1 <= editableLimits.HierarchyDepth,
+            parentDepth + 1 <= editableLimits.HierarchyDepth and nil or "hierarchy-too-deep"
+    end
+    local subtreeHeight, subtreeError = CategorySubtreeHeight(category.Id)
+    if not subtreeHeight then
+        return false, subtreeError
+    end
+    if parentDepth + subtreeHeight > editableLimits.HierarchyDepth then
+        return false, "hierarchy-too-deep"
+    end
+    return true
+end
+
 --- Assigns a page/category into a category (or toggles back to root).
 -- @tparam number entryId Positive for page id, negative for category id.
 -- @tparam number parentId Target category id.
@@ -1022,13 +1204,24 @@ function AngryEra:AssignCategory(entryId, parentId)
     end
     local parent = self:GetCat(parentId)
     if not (page or cat) or not parent then
-        return
+        return false, "missing-category"
     end
 
     if page then
         if page.CategoryId == parentId then
             page.CategoryId = nil
         else
+            local validDepth, depthError = ValidateCategoryMoveDepth(page, nil, parentId)
+            if not validDepth then
+                self:Print(
+                    depthError == "hierarchy-too-deep"
+                            and ("Cannot move there: category hierarchy cannot exceed %d levels."):format(
+                                editableLimits.HierarchyDepth
+                            )
+                        or "Cannot move there because the category hierarchy is invalid."
+                )
+                return false, depthError
+            end
             page.CategoryId = parentId
         end
     end
@@ -1039,7 +1232,18 @@ function AngryEra:AssignCategory(entryId, parentId)
         else
             if IsCategoryDescendant(parentId, cat.Id) then
                 self:Print("Cannot move into self.")
-                return
+                return false, "category-cycle"
+            end
+            local validDepth, depthError = ValidateCategoryMoveDepth(nil, cat, parentId)
+            if not validDepth then
+                self:Print(
+                    depthError == "hierarchy-too-deep"
+                            and ("Cannot move there: category hierarchy cannot exceed %d levels."):format(
+                                editableLimits.HierarchyDepth
+                            )
+                        or "Cannot move there because the category hierarchy is invalid."
+                )
+                return false, depthError
             end
             cat.CategoryId = parentId
         end
@@ -1051,6 +1255,7 @@ function AngryEra:AssignCategory(entryId, parentId)
         self:SetSelectedId(selectedId)
     end
     self:RefreshDisplayedPageAfterHierarchyMutation()
+    return true
 end
 
 --- Updates a page's contents, history, hash, and sync state.
@@ -1067,8 +1272,19 @@ function AngryEra:UpdateContents(id, value)
     if not self:CanEditEntityLocally(page) then
         return false, "Permission denied.", false
     end
+    if type(value) ~= "string" then
+        return false, "Page contents must be text.", false
+    end
 
     local new_content = value:gsub("^%s+", ""):gsub("%s+$", "")
+    local valid, validationError = self:ValidateLocalEntityFields("page", {
+        Name = type(page.Name) == "string" and page.Name or "",
+        Contents = new_content,
+        Vars = type(page.Vars) == "string" and page.Vars or "",
+    })
+    if not valid then
+        return false, validationError, false
+    end
     local contents_updated = new_content ~= page.Contents
 
     local submitted, submitResult, proposed, retainedDesired =
@@ -1118,6 +1334,19 @@ function AngryEra:UpdatePageVars(id, value)
     if not self:CanEditEntityLocally(page) then
         return false, "Permission denied.", false
     end
+    if value == nil then
+        value = ""
+    elseif type(value) ~= "string" then
+        return false, "Variables and metadata must be text.", false
+    end
+    local valid, validationError = self:ValidateLocalEntityFields("page", {
+        Name = type(page.Name) == "string" and page.Name or "",
+        Contents = type(page.Contents) == "string" and page.Contents or "",
+        Vars = value,
+    })
+    if not valid then
+        return false, validationError, false
+    end
 
     local submitted, submitResult, proposed, retainedDesired = SubmitSharedPageMutation(self, id, page, "Vars", value)
     if proposed then
@@ -1134,12 +1363,12 @@ function AngryEra:PushHistory(page, content, author)
     if not page or not content or content == "" then
         return
     end
-    if not page.History then
+    if type(page.History) ~= "table" then
         page.History = {}
     end
 
     -- Avoid duplicate consecutive entries
-    if #page.History > 0 and page.History[1].content == content then
+    if #page.History > 0 and type(page.History[1]) == "table" and page.History[1].content == content then
         return
     end
 

@@ -7,10 +7,15 @@
 local _, app = ...
 local AngryEra = app.AngryEra
 local identity = AngryEra.identity
+local schema = AngryEra.sync and AngryEra.sync.schema
 
 local ENTITY_SCHEMA_VERSION = 2
 local OWNED_CATEGORY_PIN_MIGRATION_VERSION = 1
 local MAX_DELETED_LOCAL_TOMBSTONES = 4096
+local MAX_CATEGORY_DEPTH = 32
+local MAX_PAGE_HISTORY = 10
+local MAX_PAGE_CONTENT_BYTES = schema and schema.LIMITS and schema.LIMITS.ContentsBytes or 20000
+local MAX_HISTORY_AUTHOR_BYTES = schema and schema.LIMITS and schema.LIMITS.AuthorBytes or 128
 local IDENTITY_FIELDS = {
     "SyncId",
     "OwnerId",
@@ -765,9 +770,97 @@ function AngryEra:ForgetEntityIdentity(entityOrSyncId, kind)
     end
 end
 
---- Removes saved entity records that are not tables.
+local function IsFiniteNumber(value)
+    return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge
+end
+
+local function IsSafeHistoryAuthor(value)
+    if value == nil then
+        return true
+    end
+    if type(value) ~= "string" or value == "" or #value > MAX_HISTORY_AUTHOR_BYTES then
+        return false
+    end
+    for index = 1, #value do
+        local byte = value:byte(index)
+        if byte < 32 or byte == 127 then
+            return false
+        end
+    end
+    return true
+end
+
+local function SanitizePageLocalFields(record)
+    if type(record.Backup) ~= "string" or #record.Backup > MAX_PAGE_CONTENT_BYTES then
+        record.Backup = nil
+    end
+
+    local history = record.History
+    if type(history) ~= "table" then
+        record.History = nil
+        return
+    end
+    local sanitized = {}
+    for index = 1, MAX_PAGE_HISTORY do
+        local entry = rawget(history, index)
+        if
+            type(entry) == "table"
+            and type(entry.content) == "string"
+            and #entry.content <= MAX_PAGE_CONTENT_BYTES
+            and IsFiniteNumber(entry.timestamp)
+            and entry.timestamp >= 0
+            and entry.timestamp % 1 == 0
+            and IsSafeHistoryAuthor(entry.author)
+        then
+            sanitized[#sanitized + 1] = {
+                timestamp = entry.timestamp,
+                content = entry.content,
+                author = entry.author or "Unknown",
+            }
+        end
+    end
+    record.History = #sanitized > 0 and sanitized or nil
+end
+
+local function IsValidSavedEntityRecord(kind, id, record)
+    if not IsPositiveInteger(id) or type(record) ~= "table" or record.Id ~= id then
+        return false
+    end
+    if record.CategoryId ~= nil and not IsPositiveInteger(record.CategoryId) then
+        return false
+    end
+    if record.Index ~= nil and not IsFiniteNumber(record.Index) then
+        return false
+    end
+    if record.Vars == nil then
+        record.Vars = ""
+    end
+    if kind == "page" and record.Contents == nil then
+        record.Contents = ""
+    end
+    if schema and type(schema.ValidateEditableEntityFields) == "function" then
+        local valid = schema.ValidateEditableEntityFields(kind, {
+            Name = record.Name,
+            Contents = kind == "page" and record.Contents or nil,
+            Vars = record.Vars,
+        })
+        if not valid then
+            return false
+        end
+    elseif
+        type(record.Name) ~= "string"
+        or type(record.Vars) ~= "string"
+        or kind == "page" and type(record.Contents) ~= "string"
+    then
+        return false
+    end
+    return true
+end
+
+--- Removes saved entity records whose core shape is unsafe to migrate or render.
 -- Corrupt or hand-edited SavedVariables must not abort initialization, so
--- invalid records are dropped before any migration dereferences them.
+-- invalid scalar and table-shaped records are dropped before any migration
+-- dereferences them. Missing page contents are repaired to the legacy default.
 -- @treturn number removed Count of dropped records.
 function AngryEra:RemoveInvalidEntityRecords()
     local removed = 0
@@ -775,9 +868,13 @@ function AngryEra:RemoveInvalidEntityRecords()
         local records = GetRecords(kind)
         if type(records) == "table" then
             for id, record in pairs(records) do
-                if type(record) ~= "table" then
+                if not IsValidSavedEntityRecord(kind, id, record) then
                     records[id] = nil
                     removed = removed + 1
+                elseif kind == "category" and record.Children ~= nil and type(record.Children) ~= "table" then
+                    record.Children = nil
+                elseif kind == "page" then
+                    SanitizePageLocalFields(record)
                 end
             end
         end
@@ -788,6 +885,76 @@ function AngryEra:RemoveInvalidEntityRecords()
         self:Print(red .. "Removed " .. removed .. " invalid saved records." .. reset)
     end
     return removed
+end
+
+--- Rehomes unsafe saved parent links before hierarchy consumers run.
+-- Missing parents, cycles, and chains deeper than the wire-format bound become
+-- roots. Valid descendants and entity contents are retained.
+-- @treturn number repaired Count of parent links changed.
+function AngryEra:RepairSavedEntityHierarchy()
+    if type(AngryAssign_Categories) ~= "table" or type(AngryAssign_Pages) ~= "table" then
+        return 0
+    end
+    local repaired = 0
+    local categoryIds = {}
+    for id, category in pairs(AngryAssign_Categories) do
+        categoryIds[#categoryIds + 1] = id
+        local parentId = category.CategoryId
+        if parentId ~= nil and (parentId == id or type(AngryAssign_Categories[parentId]) ~= "table") then
+            category.CategoryId = nil
+            repaired = repaired + 1
+        end
+    end
+    table.sort(categoryIds)
+
+    -- Every pass starts from the child being validated. Rehoming that one
+    -- record deterministically breaks a cycle or over-deep chain, and can only
+    -- shorten the paths checked later.
+    for _, id in ipairs(categoryIds) do
+        local seen = {}
+        local currentId = id
+        local depth = 0
+        while currentId do
+            if seen[currentId] then
+                AngryAssign_Categories[id].CategoryId = nil
+                repaired = repaired + 1
+                break
+            end
+            seen[currentId] = true
+            depth = depth + 1
+            if depth > MAX_CATEGORY_DEPTH then
+                AngryAssign_Categories[id].CategoryId = nil
+                repaired = repaired + 1
+                break
+            end
+            local current = AngryAssign_Categories[currentId]
+            currentId = type(current) == "table" and current.CategoryId or nil
+        end
+    end
+
+    for _, page in pairs(AngryAssign_Pages) do
+        local parentId = page.CategoryId
+        if parentId ~= nil and type(AngryAssign_Categories[parentId]) ~= "table" then
+            page.CategoryId = nil
+            repaired = repaired + 1
+        elseif parentId ~= nil then
+            local currentId = parentId
+            local categoryDepth = 0
+            while currentId and categoryDepth < MAX_CATEGORY_DEPTH do
+                categoryDepth = categoryDepth + 1
+                currentId = AngryAssign_Categories[currentId].CategoryId
+            end
+            if categoryDepth >= MAX_CATEGORY_DEPTH then
+                page.CategoryId = nil
+                repaired = repaired + 1
+            end
+        end
+    end
+
+    if repaired > 0 and type(self.Print) == "function" then
+        self:Print(("Rehomed %d unsafe saved hierarchy link%s."):format(repaired, repaired == 1 and "" or "s"))
+    end
+    return repaired
 end
 
 --- Removes a page record and its identity registration.

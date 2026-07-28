@@ -1,3 +1,4 @@
+local layoutRoster = {}
 local app = {
     AngryEra = {
         utils = {
@@ -5,7 +6,23 @@ local app = {
                 EnsureUnitShortName = function(value)
                     return value
                 end,
-                IterateGroupMembers = function() end,
+                IterateGroupMembers = function(callback)
+                    for _, member in ipairs(layoutRoster) do
+                        if
+                            callback(
+                                member.RawName,
+                                member.FullName,
+                                member.Unit,
+                                member.Subgroup,
+                                member.Class,
+                                member.Online,
+                                member.IsDead
+                            )
+                        then
+                            break
+                        end
+                    end
+                end,
             },
             colors = {
                 ColorTable = {},
@@ -42,6 +59,8 @@ local app = {
 assert(loadfile("modules/identity.lua"))("AngryEra", app)
 assert(loadfile("modules/utils/json.lua"))("AngryEra", app)
 assert(loadfile("modules/utils/variables.lua"))("AngryEra", app)
+assert(loadfile("modules/utils/roster.lua"))("AngryEra", app)
+assert(loadfile("modules/layout.lua"))("AngryEra", app)
 assert(loadfile("modules/ui/display.lua"))("AngryEra", app)
 
 local AngryEra = app.AngryEra
@@ -97,6 +116,27 @@ assert(
         and familyVariables["HEALER*"] == nil,
     "display consumers should receive numbered outputs but not the declaration"
 )
+
+layoutRoster = {
+    {
+        RawName = "Zed",
+        FullName = "Zed-OtherRealm",
+        Subgroup = 1,
+        Class = "MAGE",
+        Online = true,
+        IsDead = false,
+    },
+}
+local layoutText, _, layoutError = AngryEra:RenderPageContent({
+    Contents = "{layout}",
+    Vars = "$LAYOUT=Main/1: Zed, *MAGE",
+}, {})
+assert(not layoutError, layoutError)
+assert(
+    layoutText == "Main: Zed",
+    "display layout expansion should canonicalize short/full roster names and never render one player twice"
+)
+layoutRoster = {}
 
 local chain = assert(variableHelpers.CollectCategoryChain(AngryAssign_Categories, 3))
 local wireLayers = assert(variableHelpers.BuildAncestorVariableLayers(chain))

@@ -2,6 +2,7 @@ local AngryEra = {}
 local app = { AngryEra = AngryEra }
 
 assert(loadfile("modules/identity.lua"))("AngryEra", app)
+assert(loadfile("modules/sync/schema.lua"))("AngryEra", app)
 assert(loadfile("modules/entities.lua"))("AngryEra", app)
 
 local installationId = "ae3i:1:2:3:4"
@@ -229,15 +230,97 @@ assert(AngryAssign_Meta.EntityLocal[retiredSyncId].DeletedLocally, "Removed loca
 AngryAssign_Pages[9001] = 42
 AngryAssign_Pages[9002] = "corrupt"
 AngryAssign_Categories[9003] = false
+AngryAssign_Pages[9004] = {
+    Id = 9004,
+    Name = "Malformed page",
+    Contents = {},
+}
+AngryAssign_Pages[9009] = {
+    Id = 9009,
+    Name = "Oversized page",
+    Contents = string.rep("x", 20001),
+}
+AngryAssign_Categories[9010] = {
+    Id = 9010,
+    Name = " Badly spaced ",
+}
+AngryAssign_Categories[9005] = {
+    Id = "9005",
+    Name = "Malformed category",
+}
+AngryAssign_Categories[9006] = {
+    Id = 9006,
+    Name = 9006,
+}
+AngryAssign_Pages[9007] = {
+    Id = 9007,
+    Name = "Legacy empty contents",
+    Backup = {},
+    History = {
+        "invalid",
+        {
+            timestamp = 123,
+            content = "safe history",
+            author = "Leader",
+            unexpected = {},
+        },
+        {
+            timestamp = "yesterday",
+            content = "invalid timestamp",
+        },
+        {
+            timestamp = 124,
+            content = {},
+        },
+        {
+            timestamp = -1,
+            content = "invalid negative timestamp",
+            author = "Leader",
+        },
+        {
+            timestamp = 125.5,
+            content = "invalid fractional timestamp",
+            author = "Leader",
+        },
+        {
+            timestamp = 126,
+            content = "invalid oversized author",
+            author = string.rep("a", 129),
+        },
+        {
+            timestamp = 127,
+            content = "invalid author control byte",
+            author = "Leader\nOther",
+        },
+    },
+}
 local removed = AngryEra:RemoveInvalidEntityRecords()
-assert(removed == 3, "invalid saved records should be dropped before migrations run")
+assert(removed == 8, "scalar, table-shaped, and out-of-bounds records should be dropped before migrations run")
 assert(
-    AngryAssign_Pages[9001] == nil and AngryAssign_Pages[9002] == nil and AngryAssign_Categories[9003] == nil,
+    AngryAssign_Pages[9001] == nil
+        and AngryAssign_Pages[9002] == nil
+        and AngryAssign_Pages[9004] == nil
+        and AngryAssign_Pages[9009] == nil
+        and AngryAssign_Categories[9003] == nil
+        and AngryAssign_Categories[9005] == nil
+        and AngryAssign_Categories[9006] == nil
+        and AngryAssign_Categories[9010] == nil,
     "dropped records must not remain in storage"
 )
+assert(AngryAssign_Pages[9007].Contents == "", "missing legacy page contents should be repaired safely")
+assert(AngryAssign_Pages[9007].Vars == "", "missing legacy page variables should be repaired safely")
+assert(
+    AngryAssign_Pages[9007].Backup == nil
+        and #AngryAssign_Pages[9007].History == 1
+        and AngryAssign_Pages[9007].History[1].content == "safe history"
+        and AngryAssign_Pages[9007].History[1].author == "Leader"
+        and AngryAssign_Pages[9007].History[1].unexpected == nil,
+    "invalid local backup/history fields should be scrubbed without dropping an otherwise valid page"
+)
 assert(AngryEra:RemoveInvalidEntityRecords() == 0, "record cleanup should be idempotent")
+AngryAssign_Pages[9007] = nil
 
-AngryAssign_Pages[9004] = 7
+AngryAssign_Pages[9008] = 7
 AngryAssign_Meta.Migrations.EntityIdentity = nil
 AngryEra:RemoveInvalidEntityRecords()
 AngryEra:MigrateEntityIdentities()
@@ -245,6 +328,54 @@ assert(
     AngryAssign_Meta.Migrations.EntityIdentity ~= nil,
     "identity migration should complete after invalid records are removed"
 )
+
+AngryAssign_Categories[9101] = { Id = 9101, Name = "Cycle A", CategoryId = 9102 }
+AngryAssign_Categories[9102] = { Id = 9102, Name = "Cycle B", CategoryId = 9101 }
+AngryAssign_Categories[9103] = { Id = 9103, Name = "Missing parent", CategoryId = 999999 }
+for id = 9201, 9233 do
+    AngryAssign_Categories[id] = {
+        Id = id,
+        Name = "Depth " .. id,
+        CategoryId = id > 9201 and id - 1 or nil,
+    }
+end
+AngryAssign_Pages[9104] = {
+    Id = 9104,
+    Name = "Missing page parent",
+    Contents = "",
+    CategoryId = 999999,
+}
+local hierarchyRepairs = AngryEra:RepairSavedEntityHierarchy()
+assert(hierarchyRepairs >= 4, "cycles, missing parents, and over-deep chains should all be rehomed")
+assert(
+    AngryAssign_Categories[9101].CategoryId == nil or AngryAssign_Categories[9102].CategoryId == nil,
+    "a saved category cycle should be broken deterministically"
+)
+assert(
+    AngryAssign_Categories[9103].CategoryId == nil and AngryAssign_Pages[9104].CategoryId == nil,
+    "missing saved parents should be rehomed to the root"
+)
+assert(AngryAssign_Categories[9233].CategoryId == nil, "a category deeper than the wire bound should be rehomed")
+AngryAssign_Pages[9105] = {
+    Id = 9105,
+    Name = "Page below max-depth categories",
+    Contents = "",
+    Vars = "",
+    CategoryId = 9232,
+}
+assert(
+    AngryEra:RepairSavedEntityHierarchy() == 1 and AngryAssign_Pages[9105].CategoryId == nil,
+    "a page counts as the final wire hierarchy node and must not sit below 32 categories"
+)
+assert(AngryEra:RepairSavedEntityHierarchy() == 0, "hierarchy repair should be idempotent")
+for id = 9101, 9103 do
+    AngryAssign_Categories[id] = nil
+end
+for id = 9201, 9233 do
+    AngryAssign_Categories[id] = nil
+end
+AngryAssign_Pages[9104] = nil
+AngryAssign_Pages[9105] = nil
 
 do
     local retained = {}

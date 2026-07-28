@@ -11,6 +11,68 @@ local json = AngryEra.utils.json
 local serialization = AngryEra.utils.serialization
 local CompareIndexedEntries = AngryEra.utils.helpers.CompareIndexedEntries
 
+local trackedWindowNames = {
+    _encodedExportWindow = "AngryEra_ExportWindow",
+    _encodedImportWindow = "AngryEra_ImportWindow",
+    _legacyImportWindow = "AngryEra_LegacyImportWindow",
+    _generalExportWindow = "AngryEra_GeneralExportWindow",
+}
+
+local function RemoveSpecialFrame(name, frame)
+    if type(UISpecialFrames) == "table" then
+        for index = #UISpecialFrames, 1, -1 do
+            if UISpecialFrames[index] == name then
+                table.remove(UISpecialFrames, index)
+            end
+        end
+    end
+    if frame == nil or rawget(_G, name) == frame then
+        rawset(_G, name, nil)
+    end
+end
+
+local function ReleaseTrackedWindow(owner, field, widget)
+    if not widget or widget._angryEraWindowReleased == true then
+        return false
+    end
+    widget._angryEraWindowReleased = true
+    if owner[field] == widget then
+        owner[field] = nil
+    end
+    local name = trackedWindowNames[field]
+    RemoveSpecialFrame(name, widget.frame)
+    AceGUI:Release(widget)
+    return true
+end
+
+local function CloseTrackedWindow(owner, field)
+    return ReleaseTrackedWindow(owner, field, owner[field])
+end
+
+local function TrackWindow(owner, field, widget)
+    CloseTrackedWindow(owner, field)
+    local name = trackedWindowNames[field]
+    widget._angryEraWindowReleased = false
+    owner[field] = widget
+    RemoveSpecialFrame(name)
+    rawset(_G, name, widget.frame)
+    if type(UISpecialFrames) == "table" then
+        table.insert(UISpecialFrames, name)
+    end
+    widget:SetCallback("OnClose", function(closed)
+        ReleaseTrackedWindow(owner, field, closed)
+    end)
+end
+
+--- Closes import/export windows and removes their Escape registrations.
+function AngryEra:CloseImportExportWindows()
+    local closed = false
+    for field in pairs(trackedWindowNames) do
+        closed = CloseTrackedWindow(self, field) or closed
+    end
+    return closed
+end
+
 -- ── Export / Import (Encoded AA) ────────────────────────────────────────────
 
 --- Builds recursive export payload data for a category.
@@ -26,11 +88,7 @@ function AngryEra:ShowExportWindow(exportString, pageName)
     frame:SetWidth(520)
     frame:SetHeight(220)
     frame:EnableResize(false)
-    _G["AngryEra_ExportWindow"] = frame.frame
-    tinsert(UISpecialFrames, "AngryEra_ExportWindow")
-    frame:SetCallback("OnClose", function(widget)
-        AceGUI:Release(widget)
-    end)
+    TrackWindow(self, "_encodedExportWindow", frame)
 
     local editBox = AceGUI:Create("MultiLineEditBox")
     editBox:SetLabel(nil)
@@ -42,7 +100,7 @@ function AngryEra:ShowExportWindow(exportString, pageName)
 
     -- Pre-select all text so user can Ctrl+C immediately
     C_Timer.After(0, function()
-        if editBox.editBox then
+        if self._encodedExportWindow == frame and frame._angryEraWindowReleased ~= true and editBox.editBox then
             editBox.editBox:SetFocus()
             editBox.editBox:HighlightText()
         end
@@ -426,11 +484,7 @@ function AngryEra:ShowImportWindow()
     frame:SetWidth(520)
     frame:SetHeight(340)
     frame:EnableResize(false)
-    _G["AngryEra_ImportWindow"] = frame.frame
-    tinsert(UISpecialFrames, "AngryEra_ImportWindow")
-    frame:SetCallback("OnClose", function(widget)
-        AceGUI:Release(widget)
-    end)
+    TrackWindow(self, "_encodedImportWindow", frame)
 
     local includeVariables = AceGUI:Create("CheckBox")
     includeVariables:SetLabel("Import variables and metadata when included")
@@ -458,7 +512,7 @@ function AngryEra:ShowImportWindow()
         local options = {
             includeVariables = includeVariables:GetValue() == true,
         }
-        frame:Hide()
+        CloseTrackedWindow(AngryEra, "_encodedImportWindow")
         if prefix == "Category" then
             AngryEra:ConfirmImportCategory(result, options)
         else
@@ -468,7 +522,7 @@ function AngryEra:ShowImportWindow()
     frame:AddChild(editBox)
 
     C_Timer.After(0, function()
-        if editBox.editBox then
+        if AngryEra._encodedImportWindow == frame and frame._angryEraWindowReleased ~= true and editBox.editBox then
             editBox.editBox:SetFocus()
         end
     end)
@@ -550,10 +604,7 @@ local function AngryEra_ImportPage()
     frame:SetWidth(500)
     frame:SetHeight(400)
     frame:EnableResize(true)
-
-    frame:SetCallback("OnClose", function(widget)
-        AceGUI:Release(widget)
-    end)
+    TrackWindow(AngryEra, "_legacyImportWindow", frame)
 
     local nameBox = AceGUI:Create("EditBox")
     nameBox:SetLabel("Name")
@@ -632,7 +683,7 @@ local function AngryEra_ImportPage()
                             AngryEra:CreatePage(pName, pContent, catId, i)
                         end
                     end
-                    frame:Hide()
+                    CloseTrackedWindow(AngryEra, "_legacyImportWindow")
                 end
             else
                 -- Single Page Import
@@ -653,13 +704,13 @@ local function AngryEra_ImportPage()
                 if existingId then
                     AngryEra:UpdateContents(existingId, pageContent)
                     AngryEra:RenamePage(existingId, title)
-                    frame:Hide()
+                    CloseTrackedWindow(AngryEra, "_legacyImportWindow")
                 else
                     local success, err = AngryEra:CreatePage(title, pageContent, nil, nil)
                     if not success then
                         print("Error: " .. (err or ""))
                     else
-                        frame:Hide()
+                        CloseTrackedWindow(AngryEra, "_legacyImportWindow")
                     end
                 end
             end
@@ -705,7 +756,7 @@ local function AngryEra_ImportPage()
                     print("Error: " .. (err or ""))
                 end
             end
-            frame:Hide()
+            CloseTrackedWindow(AngryEra, "_legacyImportWindow")
         else
             -- Category
             local catId
@@ -755,7 +806,7 @@ local function AngryEra_ImportPage()
                         AngryEra:CreatePage(pageTitle, block, catId, i)
                     end
                 end
-                frame:Hide()
+                CloseTrackedWindow(AngryEra, "_legacyImportWindow")
             end
         end
         AngryEra:UpdateTree()
@@ -876,9 +927,9 @@ local function SerializeJSON(val)
     return json.JSON_Encode(val)
 end
 
-local function HighlightExportText(editBox)
+local function HighlightExportText(editBox, frame)
     C_Timer.After(0, function()
-        if editBox.editBox then
+        if AngryEra._generalExportWindow == frame and frame._angryEraWindowReleased ~= true and editBox.editBox then
             editBox:SetFocus()
             editBox:HighlightText()
         end
@@ -892,10 +943,7 @@ local function AngryEra_ShowExportWindow(text, title, encodedOptions)
     frame:SetWidth(600)
     frame:SetHeight(encodedOptions and 570 or 500)
     frame:EnableResize(true)
-
-    frame:SetCallback("OnClose", function(widget)
-        AceGUI:Release(widget)
-    end)
+    TrackWindow(AngryEra, "_generalExportWindow", frame)
 
     local editBox
     if encodedOptions then
@@ -924,7 +972,7 @@ local function AngryEra_ShowExportWindow(text, title, encodedOptions)
                 return
             end
             editBox:SetText(updatedText)
-            HighlightExportText(editBox)
+            HighlightExportText(editBox, frame)
         end)
     end
 
@@ -935,7 +983,7 @@ local function AngryEra_ShowExportWindow(text, title, encodedOptions)
     editBox:SetText(text)
     editBox:DisableButton(true)
     frame:AddChild(editBox)
-    HighlightExportText(editBox)
+    HighlightExportText(editBox, frame)
 end
 
 local function BuildEncodedExport(self, id, entityType, includeVariables)

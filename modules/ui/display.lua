@@ -26,15 +26,44 @@ local LibMustache = app.libs.LibMustache
 local currentGroup = nil
 local AUTO_HIDE_REVEAL_SECONDS = 3
 local AUTO_HIDE_FADE_SECONDS = 0.2
+local COMBAT_FADE_ALPHA = 0.1
+local updateFlasher, updateFlasher2
 
-local function SetDisplayAutoHideAlpha(self, alpha)
-    alpha = math.max(0, math.min(tonumber(alpha) or 1, 1))
+local function DisplayVisualState(self)
+    local state = self._displayVisualState
+    if type(state) ~= "table" then
+        local alpha = 1
+        if self.display_text and type(self.display_text.GetAlpha) == "function" then
+            alpha = tonumber(self.display_text:GetAlpha()) or alpha
+        end
+        state = {
+            BaseAlpha = math.max(0, math.min(alpha, 1)),
+            CombatFade = false,
+        }
+        self._displayVisualState = state
+    end
+    return state
+end
+
+local function ApplyDisplayVisualAlpha(self)
+    local state = DisplayVisualState(self)
+    local alpha = math.max(0, math.min(tonumber(state.BaseAlpha) or 1, 1))
+    if state.CombatFade == true then
+        alpha = math.min(alpha, COMBAT_FADE_ALPHA)
+    end
     if self.display_text and type(self.display_text.SetAlpha) == "function" then
         self.display_text:SetAlpha(alpha)
     end
     if self.mover and type(self.mover.SetAlpha) == "function" then
         self.mover:SetAlpha(alpha)
     end
+    return alpha
+end
+
+local function SetDisplayAutoHideAlpha(self, alpha)
+    alpha = math.max(0, math.min(tonumber(alpha) or 1, 1))
+    DisplayVisualState(self).BaseAlpha = alpha
+    return ApplyDisplayVisualAlpha(self)
 end
 
 local function DisplayAutoHideState(self)
@@ -152,13 +181,28 @@ function AngryEra:UpdateDisplayAutoHide(elapsed)
         return 1
     end
 
+    local visualState = DisplayVisualState(self)
+    if visualState.CombatFade == true then
+        if driver then
+            driver:SetScript("OnUpdate", nil)
+        end
+        return ApplyDisplayVisualAlpha(self)
+    end
+
     elapsed = type(elapsed) == "number" and math.max(elapsed, 0) or 0
     state.HoldRemaining = math.max((tonumber(state.HoldRemaining) or 0) - elapsed, 0)
 
     local textShown = type(text.IsShown) ~= "function" or text:IsShown()
     local shouldShow = not textShown or state.HoldRemaining > 0 or IsDisplayAutoHideHovered(self)
     local targetAlpha = shouldShow and 1 or 0
-    local currentAlpha = type(text.GetAlpha) == "function" and text:GetAlpha() or 1
+    local currentAlpha = visualState.BaseAlpha
+    if type(text.GetAlpha) == "function" then
+        local appliedAlpha = text:GetAlpha()
+        if type(appliedAlpha) == "number" then
+            currentAlpha = appliedAlpha
+            visualState.BaseAlpha = appliedAlpha
+        end
+    end
     currentAlpha = type(currentAlpha) == "number" and currentAlpha or 1
 
     if currentAlpha ~= targetAlpha then
@@ -183,7 +227,8 @@ function AngryEra:RevealDisplayForAutoHide(seconds)
 
     local state = DisplayAutoHideState(self)
     state.HoldRemaining = type(seconds) == "number" and math.max(seconds, 0) or AUTO_HIDE_REVEAL_SECONDS
-    if self.display_auto_hide_driver then
+    SetDisplayAutoHideAlpha(self, 1)
+    if self.display_auto_hide_driver and DisplayVisualState(self).CombatFade ~= true then
         self.display_auto_hide_driver:SetScript("OnUpdate", DisplayAutoHideDriver_OnUpdate)
     end
     self:UpdateDisplayAutoHide(0)
@@ -210,14 +255,52 @@ function AngryEra:RefreshDisplayAutoHide(reveal)
         return false
     end
 
-    if driver then
+    if driver and DisplayVisualState(self).CombatFade ~= true then
         driver:SetScript("OnUpdate", DisplayAutoHideDriver_OnUpdate)
     end
     if reveal == true then
         state.HoldRemaining = AUTO_HIDE_REVEAL_SECONDS
+        SetDisplayAutoHideAlpha(self, 1)
     end
     self:UpdateDisplayAutoHide(0)
     return true
+end
+
+--- Applies or clears the temporary in-combat opacity cap.
+-- Manual hidden/shown state is never changed. Auto-hide's logical opacity and
+-- reveal hold are paused so leaving combat restores the exact prior opacity,
+-- unless the user explicitly changed display settings while combat was active.
+-- @tparam boolean active
+-- @treturn boolean active
+function AngryEra:SetDisplayCombatFade(active)
+    local visualState = DisplayVisualState(self)
+    active = active == true and self.display_text ~= nil
+    if visualState.CombatFade == active then
+        return active
+    end
+    visualState.CombatFade = active
+    if self.display_auto_hide_driver then
+        self.display_auto_hide_driver:SetScript("OnUpdate", nil)
+    end
+    ApplyDisplayVisualAlpha(self)
+    if not active then
+        self:RefreshDisplayAutoHide(false)
+    end
+    return active
+end
+
+--- Reconciles the persisted combat-fade option with the player's live state.
+-- @treturn boolean active
+function AngryEra:RefreshDisplayCombatFade()
+    local inCombat = false
+    if type(UnitAffectingCombat) == "function" then
+        local called, result = pcall(UnitAffectingCombat, "player")
+        inCombat = called and result == true
+    elseif type(InCombatLockdown) == "function" then
+        local called, result = pcall(InCombatLockdown)
+        inCombat = called and result == true
+    end
+    return self:SetDisplayCombatFade(self:GetConfig("hideoncombat") == true and inCombat)
 end
 
 -- -------------------------
@@ -280,6 +363,9 @@ end
 
 --- Resets display frame position, lock state, and direction settings.
 function AngryEra:ResetPosition()
+    if not self.display_text or not self.mover or not self.frame then
+        return
+    end
     AngryAssign_State.display = {}
     AngryAssign_State.directionUp = false
     AngryAssign_State.locked = false
@@ -298,6 +384,9 @@ end
 --- Shows the on-screen assignment display.
 -- @tparam[opt=true] boolean revealAutoHide Start a fresh auto-hide reveal.
 function AngryEra:ShowDisplay(revealAutoHide)
+    if not self.display_text then
+        return
+    end
     self.display_text:Show()
     self:UpdateBackdrop()
     AngryAssign_State.display.hidden = false
@@ -306,6 +395,9 @@ end
 
 --- Hides the on-screen assignment display.
 function AngryEra:HideDisplay()
+    if not self.display_text then
+        return
+    end
     self.display_text:Hide()
     AngryAssign_State.display.hidden = true
     DisplayAutoHideState(self).HoldRemaining = 0
@@ -317,6 +409,9 @@ end
 
 --- Toggles the on-screen assignment display visibility.
 function AngryEra:ToggleDisplay()
+    if not self.display_text then
+        return
+    end
     if self.display_text:IsShown() then
         self:HideDisplay()
     else
@@ -326,6 +421,45 @@ end
 
 --- Creates and initializes the on-screen assignment frame/mover widgets.
 function AngryEra:CreateDisplay()
+    if
+        self.frame
+        and self.display_text
+        and self.mover
+        and self.display_auto_hide_driver
+        and self.display_auto_hide_hover
+    then
+        self._displayLifecycleGeneration = (self._displayLifecycleGeneration or 0) + 1
+        self._displayVisualState = {
+            BaseAlpha = 1,
+            CombatFade = false,
+        }
+        self._displayAutoHideState = nil
+        self.display_auto_hide_driver.owner = self
+        self.frame:Show()
+        if AngryAssign_State.display.hidden then
+            self.display_text:Hide()
+        else
+            self.display_text:Show()
+        end
+        if AngryAssign_State.locked then
+            self.mover:Hide()
+        else
+            self.mover:Show()
+        end
+        self:UpdateMedia()
+        self:UpdateDirection()
+        self:RefreshDisplayAutoHide(false)
+        self:RefreshDisplayCombatFade()
+        self:UpdateBackdrop()
+        return
+    end
+    self._displayLifecycleGeneration = (self._displayLifecycleGeneration or 0) + 1
+    self._displayVisualState = {
+        BaseAlpha = 1,
+        CombatFade = false,
+    }
+    updateFlasher = nil
+    updateFlasher2 = nil
     local frame = CreateFrame("Frame", nil, UIParent)
     frame:SetPoint("CENTER", 0, 0)
     frame:SetWidth(AngryAssign_State.display.width or 300)
@@ -455,6 +589,36 @@ function AngryEra:CreateDisplay()
     self:UpdateMedia()
     self:UpdateDirection()
     self:RefreshDisplayAutoHide(false)
+    self:RefreshDisplayCombatFade()
+    self:UpdateBackdrop()
+end
+
+--- Stops display-owned animation/update work and hides the retained frame.
+-- WoW frames cannot be destroyed, so a later enable reuses this exact set
+-- instead of leaking another anonymous UIParent child.
+function AngryEra:DestroyDisplay()
+    self._displayLifecycleGeneration = (self._displayLifecycleGeneration or 0) + 1
+    if self.display_auto_hide_driver then
+        self.display_auto_hide_driver:SetScript("OnUpdate", nil)
+        self.display_auto_hide_driver.owner = nil
+    end
+    if self.display_auto_hide_hover then
+        self.display_auto_hide_hover:Hide()
+    end
+    if updateFlasher and type(updateFlasher.Stop) == "function" then
+        updateFlasher:Stop()
+    end
+    if updateFlasher2 and type(updateFlasher2.Stop) == "function" then
+        updateFlasher2:Stop()
+    end
+    local visualState = DisplayVisualState(self)
+    visualState.BaseAlpha = 1
+    visualState.CombatFade = false
+    ApplyDisplayVisualAlpha(self)
+    DisplayAutoHideState(self).HoldRemaining = 0
+    if self.frame and type(self.frame.Hide) == "function" then
+        self.frame:Hide()
+    end
 end
 
 function AngryEra:ToggleLock()
@@ -508,6 +672,9 @@ function AngryEra:UpdateDirection()
 end
 
 function AngryEra:UpdateBackdrop()
+    if not self.display_text or not self.backdrop then
+        return
+    end
     local first, last
     for lineIndex, visibleLine in ipairs(self.display_text.visibleLines) do
         local messageInfo = self.display_text.historyBuffer:GetEntryAtIndex(lineIndex)
@@ -538,7 +705,17 @@ end
 
 local editFontName, editFontHeight, editFontFlags
 function AngryEra:UpdateMedia()
-    local fontName = LSM:Fetch("font", AngryEra:GetConfig("fontName"))
+    if not self.display_text then
+        return
+    end
+    local requestedFont = AngryEra:GetConfig("fontName")
+    local fetched, fontName = pcall(LSM.Fetch, LSM, "font", requestedFont)
+    if not fetched or type(fontName) ~= "string" or fontName == "" then
+        fetched, fontName = pcall(LSM.Fetch, LSM, "font", AngryEra.core.configDefaults.fontName)
+    end
+    if not fetched or type(fontName) ~= "string" or fontName == "" then
+        return
+    end
     local fontHeight = AngryEra:GetConfig("fontHeight")
     local fontFlags = AngryEra:GetConfig("fontFlags")
 
@@ -564,8 +741,11 @@ function AngryEra:UpdateMedia()
         end
     end
 
+    local generation = self._displayLifecycleGeneration
     C_Timer.After(0.01, function()
-        self:UpdateBackdrop()
+        if generation == self._displayLifecycleGeneration and self.display_text then
+            self:UpdateBackdrop()
+        end
     end)
 end
 
@@ -573,8 +753,10 @@ end
 -- Glow notification
 -- -------------------------
 
-local updateFlasher, updateFlasher2 = nil, nil
 function AngryEra:DisplayUpdateNotification()
+    if not self.display_glow or not self.display_glow2 then
+        return
+    end
     if updateFlasher == nil then
         updateFlasher = self.display_glow:CreateAnimationGroup()
 
@@ -720,6 +902,8 @@ local function BuildLayoutProviders(vars)
     local classByName = {}
     local classMembers = {}
     local subgroupMembers = {}
+    local fullNames = {}
+    local shortNames = {}
     IterateGroupMembers(function(_, fullName, _, subgroup, memberClass, online, isDead)
         if type(fullName) ~= "string" or type(memberClass) ~= "string" then
             return false
@@ -727,6 +911,14 @@ local function BuildLayoutProviders(vars)
         local class = memberClass:upper()
         local fullLower = fullName:lower()
         local shortLower = fullLower:match("^([^-]+)")
+        fullNames[fullLower] = fullName
+        if shortLower then
+            if shortNames[shortLower] == nil then
+                shortNames[shortLower] = fullName
+            elseif shortNames[shortLower] ~= false and shortNames[shortLower]:lower() ~= fullLower then
+                shortNames[shortLower] = false
+            end
+        end
         classByName[fullLower] = class
         if shortLower and classByName[shortLower] == nil then
             classByName[shortLower] = class
@@ -758,8 +950,25 @@ local function BuildLayoutProviders(vars)
         return name
     end
 
+    local function ResolveRosterName(name)
+        if type(name) ~= "string" or name == "" then
+            return nil
+        end
+        local exact = fullNames[name:lower()]
+        if exact then
+            return exact
+        end
+        if name:find("-", 1, true) then
+            return nil
+        end
+        local unique = shortNames[name:lower()]
+        return type(unique) == "string" and unique or nil
+    end
+
     return {
-        ResolvePriorityValue = rosterHelpers and rosterHelpers.ResolvePriorityValue,
+        ResolvePriorityValue = rosterHelpers
+            and (rosterHelpers.ResolvePriorityFullName or rosterHelpers.ResolvePriorityValue),
+        ResolveRosterName = ResolveRosterName,
         ClassMembers = function(class)
             return classMembers[class] or {}
         end,
@@ -952,6 +1161,9 @@ end
 
 --- Rebuilds and draws the active display page.
 function AngryEra:UpdateDisplayed()
+    if not self.display_text then
+        return
+    end
     local displayedId = AngryAssign_State.displayed
     local page = AngryAssign_Pages[displayedId]
     if not page then
@@ -1088,8 +1300,11 @@ function AngryEra:UpdateDisplayed()
         self.display_text:AddMessage(line)
     end
 
+    local generation = self._displayLifecycleGeneration
     C_Timer.After(0.01, function()
-        self:UpdateBackdrop()
+        if generation == self._displayLifecycleGeneration and self.display_text then
+            self:UpdateBackdrop()
+        end
     end)
 
     local displayChanged, displayIdentity = CaptureDisplayAutoHideContent(self, renderedPage, displayedId, text)

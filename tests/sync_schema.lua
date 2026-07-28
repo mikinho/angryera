@@ -127,6 +127,80 @@ AssertEqual(schema.VERSION, 1, "schema version")
 AssertEqual(schema.LIMITS.EntityCount, 512, "entity bound")
 AssertEqual(schema.LIMITS.HierarchyDepth, 32, "hierarchy depth bound")
 
+local editableValid, editableError = schema.ValidateEditableEntityFields("page", {
+    Name = "Patchwerk",
+    Contents = string.rep("x", schema.LIMITS.ContentsBytes),
+    Vars = string.rep("v", schema.LIMITS.VarsBytes),
+})
+Assert(editableValid and editableError == nil, "editable page accepts exact text limits")
+
+editableValid, editableError = schema.ValidateEditableEntityFields("category", {
+    Name = string.rep("n", schema.LIMITS.NameBytes),
+    Vars = "",
+})
+Assert(editableValid and editableError == nil, "editable category accepts exact name limit")
+
+for _, editableCase in ipairs({
+    {
+        name = "unsupported kind",
+        kind = "note",
+        fields = { Name = "Invalid", Vars = "" },
+        expected = "invalid-entity-kind",
+    },
+    {
+        name = "non-table fields",
+        kind = "page",
+        fields = "Invalid",
+        expected = "invalid-entity",
+    },
+    {
+        name = "blank name",
+        kind = "page",
+        fields = { Name = " ", Contents = "", Vars = "" },
+        expected = "invalid-name",
+    },
+    {
+        name = "untrimmed name",
+        kind = "page",
+        fields = { Name = " Patchwerk", Contents = "", Vars = "" },
+        expected = "invalid-name",
+    },
+    {
+        name = "control byte in name",
+        kind = "page",
+        fields = { Name = "Patch\nwerk", Contents = "", Vars = "" },
+        expected = "invalid-name",
+    },
+    {
+        name = "oversized name",
+        kind = "page",
+        fields = { Name = string.rep("n", schema.LIMITS.NameBytes + 1), Contents = "", Vars = "" },
+        expected = "invalid-name",
+    },
+    {
+        name = "oversized contents",
+        kind = "page",
+        fields = {
+            Name = "Patchwerk",
+            Contents = string.rep("x", schema.LIMITS.ContentsBytes + 1),
+            Vars = "",
+        },
+        expected = "invalid-contents",
+    },
+    {
+        name = "oversized variables",
+        kind = "category",
+        fields = {
+            Name = "Naxxramas",
+            Vars = string.rep("v", schema.LIMITS.VarsBytes + 1),
+        },
+        expected = "invalid-vars",
+    },
+}) do
+    editableValid, editableError = schema.ValidateEditableEntityFields(editableCase.kind, editableCase.fields)
+    AssertError(editableValid, editableError, editableCase.expected, editableCase.name)
+end
+
 local page = MakeEntity("page", 10, SyncId("category", 1), 1)
 local valid, validationError = schema.ValidateEntity(page, TestHash)
 Assert(valid and validationError == nil, "valid page record")

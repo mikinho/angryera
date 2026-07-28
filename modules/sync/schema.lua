@@ -202,6 +202,40 @@ local function ValidateAuthor(value)
         and value:find("-", 1, true) ~= nil
 end
 
+--- Validates the user-editable fields shared by local and wire entities.
+-- Keeping this check independent of revision metadata lets CRUD/import paths
+-- reject values before mutating SavedVariables, while the canonical wire
+-- validator below remains the final transport boundary.
+-- @tparam string kind Either `"page"` or `"category"`.
+-- @tparam table fields Name, Vars, and (for pages) Contents.
+-- @treturn boolean valid
+-- @treturn string|nil errorCode
+function schema.ValidateEditableEntityFields(kind, fields)
+    if kind ~= "page" and kind ~= "category" then
+        return false, "invalid-entity-kind"
+    end
+    if type(fields) ~= "table" or getmetatable(fields) ~= nil then
+        return false, "invalid-entity"
+    end
+
+    local name = fields.Name
+    if
+        not IsBoundedString(name, schema.LIMITS.NameBytes, false)
+        or name:match("^%s*$")
+        or name ~= name:match("^%s*(.-)%s*$")
+        or ContainsControlByte(name)
+    then
+        return false, "invalid-name"
+    end
+    if not IsBoundedString(fields.Vars, schema.LIMITS.VarsBytes, true) then
+        return false, "invalid-vars"
+    end
+    if kind == "page" and not IsBoundedString(fields.Contents, schema.LIMITS.ContentsBytes, true) then
+        return false, "invalid-contents"
+    end
+    return true
+end
+
 local function EncodeString(value)
     return "S" .. tostring(#value) .. ":" .. value
 end
@@ -295,19 +329,9 @@ local function ValidateEntityShape(entity, requireRevisionId)
     if not IsInteger(entity.Order, 1, schema.LIMITS.Order) then
         return false, "invalid-order"
     end
-    if
-        not IsBoundedString(entity.Name, schema.LIMITS.NameBytes, false)
-        or entity.Name:match("^%s*$")
-        or entity.Name ~= entity.Name:match("^%s*(.-)%s*$")
-        or ContainsControlByte(entity.Name)
-    then
-        return false, "invalid-name"
-    end
-    if not IsBoundedString(entity.Vars, schema.LIMITS.VarsBytes, true) then
-        return false, "invalid-vars"
-    end
-    if entity.Kind == "page" and not IsBoundedString(entity.Contents, schema.LIMITS.ContentsBytes, true) then
-        return false, "invalid-contents"
+    local editable, editableError = schema.ValidateEditableEntityFields(entity.Kind, entity)
+    if not editable then
+        return false, editableError
     end
 
     return true

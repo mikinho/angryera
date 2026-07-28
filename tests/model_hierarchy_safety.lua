@@ -4,6 +4,7 @@ local removedCategories = {}
 local removedPages = {}
 local clearCalls = {}
 local displayedRepublishes = {}
+local printedMessages = {}
 
 local AngryEra = {
     utils = {
@@ -84,6 +85,9 @@ end
 
 function AngryEra:UpdateDisplayed() end
 function AngryEra:UpdateTree() end
+function AngryEra:Print(message)
+    printedMessages[#printedMessages + 1] = message
+end
 
 AngryAssign_State = {
     tree = {
@@ -172,5 +176,48 @@ assert(
     #displayedRepublishes == 1 and displayedRepublishes[1].Id == 20 and displayedRepublishes[1].Force == true,
     "Sibling subtree deletion should republish the displayed page exactly once"
 )
+
+AngryAssign_Categories = {}
+for id = 1, 32 do
+    AngryAssign_Categories[id] = {
+        Id = id,
+        Name = "Depth " .. id,
+        CategoryId = id > 1 and id - 1 or nil,
+    }
+end
+AngryAssign_Pages = {
+    [99] = {
+        Id = 99,
+        Name = "Depth boundary",
+        Contents = "",
+    },
+}
+AngryAssign_State.displayed = nil
+printedMessages = {}
+
+local assigned, assignError = AngryEra:AssignCategory(99, 31)
+assert(assigned and not assignError, "a page should fit at the exact hierarchy depth limit")
+assert(AngryAssign_Pages[99].CategoryId == 31, "the exact-limit page move should be retained")
+
+assigned, assignError = AngryEra:AssignCategory(99, 32)
+assert(not assigned and assignError == "hierarchy-too-deep", "a page should not exceed the hierarchy depth limit")
+assert(AngryAssign_Pages[99].CategoryId == 31, "a rejected page move must preserve its previous parent")
+assert(
+    printedMessages[#printedMessages]:find("cannot exceed 32 levels", 1, true),
+    "an oversized page move should explain the hierarchy limit"
+)
+
+AngryAssign_Categories[100] = { Id = 100, Name = "Subtree root" }
+AngryAssign_Categories[101] = { Id = 101, Name = "Subtree child", CategoryId = 100 }
+assigned, assignError = AngryEra:AssignCategory(-100, 31)
+assert(
+    not assigned and assignError == "hierarchy-too-deep",
+    "moving a category subtree should account for every descendant"
+)
+assert(AngryAssign_Categories[100].CategoryId == nil, "a rejected subtree move must preserve its previous parent")
+
+assigned, assignError = AngryEra:AssignCategory(-100, 30)
+assert(assigned and not assignError, "a category subtree should fit at the exact hierarchy depth limit")
+assert(AngryAssign_Categories[100].CategoryId == 30, "the exact-limit subtree move should be retained")
 
 print("Model hierarchy safety tests passed.")

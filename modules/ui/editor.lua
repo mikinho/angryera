@@ -93,7 +93,11 @@ local WINDOW_BACKDROP = {
 -- through it, so an opaque texture goes underneath and the backdrop is
 -- recolored to match instead of tinting the world behind it.
 local function DarkenWindow(f)
-    local bg = f:CreateTexture(nil, "BACKGROUND")
+    local bg = f._angryEraDarkBackground
+    if not bg then
+        bg = f:CreateTexture(nil, "BACKGROUND")
+        f._angryEraDarkBackground = bg
+    end
     bg:SetAllPoints(f)
     bg:SetColorTexture(0, 0, 0, 0.95)
 
@@ -104,13 +108,69 @@ local function DarkenWindow(f)
     f:SetBackdropColor(0, 0, 0, 1)
 end
 
+local function RemoveOwnedEditorSpecialFrame(name, frame)
+    if type(UISpecialFrames) == "table" and type(name) == "string" then
+        for index = #UISpecialFrames, 1, -1 do
+            if UISpecialFrames[index] == name then
+                table.remove(UISpecialFrames, index)
+            end
+        end
+    end
+    if type(name) == "string" and (frame == nil or rawget(_G, name) == frame) then
+        rawset(_G, name, nil)
+    end
+end
+
+local function ReleaseOwnedEditorWindow(owner, field, specialName, widget)
+    if not widget or widget._angryEraEditorWindowReleased == true then
+        return false
+    end
+    widget._angryEraEditorWindowReleased = true
+    if owner[field] == widget then
+        owner[field] = nil
+    end
+    if field == "iconpicker" then
+        owner.iconpicker_scroll = nil
+    end
+    RemoveOwnedEditorSpecialFrame(specialName, widget.frame)
+    AceGUI:Release(widget)
+    return true
+end
+
+local function TrackOwnedEditorWindow(owner, field, specialName, widget)
+    ReleaseOwnedEditorWindow(owner, field, specialName, owner[field])
+    widget._angryEraEditorWindowReleased = false
+    owner[field] = widget
+    if type(specialName) == "string" then
+        RemoveOwnedEditorSpecialFrame(specialName)
+        rawset(_G, specialName, widget.frame)
+        if type(UISpecialFrames) == "table" then
+            table.insert(UISpecialFrames, specialName)
+        end
+    end
+    widget:SetCallback("OnClose", function(closed)
+        ReleaseOwnedEditorWindow(owner, field, specialName, closed)
+    end)
+end
+
+--- Releases the bulk-management AceGUI window, if open.
+-- @treturn boolean closed
+function AngryEra:CloseBulkManagement()
+    return ReleaseOwnedEditorWindow(self, "_bulkManagementWindow", "AngryEra_BulkManage", self._bulkManagementWindow)
+end
+
+--- Releases the optional icon-picker AceGUI window, if open.
+-- @treturn boolean closed
+function AngryEra:CloseIconPicker()
+    return ReleaseOwnedEditorWindow(self, "iconpicker", nil, self.iconpicker)
+end
+
 -- --------------------------
 -- Bulk Management      --
 -- --------------------------
 
 --- Opens the bulk-management UI for selecting and deleting pages/categories.
 function AngryEra:ShowBulkManagement()
-    -- CHANGE: Use "Window" instead of "Frame" for better dialog behavior
     local frame = AceGUI:Create("Window")
     frame:SetTitle("Bulk Manage Pages")
     frame:SetLayout("Flow")
@@ -129,28 +189,8 @@ function AngryEra:ShowBulkManagement()
         end
 
         DarkenWindow(f)
-
-        -- Assign a global name so UISpecialFrames can find it
-        local globalName = "AngryEra_BulkManage"
-        _G[globalName] = f
-
-        -- Register for Escape key closing
-        local found = false
-        for _, v in ipairs(UISpecialFrames) do
-            if v == globalName then
-                found = true
-                break
-            end
-        end
-        if not found then
-            tinsert(UISpecialFrames, globalName)
-        end
     end
-
-    -- Ensure the widget is released (cleaned up) when closed
-    frame:SetCallback("OnClose", function(widget)
-        AceGUI:Release(widget)
-    end)
+    TrackOwnedEditorWindow(self, "_bulkManagementWindow", "AngryEra_BulkManage", frame)
 
     -- Fixed height for scroll area
     local scroll = AceGUI:Create("ScrollFrame")
@@ -365,10 +405,10 @@ function AngryEra:ShowBulkManagement()
         end
 
         AngryEra:Print(string.format("Deleted %d pages and %d categories.", pCount, cCount))
-        frame:Hide()
         if AngryEra.window then
             AngryEra:UpdateTree()
         end
+        AngryEra:CloseBulkManagement()
     end)
     btnGroup:AddChild(delBtn)
 
@@ -377,7 +417,7 @@ function AngryEra:ShowBulkManagement()
     closeBtn:SetText("Close")
     closeBtn:SetRelativeWidth(0.30)
     closeBtn:SetCallback("OnClick", function()
-        frame:Hide()
+        AngryEra:CloseBulkManagement()
     end)
     btnGroup:AddChild(closeBtn)
 end
@@ -950,21 +990,24 @@ local function AngryEra_RestorePage(widget, event, value)
         { text = "Restore Version", isTitle = true, notCheckable = true },
     }
 
-    if page.History then
-        for i, entry in ipairs(page.History) do
-            local dateStr = date("%m/%d %H:%M", entry.timestamp)
-            local author = entry.author or "?"
-            local contentPreview = entry.content:gsub("\n", " "):sub(1, 20)
+    if type(page.History) == "table" then
+        for _, entry in ipairs(page.History) do
+            if type(entry) == "table" and type(entry.timestamp) == "number" and type(entry.content) == "string" then
+                local dateOk, dateStr = pcall(date, "%m/%d %H:%M", entry.timestamp)
+                dateStr = dateOk and type(dateStr) == "string" and dateStr or "Unknown date"
+                local author = type(entry.author) == "string" and entry.author or "?"
+                local contentPreview = entry.content:gsub("\n", " "):sub(1, 20)
 
-            table.insert(menu, {
-                text = string.format("|cff999999%s|r |cffffd100%s|r: %s...", dateStr, author, contentPreview),
-                func = function()
-                    AngryEra.window.text:SetText(entry.content)
-                    AngryEra.window.text.button:Enable()
-                    AngryEra_TextChanged()
-                end,
-                notCheckable = true,
-            })
+                table.insert(menu, {
+                    text = string.format("|cff999999%s|r |cffffd100%s|r: %s...", dateStr, author, contentPreview),
+                    func = function()
+                        AngryEra.window.text:SetText(entry.content)
+                        AngryEra.window.text.button:Enable()
+                        AngryEra_TextChanged()
+                    end,
+                    notCheckable = true,
+                })
+            end
         end
     end
 
@@ -1932,6 +1975,7 @@ end
 -- Owns Escape/X/raw-Hide handling for auxiliary editors. Dirty raw frames are
 -- immediately reshown before the discard prompt, so Blizzard never advances
 -- from the child to the suspended main window during the same Escape pass.
+local activeEditorCloseGuards = {}
 AttachEditorCloseGuard = function(data)
     local owner = data.Owner
     local escapeEntry = RegisterAuxiliaryEscapeFrame(owner)
@@ -1956,6 +2000,7 @@ AttachEditorCloseGuard = function(data)
             return
         end
         finished = true
+        activeEditorCloseGuards[guard] = nil
         CloseLayoutModal(owner)
         if owner and owner.SetScript then
             owner:SetScript("OnHide", previousOnHide)
@@ -2013,12 +2058,35 @@ AttachEditorCloseGuard = function(data)
         end)
     end
 
+    activeEditorCloseGuards[guard] = true
     return guard
 end
 
 layoutEditor.AttachEditorCloseGuard = AttachEditorCloseGuard
 layoutEditor.ShowTextPopup = AngryEra_LayoutTextPopup
 layoutEditor.ShowConfirmPopup = AngryEra_LayoutConfirmPopup
+
+--- Force-closes auxiliary editors during addon teardown.
+-- Normal user closes still go through dirty confirmation; disabling the addon
+-- must instead release roster watchers, modal blockers, and Escape globals.
+-- @treturn number closed
+function layoutEditor.CloseAllEditors()
+    local pending = {}
+    for guard in pairs(activeEditorCloseGuards) do
+        pending[#pending + 1] = guard
+    end
+    for _, guard in ipairs(pending) do
+        guard:Finish()
+    end
+    local closed = #pending
+    if type(AngryEra.CloseBulkManagement) == "function" and AngryEra:CloseBulkManagement() then
+        closed = closed + 1
+    end
+    if type(AngryEra.CloseIconPicker) == "function" and AngryEra:CloseIconPicker() then
+        closed = closed + 1
+    end
+    return closed
+end
 
 local function NormalizeLayoutTextDraft(text)
     return type(text) == "string" and text:gsub("\r\n", "\n"):gsub("\r", "\n") or ""
@@ -2306,10 +2374,22 @@ function layoutEditor.SaveVariableSource(reference, rawVariables, expectedVariab
     if not AngryEra:CanEditEntityLocally(entity) then
         return false, "Permission denied.", false
     end
+    if rawVariables == nil then
+        rawVariables = ""
+    end
     if expectedVariables ~= nil then
         local currentVariables = CurrentLayoutVars(reference, entity, id)
         if currentVariables ~= expectedVariables then
             return false, "variable-source-changed", false
+        end
+    end
+    if reference.EntityType == "category" then
+        local valid, validationError = AngryEra:ValidateLocalEntityFields("category", {
+            Name = type(entity.Name) == "string" and entity.Name or "",
+            Vars = rawVariables,
+        })
+        if not valid then
+            return false, validationError, false
         end
     end
 
@@ -2336,7 +2416,7 @@ local function EffectiveLayoutVariables(reference, entity, vars)
         return merged
     end
     -- Match display rendering: a damaged ancestor must not hide otherwise valid
-    -- page variables or make editor capacity less strict than Apply to Raid.
+    -- page variables or make editor capacity less strict than Apply.
     local pageOnly, pageError = variableHelpers.MergeVariableLayers({}, vars)
     return pageOnly or {}, mergeError or pageError
 end
@@ -2412,6 +2492,13 @@ function layoutEditor.SaveSource(reference, source)
 
     if reference.EntityType ~= "category" then
         return AngryEra:UpdatePageVars(id, newVars)
+    end
+    local valid, validationError = AngryEra:ValidateLocalEntityFields("category", {
+        Name = type(entity.Name) == "string" and entity.Name or "",
+        Vars = newVars,
+    })
+    if not valid then
+        return false, validationError, false
     end
     entity.Vars = newVars
     AngryEra:CategoryUpdated(id)
@@ -2654,7 +2741,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         end
         if proposed then
             self:Print(
-                "Submitted the layout change to the raid leader. Apply to Raid is available after it is accepted and displayed."
+                "Submitted the layout change to the raid leader. Apply is available after it is accepted and displayed."
             )
             return true, true, savedEffectiveSource or ""
         end
@@ -2690,8 +2777,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
 
     local function TargetIsDisplayedPage()
         if reference.EntityType == "category" then
-            return false,
-                "display a descendant page that inherits this layout, then use Apply to Raid from that page's editor"
+            return false, "display a descendant page that inherits this layout, then use Apply from that page's editor"
         end
         local target = layoutEditor.ResolveEntity(reference)
         local displayedId = type(AngryAssign_State) == "table" and AngryAssign_State.displayed or nil
@@ -3485,6 +3571,15 @@ function AngryEra:CreateWindow()
     end
     window:Hide()
     AngryEra.window = window
+    window:SetCallback("OnClose", function(widget)
+        AngryEra:CloseIconPicker()
+        widget:Hide()
+    end)
+    if type(window.frame.HookScript) == "function" then
+        window.frame:HookScript("OnHide", function()
+            AngryEra:CloseIconPicker()
+        end)
+    end
 
     -- Move content area up 20px relative to the title bar
     window.content:ClearAllPoints()
@@ -3745,6 +3840,7 @@ function AngryEra:CreateIconButton(name, texture)
 end
 
 function AngryEra:CreateIconPicker()
+    self:CloseIconPicker()
     local window = AceGUI:Create("Window")
     window:SetTitle("Insert an Icon")
     window:SetLayout("List")
@@ -3757,7 +3853,7 @@ function AngryEra:CreateIconPicker()
     window.title:SetScript("OnMouseDown", nil)
     window.title:SetScript("OnMouseUp", nil)
     window:EnableResize(false)
-    self.iconpicker = window
+    TrackOwnedEditorWindow(self, "iconpicker", nil, window)
 
     local group = AceGUI:Create("SimpleGroup")
     group:SetLayout("Flow")

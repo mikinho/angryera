@@ -163,6 +163,37 @@ local valid, validationError = serialization.ValidateEncodedCategoryPayload(expo
 assert(valid, validationError)
 
 valid, validationError = serialization.ValidateEncodedPagePayload({
+    Name = string.rep("n", 100),
+    Contents = string.rep("x", 20000),
+    Vars = string.rep("v", 5000),
+}, "Page")
+assert(valid, validationError)
+
+valid, validationError = serialization.ValidateEncodedPagePayload({
+    Name = string.rep("n", 101),
+    Contents = "",
+}, "Page")
+assert(not valid and validationError:find("at most 100 bytes", 1, true), "Oversized imported names should be rejected")
+
+valid, validationError = serialization.ValidateEncodedPagePayload({
+    Name = "Bad\nName",
+    Contents = "",
+}, "Page")
+assert(
+    not valid and validationError:find("without control characters", 1, true),
+    "Control characters in imported names should be rejected"
+)
+
+valid, validationError = serialization.ValidateEncodedPagePayload({
+    Name = "Oversized contents",
+    Contents = string.rep("x", 20001),
+}, "Page")
+assert(
+    not valid and validationError:find("maximum page-content size", 1, true),
+    "Oversized imported page contents should be rejected"
+)
+
+valid, validationError = serialization.ValidateEncodedPagePayload({
     Name = "Invalid flag",
     Contents = "",
     VariablesIncluded = "false",
@@ -239,6 +270,72 @@ local cyclic = {
 cyclic.Children[1] = cyclic
 valid, validationError = serialization.ValidateEncodedCategoryPayload(cyclic, "Category")
 assert(not valid and validationError:find("cyclic", 1, true), "Cyclic category imports should be rejected")
+
+local exactDepthCategory = {
+    Type = "Category",
+    Name = "Depth 1",
+    Children = {},
+}
+local exactDepthParent = exactDepthCategory
+for depth = 2, 31 do
+    local child = {
+        Type = "Category",
+        Name = "Depth " .. depth,
+        Children = {},
+    }
+    exactDepthParent.Children[1] = child
+    exactDepthParent = child
+end
+exactDepthParent.Children[1] = {
+    Type = "Page",
+    Name = "Depth 32 page",
+    Contents = "",
+}
+valid, validationError = serialization.ValidateEncodedCategoryPayload(exactDepthCategory, "Category")
+assert(valid, validationError)
+
+local tooDeepCategory = exactDepthParent
+tooDeepCategory.Children[1] = {
+    Type = "Category",
+    Name = "Depth 32",
+    Children = {
+        {
+            Type = "Page",
+            Name = "Depth 33 page",
+            Contents = "",
+        },
+    },
+}
+valid, validationError = serialization.ValidateEncodedCategoryPayload(exactDepthCategory, "Category")
+assert(
+    not valid and validationError:find("maximum hierarchy depth", 1, true),
+    "Imported pages should count toward the complete hierarchy depth limit"
+)
+
+local maximumEntityCategory = {
+    Type = "Category",
+    Name = "Maximum entities",
+    Children = {},
+}
+for index = 1, 511 do
+    maximumEntityCategory.Children[index] = {
+        Type = "Page",
+        Name = "Page " .. index,
+        Contents = "",
+    }
+end
+valid, validationError = serialization.ValidateEncodedCategoryPayload(maximumEntityCategory, "Category")
+assert(valid, validationError)
+maximumEntityCategory.Children[512] = {
+    Type = "Page",
+    Name = "One page too many",
+    Contents = "",
+}
+valid, validationError = serialization.ValidateEncodedCategoryPayload(maximumEntityCategory, "Category")
+assert(
+    not valid and validationError:find("maximum category entity count", 1, true),
+    "Category imports must not exceed the synchronization entity budget"
+)
 
 local validPage = {
     Type = "Page",

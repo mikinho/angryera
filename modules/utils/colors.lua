@@ -11,6 +11,14 @@ AngryEra.utils = AngryEra.utils or {}
 AngryEra.utils.colors = {}
 local colors = AngryEra.utils.colors
 
+local function ClampColorChannel(value, default)
+    value = tonumber(value)
+    if not value or value ~= value or value == math.huge or value == -math.huge then
+        return default
+    end
+    return math.max(0, math.min(value, 1))
+end
+
 colors.ColorTable = {
     ["|cblue"] = "|cff00cbf4",
     ["|cdeathknight"] = "|cffc41f3b",
@@ -37,18 +45,21 @@ colors.ColorTable = {
 }
 
 function colors.RGBToHex(r, g, b, a)
-    r = math.ceil(255 * r)
-    g = math.ceil(255 * g)
-    b = math.ceil(255 * b)
+    r = math.ceil(255 * ClampColorChannel(r, 1))
+    g = math.ceil(255 * ClampColorChannel(g, 1))
+    b = math.ceil(255 * ClampColorChannel(b, 1))
     if a == nil then
         return string.format("%02x%02x%02x", r, g, b)
     else
-        a = math.ceil(255 * a)
+        a = math.ceil(255 * ClampColorChannel(a, 1))
         return string.format("%02x%02x%02x%02x", r, g, b, a)
     end
 end
 
 function colors.HexToRGB(hex)
+    if type(hex) ~= "string" or (#hex ~= 6 and #hex ~= 8) or not hex:match("^%x+$") then
+        hex = "ffffff"
+    end
     if string.len(hex) == 8 then
         return tonumber("0x" .. hex:sub(1, 2)) / 255,
             tonumber("0x" .. hex:sub(3, 4)) / 255,

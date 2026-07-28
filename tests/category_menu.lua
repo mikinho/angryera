@@ -67,6 +67,19 @@ function AngryEra:CanEditEntityLocally()
     return editable
 end
 
+function AngryEra:ValidateLocalEntityFields(kind, fields)
+    if kind ~= "category" or type(fields.Name) ~= "string" or fields.Name == "" then
+        return false, "The page or category data is invalid."
+    end
+    if type(fields.Vars) ~= "string" then
+        return false, "Variables and metadata must be text."
+    end
+    if #fields.Vars > 5000 then
+        return false, "Variables and metadata must be 5,000 bytes or less."
+    end
+    return true
+end
+
 local pinned = {}
 function AngryEra:IsPinned(category)
     return pinned[category.Id] == true
@@ -455,6 +468,29 @@ function app.libs.AceGUI.Create(_, widgetType)
         function widget.frame:SetResizeBounds(width, height)
             self.resizeBounds[#self.resizeBounds + 1] = { width, height }
         end
+        function widget.frame:CreateTexture()
+            return setmetatable({}, {
+                __index = function()
+                    return function() end
+                end,
+            })
+        end
+        for _, method in ipairs({
+            "ClearAllPoints",
+            "HookScript",
+            "SetBackdrop",
+            "SetBackdropColor",
+            "SetFrameStrata",
+            "SetMovable",
+            "SetParent",
+            "SetPoint",
+            "SetToplevel",
+        }) do
+            widget.frame[method] = function() end
+        end
+        widget.title = {
+            SetScript = function() end,
+        }
     end
     function widget:SetText(text)
         self.text = text
@@ -483,8 +519,33 @@ function app.libs.AceGUI.Create(_, widgetType)
     function widget:SetFullWidth(value)
         self.fullWidth = value
     end
+    function widget:SetFullHeight(value)
+        self.fullHeight = value
+    end
+    function widget:SetRelativeWidth(value)
+        self.relativeWidth = value
+    end
+    function widget:SetType(value)
+        self.widgetType = value
+    end
+    function widget:SetValue(value)
+        self.value = value
+    end
+    function widget:GetValue()
+        return self.value
+    end
+    function widget:ReleaseChildren()
+        self.children = {}
+    end
     function widget:DisableButton(value)
         self.buttonDisabled = value
+    end
+    function widget:SetImage(value)
+        self.imageValue = value
+    end
+    function widget:SetImageSize(width, height)
+        self.imageWidth = width
+        self.imageHeight = height
     end
     function widget:SetUserData(key, value)
         self.userdata[key] = value
@@ -502,7 +563,9 @@ function app.libs.AceGUI.Create(_, widgetType)
     return widget
 end
 function app.libs.AceGUI:Release(widget)
+    assert(not widget.released, "owned AceGUI windows should be released exactly once")
     widget.released = true
+    widget.releaseCount = (widget.releaseCount or 0) + 1
 end
 
 _G.UISpecialFrames = {}
@@ -605,6 +668,59 @@ assert(
 assert(#UISpecialFrames == 0, "saving removes the variable editor's Escape registration")
 assert(_G[variableEscapeName] == nil, "saving releases the variable editor's temporary global frame")
 AngryAssign_Categories[5].Vars = nil
+
+AngryEra:ShowBulkManagement()
+local firstBulkWindow = AngryEra._bulkManagementWindow
+assert(
+    firstBulkWindow
+        and _G.AngryEra_BulkManage == firstBulkWindow.frame
+        and #UISpecialFrames == 1
+        and UISpecialFrames[1] == "AngryEra_BulkManage",
+    "bulk management should own one tracked Escape window"
+)
+AngryEra:ShowBulkManagement()
+local secondBulkWindow = AngryEra._bulkManagementWindow
+assert(
+    firstBulkWindow.released
+        and firstBulkWindow.releaseCount == 1
+        and secondBulkWindow ~= firstBulkWindow
+        and #UISpecialFrames == 1
+        and _G.AngryEra_BulkManage == secondBulkWindow.frame,
+    "reopening bulk management should release the prior window without duplicating Escape state"
+)
+secondBulkWindow.callbacks.OnClose(secondBulkWindow)
+secondBulkWindow.callbacks.OnClose(secondBulkWindow)
+assert(
+    secondBulkWindow.releaseCount == 1
+        and AngryEra._bulkManagementWindow == nil
+        and _G.AngryEra_BulkManage == nil
+        and #UISpecialFrames == 0,
+    "closing bulk management should release exactly once and remove its global registration"
+)
+
+local previousMainWindow = AngryEra.window
+AngryEra.window = { frame = {} }
+AngryEra:CreateIconPicker()
+local firstIconPicker = AngryEra.iconpicker
+AngryEra:CreateIconPicker()
+assert(
+    firstIconPicker.released and firstIconPicker.releaseCount == 1 and AngryEra.iconpicker ~= firstIconPicker,
+    "reopening the icon picker should release its prior AceGUI window"
+)
+local teardownIconPicker = AngryEra.iconpicker
+AngryEra:ShowBulkManagement()
+local teardownBulkWindow = AngryEra._bulkManagementWindow
+assert(
+    layoutEditor.CloseAllEditors() == 2
+        and teardownIconPicker.released
+        and teardownBulkWindow.released
+        and AngryEra.iconpicker == nil
+        and AngryEra.iconpicker_scroll == nil
+        and AngryEra._bulkManagementWindow == nil
+        and #UISpecialFrames == 0,
+    "addon teardown should release both unguarded auxiliary editor windows"
+)
+AngryEra.window = previousMainWindow
 
 local providers = layoutEditor.BuildLayoutProviders({
     { FullName = "Alex-RealmA", ShortName = "Alex", Text = "Alex", Available = true },
@@ -946,6 +1062,24 @@ assert(
 assert(
     AngryAssign_Categories[5].Vars == "CATEGORY_ROLE=healers" and updatedCategoryId == 5,
     "a category variable save should update the exact category"
+)
+local validCategoryVars = AngryAssign_Categories[5].Vars
+updatedCategoryId = nil
+savedVariables, savedVariableError = layoutEditor.SaveVariableSource(categoryReference, "BIG=" .. string.rep("v", 5001))
+assert(
+    not savedVariables
+        and savedVariableError == "Variables and metadata must be 5,000 bytes or less."
+        and AngryAssign_Categories[5].Vars == validCategoryVars
+        and updatedCategoryId == nil,
+    "the category variable editor should reject oversized variables before mutation"
+)
+saved, saveError = layoutEditor.SaveSource(categoryReference, string.rep("L", 5001))
+assert(
+    not saved
+        and saveError == "Variables and metadata must be 5,000 bytes or less."
+        and AngryAssign_Categories[5].Vars == validCategoryVars
+        and updatedCategoryId == nil,
+    "a category layout save should enforce the synchronized variable-size limit before mutation"
 )
 
 AngryAssign_Pages[21] = {

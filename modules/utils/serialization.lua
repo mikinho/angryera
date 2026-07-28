@@ -16,6 +16,42 @@ local libD = app.libs.libD
 local core = AngryEra.core
 local boundedDeflate = AngryEra.utils.boundedDeflate
 local DEFAULT_MAX_VARIABLE_BYTES = 5000
+local syncSchema = AngryEra.sync and AngryEra.sync.schema
+local schemaLimits = syncSchema and syncSchema.LIMITS
+    or {
+        EntityCount = 512,
+        HierarchyDepth = 32,
+        NameBytes = 100,
+        ContentsBytes = 20000,
+        VarsBytes = DEFAULT_MAX_VARIABLE_BYTES,
+    }
+
+local function ContainsControlByte(value)
+    for index = 1, #value do
+        local byte = value:byte(index)
+        if byte < 32 or byte == 127 then
+            return true
+        end
+    end
+    return false
+end
+
+local function ValidatePortableName(value, path)
+    if
+        type(value) ~= "string"
+        or value == ""
+        or #value > schemaLimits.NameBytes
+        or value ~= value:match("^%s*(.-)%s*$")
+        or ContainsControlByte(value)
+    then
+        return false,
+            ("%s must be a trimmed, non-empty string of at most %d bytes without control characters."):format(
+                path,
+                schemaLimits.NameBytes
+            )
+    end
+    return true
+end
 
 local function ValidateVariablesIncluded(data, path)
     if data.VariablesIncluded ~= nil and type(data.VariablesIncluded) ~= "boolean" then
@@ -33,7 +69,7 @@ local function ValidateVariableSource(data, path)
     end
 
     local variableUtils = AngryEra.utils and AngryEra.utils.variables
-    local maximumBytes = variableUtils and variableUtils.MAX_VARIABLE_BYTES or DEFAULT_MAX_VARIABLE_BYTES
+    local maximumBytes = variableUtils and variableUtils.MAX_VARIABLE_BYTES or schemaLimits.VarsBytes
     if #data.Vars > maximumBytes then
         return false, path .. ".Vars exceeds the maximum variable size."
     end
@@ -54,11 +90,16 @@ local function ValidateEncodedPagePayload(data, path)
     if not valid then
         return false, validationError
     end
-    if type(data.Name) ~= "string" or data.Name:match("^%s*$") then
-        return false, path .. ".Name must be a non-empty string."
+    valid, validationError = ValidatePortableName(data.Name, path .. ".Name")
+    if not valid then
+        return false, validationError
     end
     if type(data.Contents) ~= "string" then
         return false, path .. ".Contents must be a string."
+    end
+    if #data.Contents > schemaLimits.ContentsBytes then
+        return false,
+            ("%s.Contents exceeds the maximum page-content size of %d bytes."):format(path, schemaLimits.ContentsBytes)
     end
     valid, validationError = ValidateVariableSource(data, path)
     if not valid then
@@ -69,7 +110,8 @@ end
 
 serialization.ValidateEncodedPagePayload = ValidateEncodedPagePayload
 
-local MAX_CATEGORY_DEPTH = 32
+local MAX_CATEGORY_DEPTH = schemaLimits.HierarchyDepth
+local MAX_CATEGORY_ENTITIES = schemaLimits.EntityCount or 512
 
 local ValidateEncodedCategoryPayload
 ValidateEncodedCategoryPayload = function(data, path, state)
@@ -79,12 +121,18 @@ ValidateEncodedCategoryPayload = function(data, path, state)
     state = state or {
         depth = 0,
         seen = {},
+        budget = { count = 0 },
     }
+    state.budget = state.budget or { count = 0 }
     if state.seen[data] then
         return false, path .. " contains a repeated or cyclic category."
     end
     if state.depth >= MAX_CATEGORY_DEPTH then
         return false, path .. " exceeds the maximum category depth."
+    end
+    state.budget.count = state.budget.count + 1
+    if state.budget.count > MAX_CATEGORY_ENTITIES then
+        return false, path .. " exceeds the maximum category entity count."
     end
     state.seen[data] = true
 
@@ -92,8 +140,9 @@ ValidateEncodedCategoryPayload = function(data, path, state)
     if not valid then
         return false, validationError
     end
-    if type(data.Name) ~= "string" or data.Name:match("^%s*$") then
-        return false, path .. ".Name must be a non-empty string."
+    valid, validationError = ValidatePortableName(data.Name, path .. ".Name")
+    if not valid then
+        return false, validationError
     end
     if type(data.Children) ~= "table" then
         return false, path .. ".Children must be a table."
@@ -127,6 +176,7 @@ ValidateEncodedCategoryPayload = function(data, path, state)
             local ok, err = ValidateEncodedCategoryPayload(child, childPath, {
                 depth = state.depth + 1,
                 seen = state.seen,
+                budget = state.budget,
             })
             if not ok then
                 return false, err
@@ -134,6 +184,13 @@ ValidateEncodedCategoryPayload = function(data, path, state)
         elseif
             childType == "Page" or (childType == nil and type(child) == "table" and type(child.Contents) == "string")
         then
+            if state.depth + 2 > MAX_CATEGORY_DEPTH then
+                return false, childPath .. " exceeds the maximum hierarchy depth."
+            end
+            state.budget.count = state.budget.count + 1
+            if state.budget.count > MAX_CATEGORY_ENTITIES then
+                return false, childPath .. " exceeds the maximum category entity count."
+            end
             local ok, err = ValidateEncodedPagePayload(child, childPath)
             if not ok then
                 return false, err

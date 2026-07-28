@@ -528,11 +528,11 @@ activeDisplayReference = {
     ContextRevisionId = "fcs32:70707070",
 }
 saved, saveResult, proposed = AngryEra:UpdateContents(60, "Promoted draft contents")
-assert(saved and proposed, "the pre-promotion content draft should submit")
+assert(saved and saveResult == "change-proposal-message" and proposed, "the pre-promotion content draft should submit")
 renamed, renameError, proposed = AngryEra:RenamePage(60, "Promoted draft name")
-assert(renamed and proposed, "the pre-promotion name draft should merge")
+assert(renamed and renameError == "change-proposal-message" and proposed, "the pre-promotion name draft should merge")
 saved, saveResult, proposed = AngryEra:UpdatePageVars(60, "$MT=PromotedDraft")
-assert(saved and proposed, "the pre-promotion variable draft should merge")
+assert(saved and saveResult == "change-proposal-message" and proposed, "the pre-promotion variable draft should merge")
 AngryEra.syncDraftConflict = {
     SyncId = sharedPage.SyncId,
     Status = "conflict",
@@ -839,6 +839,77 @@ assert(
 )
 assert(sentPageId == 46, "the first published page revision includes the fully initialized record")
 
+local pagesBeforeRejectedCreate = nextPageId
+local sendsBeforeRejectedCreate = #sentDisplays
+sentPageId = nil
+created, createError = AngryEra:CreatePage(string.rep("n", 101), "", nil, nil)
+assert(not created and createError, "page creation should reject an oversized name")
+assert(nextPageId == pagesBeforeRejectedCreate, "invalid page creation must not allocate a record id")
+assert(sentPageId == nil and #sentDisplays == sendsBeforeRejectedCreate, "invalid page creation must not publish")
+
+created, createError = AngryEra:CreatePage("Oversized content", string.rep("x", 20001), nil, nil)
+assert(not created and createError, "page creation should reject oversized contents")
+assert(nextPageId == pagesBeforeRejectedCreate, "oversized contents must not allocate a record id")
+
+created, createError = AngryEra:CreatePage("Invalid content type", {}, nil, nil)
+assert(not created and createError == "Page contents must be text.", "page creation should reject non-text contents")
+created, createError = AngryEra:CreatePage("Invalid variables type", "", nil, nil, nil, {})
+assert(
+    not created and createError == "Variables and metadata must be text.",
+    "page creation should reject non-text variables"
+)
+
+local pageBeforeRejectedEdit = AngryAssign_Pages[42]
+local oldName = pageBeforeRejectedEdit.Name
+local oldContents = pageBeforeRejectedEdit.Contents
+local oldVars = pageBeforeRejectedEdit.Vars
+local oldHistoryCount = #(pageBeforeRejectedEdit.History or {})
+local proposalsBeforeRejectedEdit = #submittedSharedPageProposals
+local sendsBeforeRejectedEdit = #sentDisplays
+sentPageId = nil
+
+renamed, renameError = AngryEra:RenamePage(42, string.rep("n", 101))
+assert(not renamed and renameError, "page rename should reject an oversized name")
+assert(pageBeforeRejectedEdit.Name == oldName, "a rejected rename must preserve the page name")
+
+saved, saveResult = AngryEra:UpdateContents(42, string.rep("x", 20001))
+assert(not saved and saveResult, "page update should reject oversized contents")
+assert(pageBeforeRejectedEdit.Contents == oldContents, "rejected contents must preserve the page")
+assert(#(pageBeforeRejectedEdit.History or {}) == oldHistoryCount, "rejected contents must not create history")
+
+saved, saveResult = AngryEra:UpdatePageVars(42, string.rep("v", 5001))
+assert(not saved and saveResult, "page update should reject oversized variables")
+assert(pageBeforeRejectedEdit.Vars == oldVars, "rejected variables must preserve the page")
+saved, saveResult = AngryEra:UpdatePageVars(42, {})
+assert(
+    not saved and saveResult == "Variables and metadata must be text.",
+    "page variable updates should reject non-text input instead of silently erasing it"
+)
+assert(pageBeforeRejectedEdit.Vars == oldVars, "rejected non-text variables must preserve the page")
+assert(
+    #submittedSharedPageProposals == proposalsBeforeRejectedEdit,
+    "invalid local edits must fail before proposal submission"
+)
+assert(
+    sentPageId == nil and #sentDisplays == sendsBeforeRejectedEdit,
+    "invalid local edits must fail before publication"
+)
+
+local categoriesBeforeRejectedCreate = 0
+for _ in pairs(AngryAssign_Categories) do
+    categoriesBeforeRejectedCreate = categoriesBeforeRejectedCreate + 1
+end
+local categoryCreated, categoryCreateError = AngryEra:CreateCategory(string.rep("n", 101))
+assert(not categoryCreated and categoryCreateError, "category creation should reject an oversized name")
+local categoriesAfterRejectedCreate = 0
+for _ in pairs(AngryAssign_Categories) do
+    categoriesAfterRejectedCreate = categoriesAfterRejectedCreate + 1
+end
+assert(
+    categoriesAfterRejectedCreate == categoriesBeforeRejectedCreate,
+    "invalid category creation must not allocate a record"
+)
+
 AngryAssign_Pages[43] = {
     Name = "Movable Sibling",
     Contents = "",
@@ -853,6 +924,32 @@ assert(AngryAssign_Pages[43].CategoryId == 7, "category assignment should still 
 assert(
     #sentDisplays == sendsBeforeAssignment + 1 and sentDisplays[#sentDisplays].Id == 42,
     "moving a sibling should republish the displayed page's mixed-sibling order"
+)
+
+for depth = 1, 32 do
+    local id = 1000 + depth
+    AngryAssign_Categories[id] = {
+        Id = id,
+        Name = "Depth " .. depth,
+        CategoryId = depth > 1 and id - 1 or nil,
+    }
+end
+local nextIdBeforeDeepCreate = nextPageId
+local sendsBeforeDeepCreate = #sentDisplays
+created, createError = AngryEra:CreatePage("Too deep", "", 1032)
+assert(not created and createError, "page creation should reject a parent at the maximum category depth")
+assert(nextPageId == nextIdBeforeDeepCreate, "a too-deep page must not allocate a record")
+assert(#sentDisplays == sendsBeforeDeepCreate, "a too-deep page must not publish")
+
+created, createError = AngryEra:CreatePage("Missing parent", "", 9999)
+assert(not created and createError, "page creation should reject an unknown parent category")
+assert(nextPageId == nextIdBeforeDeepCreate, "an orphaned page must not allocate a record")
+
+pageBeforeRejectedEdit.History = "corrupt"
+AngryEra:PushHistory(pageBeforeRejectedEdit, "Recovered history", "Leader-Realm")
+assert(
+    type(pageBeforeRejectedEdit.History) == "table" and pageBeforeRejectedEdit.History[1].content == "Recovered history",
+    "history insertion should recover safely if runtime state is unexpectedly malformed"
 )
 
 print("Model update tests passed.")

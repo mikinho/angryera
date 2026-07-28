@@ -1,4 +1,5 @@
 local createdWidgets = {}
+local releasedWidgets = {}
 local printed = {}
 local parsedImportOptions
 
@@ -74,7 +75,10 @@ local AceGUI = {}
 function AceGUI:Create(kind)
     return NewWidget(kind)
 end
-function AceGUI:Release() end
+function AceGUI:Release(widget)
+    assert(not releasedWidgets[widget], "tracked windows must be released exactly once")
+    releasedWidgets[widget] = true
+end
 
 local serialization = {}
 function serialization.GetPageExportData(page, options)
@@ -148,7 +152,18 @@ rawset(_G, "C_Timer", {
 
 assert(loadfile("modules/ui/import_export.lua"))("AngryEra", app)
 
+local function CountSpecialFrame(name)
+    local count = 0
+    for _, registered in ipairs(UISpecialFrames) do
+        if registered == name then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 AngryEra:Export(1, "page", "Encoded AA")
+local firstExportWindow = AngryEra._generalExportWindow
 local exportToggle = LatestWidget("CheckBox")
 local exportText = LatestWidget("MultiLineEditBox")
 assert(exportToggle.value == true, "Encoded AA export should include variables and metadata by default")
@@ -161,6 +176,8 @@ assert(exportText.text == "AA:Page:2:content-only", "Unchecking export variables
 createdWidgets = {}
 AngryAssign_Pages[1].Vars = "invalid"
 AngryEra:Export(1, "page", "Encoded AA")
+assert(releasedWidgets[firstExportWindow], "reopening export should release the prior pooled window")
+assert(CountSpecialFrame("AngryEra_GeneralExportWindow") == 1, "export should have one Escape registration")
 exportToggle = LatestWidget("CheckBox")
 exportText = LatestWidget("MultiLineEditBox")
 assert(exportToggle.value == false, "Invalid stored variables should fall back to a visibly content-only export")
@@ -178,6 +195,7 @@ end
 
 createdWidgets = {}
 AngryEra:ShowImportWindow()
+local firstImportWindow = AngryEra._encodedImportWindow
 local importToggle = LatestWidget("CheckBox")
 local importText = LatestWidget("MultiLineEditBox")
 assert(importToggle.value == true, "Encoded AA import should include variables and metadata by default")
@@ -186,10 +204,13 @@ assert(
     parsedImportOptions and parsedImportOptions.includeVariables == true,
     "The import window should retain its default variable choice"
 )
+assert(releasedWidgets[firstImportWindow], "a completed import should release its pooled window")
+assert(CountSpecialFrame("AngryEra_ImportWindow") == 0, "completed import should remove its Escape registration")
 
 createdWidgets = {}
 parsedImportOptions = nil
 AngryEra:ShowImportWindow()
+local secondImportWindow = AngryEra._encodedImportWindow
 importToggle = LatestWidget("CheckBox")
 importText = LatestWidget("MultiLineEditBox")
 importToggle:SetValue(false)
@@ -198,5 +219,35 @@ assert(
     parsedImportOptions and parsedImportOptions.includeVariables == false,
     "The import window should pass an explicit variable opt-out"
 )
+assert(releasedWidgets[secondImportWindow], "every completed import should release exactly once")
+
+AngryEra:ShowImportWindow()
+local escapeClosedImportWindow = AngryEra._encodedImportWindow
+escapeClosedImportWindow.callbacks.OnClose(escapeClosedImportWindow)
+assert(
+    releasedWidgets[escapeClosedImportWindow]
+        and AngryEra._encodedImportWindow == nil
+        and CountSpecialFrame("AngryEra_ImportWindow") == 0,
+    "Escape/window-close should release the tracked AceGUI window and unregister it"
+)
+escapeClosedImportWindow.callbacks.OnClose(escapeClosedImportWindow)
+assert(
+    releasedWidgets[escapeClosedImportWindow],
+    "a repeated close callback should remain idempotent instead of releasing the pooled window twice"
+)
+
+AngryEra:ShowImportWindow()
+local disabledImportWindow = AngryEra._encodedImportWindow
+assert(CountSpecialFrame("AngryEra_ImportWindow") == 1, "an open import should have one Escape registration")
+assert(AngryEra:CloseImportExportWindows(), "addon teardown should close tracked import/export windows")
+assert(releasedWidgets[disabledImportWindow], "addon teardown should release the open import window")
+assert(
+    CountSpecialFrame("AngryEra_ImportWindow") == 0
+        and CountSpecialFrame("AngryEra_GeneralExportWindow") == 0
+        and AngryEra._encodedImportWindow == nil
+        and AngryEra._generalExportWindow == nil,
+    "addon teardown should remove every tracked window and Escape global"
+)
+assert(not AngryEra:CloseImportExportWindows(), "repeated teardown should be idempotent")
 
 print("Import/export option UI tests passed.")
