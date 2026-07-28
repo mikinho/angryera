@@ -243,8 +243,11 @@ local function NewRegion(parent)
     function region:CreateFontString()
         return NewRegion(self)
     end
-    function region:CreateTexture()
-        return NewRegion(self)
+    function region:CreateTexture(_, layer, _, sublevel)
+        local texture = NewRegion(self)
+        texture.drawLayer = layer
+        texture.drawSublevel = sublevel
+        return texture
     end
 
     return region
@@ -343,6 +346,15 @@ local function VariablesBox()
     return BoxByTitle("Variables")
 end
 
+local function EdgesAreShown(edges, expected)
+    for _, edge in pairs(edges) do
+        if edge:IsShown() ~= expected then
+            return false
+        end
+    end
+    return true
+end
+
 -- The grid always draws the eight raid subgroup boxes, then both palettes.
 local visible = 0
 for _, box in ipairs(grid.boxes) do
@@ -365,6 +377,7 @@ assert(
         and VariablesBox().rows[1].label.fontObject == "GameFontHighlightSmall"
         and not VariablesBox().rows[1].background:IsShown()
         and not VariablesBox().rows[1].highlight:IsShown()
+        and EdgesAreShown(VariablesBox().rows[1].highlightEdges, false)
         and #VariablesBox().rows[1].dragButtons == 0,
     "an empty palette stays blank instead of borrowing the raid Empty treatment"
 )
@@ -462,6 +475,40 @@ assert(
     "an empty row targets its group"
 )
 assert(blank.layoutTarget.group == 1, "an empty row in a claimed box appends to that group")
+assert(
+    blank.highlight.drawLayer == "HIGHLIGHT"
+        and blank.highlight.color[1] == 1
+        and blank.highlight.color[2] == 0.82
+        and blank.highlight.color[3] == 0
+        and blank.highlight.color[4] == 0.12
+        and EdgesAreShown(blank.highlightEdges, true),
+    "raid rows use the continuous gold hover treatment"
+)
+for name, edge in pairs(blank.highlightEdges) do
+    assert(edge.drawLayer == "HIGHLIGHT", name .. " hover edge is conditional on the button highlight")
+end
+assert(
+    blank.highlightEdges.top:GetLeft() == blank:GetLeft()
+        and blank.highlightEdges.top:GetRight() == blank:GetRight()
+        and blank.highlightEdges.top:GetTop() == blank:GetTop()
+        and blank.highlightEdges.top:GetHeight() == 2
+        and blank.highlightEdges.bottom:GetLeft() == blank:GetLeft()
+        and blank.highlightEdges.bottom:GetRight() == blank:GetRight()
+        and blank.highlightEdges.bottom:GetBottom() == blank:GetBottom()
+        and blank.highlightEdges.bottom:GetHeight() == 2,
+    "the hover treatment has continuous horizontal edges"
+)
+assert(
+    blank.highlightEdges.left:GetTop() == blank:GetTop()
+        and blank.highlightEdges.left:GetBottom() == blank:GetBottom()
+        and blank.highlightEdges.left:GetLeft() == blank:GetLeft()
+        and blank.highlightEdges.left:GetWidth() == 2
+        and blank.highlightEdges.right:GetTop() == blank:GetTop()
+        and blank.highlightEdges.right:GetBottom() == blank:GetBottom()
+        and blank.highlightEdges.right:GetRight() == blank:GetRight()
+        and blank.highlightEdges.right:GetWidth() == 2,
+    "the hover treatment has continuous vertical edges"
+)
 
 local unclaimed = grid.boxes[2].rows[1]
 assert(unclaimed.layoutTarget.group == nil, "an unclaimed box has no group yet")
@@ -545,6 +592,7 @@ local function GestureTo(source, x, y)
             and grid.dragGrabY == nil
             and grid.frame:GetScript("OnUpdate") == nil
             and not grid.dropMarker:IsShown()
+            and not next(grid.dropMarker.points)
             and not grid.dragGhost:IsShown()
             and grid.dragGhost.label:GetText() == ""
             and not next(grid.dragGhost.points)
@@ -659,22 +707,78 @@ assert(
     "the carried cell follows vertical movement within one unchanged target"
 )
 assert(grid.dropMarker:IsShown(), "a drag marks where a release would land")
-assert(grid.dropMarker:GetTop() == marked:GetTop(), "the marker covers the row under the cursor")
+assert(
+    grid.dropMarker:GetLeft() == marked:GetLeft()
+        and grid.dropMarker:GetRight() == marked:GetRight()
+        and grid.dropMarker:GetTop() == marked:GetTop()
+        and grid.dropMarker:GetBottom() == marked:GetBottom(),
+    "the marker covers every edge of the row under the cursor"
+)
 assert(grid.dropMarker:GetFrameLevel() > marked:GetFrameLevel(), "the marker draws above the row it covers")
+assert(not grid.dropMarker.mouseEnabled, "the marker cannot steal mouse input from its target")
 local markerFill = grid.dropMarker.fill
 assert(
-    markerFill.texture == "Interface\\RaidFrame\\UI-RaidFrame-GroupButton",
-    "the drop marker reuses the native raid highlight"
+    markerFill.texture == nil
+        and markerFill.drawLayer == "ARTWORK"
+        and markerFill.color[1] == 1
+        and markerFill.color[2] == 0.82
+        and markerFill.color[3] == 0
+        and markerFill.color[4] == 0.12,
+    "the drop marker uses a subtle solid-gold tint instead of segmented raid art"
 )
-assert(markerFill.texCoord[3] == 0.5 and markerFill.texCoord[4] == 0.9375, "the drop marker uses the highlight art")
-assert(markerFill.blendMode == "ADD", "the native drop marker adds its gold highlight over the target")
-assert(markerFill:GetHeight() == 14, "the drop marker matches the native slot art height")
+assert(
+    markerFill:GetLeft() == grid.dropMarker:GetLeft()
+        and markerFill:GetRight() == grid.dropMarker:GetRight()
+        and markerFill:GetTop() == grid.dropMarker:GetTop()
+        and markerFill:GetBottom() == grid.dropMarker:GetBottom(),
+    "the target tint fills the hovered cell"
+)
+local markerEdges = grid.dropMarker.edges
+for name, edge in pairs(markerEdges) do
+    assert(
+        edge.drawLayer == "OVERLAY"
+            and edge.color[1] == 1
+            and edge.color[2] == 0.82
+            and edge.color[3] == 0
+            and edge.color[4] == 1,
+        name .. " target edge is opaque gold"
+    )
+end
+assert(
+    markerEdges.top:GetLeft() == grid.dropMarker:GetLeft()
+        and markerEdges.top:GetRight() == grid.dropMarker:GetRight()
+        and markerEdges.top:GetTop() == grid.dropMarker:GetTop()
+        and markerEdges.top:GetHeight() == 2,
+    "the target has one continuous top edge"
+)
+assert(
+    markerEdges.bottom:GetLeft() == grid.dropMarker:GetLeft()
+        and markerEdges.bottom:GetRight() == grid.dropMarker:GetRight()
+        and markerEdges.bottom:GetBottom() == grid.dropMarker:GetBottom()
+        and markerEdges.bottom:GetHeight() == 2,
+    "the target has one continuous bottom edge"
+)
+assert(
+    markerEdges.left:GetTop() == grid.dropMarker:GetTop()
+        and markerEdges.left:GetBottom() == grid.dropMarker:GetBottom()
+        and markerEdges.left:GetLeft() == grid.dropMarker:GetLeft()
+        and markerEdges.left:GetWidth() == 2,
+    "the target has one continuous left edge"
+)
+assert(
+    markerEdges.right:GetTop() == grid.dropMarker:GetTop()
+        and markerEdges.right:GetBottom() == grid.dropMarker:GetBottom()
+        and markerEdges.right:GetRight() == grid.dropMarker:GetRight()
+        and markerEdges.right:GetWidth() == 2,
+    "the target has one continuous right edge"
+)
 assert(
     grid.dropMarker:GetFrameLevel() > grid.dragGhost:GetFrameLevel(),
     "the gold target remains above the carried cell"
 )
 source:GetScript("OnDragStop")(source)
 assert(not grid.dropMarker:IsShown(), "the marker clears when the gesture ends")
+assert(not next(grid.dropMarker.points), "the marker releases its old row when the gesture ends")
 assert(not grid.dragGhost:IsShown(), "the carried cell clears when the gesture ends")
 assert(not grid.dragSourcePlaceholder:IsShown(), "the source placeholder clears when the gesture ends")
 
@@ -1077,6 +1181,7 @@ grid:OnRelease()
 assert(grid.pressed == nil and grid.dragging == nil, "release clears the pending gesture")
 assert(grid.dropTarget == nil, "release clears the pending drop")
 assert(not grid.dropMarker:IsShown(), "release clears the visible drop target")
+assert(not next(grid.dropMarker.points), "release clears the pooled marker's old anchors")
 assert(grid.frame:GetScript("OnUpdate") == nil, "release stops the drag update loop")
 assert(
     not grid.dragGhost:IsShown() and grid.dragGhost.label:GetText() == "" and not grid.dragSourcePlaceholder:IsShown(),
@@ -1087,6 +1192,11 @@ assert(next(grid.paletteOffsets) == nil, "release forgets both palette offsets")
 assert(
     not palette.scrollbar:IsShown() and not variablesPalette.scrollbar:IsShown(),
     "release hides both palette scrollbars"
+)
+grid:OnAcquire()
+assert(
+    not grid.dropMarker:IsShown() and not next(grid.dropMarker.points),
+    "a reused grid acquires no stale drop target"
 )
 
 print("Layout grid tests passed.")

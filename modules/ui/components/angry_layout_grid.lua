@@ -20,7 +20,7 @@
 --
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 12
+local Type, Version = "AngryLayoutGrid", 13
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -65,6 +65,9 @@ local PALETTE_VISIBLE_ROWS = floor((GRID_CONTENT_HEIGHT - HEADER_HEIGHT - (BOX_P
 local widgetSequence = 0
 local EMPTY_ROW_LABEL = EMPTY or "Empty"
 local RAID_ROW_TEXTURE = "Interface\\RaidFrame\\UI-RaidFrame-GroupButton"
+local GOLD_HIGHLIGHT_RED, GOLD_HIGHLIGHT_GREEN, GOLD_HIGHLIGHT_BLUE = 1, 0.82, 0
+local GOLD_HIGHLIGHT_FILL_ALPHA = 0.12
+local GOLD_HIGHLIGHT_EDGE_SIZE = 2
 
 local PaneBackdrop = {
     bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -92,14 +95,53 @@ local function SetSolidColor(texture, r, g, b, a)
     texture:SetTexture(r, g, b, a)
 end
 
-local function StyleRaidRowTexture(texture, highlight)
+local function CreateGoldHighlightEdge(owner, layer)
+    local edge = owner:CreateTexture(nil, layer)
+    SetSolidColor(edge, GOLD_HIGHLIGHT_RED, GOLD_HIGHLIGHT_GREEN, GOLD_HIGHLIGHT_BLUE, 1)
+    return edge
+end
+
+local function CreateGoldHighlight(owner, fillLayer, edgeLayer)
+    local fill = owner:CreateTexture(nil, fillLayer)
+    fill:SetAllPoints(owner)
+    SetSolidColor(fill, GOLD_HIGHLIGHT_RED, GOLD_HIGHLIGHT_GREEN, GOLD_HIGHLIGHT_BLUE, GOLD_HIGHLIGHT_FILL_ALPHA)
+
+    local top = CreateGoldHighlightEdge(owner, edgeLayer)
+    top:SetPoint("TOPLEFT")
+    top:SetPoint("TOPRIGHT")
+    top:SetHeight(GOLD_HIGHLIGHT_EDGE_SIZE)
+
+    local bottom = CreateGoldHighlightEdge(owner, edgeLayer)
+    bottom:SetPoint("BOTTOMLEFT")
+    bottom:SetPoint("BOTTOMRIGHT")
+    bottom:SetHeight(GOLD_HIGHLIGHT_EDGE_SIZE)
+
+    local left = CreateGoldHighlightEdge(owner, edgeLayer)
+    left:SetPoint("TOPLEFT")
+    left:SetPoint("BOTTOMLEFT")
+    left:SetWidth(GOLD_HIGHLIGHT_EDGE_SIZE)
+
+    local right = CreateGoldHighlightEdge(owner, edgeLayer)
+    right:SetPoint("TOPRIGHT")
+    right:SetPoint("BOTTOMRIGHT")
+    right:SetWidth(GOLD_HIGHLIGHT_EDGE_SIZE)
+
+    return fill, {
+        top = top,
+        right = right,
+        bottom = bottom,
+        left = left,
+    }
+end
+
+local function StyleRaidRowTexture(texture)
     texture:ClearAllPoints()
     texture:SetPoint("TOPLEFT")
     texture:SetPoint("TOPRIGHT")
     texture:SetHeight(RAID_ROW_HEIGHT)
     texture:SetTexture(RAID_ROW_TEXTURE)
-    texture:SetTexCoord(0, 0.640625, highlight and 0.5 or 0, highlight and 0.9375 or 0.4375)
-    texture:SetBlendMode(highlight and "ADD" or "BLEND")
+    texture:SetTexCoord(0, 0.640625, 0, 0.4375)
+    texture:SetBlendMode("BLEND")
 end
 
 -- Reads the cursor in the same space frame edges are reported in.
@@ -143,6 +185,7 @@ local function CancelDrag(self)
     self.dropTarget = nil
     self.frame:SetScript("OnUpdate", nil)
     self.dropMarker:Hide()
+    self.dropMarker:ClearAllPoints()
     HideDragVisuals(self)
 end
 
@@ -519,10 +562,9 @@ local function AcquireRow(self, box, index)
     end
     row.label = label
 
-    local highlight = row:CreateTexture(nil, "HIGHLIGHT")
-    highlight:SetAllPoints()
-    SetSolidColor(highlight, 1, 1, 1, 0.2)
+    local highlight, highlightEdges = CreateGoldHighlight(row, "HIGHLIGHT", "HIGHLIGHT")
     row.highlight = highlight
+    row.highlightEdges = highlightEdges
 
     box.rows[index] = row
     return row
@@ -784,8 +826,17 @@ end
 -- resolves as a click rather than starting a gesture that carries nothing.
 local function StyleRow(row, raidStyle)
     if raidStyle then
-        StyleRaidRowTexture(row.background, false)
-        StyleRaidRowTexture(row.highlight, true)
+        StyleRaidRowTexture(row.background)
+        row.highlight:ClearAllPoints()
+        row.highlight:SetAllPoints(row)
+        SetSolidColor(
+            row.highlight,
+            GOLD_HIGHLIGHT_RED,
+            GOLD_HIGHLIGHT_GREEN,
+            GOLD_HIGHLIGHT_BLUE,
+            GOLD_HIGHLIGHT_FILL_ALPHA
+        )
+        row.highlight:SetBlendMode("BLEND")
         return
     end
 
@@ -808,6 +859,9 @@ local function FillRow(row, text, target, isEmpty, raidStyle)
     local styled = raidStyle or text ~= nil
     row.background:SetShown(styled)
     row.highlight:SetShown(styled)
+    for _, edge in pairs(row.highlightEdges) do
+        edge:SetShown(styled and raidStyle)
+    end
 
     if DragFromTarget(target) then
         row:RegisterForDrag("LeftButton")
@@ -1107,10 +1161,14 @@ local function Constructor()
 
     local marker = CreateFrame("Frame", nil, frame)
     marker:Hide()
+    marker:EnableMouse(false)
 
-    local markerFill = marker:CreateTexture(nil, "OVERLAY")
-    StyleRaidRowTexture(markerFill, true)
+    -- The raid-row highlight crop contains ornamental gaps that look like a
+    -- broken border when stretched to these wider editor cells. A faint tint
+    -- plus four solid edges stays continuous at every cell width.
+    local markerFill, markerEdges = CreateGoldHighlight(marker, "ARTWORK", "OVERLAY")
     marker.fill = markerFill
+    marker.edges = markerEdges
 
     local ghost = CreateFrame("Frame", nil, frame)
     ghost:Hide()
@@ -1118,7 +1176,7 @@ local function Constructor()
     ghost:SetAlpha(0.9)
     ghost:SetHeight(ROW_HEIGHT)
     local ghostBackground = ghost:CreateTexture(nil, "BACKGROUND")
-    StyleRaidRowTexture(ghostBackground, false)
+    StyleRaidRowTexture(ghostBackground)
     ghost.background = ghostBackground
     local ghostLabel = ghost:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     ghostLabel:SetPoint("LEFT", ghostBackground, "LEFT", ROW_TEXT_PADDING, 0)
@@ -1141,7 +1199,7 @@ local function Constructor()
     placeholder:Hide()
     placeholder:EnableMouse(false)
     local placeholderBackground = placeholder:CreateTexture(nil, "BACKGROUND")
-    StyleRaidRowTexture(placeholderBackground, false)
+    StyleRaidRowTexture(placeholderBackground)
     placeholder.background = placeholderBackground
     local placeholderLabel = placeholder:CreateFontString(nil, "ARTWORK", "GameFontDarkGraySmall")
     placeholderLabel:SetPoint("LEFT", placeholderBackground, "LEFT")
