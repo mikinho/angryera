@@ -631,6 +631,311 @@ local function CollectCategoryDescendants(rootId)
     return descendants, visited
 end
 
+local function IsPositiveEntityId(value)
+    return type(value) == "number" and value >= 1 and value % 1 == 0
+end
+
+local function BuildUnpinnedWipePlan(self)
+    if
+        type(AngryAssign_Categories) ~= "table"
+        or type(AngryAssign_Pages) ~= "table"
+        or type(self.IsPinned) ~= "function"
+    then
+        return nil, "library-unavailable"
+    end
+
+    local categoryIds = {}
+    for id, category in pairs(AngryAssign_Categories) do
+        if
+            not IsPositiveEntityId(id)
+            or type(category) ~= "table"
+            or category.Id ~= id
+            or (category.CategoryId ~= nil and not IsPositiveEntityId(category.CategoryId))
+        then
+            return nil, "invalid-category"
+        end
+        categoryIds[#categoryIds + 1] = id
+    end
+    table.sort(categoryIds)
+
+    local categoryDepths = {}
+    local protectedCategories = {}
+    for _, id in ipairs(categoryIds) do
+        local chain, chainError = AngryEra.utils.variables.CollectCategoryChain(AngryAssign_Categories, id, {
+            maxDepth = editableLimits.HierarchyDepth,
+        })
+        if not chain then
+            return nil, "unsafe-hierarchy-" .. tostring(chainError or "invalid")
+        end
+
+        categoryDepths[id] = #chain
+        local protected = false
+        for _, ancestor in ipairs(chain) do
+            if self:IsPinned(ancestor) then
+                protected = true
+                break
+            end
+        end
+        protectedCategories[id] = protected
+    end
+
+    local pageIds = {}
+    for id, page in pairs(AngryAssign_Pages) do
+        if
+            not IsPositiveEntityId(id)
+            or type(page) ~= "table"
+            or page.Id ~= id
+            or (page.CategoryId ~= nil and not IsPositiveEntityId(page.CategoryId))
+        then
+            return nil, "invalid-page"
+        end
+        if page.CategoryId ~= nil and type(AngryAssign_Categories[page.CategoryId]) ~= "table" then
+            return nil, "unsafe-hierarchy-missing-category"
+        end
+        pageIds[#pageIds + 1] = id
+    end
+    table.sort(pageIds)
+
+    local plan = {
+        CategoryIds = {},
+        CategoryParents = {},
+        CategoryRecords = {},
+        PageIds = {},
+        PageParents = {},
+        PageRecords = {},
+    }
+
+    for _, id in ipairs(categoryIds) do
+        local category = AngryAssign_Categories[id]
+        if not protectedCategories[id] then
+            plan.CategoryIds[#plan.CategoryIds + 1] = id
+            plan.CategoryRecords[id] = category
+        elseif category.CategoryId ~= nil and not protectedCategories[category.CategoryId] then
+            local parentId = category.CategoryId
+            while parentId ~= nil and not protectedCategories[parentId] do
+                parentId = AngryAssign_Categories[parentId].CategoryId
+            end
+            plan.CategoryParents[id] = parentId or false
+        end
+    end
+    table.sort(plan.CategoryIds, function(left, right)
+        local leftDepth = categoryDepths[left]
+        local rightDepth = categoryDepths[right]
+        if leftDepth == rightDepth then
+            return left < right
+        end
+        return leftDepth > rightDepth
+    end)
+
+    for _, id in ipairs(pageIds) do
+        local page = AngryAssign_Pages[id]
+        local parentProtected = page.CategoryId ~= nil and protectedCategories[page.CategoryId] == true
+        if not self:IsPinned(page) and not parentProtected then
+            plan.PageIds[#plan.PageIds + 1] = id
+            plan.PageRecords[id] = page
+        elseif page.CategoryId ~= nil and not parentProtected then
+            local parentId = page.CategoryId
+            while parentId ~= nil and not protectedCategories[parentId] do
+                parentId = AngryAssign_Categories[parentId].CategoryId
+            end
+            plan.PageParents[id] = parentId or false
+        end
+    end
+
+    plan.CategoryCount = #plan.CategoryIds
+    plan.PageCount = #plan.PageIds
+    return plan
+end
+
+local function MatchingIdLists(expectedIds, currentIds, expectedRecords, currentRecords)
+    if type(expectedIds) ~= "table" or #expectedIds ~= #currentIds then
+        return false
+    end
+    for index, id in ipairs(currentIds) do
+        if expectedIds[index] ~= id or expectedRecords[id] ~= currentRecords[id] then
+            return false
+        end
+    end
+    return true
+end
+
+local function MatchingParentChanges(expectedParents, currentParents)
+    if type(expectedParents) ~= "table" then
+        return false
+    end
+    for id, parentId in pairs(currentParents) do
+        if expectedParents[id] ~= parentId then
+            return false
+        end
+    end
+    for id, parentId in pairs(expectedParents) do
+        if currentParents[id] ~= parentId then
+            return false
+        end
+    end
+    return true
+end
+
+local function WipePlansMatch(expected, current)
+    return type(expected) == "table"
+        and MatchingIdLists(
+            expected.CategoryIds,
+            current.CategoryIds,
+            expected.CategoryRecords or {},
+            current.CategoryRecords
+        )
+        and MatchingIdLists(expected.PageIds, current.PageIds, expected.PageRecords or {}, current.PageRecords)
+        and MatchingParentChanges(expected.CategoryParents, current.CategoryParents)
+        and MatchingParentChanges(expected.PageParents, current.PageParents)
+end
+
+local function TreeStateReferencesDeletedCategory(key, deletedCategories)
+    if type(key) == "number" then
+        local categoryId = key < 0 and -key or key
+        return deletedCategories[categoryId] ~= nil
+    end
+    if type(key) ~= "string" then
+        return false
+    end
+    for segment in key:gmatch("[^\001]+") do
+        local value = tonumber(segment)
+        if type(value) == "number" and value < 0 and deletedCategories[-value] then
+            return true
+        end
+    end
+    return false
+end
+
+local function SelectionValueAfterWipe(selectedId)
+    local path = {}
+    if type(selectedId) ~= "number" or selectedId == 0 or selectedId % 1 ~= 0 then
+        return nil
+    end
+
+    local categoryId
+    if selectedId < 0 then
+        categoryId = -selectedId
+    else
+        local page = AngryAssign_Pages[selectedId]
+        if type(page) ~= "table" then
+            return nil
+        end
+        categoryId = page.CategoryId
+    end
+
+    local chain = AngryEra.utils.variables.CollectCategoryChain(AngryAssign_Categories, categoryId, {
+        maxDepth = editableLimits.HierarchyDepth,
+    })
+    if not chain then
+        return nil
+    end
+    for _, category in ipairs(chain) do
+        path[#path + 1] = -category.Id
+    end
+    if selectedId > 0 then
+        path[#path + 1] = selectedId
+    end
+    if #path == 1 then
+        return path[1]
+    end
+    return table.concat(path, "\001")
+end
+
+--- Builds a validated snapshot of every unpinned page and category eligible for wiping.
+-- Pinned categories protect their complete descendant subtree. Individually
+-- pinned pages and pinned category roots survive and are rehomed when needed.
+-- @treturn table|nil plan
+-- @treturn string|nil errorCode
+function AngryEra:PrepareUnpinnedWipe()
+    return BuildUnpinnedWipePlan(self)
+end
+
+--- Deletes every unpinned page and category in one validated local transaction.
+-- Passing a prepared plan prevents a confirmation dialog from acting on a
+-- library that changed while it was open.
+-- @tparam[opt] table expectedPlan Snapshot returned by `PrepareUnpinnedWipe`.
+-- @treturn number|nil removedPages
+-- @treturn number|nil removedCategories
+-- @treturn string|nil errorCode
+-- @treturn string|nil warningCode
+function AngryEra:WipeUnpinned(expectedPlan)
+    local plan, planError = BuildUnpinnedWipePlan(self)
+    if not plan then
+        return nil, nil, planError
+    end
+    if expectedPlan ~= nil and not WipePlansMatch(expectedPlan, plan) then
+        return nil, nil, "library-changed"
+    end
+    if plan.PageCount == 0 and plan.CategoryCount == 0 then
+        return 0, 0
+    end
+
+    local displayedId = type(AngryAssign_State) == "table" and AngryAssign_State.displayed or nil
+    local selectedId = self:SelectedId()
+    local displayedDeleted = plan.PageRecords[displayedId] ~= nil
+    local selectedDeleted = plan.PageRecords[selectedId] ~= nil
+        or (type(selectedId) == "number" and selectedId < 0 and plan.CategoryRecords[-selectedId] ~= nil)
+
+    for id, parentId in pairs(plan.CategoryParents) do
+        AngryAssign_Categories[id].CategoryId = parentId ~= false and parentId or nil
+    end
+    for id, parentId in pairs(plan.PageParents) do
+        AngryAssign_Pages[id].CategoryId = parentId ~= false and parentId or nil
+    end
+
+    for _, id in ipairs(plan.PageIds) do
+        local page = plan.PageRecords[id]
+        if type(self.ClearSyncDraftConflict) == "function" and type(page.SyncId) == "string" then
+            self:ClearSyncDraftConflict(page.SyncId)
+        end
+        self:RemovePageRecord(id)
+    end
+    for _, id in ipairs(plan.CategoryIds) do
+        self:RemoveCategoryRecord(id)
+    end
+
+    local tree = type(AngryAssign_State) == "table" and AngryAssign_State.tree or nil
+    local groups = type(tree) == "table" and tree.groups or nil
+    if type(groups) == "table" then
+        for key in pairs(groups) do
+            if TreeStateReferencesDeletedCategory(key, plan.CategoryRecords) then
+                groups[key] = nil
+            end
+        end
+    end
+
+    if type(tree) == "table" then
+        if selectedDeleted then
+            tree.selected = nil
+        else
+            tree.selected = SelectionValueAfterWipe(selectedId)
+        end
+    end
+
+    local warningCode
+    if displayedDeleted then
+        if type(self.ClearSharedPageChangeDraft) == "function" then
+            self:ClearSharedPageChangeDraft()
+        end
+        local cleared = self:ClearDisplayed(true)
+        if cleared ~= true then
+            warningCode = "shared-display-update-failed"
+        end
+    else
+        self:UpdateTree()
+        local refreshed = self:RefreshDisplayedPageAfterHierarchyMutation()
+        local canPublish = type(self.CanLocalPlayerPublish) == "function" and self:CanLocalPlayerPublish("display")
+        if refreshed ~= true and canPublish then
+            warningCode = "shared-display-update-failed"
+        end
+    end
+    if selectedDeleted and type(self.UpdateSelected) == "function" then
+        self:UpdateSelected(true, true)
+    end
+
+    return plan.PageCount, plan.CategoryCount, nil, warningCode
+end
+
 --- Deletes all nested categories and pages under a category id.
 -- @tparam number catId Category id to recursively clear.
 -- @tparam[opt=false] boolean suppressDisplayRefresh Defer active-page republishing to a larger transaction.

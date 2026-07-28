@@ -947,6 +947,63 @@ end
 -- Expose for init.lua options table
 AngryEra._AngryEra_ClearPage = AngryEra_ClearPage
 
+local function UnpinnedWipeSummary(pageCount, categoryCount)
+    local pageLabel = pageCount == 1 and "page" or "pages"
+    local categoryLabel = categoryCount == 1 and "category" or "categories"
+    return ("%d %s and %d %s"):format(categoryCount, categoryLabel, pageCount, pageLabel)
+end
+
+local function ReportUnpinnedWipeError(errorCode)
+    if errorCode == "library-changed" then
+        AngryEra:Print("The page library changed while confirmation was open. Review Wipe Unpinned and try again.")
+    else
+        AngryEra:Print("Wipe Unpinned stopped because the page library is unsafe. Nothing was removed.")
+    end
+end
+
+local function AngryEra_WipeUnpinned()
+    local plan, planError = AngryEra:PrepareUnpinnedWipe()
+    if not plan then
+        ReportUnpinnedWipeError(planError)
+        return
+    end
+    if plan.PageCount == 0 and plan.CategoryCount == 0 then
+        AngryEra:Print("No unpinned pages or categories to wipe.")
+        return
+    end
+
+    local popupName = "AngryEra_WipeUnpinned"
+    if StaticPopupDialogs[popupName] == nil then
+        StaticPopupDialogs[popupName] = {
+            button1 = "Wipe Unpinned",
+            button2 = CANCEL,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnAccept = function(self)
+                local removedPages, removedCategories, wipeError, wipeWarning = AngryEra:WipeUnpinned(self.data)
+                if wipeError then
+                    ReportUnpinnedWipeError(wipeError)
+                elseif removedPages == 0 and removedCategories == 0 then
+                    AngryEra:Print("No unpinned pages or categories to wipe.")
+                else
+                    AngryEra:Print("Wiped " .. UnpinnedWipeSummary(removedPages, removedCategories) .. ".")
+                    if wipeWarning == "shared-display-update-failed" then
+                        AngryEra:Print(
+                            "The local wipe completed, but the shared display could not be updated. Display a page again to retry synchronization."
+                        )
+                    end
+                end
+            end,
+        }
+    end
+
+    StaticPopupDialogs[popupName].text = "Permanently wipe "
+        .. UnpinnedWipeSummary(plan.PageCount, plan.CategoryCount)
+        .. "?\n\nPinned pages and everything inside pinned categories will be kept. This cannot be undone."
+    StaticPopup_Show(popupName, nil, nil, plan)
+end
+
 local function AngryEra_TextChanged(widget, event, value)
     AngryEra.window.button_revert:SetDisabled(false)
     AngryEra.window.button_restore:SetDisabled(false)
@@ -3573,12 +3630,8 @@ end
 
 -- ── Main Menu and Window ────────────────────────────────────────────────────
 
-local function AngryEra_MainMenu(frame)
-    if not AngryEra_DropDown then
-        AngryEra_DropDown = CreateFrame("Frame", "AngryEraMenuFrame", UIParent, "UIDropDownMenuTemplate")
-    end
-
-    local menu = {
+local function AngryEra_MainMenuEntries()
+    return {
         { text = "Add Page", func = AngryEra_AddPage, notCheckable = true },
         { text = "Add Category", func = AngryEra_AddCategory, notCheckable = true },
         { text = "Load Raid Template", func = AngryEra_LoadRaidMenu, notCheckable = true },
@@ -3619,8 +3672,18 @@ local function AngryEra_MainMenu(frame)
             end,
             notCheckable = true,
         },
+        { text = "Wipe Unpinned", func = AngryEra_WipeUnpinned, notCheckable = true },
         { text = "Clear Page", func = AngryEra_ClearPage, notCheckable = true },
     }
+end
+layoutEditor.MainMenuEntries = AngryEra_MainMenuEntries
+
+local function AngryEra_MainMenu(frame)
+    if not AngryEra_DropDown then
+        AngryEra_DropDown = CreateFrame("Frame", "AngryEraMenuFrame", UIParent, "UIDropDownMenuTemplate")
+    end
+
+    local menu = AngryEra_MainMenuEntries()
     DDM.EasyMenu(menu, AngryEra_DropDown, "cursor", 0, 0, "MENU")
 end
 
@@ -4287,8 +4350,8 @@ function AngryEra:UpdateTree(id)
     end
 end
 
-function AngryEra:UpdateSelected(destructive)
-    if destructive then
+function AngryEra:UpdateSelected(destructive, preserveSharedDraft)
+    if destructive and preserveSharedDraft ~= true then
         self:ClearSyncDraftConflict()
         if type(self.ClearSharedPageChangeDraft) == "function" then
             self:ClearSharedPageChangeDraft()

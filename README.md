@@ -120,7 +120,10 @@ The **Menu** button provides:
 - **Load Raid Template**
 - **Import > Encoded AA / JSON / Markdown**
 - **Manage Pages**
+- **Wipe Unpinned**, which permanently removes every unpinned page and category after confirmation
 - **Clear Page**, which clears the current display
+
+**Wipe Unpinned** applies to the complete local library, including pages you created or imported—not only pages received from other players. A pinned page is kept. A pinned category keeps its complete nested category/page subtree, even when descendants are not pinned individually. If a kept pin sits beneath an unpinned category that is removed, AngryEra moves that kept item to the nearest surviving category or the library root.
 
 Right-click a page or category to rename it, delete it, edit variables, export it, or change its category placement. Categories can also be saved as reusable templates. A saved template retains that category's variables and each page's variables, including a category layout and page-specific layout overrides.
 
