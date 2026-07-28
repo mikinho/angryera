@@ -1486,8 +1486,101 @@ local RAID_LAYOUT_APPLY_ERRORS = {
     ["timer-unavailable"] = "The raid layout worker could not schedule its next step.",
 }
 
+-- StaticPopup frames belong to UIParent rather than the editor that opened
+-- them. Give layout prompts an explicit owner and place a mouse-catching veil
+-- over that owner so the prompt behaves like a modal child dialog.
+local activeLayoutModals = setmetatable({}, { __mode = "k" })
+
+local function EndLayoutModal(popup)
+    local state = popup and popup.angryEraLayoutModal
+    if not state then
+        return
+    end
+    popup.angryEraLayoutModal = nil
+
+    if activeLayoutModals[state.owner] == popup then
+        activeLayoutModals[state.owner] = nil
+    end
+
+    local blocker = state.blocker
+    blocker:Hide()
+    blocker:ClearAllPoints()
+    blocker:SetParent(UIParent)
+
+    if state.popupStrata and popup.SetFrameStrata then
+        popup:SetFrameStrata(state.popupStrata)
+    end
+    if state.popupLevel and popup.SetFrameLevel then
+        popup:SetFrameLevel(state.popupLevel)
+    end
+end
+
+local function BeginLayoutModal(popup, owner)
+    if not popup or not owner then
+        return
+    end
+
+    local active = activeLayoutModals[owner]
+    if active and active ~= popup then
+        active:Hide()
+        EndLayoutModal(active)
+    end
+    EndLayoutModal(popup)
+
+    local blocker = popup.angryEraLayoutModalBlocker
+    if not blocker then
+        blocker = CreateFrame("Frame", nil, UIParent)
+        blocker:EnableMouse(true)
+        blocker:EnableMouseWheel(true)
+        blocker:SetScript("OnMouseDown", function() end)
+        blocker:SetScript("OnMouseUp", function() end)
+        blocker:SetScript("OnMouseWheel", function() end)
+
+        local shade = blocker:CreateTexture(nil, "BACKGROUND")
+        shade:SetAllPoints(blocker)
+        shade:SetColorTexture(0, 0, 0, 0.45)
+        popup.angryEraLayoutModalBlocker = blocker
+    end
+
+    blocker:SetParent(owner)
+    blocker:ClearAllPoints()
+    blocker:SetAllPoints(owner)
+    blocker:SetFrameStrata("FULLSCREEN_DIALOG")
+    blocker:SetFrameLevel((owner.GetFrameLevel and owner:GetFrameLevel() or 0) + 100)
+
+    popup.angryEraLayoutModal = {
+        owner = owner,
+        blocker = blocker,
+        popupStrata = popup.GetFrameStrata and popup:GetFrameStrata() or nil,
+        popupLevel = popup.GetFrameLevel and popup:GetFrameLevel() or nil,
+    }
+    activeLayoutModals[owner] = popup
+
+    if popup.SetFrameStrata then
+        popup:SetFrameStrata("FULLSCREEN_DIALOG")
+    end
+    if popup.SetFrameLevel then
+        popup:SetFrameLevel(blocker:GetFrameLevel() + 1)
+    end
+    if popup.Raise then
+        popup:Raise()
+    end
+    blocker:Show()
+end
+
+local function CloseLayoutModal(owner)
+    local popup = activeLayoutModals[owner]
+    if not popup then
+        return
+    end
+    popup:Hide()
+    EndLayoutModal(popup)
+end
+
+layoutEditor.CloseModal = CloseLayoutModal
+
 --- Prompts for one line of layout text and hands the answer back.
--- @tparam table data Prompt, optional seed Text, and an OnAccept(text) callback.
+-- @tparam table data Prompt, optional seed Text, Owner frame, and an OnAccept(text) callback.
 local function AngryEra_LayoutTextPopup(data)
     local popup_name = "AngryEra_LayoutText"
     if StaticPopupDialogs[popup_name] == nil then
@@ -1505,6 +1598,9 @@ local function AngryEra_LayoutTextPopup(data)
                     editBox:SetText(self.data.Text or "")
                     editBox:HighlightText()
                 end
+            end,
+            OnHide = function(self)
+                EndLayoutModal(self)
             end,
             OnAccept = function(self)
                 local editBox = self.editBox or self.wideEditBox or self.EditBox
@@ -1526,11 +1622,13 @@ local function AngryEra_LayoutTextPopup(data)
         }
     end
     StaticPopupDialogs[popup_name].text = data.Prompt
-    StaticPopup_Show(popup_name, nil, nil, data)
+    local popup = StaticPopup_Show(popup_name, nil, nil, data)
+    BeginLayoutModal(popup, data.Owner)
+    return popup
 end
 
 --- Confirms a layout edit that throws work away before running it.
--- @tparam table data Prompt and an OnAccept() callback.
+-- @tparam table data Prompt, Owner frame, and an OnAccept() callback.
 local function AngryEra_LayoutConfirmPopup(data)
     local popup_name = "AngryEra_LayoutConfirm"
     if StaticPopupDialogs[popup_name] == nil then
@@ -1541,14 +1639,22 @@ local function AngryEra_LayoutConfirmPopup(data)
             whileDead = true,
             hideOnEscape = true,
             preferredIndex = 3,
+            OnHide = function(self)
+                EndLayoutModal(self)
+            end,
             OnAccept = function(self)
                 self.data.OnAccept()
             end,
         }
     end
     StaticPopupDialogs[popup_name].text = data.Prompt
-    StaticPopup_Show(popup_name, nil, nil, data)
+    local popup = StaticPopup_Show(popup_name, nil, nil, data)
+    BeginLayoutModal(popup, data.Owner)
+    return popup
 end
+
+layoutEditor.ShowTextPopup = AngryEra_LayoutTextPopup
+layoutEditor.ShowConfirmPopup = AngryEra_LayoutConfirmPopup
 
 --- Hangs an explanatory tooltip off an AceGUI widget.
 -- @tparam table widget AceGUI widget to describe.
@@ -2015,9 +2121,8 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         RefreshLayoutContext(true)
     end)
 
-    -- A prompt outlives the window it was opened from, so closing the editor
-    -- marks the views dead rather than letting a late answer touch a widget
-    -- AceGUI has already recycled.
+    -- A prompt can still be active when the window is hidden programmatically,
+    -- so closing the editor dismisses it before AceGUI recycles either widget.
     -- UISpecialFrames closes the raw Blizzard frame with Hide(), which does not
     -- necessarily fire AceGUI's OnClose callback. Bridge that path while the
     -- widget is alive, then restore AceGUI's original script before releasing it
@@ -2028,6 +2133,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             return
         end
         closed = true
+        CloseLayoutModal(frame.frame)
         frame.frame:SetScript("OnHide", previousOnHide)
         watcher:UnregisterAllEvents()
         watcher:SetScript("OnEvent", nil)
@@ -2281,9 +2387,9 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             widget:SetLayoutModel(model)
         end
 
-        -- A prompt does not block the grid, so an index taken when it opened can
-        -- point at something else by the time it is answered. Each one re-reads
-        -- what it named and gives up if that moved.
+        -- The modal prompt blocks local edits, but roster and synchronized
+        -- context changes can still arrive while it is open. Each callback
+        -- re-reads what it named and gives up if that moved.
         local function StillHolds(group, slot, expression)
             local current = model.groups[group]
             if not current then
@@ -2324,6 +2430,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             AngryEra_LayoutTextPopup({
                 Prompt = "Slot in " .. target.name .. ":",
                 Text = expression,
+                Owner = frame.frame,
                 OnAccept = function(text)
                     if not StillHolds(group, slot, expression) then
                         self:Print("That layout slot changed before the edit was confirmed; no change was made.")
@@ -2346,6 +2453,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             local drop = group and { kind = "group", group = group } or { kind = "subgroup", subgroup = subgroup }
             AngryEra_LayoutTextPopup({
                 Prompt = "Add a slot:",
+                Owner = frame.frame,
                 OnAccept = function(text)
                     if not RefreshLayoutContext(true) then
                         return
@@ -2364,6 +2472,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
                 end
                 AngryEra_LayoutConfirmPopup({
                     Prompt = ("Remove the group %s?"):format(label),
+                    Owner = frame.frame,
                     OnAccept = function()
                         if not StillHolds(group, nil, label) then
                             self:Print("That layout group changed before removal was confirmed; no change was made.")
@@ -2377,6 +2486,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             AngryEra_LayoutTextPopup({
                 Prompt = "Group name:",
                 Text = label,
+                Owner = frame.frame,
                 OnAccept = function(text)
                     if not existing then
                         Commit(layout.AddGroup(model, text, subgroup))

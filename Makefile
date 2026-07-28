@@ -1,4 +1,4 @@
-.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-bounded-deflate test-bounded-deflate-runtimes test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-pin-migration test-received-cleanup test-priority-assignments test-assigned-roles test-layout test-layout-grid test-raid-layout test-raid-assignments test-page-menu test-category-menu test-tree-pins test-active-page-network test-permissions test-import-ownership test-import-export-options test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-variable-meta test-display-inheritance test-category-serialization test-model-hierarchy-safety test-note-api test-public-api test-display-note-api test-display-autohide test-display-fallback test-legacy-id-migration test-template-load test-auto-markers test-auto-advance check check-strict
+.PHONY: docs docs-clean lint lint-syntax lint-style lint-stylua lint-stylua-strict lint-luacheck lint-luacheck-strict test test-bounded-deflate test-bounded-deflate-runtimes test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-pin-migration test-received-cleanup test-priority-assignments test-assigned-roles test-layout test-layout-grid test-layout-modal test-raid-layout test-raid-assignments test-page-menu test-category-menu test-tree-pins test-active-page-network test-permissions test-import-ownership test-import-export-options test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-variable-meta test-display-inheritance test-category-serialization test-model-hierarchy-safety test-note-api test-public-api test-display-note-api test-display-autohide test-display-fallback test-legacy-id-migration test-template-load test-auto-markers test-auto-advance check check-strict
 
 LDOC ?= ldoc
 LDOC_CONFIG ?= .ldoc
@@ -60,7 +60,7 @@ lint-luacheck-strict:
 	@command -v $(LUACHECK) >/dev/null 2>&1 || { echo "Error: $(LUACHECK) not found."; exit 1; }
 	@$(LUACHECK) --config $(LUACHECK_CONFIG) -- $(LUA_FILES)
 
-test: test-bounded-deflate test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-pin-migration test-received-cleanup test-priority-assignments test-assigned-roles test-layout test-layout-grid test-raid-layout test-raid-assignments test-page-menu test-category-menu test-tree-pins test-active-page-network test-permissions test-import-ownership test-import-export-options test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-variable-meta test-display-inheritance test-category-serialization test-model-hierarchy-safety test-note-api test-public-api test-display-note-api test-display-autohide test-display-fallback test-legacy-id-migration test-template-load test-auto-markers test-auto-advance
+test: test-bounded-deflate test-json-regression test-order-regression test-smart-markers test-chat-output test-tag-page-context test-model-updates test-init-lifecycle test-identity-meta test-entity-identity test-pin-migration test-received-cleanup test-priority-assignments test-assigned-roles test-layout test-layout-grid test-layout-modal test-raid-layout test-raid-assignments test-page-menu test-category-menu test-tree-pins test-active-page-network test-permissions test-import-ownership test-import-export-options test-protocol test-protocol-runtime test-sync-schema test-sync-active-page test-sync-page-runtime test-sync-revisions test-sync-scopes test-sync-snapshot test-sync-apply test-sync-runtime test-variable-inheritance test-variable-meta test-display-inheritance test-category-serialization test-model-hierarchy-safety test-note-api test-public-api test-display-note-api test-display-autohide test-display-fallback test-legacy-id-migration test-template-load test-auto-markers test-auto-advance
 
 test-bounded-deflate:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
@@ -129,6 +129,10 @@ test-layout:
 test-layout-grid:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
 	@$(LUA_RUN) tests/layout_grid.lua
+
+test-layout-modal:
+	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
+	@$(LUA_RUN) tests/layout_modal.lua
 
 test-raid-layout:
 	@command -v $(LUA_RUN) >/dev/null 2>&1 || { echo "Error: $(LUA_RUN) not found."; exit 1; }
