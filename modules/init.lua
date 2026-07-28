@@ -862,7 +862,7 @@ function AngryEra:OnInitialize()
     end
 end
 
---- Re-runs the additive owned-category pin migration for beta testing.
+--- Re-runs the additive owned-category pin migration for users upgrading from prerelease builds.
 function AngryEra:HandleOwnedCategoryPinMigrationCommand()
     local pinned = self:MigrateOwnedCategoryPins(true)
     if pinned > 0 then

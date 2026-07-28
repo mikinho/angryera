@@ -8,9 +8,9 @@ Supported game clients:
 - Burning Crusade Anniversary 2.5.6
 
 > [!IMPORTANT]
-> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. Priority assignments require AngryEra v3.2.0-beta or newer on every viewer. Group layouts, variable families, imported raid-role variables, automatic raid-tank and raid-assistant assignments, and the Key=Value `$true`/`$false` boolean literals require v3.2.1-beta or newer. Pages using only features common to v3.1 remain compatible with v3.1.x and v3.2.0-beta clients. Existing local pages and settings are migrated automatically for the v3.1 data model, but Key=Value automation flags are not rewritten: replace legacy `=true` and `=false` flag values with `=$true` and `=$false`, respectively. Downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
+> **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.2.2 features—including priority assignments, group layouts, variable families, imported raid-role variables, automatic raid-tank and raid-assistant assignments, and the Key=Value `$true`/`$false` boolean literals—require v3.2.2 or newer on every client that must interpret them. Pages using only features common to v3.1 remain compatible with v3.1.x clients. Existing local pages and settings are migrated automatically for the v3.1 data model, but Key=Value automation flags are not rewritten: replace legacy `=true` and `=false` flag values with `=$true` and `=$false`, respectively. Downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
 
-Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. Do not rely on priority assignments in a mixed pre-v3.2.0-beta raid, or on group layouts, variable families, imported raid-role variables, automatic raid-tank or raid-assistant assignments, or Key=Value boolean metadata in a mixed pre-v3.2.1-beta raid.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. For a production raid that uses any v3.2 feature, update every participating client to AngryEra v3.2.2 or newer.
 
 ## What is new
 
@@ -29,7 +29,7 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Safer imports and migration:** imported data is bounded and validated, and existing pages and settings are migrated automatically.
 - **Flexible Encoded AA transfers:** complete exports include variables and metadata by default, while content-only transfers can intentionally omit them.
 - **Priority assignments:** `Primary > Backup` selects the first listed player who is present and alive.
-- **Pinned page library:** local favorites stay above a clear divider, and the first v3.2.1-beta upgrade pins existing locally owned category roots when no pin choices already exist.
+- **Pinned page library:** local favorites stay above a clear divider, and the first v3.2 upgrade pins existing locally owned category roots when no pin choices already exist.
 - **Optional received-page cleanup:** remove pages received from other leaders at login or on demand while retaining protected local data.
 - **Optional hover auto-hide:** fade the assignment away when idle and reveal it on hover or whenever displayed content changes.
 - **Optional combat fade:** keep a visible assignment at 10% opacity in combat without changing its manual visibility or interrupting the current auto-hide and page-reveal state.
@@ -73,7 +73,7 @@ If a displayed page is new to your installation, it appears unfiled. You may org
 
 To keep a received page during cleanup, right-click it and choose **Pin**. You can also pin a category, which protects received pages anywhere in that category's subtree. Pinning is local to your installation and does not change shared data; right-click the item again and choose **Unpin** to remove that protection.
 
-On the first upgrade to v3.2.1-beta, AngryEra automatically pins your topmost locally owned categories if you have not already used pins. It does not pin pages, received categories, or redundant locally owned categories nested beneath another one. Existing prerelease pin choices are left unchanged. If you used a prerelease build, you can safely replay the additive step with `/ae migratepins`; it never removes an existing pin.
+On the first upgrade to v3.2, AngryEra automatically pins your topmost locally owned categories if you have not already used pins. It does not pin pages, received categories, or redundant locally owned categories nested beneath another one. Existing prerelease pin choices are left unchanged. If you used a prerelease build, you can safely replay the additive step with `/ae migratepins`; it never removes an existing pin.
 
 Every pinned item carries a gold favorite-star icon. At each level of the tree, pinned categories appear first, followed by pinned pages, then a divider and the remaining unpinned items in their existing manual order. Nested pages remain inside their categories. The gray `‡` suffix means that an item has variables or metadata; it is not the pin indicator. Pin or unpin an item before dragging it across these fixed sections; dropping into a category remains available. Pin sorting changes only the library view—Previous, Next, and First continue to follow the saved manual page order.
 
@@ -181,19 +181,21 @@ Right-click a page or category and choose **Edit Variables**. Variables accept e
 
 ```text
 MT=Zessy
-OT1=Kwayteow
-HEALER=Eblis
+OT1=Zessling
+HEALER1=Kwayteow
+HEALER2=Eblis
 ```
 
 The Edit Variables window owns its own Escape key: pressing Escape or its close button leaves the main AngryEra window open. If the current draft differs from the last opened or successfully saved value, AngryEra asks before discarding it. Its primary button reads **Close** while the draft is clean and changes to **Save** after an edit. A successful save keeps the window open and changes the same button back to **Close**.
 
-In Key=Value storage, booleans use the exact lowercase literals `$true` and `$false`. Plain `true`, `false`, `True`, and `False` are strings so they remain valid player names. An exact whole-value reference to a boolean, such as `$AUTOADVANCE={{ENABLED}}`, keeps the boolean type; a boolean embedded in other text renders as `true` or `false`. JSON keeps its native boolean syntax: use `true` or `false` without quotes for a boolean, and quotes for a string or player name. The new Key=Value literals require AngryEra v3.2.1-beta or newer on every client that needs to interpret them.
+In Key=Value storage, booleans use the exact lowercase literals `$true` and `$false`. Plain `true`, `false`, `True`, and `False` are strings so they remain valid player names. An exact whole-value reference to a boolean, such as `$AUTOADVANCE={{ENABLED}}`, keeps the boolean type; a boolean embedded in other text renders as `true` or `false`. JSON keeps its native boolean syntax: use `true` or `false` without quotes for a boolean, and quotes for a string or player name. The new Key=Value literals require AngryEra v3.2.2 or newer on every client that needs to interpret them.
 
 Use them in page text with Mustache syntax:
 
 ```text
 Main Tank: {{MT}}
 Off Tank: {{OT1}}
+Healers: {{HEALER1}}, {{HEALER2}}
 ```
 
 ### Category inheritance
@@ -209,10 +211,10 @@ The nearest value wins. Put raid-wide defaults on an outer category, encounter d
 References resolve after all layers are merged. This lets a category define a reusable expression that picks up a page override:
 
 ```text
-Tank={{MT}}
+OffTank={{OT1}}
 ```
 
-If a page later sets `MT=Roselea`, `{{Tank}}` resolves to `Roselea`.
+If a page later sets `OT1=Roselea`, `{{OffTank}}` resolves to `Roselea`.
 
 ### Variable families
 
@@ -220,27 +222,25 @@ Raid composition changes more often than the assignment structure. Variable fami
 
 The mental model is:
 
-1. Maintain numbered source variables such as `PRIESTS1`, `PRIESTS2`, `PALADINS1`, and `DRUID1`.
-2. Declare how those sources combine with `HEALER*=PRIESTS*,PALADINS*,DRUID*`.
+1. Maintain numbered source variables such as `PRIESTS1` and `DRUIDS1`.
+2. Declare how those sources combine with `HEALER*=PRIESTS*,DRUIDS*`.
 3. Use the generated `{{HEALER1}}`, `{{HEALER2}}`, and later values throughout descendant notes and layouts.
 
 For example:
 
 ```text
-PRIESTS1=Roselea
-PRIESTS2=Zessy
-PALADINS1=Kwayteow
-DRUID1=Eblis
+PRIESTS1=Kwayteow
+DRUIDS1=Eblis
 
-HEALER*=PRIESTS*,PALADINS*,DRUID*
+HEALER*=PRIESTS*,DRUIDS*
 ```
 
-This creates the effective variables `HEALER1=Roselea`, `HEALER2=Zessy`, `HEALER3=Kwayteow`, and `HEALER4=Eblis`. The declaration `HEALER*` itself is not a template variable. Its numbered results appear in the Group Layout editor's Variables column and otherwise behave exactly like variables you wrote individually.
+This creates the effective variables `HEALER1=Kwayteow` and `HEALER2=Eblis`. The declaration `HEALER*` itself is not a template variable. Its numbered results appear in the Group Layout editor's Variables column and otherwise behave exactly like variables you wrote individually.
 
 > [!IMPORTANT]
-> The `*` expands variable names only while declaring a family. `{{HEALER*}}` does not expand inside a note or occupy multiple layout seats. Use the numbered results—`{{HEALER1}}`, `{{HEALER2}}`, and so on. Selectors name variables, not literal players; define `PRIESTS1=Roselea`, then select `PRIESTS*`.
+> The `*` expands variable names only while declaring a family. `{{HEALER*}}` does not expand inside a note or occupy multiple layout seats. Use the numbered results—`{{HEALER1}}`, `{{HEALER2}}`, and so on. Selectors name variables, not literal players; define `PRIESTS1=Kwayteow`, then select `PRIESTS*`.
 
-Selectors are comma-separated and read from left to right. Braces are optional there, so `HEALER*={{PRIESTS*}},{{PALADINS*}},{{DRUID*}}` is equivalent. A wildcard matches only the same case-sensitive prefix followed by a positive number without leading zeroes, and matches use numeric order: `PRIESTS1`, `PRIESTS2`, `PRIESTS10`. Sparse source numbers are compacted into a dense destination family.
+Selectors are comma-separated and read from left to right. Braces are optional there, so `HEALER*={{PRIESTS*}},{{DRUIDS*}}` is equivalent. A wildcard matches only the same case-sensitive prefix followed by a positive number without leading zeroes, and matches use numeric order: `PRIESTS1`, `PRIESTS2`, `PRIESTS10`. Sparse source numbers are compacted into a dense destination family.
 
 Families may be composed:
 
@@ -249,7 +249,7 @@ MELEE*=FURY*,ROGUE*
 RAID*=HEALER*,MELEE*
 ```
 
-The nearest inherited declaration wins. An empty declaration such as `HEALER*=` disables an inherited family, while an explicit `HEALER2=Someone` on the same or a nearer layer overrides that one generated position. Repeating a source selector does not repeat the same source key. Two different source keys may still hold the same player, but after either is placed the Group Layout editor hides every other variable that currently resolves to that target.
+The nearest inherited declaration wins. An empty declaration such as `HEALER*=` disables an inherited family, while an explicit `HEALER2=Name` on the same or a nearer layer overrides that one generated position. Repeating a source selector does not repeat the same source key. Two different source keys may still hold the same player, but after either is placed the Group Layout editor hides every other variable that currently resolves to that target.
 
 Family names use letters, numbers, and underscores, must start with a letter or underscore, and cannot end in a number before `*`. Each declaration collects at most 40 string source members; numeric, boolean, structured, and `$` metadata values are not collected. Missing selectors contribute nothing, explicitly empty string members retain their numbered position, and cyclic or oversized family definitions are rejected before an Edit Variables save.
 
@@ -269,10 +269,11 @@ Import only changes the open draft until you save it. It never assigns or change
 The import creates effective numbered variables:
 
 ```text
-RAID_TANK1=Roselea
-RAID_HEALER1=Eblis
-RAID_HEALER2=Zessy
-RAID_DPS1=Kwayteow
+RAID_TANK1=Zessy
+RAID_HEALER1=Kwayteow
+RAID_HEALER2=Eblis
+RAID_DPS1=Zessling
+RAID_DPS2=Roselea
 ```
 
 Blizzard's `DAMAGER` role is exposed as `RAID_DPS`; players with no assigned role are skipped. Names normally omit `-Realm`. If two current group members have the same short name, AngryEra keeps `Name-Realm` for the ambiguous assignments instead of guessing. Re-importing preserves the relative order of members who remain in the same role and appends newly assigned members. Numbering stays dense, so later members shift down when an earlier member leaves that role.
@@ -321,28 +322,25 @@ The aliases are optional—you may use `{{RAID_TANK1}}` directly—but they give
 Blizzard can identify Damage, but not the melee, caster, interrupt, or soak team you intend. Maintain those source lists yourself and combine them into generic families:
 
 ```text
-FURY1=Mirei
-FURY2=Peanut
-ROGUE1=Zessy
-FERAL1=Paddis
-MAGE1=Ellaria
-WARLOCK1=Wonkovar
-WARLOCK2=Chadbone
+INTERRUPT1=Zessling
+SUNDER1=Roselea
+DISPEL1=Kwayteow
+DECURSE1=Eblis
 
-MELEE*=FURY*,ROGUE*,FERAL*
-CASTER*=MAGE*,WARLOCK*
+MELEE*=INTERRUPT*,SUNDER*
+CASTER*=DISPEL*,DECURSE*
 ```
 
-This generates `MELEE1...4` and `CASTER1...3` in the authored selector order. A reusable layout can mix those curated families with imported roles:
+This generates `MELEE1...2` and `CASTER1...2` in the authored selector order. A reusable layout can mix those curated families with imported roles:
 
 ```text
-$LAYOUT=Windfury/3: {{RAID_TANK1}}, {{MELEE1}}, {{MELEE2}}, {{MELEE3}}, {{RAID_HEALER1}}; Support/4: {{MELEE4}}, {{CASTER1}}, {{CASTER2}}, {{CASTER3}}, {{RAID_HEALER2}}
+$LAYOUT=Windfury/3: {{RAID_TANK1}}, {{MELEE1}}, {{CASTER1}}; Support/4: {{MELEE2}}, {{CASTER2}}
 ```
 
-If one encounter needs Rogues first, put only this nearer declaration on that page:
+If one encounter needs the Sunder assignment first, put only this nearer declaration on that page:
 
 ```text
-MELEE*=ROGUE*,FURY*,FERAL*
+MELEE*=SUNDER*,INTERRUPT*
 ```
 
 The page still inherits the same `$LAYOUT`, but its generated `MELEE1...N` order changes for that encounter. This is the main benefit of families: pages and layouts describe stable jobs and positions, while smaller source lists decide who fills them.
@@ -376,7 +374,7 @@ After re-importing and saving changed roles, the written assignment, automatic S
 A priority assignment uses `>` to select the first listed player who is both present and alive. It re-resolves when the roster or player state changes:
 
 ```text
-MAIN_TANK=Roselea > Zessy > Backup
+MAIN_TANK=Zessy > Zessling > Roselea
 $SKULL={{MAIN_TANK}}
 ```
 
@@ -416,11 +414,11 @@ Metadata can also appear in page text. It is excluded from automatic word highli
 `$TANKS` and `$ASSISTS` let the raid leader apply the roles and authority required by the exact displayed page:
 
 ```text
-MT=Roselea
-OT=Zessy
-LOOTER=Eblis
-$TANKS={{MT}},{{OT}}
-$ASSISTS={{OT}},{{LOOTER}}
+MT=Zessy
+ASSIST1=Zessling
+ASSIST2=Roselea
+$TANKS={{MT}}
+$ASSISTS={{ASSIST1}},{{ASSIST2}}
 ```
 
 `$TANKS` means Blizzard's modern assigned **Tank** role. It does not set Blizzard's separate **Main Tank** flag: the dedicated Main Tank raid-frame row and its target/target-of-target frames will remain unchanged, and the context menu may still offer **Promote to Main Tank**. Blizzard protects that flag behind a secure player action, so an automatic page update cannot apply it. `$ASSISTS` means actual **raid-assistant rank**, with the same permissions as assigning Assist through Blizzard's raid UI; it does not mean a Main Assist raid-frame flag. One player may appear in both lists.
@@ -462,7 +460,7 @@ $SKULL
 MT=Zessy
 $MT={{MT}}
 $SQUARE=$MT
-$SKULL=Kway-OtherRealm
+$SKULL=Roselea-OtherRealm
 ```
 
 When the page is displayed, AngryEra resolves the assignments and applies the requested markers:
@@ -522,13 +520,13 @@ A raid has eight subgroups of five. The parser keeps the first eight groups and 
 A layout may intentionally cover only part of the raid. Only members produced by its slots receive target subgroups; everyone else has no assigned destination, although Blizzard may move an unassigned member as the other half of a required subgroup swap.
 
 ```text
-$LAYOUT=Tanks/1: {{MT}}, {{OT1}}; Spores: Wonkovar > Chadbone, *WARLOCK x2; Kite/8: group:3
+$LAYOUT=Tanks/1: {{MT}}, {{OT1}}; Spores: Kwayteow > Eblis, *WARLOCK x2; Kite/8: group:3
 ```
 
-A slot may also be a `{{Variable}}`, so one name change updates the note and the layout together. The variable is read first and what it holds is classified afterwards, so `MT=Roselea` places Roselea, `MT=Roselea > Vhez` picks whichever of them is present, and `Soakers=*WARLOCK x3` fills three warlocks. A variable that is not set anywhere leaves its slot out rather than placing a player of that name.
+A slot may also be a `{{Variable}}`, so one name change updates the note and the layout together. The variable is read first and what it holds is classified afterwards, so `MT=Zessy` places Zessy, `MT=Zessy > Zessling > Roselea` picks the first one present and alive, and `Soakers=*WARLOCK x3` fills three warlocks. A variable that is not set anywhere leaves its slot out rather than placing a player of that name.
 
 ```text
-MT=Roselea > Vhez
+MT=Zessy > Zessling > Roselea
 $LAYOUT=Tanks/1: {{MT}}, {{OT1}}
 ```
 
@@ -615,7 +613,7 @@ Open the editor and choose **Menu > Import**:
 
 Imports are validated and bounded before they change local data. If a matching page or category name exists, AngryEra asks before replacing it.
 
-Uncheck **Import variables and metadata when included** to import only names, page contents, ordering, and hierarchy. A new item then starts without directly defined variables or metadata. Replacing an existing page keeps that page's current direct values; replacing a category keeps the matched root category's values, while its deleted-and-recreated descendants receive none. An export created without variables and metadata is also recognized as content-only. Content-only exports require AngryEra v3.2.1-beta or newer to import; older clients reject them rather than risk clearing an existing setup. Complete exports remain compatible with earlier AA Encoding importers.
+Uncheck **Import variables and metadata when included** to import only names, page contents, ordering, and hierarchy. A new item then starts without directly defined variables or metadata. Replacing an existing page keeps that page's current direct values; replacing a category keeps the matched root category's values, while its deleted-and-recreated descendants receive none. An export created without variables and metadata is also recognized as content-only. Content-only exports require AngryEra v3.2.2 or newer to import; older clients reject them rather than risk clearing an existing setup. Complete exports remain compatible with earlier AA Encoding importers.
 
 Read-only received data is protected: choosing **Replace** for an item you cannot edit creates a uniquely named local copy instead. Importing into the exact active shared page follows the same leader and qualified-assistant rules as editing it.
 
@@ -714,15 +712,13 @@ Adding `Group` to **Highlight** emphasizes your current group token, such as `G2
 | `/ae deleteall` | Permanently delete the local page library after confirmation. |
 | `/ae debug [on\|off\|status]` | Control session-local sharing diagnostics. |
 
-`/aa` remains a temporary compatibility alias for existing macros and habits. It runs the same commands, but prints one local deprecation notice per login. Update macros and documentation to use `/ae`.
-
 Debug is off by default and resets to off after a UI reload. It never prints page contents or variable values, but it does include character names and message, page, and revision identifiers. Review debug output before sharing it publicly.
 
 ## Troubleshooting
 
 ### A raider does not receive the displayed page
 
-1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). Priority assignments require v3.2.0-beta or newer on every viewer; group layouts, variable families, imported raid-role variables, automatic raid-tank and raid-assistant assignments, and Key=Value boolean metadata require v3.2.1-beta or newer.
+1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). If the page uses any v3.2 feature, confirm every client that must interpret it is running AngryEra v3.2.2 or newer.
 2. Confirm the sender is the current party or raid leader.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
 4. Have the leader or a raid assistant run `/ae version` in the group.
@@ -742,7 +738,7 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 ### A variable family is empty or rejected
 
 - Use the generated numbered variables such as `{{HEALER1}}`; `{{HEALER*}}` is not a template or layout expansion.
-- Confirm each selector names an existing variable or numbered family. `HEALER*=Roselea,Zessy` looks for variables named `Roselea` and `Zessy`; it does not treat those words as player values.
+- Confirm each selector names an existing variable or numbered family. `HEALER*=Kwayteow,Eblis` looks for variables named `Kwayteow` and `Eblis`; it does not treat those words as player values.
 - Wildcard prefixes are case-sensitive and match only positive numeric suffixes without leading zeroes: `PRIEST1` and `PRIEST10` match `PRIEST*`; `Priest1`, `PRIEST0`, and `PRIEST01` do not.
 - Remove family cycles and keep each generated family to 40 string source members.
 - If the sources come from Blizzard roles, click **Import Assigned Raid Roles** again and save the draft. Imports are snapshots, not a live role feed.
