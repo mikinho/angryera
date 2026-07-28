@@ -75,6 +75,20 @@ local function Reaches(current, want)
     return ops
 end
 
+local function FullRaidGroups()
+    local groups = {}
+    for index = 1, 40 do
+        groups[index] = math.floor((index - 1) / 5) + 1
+    end
+    return groups
+end
+
+local function AssertOnlySwaps(operations, message)
+    for _, operation in ipairs(operations) do
+        assert(operation.Kind == "swap", message)
+    end
+end
+
 -- A single move into a non-full subgroup uses set.
 local single = Reaches({ [1] = 1, [2] = 1, [3] = 2 }, { [3] = 1 })
 assert(#single == 1 and single[1].Kind == "set", "a non-full target is filled with set")
@@ -94,6 +108,10 @@ end
 local traded = Reaches(trade, { [1] = 2, [6] = 1 })
 assert(#traded == 1 and traded[1].Kind == "swap", "a mutual swap satisfies both members at once")
 
+-- A reciprocal swap is still cheaper when both target subgroups have room.
+local sparseTrade = Reaches({ [1] = 1, [2] = 2 }, { [1] = 2, [2] = 1 })
+assert(#sparseTrade == 1 and sparseTrade[1].Kind == "swap", "a sparse reciprocal pair should avoid two sets")
+
 -- Already-correct assignments need no moves.
 assert(#Reaches({ [1] = 1, [2] = 2 }, { [1] = 1 }) == 0, "a satisfied layout produces no moves")
 
@@ -102,6 +120,49 @@ Reaches(
     { [1] = 1, [2] = 1, [3] = 2, [4] = 2, [5] = 3, [6] = 3, [7] = 4, [8] = 4, [9] = 5, [10] = 5 },
     { [1] = 5, [10] = 1, [5] = 2 }
 )
+
+-- A complete 40-person layout can exchange every pair of full subgroups
+-- without ever requiring a capacity-breaking set operation.
+local fullRaid = FullRaidGroups()
+local pairedGroups = {}
+for index, subgroup in pairs(fullRaid) do
+    pairedGroups[index] = subgroup % 2 == 1 and subgroup + 1 or subgroup - 1
+end
+local pairedFullRaid = Reaches(fullRaid, pairedGroups)
+assert(#pairedFullRaid == 20, "four pairs of full subgroups should need twenty mutual swaps")
+AssertOnlySwaps(pairedFullRaid, "a full 40-person raid must rearrange through swaps")
+
+-- Partial layouts also work in a full raid. The displaced, unbound member may
+-- occupy the assigned member's old subgroup, but no sixth member is introduced.
+local partialFullRaid = Reaches(fullRaid, { [1] = 2 })
+assert(
+    #partialFullRaid == 1 and partialFullRaid[1].Kind == "swap",
+    "one partial assignment into a full subgroup should need one swap"
+)
+
+-- Prefer reciprocal partners even when a lower-index non-reciprocal candidate
+-- is available. These four members form two independent mutual swaps.
+local reciprocalTargets = {}
+for index, subgroup in pairs(fullRaid) do
+    reciprocalTargets[index] = subgroup
+end
+reciprocalTargets[1] = 2
+reciprocalTargets[6] = 3
+reciprocalTargets[7] = 1
+reciprocalTargets[11] = 2
+local reciprocalPlan = Reaches(fullRaid, reciprocalTargets)
+assert(#reciprocalPlan == 2, "two available reciprocal pairs should take exactly two swaps")
+AssertOnlySwaps(reciprocalPlan, "reciprocal exchanges in a full raid must remain swaps")
+
+-- Five parallel cycles rotate all eight full subgroups. Each eight-way cycle
+-- takes seven swaps, so the complete transformation takes thirty-five.
+local cycleTargets = {}
+for index, subgroup in pairs(fullRaid) do
+    cycleTargets[index] = subgroup % 8 + 1
+end
+local cyclePlan = Reaches(fullRaid, cycleTargets)
+assert(#cyclePlan == 35, "five eight-subgroup cycles should need thirty-five swaps")
+AssertOnlySwaps(cyclePlan, "a full multi-group cycle must preserve subgroup capacity through swaps")
 
 -- Oversubscribing a subgroup is rejected up front.
 local _, okOver, errOver = rl.PlanSubgroupMoves(
@@ -522,6 +583,50 @@ assert(#operations == 2, "both required members should move")
 assert(operations[1].Name == "Alice-Home", "the first operation targets Alice")
 assert(operations[2].Name == "Bob-Home" and operations[2].Index == 1, "the second operation refreshes Bob's index")
 assert(operations[2].At - operations[1].At >= 0.25, "raid API calls are separated by at least 250ms")
+
+-- A complete full-raid cycle also survives roster reindexing after every API
+-- acknowledgement. The driver must continue targeting identities, not the
+-- indices captured by an earlier plan.
+local fullRaidMembers = {}
+for index = 1, 40 do
+    fullRaidMembers[index] = {
+        Name = ("Player%02d-Home"):format(index),
+        Subgroup = math.floor((index - 1) / 5) + 1,
+    }
+end
+local fullRaidLayoutGroups = {}
+for targetSubgroup = 1, 8 do
+    local sourceSubgroup = targetSubgroup == 1 and 8 or targetSubgroup - 1
+    local names = {}
+    for offset = 1, 5 do
+        local index = (sourceSubgroup - 1) * 5 + offset
+        names[#names + 1] = ("Player%02d-Home"):format(index)
+    end
+    fullRaidLayoutGroups[#fullRaidLayoutGroups + 1] = ("Group %d/%d: %s"):format(
+        targetSubgroup,
+        targetSubgroup,
+        table.concat(names, ", ")
+    )
+end
+Setup(fullRaidMembers, table.concat(fullRaidLayoutGroups, "; "))
+afterRaidApiCall = function()
+    local first = table.remove(raidMembers, 1)
+    raidMembers[#raidMembers + 1] = first
+end
+applied, reason = AngryEra:RequestGroupLayoutApply()
+assert(applied and reason == "started", "a complete full-raid cycle should start asynchronously")
+RunTimers()
+assert(#operations == 35, "the full-raid cycle should issue the planned thirty-five swaps")
+AssertOnlySwaps(operations, "the asynchronous full-raid cycle must not overfill a subgroup")
+assert(
+    #finishEvents == 1 and finishEvents[1].Success and finishEvents[1].Result == 35,
+    "the full-raid cycle should report one successful completion"
+)
+for index = 1, 40 do
+    local member = assert(FindMember(("Player%02d-Home"):format(index)), "every full-raid member should remain present")
+    local originalSubgroup = math.floor((index - 1) / 5) + 1
+    assert(member.Subgroup == originalSubgroup % 8 + 1, "every full-raid member should reach the target subgroup")
+end
 
 -- Only one raid API operation may be outstanding. A second operation cannot be
 -- sent until a fresh roster snapshot acknowledges the first.

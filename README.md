@@ -557,6 +557,8 @@ Tick **Inherit layout** to preview and use the nearest ancestor category layout.
 
 **Apply** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected. It then moves one identity at a time, waits for Classic to acknowledge the change, and resolves fresh raid indices before continuing so roster renumbering cannot redirect a later move.
 
+In a full 40-player raid, AngryEra rearranges full subgroups with swaps instead of attempting to add a sixth member. It prioritizes reciprocal exchanges that place both players at once, then the shortest remaining subgroup cycles, before using an unbound roster member as a filler. This reduces protected raid calls while keeping every intermediate subgroup valid.
+
 The raid leader may always apply it. A raid assistant must also be an officer in the current raid leader's guild, be listed in **Trusted Assistants** on that installation, or have **Allow All Raid Assistants** enabled there. This local check means routinely granting assist to an entire raid does not enable the action for everyone by default.
 
 The editor button saves and applies only the exact page currently displayed. After editing a category layout, display a descendant page that inherits it and use `/ae applylayout`, or open that displayed page's layout editor. `/ae applylayout` always applies the layout resolved by the actively displayed page.

@@ -83,6 +83,67 @@ function raid_layout.PlanSubgroupMoves(current, want, options)
         return nil
     end
 
+    -- Returns the first member on the shortest directed path from one subgroup
+    -- to another. Each misplaced constrained member is an edge from their
+    -- current subgroup to their desired subgroup.
+    local function ShortestPathFirstIndex(startSubgroup, finishSubgroup, excludedIndex)
+        local queue = { startSubgroup }
+        local queueHead = 1
+        local seen = {
+            [startSubgroup] = true,
+        }
+        local firstIndexBySubgroup = {}
+        local distanceBySubgroup = {
+            [startSubgroup] = 0,
+        }
+        while queueHead <= #queue do
+            local subgroup = queue[queueHead]
+            queueHead = queueHead + 1
+            for _, index in ipairs(assigned) do
+                local desiredSubgroup = want[index]
+                if index ~= excludedIndex and groupOf[index] == subgroup and desiredSubgroup ~= subgroup then
+                    local firstIndex = firstIndexBySubgroup[subgroup] or index
+                    local distance = distanceBySubgroup[subgroup] + 1
+                    if desiredSubgroup == finishSubgroup then
+                        return firstIndex, distance
+                    end
+                    if not seen[desiredSubgroup] then
+                        seen[desiredSubgroup] = true
+                        firstIndexBySubgroup[desiredSubgroup] = firstIndex
+                        distanceBySubgroup[desiredSubgroup] = distance
+                        queue[#queue + 1] = desiredSubgroup
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    -- Resolve the shortest available cycle before consuming empty capacity or
+    -- an unconstrained filler. A two-edge cycle is a reciprocal swap that fixes
+    -- both members; a longer k-edge cycle completes in k-1 swaps.
+    local function BestCycleSwap()
+        local bestIndex
+        local bestSwapWith
+        local bestLength
+        for _, index in ipairs(assigned) do
+            local fromSubgroup = groupOf[index]
+            local targetSubgroup = want[index]
+            if fromSubgroup ~= targetSubgroup then
+                local swapWith, returnPathLength = ShortestPathFirstIndex(targetSubgroup, fromSubgroup, index)
+                if swapWith then
+                    local cycleLength = returnPathLength + 1
+                    if not bestLength or cycleLength < bestLength then
+                        bestIndex = index
+                        bestSwapWith = swapWith
+                        bestLength = cycleLength
+                    end
+                end
+            end
+        end
+        return bestIndex, bestSwapWith
+    end
+
     local ops = {}
     local guard = 0
     while true do
@@ -90,30 +151,47 @@ function raid_layout.PlanSubgroupMoves(current, want, options)
         if guard > MAX_OPS then
             return {}, false, "plan-too-large"
         end
-        local i = FirstMisplaced()
-        if not i then
-            break
-        end
-        local targetSub = want[i]
-        local fromSub = groupOf[i]
-        if (counts[targetSub] or 0) < cap then
-            ops[#ops + 1] = { Kind = "set", Index = i, Subgroup = targetSub }
-            counts[fromSub] = counts[fromSub] - 1
-            counts[targetSub] = (counts[targetSub] or 0) + 1
-            groupOf[i] = targetSub
+        local cycleIndex, cycleSwapWith = BestCycleSwap()
+        if cycleIndex then
+            ops[#ops + 1] = { Kind = "swap", Index1 = cycleIndex, Index2 = cycleSwapWith }
+            groupOf[cycleIndex], groupOf[cycleSwapWith] = groupOf[cycleSwapWith], groupOf[cycleIndex]
         else
-            local swapWith
-            for _, index in ipairs(allIndices) do
-                if index ~= i and groupOf[index] == targetSub and want[index] ~= targetSub then
-                    swapWith = index
-                    break
+            local i = FirstMisplaced()
+            if not i then
+                break
+            end
+            local targetSub = want[i]
+            local fromSub = groupOf[i]
+            if (counts[targetSub] or 0) < cap then
+                ops[#ops + 1] = { Kind = "set", Index = i, Subgroup = targetSub }
+                counts[fromSub] = counts[fromSub] - 1
+                counts[targetSub] = (counts[targetSub] or 0) + 1
+                groupOf[i] = targetSub
+            else
+                local swapWith
+                -- Prefer an unconstrained occupant when no constrained cycle
+                -- exists, avoiding an unnecessary extra move for another
+                -- assigned member.
+                for _, index in ipairs(allIndices) do
+                    if index ~= i and groupOf[index] == targetSub and want[index] == nil then
+                        swapWith = index
+                        break
+                    end
                 end
+                if not swapWith then
+                    for _, index in ipairs(allIndices) do
+                        if index ~= i and groupOf[index] == targetSub and want[index] ~= targetSub then
+                            swapWith = index
+                            break
+                        end
+                    end
+                end
+                if not swapWith then
+                    return {}, false, "subgroup-blocked"
+                end
+                ops[#ops + 1] = { Kind = "swap", Index1 = i, Index2 = swapWith }
+                groupOf[i], groupOf[swapWith] = targetSub, fromSub
             end
-            if not swapWith then
-                return {}, false, "subgroup-blocked"
-            end
-            ops[#ops + 1] = { Kind = "swap", Index1 = i, Index2 = swapWith }
-            groupOf[i], groupOf[swapWith] = targetSub, fromSub
         end
     end
     return ops, true
