@@ -387,11 +387,13 @@ local knownActivePages = {}
 local pendingActiveDisplay
 local activeResetCount = 0
 local publicationResetCount = 0
-resolvedDisplayDiscoveries = 0
-appliedChangeProposals = {}
-handledChangeResults = {}
-observedCanonicalChanges = {}
-changeProposalApplyResult = nil
+app.ProtocolTest = {
+    AppliedChangeProposals = {},
+    ChangeProposalApplyResult = nil,
+    HandledChangeResults = {},
+    ObservedCanonicalChanges = {},
+    ResolvedDisplayDiscoveries = 0,
+}
 
 function AngryEra:ResetActivePageTransientState()
     activeResetCount = activeResetCount + 1
@@ -404,7 +406,7 @@ function AngryEra:ResetDisplayPublicationState()
 end
 
 function AngryEra:ResolveDisplayDiscovery()
-    resolvedDisplayDiscoveries = resolvedDisplayDiscoveries + 1
+    app.ProtocolTest.ResolvedDisplayDiscoveries = app.ProtocolTest.ResolvedDisplayDiscoveries + 1
     return true
 end
 
@@ -452,15 +454,15 @@ end
 
 function AngryEra:ApplyActivePageChangeProposal(auth, payload)
     self:AssertActivePageAuthForTest(auth, "change proposal")
-    appliedChangeProposals[#appliedChangeProposals + 1] = {
+    app.ProtocolTest.AppliedChangeProposals[#app.ProtocolTest.AppliedChangeProposals + 1] = {
         Auth = auth,
         Payload = payload,
     }
-    return true, changeProposalApplyResult
+    return true, app.ProtocolTest.ChangeProposalApplyResult
 end
 
 function AngryEra:HandleSharedPageChangeResult(auth, payload, proposal, messageId)
-    handledChangeResults[#handledChangeResults + 1] = {
+    app.ProtocolTest.HandledChangeResults[#app.ProtocolTest.HandledChangeResults + 1] = {
         Auth = auth,
         Payload = payload,
         Proposal = proposal,
@@ -470,7 +472,7 @@ function AngryEra:HandleSharedPageChangeResult(auth, payload, proposal, messageI
 end
 
 function AngryEra:ObserveSharedPageCanonicalUpdate(auth, payload, result)
-    observedCanonicalChanges[#observedCanonicalChanges + 1] = {
+    app.ProtocolTest.ObservedCanonicalChanges[#app.ProtocolTest.ObservedCanonicalChanges + 1] = {
         Auth = auth,
         Payload = payload,
         Result = result,
@@ -840,7 +842,20 @@ assert(accepted, result)
 assert(#sentMessages == 2, "The sender-level throttle should reopen after its interval")
 members["alpha-realm"] = "assistant"
 
+sent, result = AngryEra:SendProtocolVersionQuery()
+AssertError(sent, result, "throttled", "local query immediately after observed group discovery")
+assert(#sentMessages == 2, "local discovery should coalesce with a recent group-wide query")
+
 members["gamma-realm"] = "leader"
+do
+    local coalescedQuery = BuildRemoteEnvelope("coalesced-query", "VERSION_QUERY", {}, {
+        InstallationId = "ae3i:9:9:9:9",
+    })
+    accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, coalescedQuery, "RAID", "Gamma-Realm")
+    AssertError(accepted, result, "throttled", "simultaneous group-wide version query")
+    assert(#sentMessages == 2, "Distinct query senders must share one global reply budget")
+end
+currentTime = currentTime + 2
 timestampTest.ZlibQueryEnvelope = select(2, BuildRemoteEnvelope("zlib-query", "VERSION_QUERY", {}))
 timestampTest.ZlibQueryEncoded = assert(
     protocol.EncodeEnvelope(
@@ -869,6 +884,7 @@ AssertError(accepted, result, "invalid-channel", "query over a non-current group
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
 AssertError(accepted, result, "unauthorized", "nonleader version query")
 assert(#sentMessages == 2, "a nonleader query must not amplify whispered version traffic")
+currentTime = currentTime + 2
 members["beta-realm"] = "leader"
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, wrongChannelQuery, "RAID", "Beta-Realm")
 assert(accepted, result)
@@ -990,13 +1006,26 @@ local queryMessageId = result
 do
     local genericLimits = AngryEra:GetProtocolGenericWireLimits()
     assert(
-        genericLimits.SerializedBytes <= genericLimits.CompressedBytes,
-        "untrusted generic traffic must not decompress beyond the accepted compressed ceiling"
+        genericLimits.EncodedBytes == 64 * 1024
+            and genericLimits.CompressedBytes == 64 * 1024
+            and genericLimits.SerializedBytes == 64 * 1024,
+        "untrusted generic traffic should have one explicit 64 KiB decode budget"
     )
     assert(
         genericLimits.SerializedBytes < protocol.WIRE_LIMITS.SerializedBytes,
         "the generic decode ceiling must be tighter than the absolute wire ceiling"
     )
+    assert(
+        2
+                    * (protocol.LIMITS.ActivePageNameBytes + protocol.LIMITS.ActivePageVarsBytes + protocol.LIMITS.ActivePageContentsBytes)
+                + 8192
+            < genericLimits.SerializedBytes,
+        "even fully escaped maximum CHANGE_PROPOSE fields need serializer overhead under the generic budget"
+    )
+
+    local oversizedGenericHuffman = libD:EncodeForWoWAddonChannel(string.char(3, 0, 1, 0, 1) .. "body")
+    accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, oversizedGenericHuffman, "RAID", "Beta-Realm")
+    AssertError(accepted, result, "serialized-too-large", "generic Huffman payload over 64 KiB")
 end
 local queryTransport, localQueryEnvelope = DecodeSent()
 assert(queryTransport.Channel == "RAID", "A raid query should broadcast to RAID")
@@ -1148,10 +1177,13 @@ do
     accepted, result =
         AngryEra:ReceiveProtocolMessage(protocol.PREFIX, correlatedChangeResult, "WHISPER", "Alpha-Realm")
     assert(accepted and result == "unchanged", result)
-    assert(#handledChangeResults == 1, "a correlated current-leader result should complete exactly one proposal")
     assert(
-        handledChangeResults[1].MessageId == proposalMessageId
-            and handledChangeResults[1].Proposal.BaseRevisionId == remoteReference.RevisionId,
+        #app.ProtocolTest.HandledChangeResults == 1,
+        "a correlated current-leader result should complete exactly one proposal"
+    )
+    assert(
+        app.ProtocolTest.HandledChangeResults[1].MessageId == proposalMessageId
+            and app.ProtocolTest.HandledChangeResults[1].Proposal.BaseRevisionId == remoteReference.RevisionId,
         "the result bridge should receive its exact detached proposal"
     )
     members["alpha-realm"] = "assistant"
@@ -1176,7 +1208,7 @@ do
         AncestorVariableLayers = {},
         ContextRevisionId = remoteReference.ContextRevisionId,
     }
-    changeProposalApplyResult = {
+    app.ProtocolTest.ChangeProposalApplyResult = {
         Status = "applied",
         Applied = true,
         LocalId = 1,
@@ -1205,7 +1237,7 @@ do
     AssertError(accepted, result, "invalid-channel", "group change proposal")
     accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, inboundChangeProposal, "WHISPER", "Alpha-Realm")
     assert(accepted and result.Status == "applied", result)
-    assert(#appliedChangeProposals == 1, "the leader should serialize one authorized proposal")
+    assert(#app.ProtocolTest.AppliedChangeProposals == 1, "the leader should serialize one authorized proposal")
     assert(#sentMessages == 1, "an applied proposal should publish DISPLAY before its page finishes")
     local _, proposalDisplayEnvelope = DecodeSent(1)
     assert(
@@ -1238,7 +1270,7 @@ do
         AngryEra:ReceiveProtocolMessage(protocol.PREFIX, secondInboundChangeProposal, "WHISPER", "Alpha-Realm")
     assert(accepted and result.Status == "applied", result)
     assert(
-        #appliedChangeProposals == 2
+        #app.ProtocolTest.AppliedChangeProposals == 2
             and #sentMessages == 1
             and #throttleFrames == 1
             and #throttleFrames[1].CallbackArg.Transfer.Waiters == 2,
@@ -1272,9 +1304,91 @@ do
         "each coalesced proposer should receive its own correlated result"
     )
 
+    do
+        app.ProtocolTest.ChangeProposalApplyResult = {
+            Status = "unchanged",
+            Applied = false,
+            LocalId = 1,
+            SyncId = canonicalProposalPage.SyncId,
+            Revision = canonicalProposalPage.Revision,
+            RevisionId = canonicalProposalPage.RevisionId,
+            ContextRevisionId = canonicalProposalUpsert.ContextRevisionId,
+            PageUpsertPayload = canonicalProposalUpsert,
+        }
+        sentMessages = {}
+        throttleFrames = {}
+        local exactBaseUnchanged, exactBaseUnchangedEnvelope = BuildRemoteEnvelope(
+            "assistant-change-proposal",
+            "CHANGE_PROPOSE",
+            {
+                SyncId = assistantProposalPayload.SyncId,
+                BaseRevision = canonicalProposalPage.Revision,
+                BaseRevisionId = canonicalProposalPage.RevisionId,
+                BaseContextRevisionId = canonicalProposalUpsert.ContextRevisionId,
+                Name = canonicalProposalPage.Name,
+                Vars = canonicalProposalPage.Vars,
+                Contents = canonicalProposalPage.Contents,
+                AuthorityInstallationId = localInstallationId,
+                AuthoritySessionId = "local-session-1",
+            },
+            {
+                Sequence = 80,
+            }
+        )
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.PREFIX, exactBaseUnchanged, "WHISPER", "Alpha-Realm")
+        assert(accepted and result.Status == "unchanged" and result.PublicationSkipped, result)
+        local exactUnchangedTransport, exactUnchangedResult = DecodeSent()
+        assert(
+            #sentMessages == 1
+                and #throttleFrames == 0
+                and exactUnchangedTransport.Channel == "WHISPER"
+                and exactUnchangedResult.Type == "CHANGE_RESULT"
+                and exactUnchangedResult.ReplyTo == exactBaseUnchangedEnvelope.MessageId,
+            "an exact-base unchanged proposal should receive only its correlated result"
+        )
+
+        sentMessages = {}
+        throttleFrames = {}
+        throttleAutoDrain = true
+        local staleBaseUnchanged, staleBaseUnchangedEnvelope = BuildRemoteEnvelope(
+            "assistant-change-proposal",
+            "CHANGE_PROPOSE",
+            {
+                SyncId = assistantProposalPayload.SyncId,
+                BaseRevision = assistantProposalPayload.BaseRevision,
+                BaseRevisionId = assistantProposalPayload.BaseRevisionId,
+                BaseContextRevisionId = assistantProposalPayload.BaseContextRevisionId,
+                Name = canonicalProposalPage.Name,
+                Vars = canonicalProposalPage.Vars,
+                Contents = canonicalProposalPage.Contents,
+                AuthorityInstallationId = localInstallationId,
+                AuthoritySessionId = "local-session-1",
+            },
+            {
+                Sequence = 81,
+            }
+        )
+        accepted, result =
+            AngryEra:ReceiveProtocolMessage(protocol.PREFIX, staleBaseUnchanged, "WHISPER", "Alpha-Realm")
+        throttleAutoDrain = false
+        assert(accepted and result.Status == "unchanged" and result.PublicationSucceeded, result)
+        local _, staleUnchangedDisplay = DecodeSent(1)
+        local _, staleUnchangedResult = DecodeSent(2)
+        assert(
+            #sentMessages == 2
+                and #throttleFrames > 0
+                and staleUnchangedDisplay.Type == "DISPLAY"
+                and staleUnchangedDisplay.Payload.PageFollows == true
+                and staleUnchangedResult.Type == "CHANGE_RESULT"
+                and staleUnchangedResult.ReplyTo == staleBaseUnchangedEnvelope.MessageId,
+            "a stale-base idempotent retry should still republish the canonical tuple before its result"
+        )
+    end
+
     sentMessages = {}
     throttleFrames = {}
-    changeProposalApplyResult = {
+    app.ProtocolTest.ChangeProposalApplyResult = {
         Status = "applied",
         Applied = true,
         LocalId = 1,
@@ -1322,12 +1436,12 @@ do
 
     for sequence, status in ipairs({ "conflict", "busy", "unavailable" }) do
         if status == "unavailable" then
-            changeProposalApplyResult = {
+            app.ProtocolTest.ChangeProposalApplyResult = {
                 Status = status,
                 SyncId = canonicalProposalPage.SyncId,
             }
         else
-            changeProposalApplyResult = {
+            app.ProtocolTest.ChangeProposalApplyResult = {
                 Status = status,
                 SyncId = canonicalProposalPage.SyncId,
                 Revision = canonicalProposalPage.Revision,
@@ -1405,7 +1519,7 @@ do
         )
         AngryEra.ApplyActivePageChangeProposal = savedApplyProposal
 
-        changeProposalApplyResult = {
+        app.ProtocolTest.ChangeProposalApplyResult = {
             Status = "applied",
             Applied = true,
             LocalId = 1,
@@ -1454,7 +1568,7 @@ do
         )
     end
 
-    changeProposalApplyResult = {
+    app.ProtocolTest.ChangeProposalApplyResult = {
         Status = "applied",
         Applied = true,
         LocalId = 1,
@@ -1536,7 +1650,7 @@ do
         RevisionId = canonicalProposalPage.RevisionId,
         ContextRevisionId = canonicalProposalUpsert.ContextRevisionId,
     }
-    changeProposalApplyResult = {
+    app.ProtocolTest.ChangeProposalApplyResult = {
         Status = "applied",
         Applied = true,
         LocalId = 1,
@@ -1574,7 +1688,7 @@ do
         RevisionId = supersedingProposalPage.RevisionId,
         ContextRevisionId = supersedingProposalUpsert.ContextRevisionId,
     }
-    changeProposalApplyResult = {
+    app.ProtocolTest.ChangeProposalApplyResult = {
         Status = "applied",
         Applied = true,
         LocalId = 1,
@@ -1644,7 +1758,7 @@ do
     )
     AngryEra.GetActiveDisplayReference = savedProposalActiveReference
 
-    changeProposalApplyResult = nil
+    app.ProtocolTest.ChangeProposalApplyResult = nil
     sentMessages = {}
     members["viewer-realm"] = "leader"
 end
@@ -2491,10 +2605,11 @@ AssertError(accepted, result, "display-plan-unavailable", "failed display respon
 displayResponseError = nil
 AngryEra.BuildActiveDisplayRequestResponse = savedBuildDisplayResponse
 
+currentTime = currentTime + 2
 sentMessages = {}
-local displayRequestEncoded, displayRequestEnvelope =
-    BuildRemoteEnvelope("remote-display-request", "DISPLAY_REQUEST", {})
-displayRequestEncoded = assert(protocol.EncodeEnvelope(displayRequestEnvelope, AngryEra:GetProtocolControlCodec()))
+local displayRequestEnvelope = select(2, BuildRemoteEnvelope("remote-display-request", "DISPLAY_REQUEST", {}))
+local displayRequestEncoded =
+    assert(protocol.EncodeEnvelope(displayRequestEnvelope, AngryEra:GetProtocolControlCodec()))
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, displayRequestEncoded, "RAID", "Alpha-Realm")
 AssertError(accepted, result, "invalid-channel", "DISPLAY_REQUEST over group")
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, displayRequestEncoded, "WHISPER", "Alpha-Realm")
@@ -2524,8 +2639,15 @@ AssertError(accepted, result, "throttled", "unique display requests for the same
 assert(#sentMessages == 2, "A throttled display request must not amplify into another page response")
 local reloadedDisplayRequest = BuildRemoteEnvelope("remote-display-request-reloaded", "DISPLAY_REQUEST", {})
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, reloadedDisplayRequest, "WHISPER", "Alpha-Realm")
-assert(accepted, result or "a new requester session should not inherit the prior session's throttle")
-assert(#sentMessages == 4, "a reloaded requester should receive a fresh page and display response")
+AssertError(accepted, result, "throttled", "requester session rotation must not bypass display throttling")
+assert(#sentMessages == 2, "a rotated requester must not amplify display responses")
+currentTime = currentTime + 2
+reloadedDisplayRequest = BuildRemoteEnvelope("remote-display-request-reloaded", "DISPLAY_REQUEST", {}, {
+    Sequence = 2,
+})
+accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, reloadedDisplayRequest, "WHISPER", "Alpha-Realm")
+assert(accepted, result or "a rotated requester should recover after the short watchdog throttle")
+assert(#sentMessages == 4, "the rotated requester should receive a response after the throttle expires")
 
 local unauthorizedUpsertEncoded = BuildRemoteEnvelope("remote-unauthorized", "PAGE_UPSERT", remoteUpsert)
 accepted, result =
@@ -2747,12 +2869,12 @@ local requestedRemoteDisplay = BuildRemoteEnvelope("remote-request-response", "D
     ReplyTo = localDisplayRequestId,
     Sequence = 2,
 })
-discoveriesBeforeRequestedDisplay = resolvedDisplayDiscoveries
+app.ProtocolTest.DiscoveriesBeforeRequestedDisplay = app.ProtocolTest.ResolvedDisplayDiscoveries
 accepted, result =
     AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, requestedRemoteDisplay, "WHISPER", "Alpha-Realm")
 assert(accepted and not result.RequestNeeded, "Correlated upsert then display should use exact cached tuple")
 assert(
-    resolvedDisplayDiscoveries == discoveriesBeforeRequestedDisplay + 1,
+    app.ProtocolTest.ResolvedDisplayDiscoveries == app.ProtocolTest.DiscoveriesBeforeRequestedDisplay + 1,
     "an accepted correlated DISPLAY should resolve its unanswered-request watchdog"
 )
 
@@ -2970,31 +3092,33 @@ accepted, result =
     AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, retiredDisplaySessionPacket, "RAID", "Beta-Realm")
 AssertError(accepted, result, "stale-display-session", "retired display session")
 
-for index = 3, 64 do
+for index = 3, 70 do
     local rotatedDisplay = BuildRemoteEnvelope("beta-display-session-" .. index, "DISPLAY", {
         Displayed = false,
     })
     accepted, result = AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, rotatedDisplay, "RAID", "Beta-Realm")
     assert(accepted, result)
 end
-local overflowDisplaySession = BuildRemoteEnvelope("beta-display-session-65", "DISPLAY", {
+local recentRetiredDisplaySession = BuildRemoteEnvelope("beta-display-session-69", "DISPLAY", {
     Displayed = false,
+}, {
+    Sequence = 2,
 })
 accepted, result =
-    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, overflowDisplaySession, "RAID", "Beta-Realm")
-AssertError(accepted, result, "display-session-capacity", "display session rotation capacity")
+    AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, recentRetiredDisplaySession, "RAID", "Beta-Realm")
+AssertError(accepted, result, "stale-display-session", "recent retired display session")
 
-local lastDisplaySessionContinues = BuildRemoteEnvelope("beta-display-session-64", "DISPLAY", {
+local lastDisplaySessionContinues = BuildRemoteEnvelope("beta-display-session-70", "DISPLAY", {
     Displayed = false,
 }, {
     Sequence = 2,
 })
 accepted, result =
     AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, lastDisplaySessionContinues, "RAID", "Beta-Realm")
-assert(accepted, result or "Capacity rejection must not poison the active display session")
+assert(accepted, result or "retired-session eviction must not poison the active display session")
 accepted, result =
     AngryEra:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, retiredDisplaySessionPacket, "RAID", "Beta-Realm")
-AssertError(accepted, result, "stale-display-session", "retired session after replay-cache eviction")
+AssertError(accepted, result, "stale-display-timestamp", "evicted retired session must not beat the accepted watermark")
 members["beta-realm"] = "member"
 
 local localSessionForCapacity = AngryEra:GetProtocolSession()
@@ -3143,12 +3267,14 @@ members["alpha-realm"] = nil
 AngryEra:PruneProtocolPeers()
 assert(AngryEra:GetProtocolPeer("Alpha-Realm") == nil, "Roster pruning should remove departed peers")
 members["alpha-realm"] = "leader"
+currentTime = currentTime + 2
 local afterPruneQuery = BuildRemoteEnvelope("remote-query-after-prune", "VERSION_QUERY", {})
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, afterPruneQuery, "RAID", "Alpha-Realm")
 assert(accepted, result)
 members["alpha-realm"] = "assistant"
 
 members["delta-realm"] = "assistant"
+currentTime = currentTime + 2
 afterPruneQuery = BuildRemoteEnvelope(
     "remote-assistant-query",
     "VERSION_QUERY",
@@ -3156,7 +3282,7 @@ afterPruneQuery = BuildRemoteEnvelope(
     { InstallationId = "ae3i:d:d:d:d" }
 )
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, afterPruneQuery, "RAID", "Delta-Realm")
-assert(accepted, "a raid assistant should be allowed to run a version query")
+assert(accepted, result or "a raid assistant should be allowed to run a version query")
 members["delta-realm"] = "member"
 afterPruneQuery = BuildRemoteEnvelope("remote-member-query", "VERSION_QUERY", {}, { InstallationId = "ae3i:d:d:d:d" })
 accepted, result = AngryEra:ReceiveProtocolMessage(protocol.PREFIX, afterPruneQuery, "RAID", "Delta-Realm")
@@ -3187,7 +3313,7 @@ sent, result = AngryEra:SendProtocolMessage("DISPLAY", {
 assert(sent, result)
 timestampTest.AfterReloadEnvelope = select(2, DecodeSent())
 assert(
-    timestampTest.AfterReloadEnvelope.SentAt == timestampTest.PersistedSentAtBeforeReload + 1,
+    timestampTest.AfterReloadEnvelope.SentAt > timestampTest.PersistedSentAtBeforeReload,
     "A reloaded runtime should continue above its persisted timestamp"
 )
 
@@ -3582,9 +3708,9 @@ function AngryEra:RunAuthorityTenureTests()
 
         local savedSendRequestDisplay = self.SendRequestDisplay
         local recoveryCalls = 0
-        function self:SendRequestDisplay()
+        self.SendRequestDisplay = function(addon)
             recoveryCalls = recoveryCalls + 1
-            return self:SendProtocolDisplayRequest("Beta-Realm")
+            return addon:SendProtocolDisplayRequest("Beta-Realm")
         end
 
         sentMessages = {}
@@ -3982,11 +4108,11 @@ function AngryEra:RunAuthorityTenureTests()
         AuthorityInstallationId = localInstallationId,
         AuthoritySessionId = "local-leader-tenure",
     }
-    changeProposalApplyResult = {
+    app.ProtocolTest.ChangeProposalApplyResult = {
         Status = "unavailable",
         SyncId = remoteReference.SyncId,
     }
-    local appliedBeforeFreshness = #appliedChangeProposals
+    local appliedBeforeFreshness = #app.ProtocolTest.AppliedChangeProposals
     local staleProposal = BuildRemoteEnvelope("assistant-tenure", "CHANGE_PROPOSE", leaderPayload, {
         SentAt = (currentTime - 21) * 1000,
         Sequence = 1,
@@ -4010,7 +4136,7 @@ function AngryEra:RunAuthorityTenureTests()
         "a proposal for a retired leader tenure should receive a correlated terminal result"
     )
     assert(
-        #appliedChangeProposals == appliedBeforeFreshness,
+        #app.ProtocolTest.AppliedChangeProposals == appliedBeforeFreshness,
         "stale or wrong-tenure proposals must not reach canonical application"
     )
 
@@ -4022,11 +4148,11 @@ function AngryEra:RunAuthorityTenureTests()
         self:ReceiveProtocolMessage(protocol.PREFIX, freshProposal, "WHISPER", "Alpha-Realm")
     assert(freshAccepted and freshResult.Status == "unavailable", freshResult)
     assert(
-        #appliedChangeProposals == appliedBeforeFreshness + 1,
+        #app.ProtocolTest.AppliedChangeProposals == appliedBeforeFreshness + 1,
         "a fresh proposal for the exact active leader tenure should be applied once"
     )
 
-    changeProposalApplyResult = nil
+    app.ProtocolTest.ChangeProposalApplyResult = nil
     displayRequiresLeader = false
     pageUpsertRequiresLeader = false
 end

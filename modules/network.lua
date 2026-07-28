@@ -1066,7 +1066,7 @@ function AngryEra:RestoreDisplayAuthority()
         return false, "no-display-continuity", true
     end
 
-    local sent, result, activatedLocally = self:SendDisplayMessage(displayedId)
+    local _, result, activatedLocally = self:SendDisplayMessage(displayedId)
     if activatedLocally ~= true then
         return false, result or "display-continuity-activation-failed", true
     end

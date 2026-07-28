@@ -48,6 +48,7 @@ local MAX_SEEN_PER_SESSION = 64
 local MAX_DISPLAY_SESSIONS_PER_PLAYER = 64
 local MAX_ACTIVE_PAGE_COMPLETION_WAITERS = 32
 local MAX_RETIRED_DISPLAY_AUTHORITIES = 64
+local GENERIC_MESSAGE_BYTES = 64 * 1024
 local TIMESTAMP_MILLISECONDS_PER_SECOND = 1000
 local DISPLAY_TIMESTAMP_MAX_AGE_SECONDS = 5 * 60
 local DISPLAY_TIMESTAMP_MAX_FUTURE_SECONDS = 10
@@ -76,6 +77,7 @@ local replayPlayers = {}
 local replayPlayerCount = 0
 local lastVersionReplyAt = {}
 local lastVersionReplyCount = 0
+local lastVersionReplyGlobalAt
 local lastQueryAt
 local warnedOutOfDate = false
 local transportOrdinal = 0
@@ -1297,13 +1299,13 @@ local CONTROL_WIRE_LIMITS = {
 }
 
 -- Untrusted generic-prefix traffic is authorized by type only after decoding.
--- Bounding the decompressed size to the accepted compressed ceiling removes the
--- amplification headroom while still admitting the largest legitimate payload
--- (a full-page CHANGE_PROPOSE/CHANGE_RESULT, far below this cap).
+-- AceSerializer can at most double the 25,100 bounded text bytes in a
+-- CHANGE_PROPOSE. A 64 KiB ceiling leaves ample envelope overhead while
+-- removing the generic protocol's former 256 KiB decode headroom.
 local GENERIC_WIRE_LIMITS = {
-    EncodedBytes = protocol.WIRE_LIMITS.EncodedBytes,
-    CompressedBytes = protocol.WIRE_LIMITS.CompressedBytes,
-    SerializedBytes = protocol.WIRE_LIMITS.CompressedBytes,
+    EncodedBytes = GENERIC_MESSAGE_BYTES,
+    CompressedBytes = GENERIC_MESSAGE_BYTES,
+    SerializedBytes = GENERIC_MESSAGE_BYTES,
 }
 
 local function HasControlZlibHeader(encoded)
@@ -1426,6 +1428,7 @@ local function ResetTransportTables(preserveRetiredDisplayAuthorities)
     replayPlayerCount = 0
     lastVersionReplyAt = {}
     lastVersionReplyCount = 0
+    lastVersionReplyGlobalAt = nil
     lastQueryAt = nil
     transportOrdinal = 0
     proposalFailureAnnouncements = {}
@@ -1710,6 +1713,31 @@ local function IsSeen(sessionState, sender, messageId)
     return sessionState.Seen.Entries[sender .. "\0" .. messageId] == true
 end
 
+local function FindOldestRetiredDisplaySession(playerState)
+    local oldestKey
+    local oldestEpoch
+    for sessionKey, displaySession in pairs(playerState.DisplaySessions) do
+        if displaySession.Retired == true and (oldestEpoch == nil or displaySession.Epoch < oldestEpoch) then
+            oldestKey = sessionKey
+            oldestEpoch = displaySession.Epoch
+        end
+    end
+    return oldestKey
+end
+
+local function EvictOldestRetiredDisplaySession(playerState)
+    local oldestKey = FindOldestRetiredDisplaySession(playerState)
+    if not oldestKey then
+        return false
+    end
+    -- Keep HighestDisplaySentAt on the player state. A delayed packet from an
+    -- evicted session therefore still loses to the accepted chronological
+    -- watermark even after its per-session tombstone is gone.
+    playerState.DisplaySessions[oldestKey] = nil
+    playerState.DisplaySessionCount = playerState.DisplaySessionCount - 1
+    return true
+end
+
 local function ValidateDisplayOrder(playerState, sessionKey, sequence, sentAt)
     local displaySession = playerState.DisplaySessions[sessionKey]
     if displaySession and displaySession.Retired then
@@ -1726,7 +1754,11 @@ local function ValidateDisplayOrder(playerState, sessionKey, sequence, sentAt)
     then
         return false, "stale-display"
     end
-    if not displaySession and playerState.DisplaySessionCount >= MAX_DISPLAY_SESSIONS_PER_PLAYER then
+    if
+        not displaySession
+        and playerState.DisplaySessionCount >= MAX_DISPLAY_SESSIONS_PER_PLAYER
+        and not FindOldestRetiredDisplaySession(playerState)
+    then
         return false, "display-session-capacity"
     end
     return true
@@ -1742,6 +1774,9 @@ local function CommitDisplayOrder(playerState, sessionKey, sequence, sentAt)
 
         playerState.DisplayEpoch = playerState.DisplayEpoch + 1
         if not displaySession then
+            if playerState.DisplaySessionCount >= MAX_DISPLAY_SESSIONS_PER_PLAYER then
+                EvictOldestRetiredDisplaySession(playerState)
+            end
             displaySession = {}
             playerState.DisplaySessions[sessionKey] = displaySession
             playerState.DisplaySessionCount = playerState.DisplaySessionCount + 1
@@ -2041,8 +2076,6 @@ local function CurrentDisplayThrottleKey(self, auth)
     end
     return table.concat({
         NormalizePlayerKey(auth.Sender) or "",
-        auth.SenderInstallationId,
-        auth.SenderSessionId,
         stateToken,
     }, "\0")
 end
@@ -2491,7 +2524,7 @@ local function PrepareProtocolPacket(messageType, payload, options, compactPageO
     elseif CONTROL_MESSAGE_TYPES[messageType] then
         encoded, encodeError = protocol.EncodeEnvelope(envelope, controlCodec, CONTROL_WIRE_LIMITS)
     else
-        encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec)
+        encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec, GENERIC_WIRE_LIMITS)
     end
     if not encoded then
         return nil, encodeError
@@ -2983,8 +3016,14 @@ function AngryEra:SendProtocolVersionQuery(force)
     end
     local now = Now()
     CleanupPendingQueries(now)
-    if not force and lastQueryAt and now - lastQueryAt < QUERY_THROTTLE_SECONDS then
-        return false, "throttled"
+    if not force then
+        local latestQueryActivity = lastQueryAt
+        if lastVersionReplyGlobalAt and (not latestQueryActivity or lastVersionReplyGlobalAt > latestQueryActivity) then
+            latestQueryActivity = lastVersionReplyGlobalAt
+        end
+        if latestQueryActivity and now - latestQueryActivity < QUERY_THROTTLE_SECONDS then
+            return false, "throttled"
+        end
     end
 
     local sent, messageId = self:SendProtocolMessage("VERSION_QUERY", {}, {
@@ -3311,6 +3350,9 @@ end
 function AngryEra:HandleProtocolVersionQuery(auth, _, envelope)
     local now = Now()
     RefreshDisplayAuthorityFromVersionQuery(self, auth)
+    if lastVersionReplyGlobalAt and now - lastVersionReplyGlobalAt < REPLY_THROTTLE_SECONDS then
+        return false, "throttled"
+    end
     local senderKey = NormalizePlayerKey(auth.Sender)
     local replyState = senderKey and lastVersionReplyAt[senderKey] or nil
     local repliedAt = replyState and replyState.RepliedAt or nil
@@ -3319,8 +3361,11 @@ function AngryEra:HandleProtocolVersionQuery(auth, _, envelope)
     end
 
     local sent, result = self:SendProtocolVersion(auth.Sender, envelope.MessageId)
-    if sent and senderKey then
-        RememberVersionReply(senderKey, now)
+    if sent then
+        lastVersionReplyGlobalAt = now
+        if senderKey then
+            RememberVersionReply(senderKey, now)
+        end
     end
     return sent, result
 end
@@ -3855,8 +3900,9 @@ local function RejectChangeProposalUnavailable(self, auth, envelope, reason)
 end
 
 --- Applies one authorized assistant proposal and returns the leader's
--- correlated semantic result. Applied and unchanged outcomes republish the
--- exact canonical tuple; terminal failures return only their correlated result.
+-- correlated semantic result. Applied outcomes and stale-base idempotent
+-- retries republish the exact canonical tuple. An unchanged proposal already
+-- based on that tuple needs only its correlated result.
 function AngryEra:HandleProtocolChangePropose(auth, _, envelope)
     if not IsLocalDisplayAuthority(self) then
         return false, "not-display-authority"
@@ -3885,7 +3931,16 @@ function AngryEra:HandleProtocolChangePropose(auth, _, envelope)
         return RejectChangeProposalUnavailable(self, auth, envelope, validationError)
     end
 
-    if result.Status == "conflict" or result.Status == "busy" or result.Status == "unavailable" then
+    local exactBaseUnchanged = result.Status == "unchanged"
+        and envelope.Payload.BaseRevision == result.Revision
+        and envelope.Payload.BaseRevisionId == result.RevisionId
+        and envelope.Payload.BaseContextRevisionId == result.ContextRevisionId
+    if
+        exactBaseUnchanged
+        or result.Status == "conflict"
+        or result.Status == "busy"
+        or result.Status == "unavailable"
+    then
         local sent, sendResult = self:SendProtocolChangeResult(auth.Sender, envelope.MessageId, resultPayload)
         if not sent then
             return false, sendResult
@@ -4176,10 +4231,9 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         return false, replayError
     end
     if envelope.Type == "DISPLAY" then
-        local displayOrderValid, displayOrderError =
-            ValidateDisplayOrder(replayPlayer, replaySessionKey, envelope.Sequence, envelope.SentAt)
-        if not displayOrderValid and displayOrderError == "stale-display-session" then
-            return false, displayOrderError
+        local displaySession = replayPlayer.DisplaySessions[replaySessionKey]
+        if displaySession and displaySession.Retired then
+            return false, "stale-display-session"
         end
     end
     if IsSeen(replayState, sender, envelope.MessageId) then

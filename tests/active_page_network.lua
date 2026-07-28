@@ -1622,8 +1622,8 @@ do
     local submitted, submitStatus = AngryEra:SubmitSharedPageChangeProposal(Draft("First generation"))
     assert(submitted and submitStatus == "scheduled", "the first queued-rebase generation should schedule")
     local firstGenerationTimer = timers[#timers]
-    local sent, messageId = AngryEra:FlushSharedPageChangeProposal(firstGenerationTimer.Argument)
-    assert(sent, "the first queued-rebase generation should enter flight")
+    local proposalSent, messageId = AngryEra:FlushSharedPageChangeProposal(firstGenerationTimer.Argument)
+    assert(proposalSent, "the first queued-rebase generation should enter flight")
     local firstGenerationMessageId = messageId
     local firstGenerationPayload = sentChangeProposals[#sentChangeProposals].Payload
     local firstGenerationResultWatchdog = timers[#timers]
