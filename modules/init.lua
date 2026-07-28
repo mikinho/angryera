@@ -71,6 +71,50 @@ local raidAssignmentErrors = {
     ["unknown-assignment-member"] = "Every $TANKS and $ASSISTS name must resolve to a current raid member.",
 }
 
+local oncePerRaidAutomationWarnings = {
+    assignments = {
+        ["unknown-assignment-member"] = true,
+    },
+    layout = {
+        ["unresolved-member"] = true,
+    },
+}
+
+local function ResetRaidAutomationWarnings(self)
+    self._raidAutomationWarnings = nil
+    self._raidAutomationWarningPartyGUID = nil
+end
+
+local function BeginRaidAutomationWarningScope(self, partyGUID)
+    local normalizedPartyGUID
+    if type(partyGUID) == "string" and partyGUID ~= "" then
+        normalizedPartyGUID = partyGUID
+    end
+    if normalizedPartyGUID and normalizedPartyGUID == self._raidAutomationWarningPartyGUID then
+        return
+    end
+    self._raidAutomationWarnings = nil
+    self._raidAutomationWarningPartyGUID = normalizedPartyGUID
+end
+
+local function ShouldReportRaidAutomationWarning(self, scope, result)
+    local scopedWarnings = oncePerRaidAutomationWarnings[scope]
+    if not scopedWarnings or scopedWarnings[result] ~= true then
+        return true
+    end
+    local warnings = self._raidAutomationWarnings
+    if type(warnings) ~= "table" then
+        warnings = {}
+        self._raidAutomationWarnings = warnings
+    end
+    local key = tostring(scope) .. "\031" .. tostring(result)
+    if warnings[key] then
+        return false
+    end
+    warnings[key] = true
+    return true
+end
+
 local colors = AngryEra.utils.colors
 local RGBToHex = colors.RGBToHex
 local HexToRGB = colors.HexToRGB
@@ -984,6 +1028,7 @@ end
 -- Initializes display and core event listeners.
 function AngryEra:OnEnable()
     self:CancelProtocolLeadershipRosterReconcile()
+    ResetRaidAutomationWarnings(self)
     if type(self.ResetGroupLayoutApplyState) == "function" then
         self:ResetGroupLayoutApplyState()
     end
@@ -1060,6 +1105,7 @@ end
 -- libraries also perform their normal event/comm/timer teardown.
 function AngryEra:OnDisable()
     self:CancelProtocolLeadershipRosterReconcile()
+    ResetRaidAutomationWarnings(self)
     if type(self.ResetGroupLayoutApplyState) == "function" then
         self:ResetGroupLayoutApplyState()
     end
@@ -1155,10 +1201,11 @@ function AngryEra:PARTY_LEADER_CHANGED()
     end
 end
 
-function AngryEra:GROUP_JOINED()
+function AngryEra:GROUP_JOINED(_, _category, partyGUID)
     local preserveLeadershipReconcile = self._leadershipRosterReconcilePending == true
     local preservedLeadershipReconcileAttempts = self._leadershipRosterReconcileAttempts or 0
     self:CancelProtocolLeadershipRosterReconcile()
+    BeginRaidAutomationWarningScope(self, partyGUID)
     if type(self.ResetGroupLayoutApplyState) == "function" then
         self:ResetGroupLayoutApplyState()
     end
@@ -1220,7 +1267,8 @@ end
 -- this hook owns work that completed asynchronously after those callers return.
 -- @tparam boolean success
 -- @tparam number|string result Move count or stable error code.
-function AngryEra:OnGroupLayoutApplyFinished(success, result)
+-- @tparam[opt] string origin Request origin, either "auto" or "manual".
+function AngryEra:OnGroupLayoutApplyFinished(success, result, origin)
     if success and type(result) == "number" then
         if result > 0 then
             self:Print(("Rearranged the raid to the layout (%d move%s)."):format(result, result == 1 and "" or "s"))
@@ -1228,6 +1276,9 @@ function AngryEra:OnGroupLayoutApplyFinished(success, result)
         return
     end
     if quietRaidLayoutApplyResults[result] then
+        return
+    end
+    if origin == "auto" and not ShouldReportRaidAutomationWarning(self, "layout", result) then
         return
     end
     self:Print(raidLayoutApplyErrors[result] or ("Could not rearrange the raid: " .. tostring(result)))
@@ -1244,6 +1295,9 @@ function AngryEra:OnDisplayedRaidAssignmentsFinished(success, result)
                 ("Updated raid tank roles and assistants (%d change%s)."):format(result, result == 1 and "" or "s")
             )
         end
+        return
+    end
+    if not ShouldReportRaidAutomationWarning(self, "assignments", result) then
         return
     end
     self:Print(
@@ -1337,6 +1391,7 @@ function AngryEra:GROUP_ROSTER_UPDATE()
     local reconcileLeadership = self._leadershipRosterReconcilePending == true
     if not (IsInRaid() or IsInGroup()) then
         self:CancelProtocolLeadershipRosterReconcile()
+        ResetRaidAutomationWarnings(self)
         if type(self.ResetGroupLayoutApplyState) == "function" then
             self:ResetGroupLayoutApplyState()
         end
