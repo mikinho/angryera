@@ -497,30 +497,48 @@ assert(
         and EdgesAreShown(blank.highlightEdges, true),
     "raid rows use the continuous gold hover treatment"
 )
+assert(
+    blank.highlight:GetLeft() == blank:GetLeft() + 1
+        and blank.highlight:GetRight() == blank:GetRight() - 1
+        and blank.highlight:GetTop() == blank:GetTop() - 1
+        and blank.highlight:GetBottom() == blank:GetBottom() + 1,
+    "the gold tint stays inside the rounded outline"
+)
 for name, edge in pairs(blank.highlightEdges) do
     assert(edge.drawLayer == "HIGHLIGHT", name .. " hover edge is conditional on the button highlight")
 end
 assert(
-    blank.highlightEdges.top:GetLeft() == blank:GetLeft()
-        and blank.highlightEdges.top:GetRight() == blank:GetRight()
+    blank.highlightEdges.top:GetLeft() == blank:GetLeft() + 2
+        and blank.highlightEdges.top:GetRight() == blank:GetRight() - 2
         and blank.highlightEdges.top:GetTop() == blank:GetTop()
-        and blank.highlightEdges.top:GetHeight() == 2
-        and blank.highlightEdges.bottom:GetLeft() == blank:GetLeft()
-        and blank.highlightEdges.bottom:GetRight() == blank:GetRight()
+        and blank.highlightEdges.top:GetHeight() == 1
+        and blank.highlightEdges.bottom:GetLeft() == blank:GetLeft() + 2
+        and blank.highlightEdges.bottom:GetRight() == blank:GetRight() - 2
         and blank.highlightEdges.bottom:GetBottom() == blank:GetBottom()
-        and blank.highlightEdges.bottom:GetHeight() == 2,
-    "the hover treatment has continuous horizontal edges"
+        and blank.highlightEdges.bottom:GetHeight() == 1,
+    "the hover treatment has thin inset horizontal edges"
 )
 assert(
-    blank.highlightEdges.left:GetTop() == blank:GetTop()
-        and blank.highlightEdges.left:GetBottom() == blank:GetBottom()
+    blank.highlightEdges.left:GetTop() == blank:GetTop() - 2
+        and blank.highlightEdges.left:GetBottom() == blank:GetBottom() + 2
         and blank.highlightEdges.left:GetLeft() == blank:GetLeft()
-        and blank.highlightEdges.left:GetWidth() == 2
-        and blank.highlightEdges.right:GetTop() == blank:GetTop()
-        and blank.highlightEdges.right:GetBottom() == blank:GetBottom()
+        and blank.highlightEdges.left:GetWidth() == 1
+        and blank.highlightEdges.right:GetTop() == blank:GetTop() - 2
+        and blank.highlightEdges.right:GetBottom() == blank:GetBottom() + 2
         and blank.highlightEdges.right:GetRight() == blank:GetRight()
-        and blank.highlightEdges.right:GetWidth() == 2,
-    "the hover treatment has continuous vertical edges"
+        and blank.highlightEdges.right:GetWidth() == 1,
+    "the hover treatment has thin inset vertical edges"
+)
+assert(
+    blank.highlightEdges.topLeft:GetLeft() == blank:GetLeft() + 1
+        and blank.highlightEdges.topLeft:GetTop() == blank:GetTop() - 1
+        and blank.highlightEdges.topRight:GetRight() == blank:GetRight() - 1
+        and blank.highlightEdges.topRight:GetTop() == blank:GetTop() - 1
+        and blank.highlightEdges.bottomLeft:GetLeft() == blank:GetLeft() + 1
+        and blank.highlightEdges.bottomLeft:GetBottom() == blank:GetBottom() + 1
+        and blank.highlightEdges.bottomRight:GetRight() == blank:GetRight() - 1
+        and blank.highlightEdges.bottomRight:GetBottom() == blank:GetBottom() + 1,
+    "single diagonal pixels round every hover corner"
 )
 
 local unclaimed = grid.boxes[2].rows[1]
@@ -740,11 +758,11 @@ assert(
     "the drop marker uses a subtle solid-gold tint instead of segmented raid art"
 )
 assert(
-    markerFill:GetLeft() == grid.dropMarker:GetLeft()
-        and markerFill:GetRight() == grid.dropMarker:GetRight()
-        and markerFill:GetTop() == grid.dropMarker:GetTop()
-        and markerFill:GetBottom() == grid.dropMarker:GetBottom(),
-    "the target tint fills the hovered cell"
+    markerFill:GetLeft() == grid.dropMarker:GetLeft() + 1
+        and markerFill:GetRight() == grid.dropMarker:GetRight() - 1
+        and markerFill:GetTop() == grid.dropMarker:GetTop() - 1
+        and markerFill:GetBottom() == grid.dropMarker:GetBottom() + 1,
+    "the target tint fills the rounded outline's interior"
 )
 local markerEdges = grid.dropMarker.edges
 for name, edge in pairs(markerEdges) do
@@ -758,32 +776,43 @@ for name, edge in pairs(markerEdges) do
     )
 end
 assert(
-    markerEdges.top:GetLeft() == grid.dropMarker:GetLeft()
-        and markerEdges.top:GetRight() == grid.dropMarker:GetRight()
+    markerEdges.top:GetLeft() == grid.dropMarker:GetLeft() + 2
+        and markerEdges.top:GetRight() == grid.dropMarker:GetRight() - 2
         and markerEdges.top:GetTop() == grid.dropMarker:GetTop()
-        and markerEdges.top:GetHeight() == 2,
-    "the target has one continuous top edge"
+        and markerEdges.top:GetHeight() == 1,
+    "the target has a thin inset top edge"
 )
 assert(
-    markerEdges.bottom:GetLeft() == grid.dropMarker:GetLeft()
-        and markerEdges.bottom:GetRight() == grid.dropMarker:GetRight()
+    markerEdges.bottom:GetLeft() == grid.dropMarker:GetLeft() + 2
+        and markerEdges.bottom:GetRight() == grid.dropMarker:GetRight() - 2
         and markerEdges.bottom:GetBottom() == grid.dropMarker:GetBottom()
-        and markerEdges.bottom:GetHeight() == 2,
-    "the target has one continuous bottom edge"
+        and markerEdges.bottom:GetHeight() == 1,
+    "the target has a thin inset bottom edge"
 )
 assert(
-    markerEdges.left:GetTop() == grid.dropMarker:GetTop()
-        and markerEdges.left:GetBottom() == grid.dropMarker:GetBottom()
+    markerEdges.left:GetTop() == grid.dropMarker:GetTop() - 2
+        and markerEdges.left:GetBottom() == grid.dropMarker:GetBottom() + 2
         and markerEdges.left:GetLeft() == grid.dropMarker:GetLeft()
-        and markerEdges.left:GetWidth() == 2,
-    "the target has one continuous left edge"
+        and markerEdges.left:GetWidth() == 1,
+    "the target has a thin inset left edge"
 )
 assert(
-    markerEdges.right:GetTop() == grid.dropMarker:GetTop()
-        and markerEdges.right:GetBottom() == grid.dropMarker:GetBottom()
+    markerEdges.right:GetTop() == grid.dropMarker:GetTop() - 2
+        and markerEdges.right:GetBottom() == grid.dropMarker:GetBottom() + 2
         and markerEdges.right:GetRight() == grid.dropMarker:GetRight()
-        and markerEdges.right:GetWidth() == 2,
-    "the target has one continuous right edge"
+        and markerEdges.right:GetWidth() == 1,
+    "the target has a thin inset right edge"
+)
+assert(
+    markerEdges.topLeft:GetLeft() == grid.dropMarker:GetLeft() + 1
+        and markerEdges.topLeft:GetTop() == grid.dropMarker:GetTop() - 1
+        and markerEdges.topRight:GetRight() == grid.dropMarker:GetRight() - 1
+        and markerEdges.topRight:GetTop() == grid.dropMarker:GetTop() - 1
+        and markerEdges.bottomLeft:GetLeft() == grid.dropMarker:GetLeft() + 1
+        and markerEdges.bottomLeft:GetBottom() == grid.dropMarker:GetBottom() + 1
+        and markerEdges.bottomRight:GetRight() == grid.dropMarker:GetRight() - 1
+        and markerEdges.bottomRight:GetBottom() == grid.dropMarker:GetBottom() + 1,
+    "single diagonal pixels round every drop-target corner"
 )
 assert(
     grid.dropMarker:GetFrameLevel() > grid.dragGhost:GetFrameLevel(),

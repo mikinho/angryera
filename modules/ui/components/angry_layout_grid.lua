@@ -20,7 +20,7 @@
 --
 -- @module AngryLayoutGrid
 
-local Type, Version = "AngryLayoutGrid", 13
+local Type, Version = "AngryLayoutGrid", 14
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then
     return
@@ -67,7 +67,10 @@ local EMPTY_ROW_LABEL = EMPTY or "Empty"
 local RAID_ROW_TEXTURE = "Interface\\RaidFrame\\UI-RaidFrame-GroupButton"
 local GOLD_HIGHLIGHT_RED, GOLD_HIGHLIGHT_GREEN, GOLD_HIGHLIGHT_BLUE = 1, 0.82, 0
 local GOLD_HIGHLIGHT_FILL_ALPHA = 0.12
-local GOLD_HIGHLIGHT_EDGE_SIZE = 2
+local GOLD_HIGHLIGHT_EDGE_SIZE = 1
+local GOLD_HIGHLIGHT_CORNER_RADIUS = 2
+local GOLD_HIGHLIGHT_CORNER_STEP = GOLD_HIGHLIGHT_CORNER_RADIUS - GOLD_HIGHLIGHT_EDGE_SIZE
+local GOLD_HIGHLIGHT_FILL_INSET = 1
 
 local PaneBackdrop = {
     bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -101,37 +104,80 @@ local function CreateGoldHighlightEdge(owner, layer)
     return edge
 end
 
+local function AnchorGoldHighlightFill(fill, owner)
+    fill:ClearAllPoints()
+    fill:SetPoint("TOPLEFT", owner, "TOPLEFT", GOLD_HIGHLIGHT_FILL_INSET, -GOLD_HIGHLIGHT_FILL_INSET)
+    fill:SetPoint("BOTTOMRIGHT", owner, "BOTTOMRIGHT", -GOLD_HIGHLIGHT_FILL_INSET, GOLD_HIGHLIGHT_FILL_INSET)
+end
+
+local function CreateGoldHighlightCorner(owner, layer, point, x, y)
+    local corner = CreateGoldHighlightEdge(owner, layer)
+    corner:SetPoint(point, owner, point, x, y)
+    corner:SetWidth(GOLD_HIGHLIGHT_EDGE_SIZE)
+    corner:SetHeight(GOLD_HIGHLIGHT_EDGE_SIZE)
+    return corner
+end
+
 local function CreateGoldHighlight(owner, fillLayer, edgeLayer)
     local fill = owner:CreateTexture(nil, fillLayer)
-    fill:SetAllPoints(owner)
+    AnchorGoldHighlightFill(fill, owner)
     SetSolidColor(fill, GOLD_HIGHLIGHT_RED, GOLD_HIGHLIGHT_GREEN, GOLD_HIGHLIGHT_BLUE, GOLD_HIGHLIGHT_FILL_ALPHA)
 
     local top = CreateGoldHighlightEdge(owner, edgeLayer)
-    top:SetPoint("TOPLEFT")
-    top:SetPoint("TOPRIGHT")
+    top:SetPoint("TOPLEFT", owner, "TOPLEFT", GOLD_HIGHLIGHT_CORNER_RADIUS, 0)
+    top:SetPoint("TOPRIGHT", owner, "TOPRIGHT", -GOLD_HIGHLIGHT_CORNER_RADIUS, 0)
     top:SetHeight(GOLD_HIGHLIGHT_EDGE_SIZE)
 
     local bottom = CreateGoldHighlightEdge(owner, edgeLayer)
-    bottom:SetPoint("BOTTOMLEFT")
-    bottom:SetPoint("BOTTOMRIGHT")
+    bottom:SetPoint("BOTTOMLEFT", owner, "BOTTOMLEFT", GOLD_HIGHLIGHT_CORNER_RADIUS, 0)
+    bottom:SetPoint("BOTTOMRIGHT", owner, "BOTTOMRIGHT", -GOLD_HIGHLIGHT_CORNER_RADIUS, 0)
     bottom:SetHeight(GOLD_HIGHLIGHT_EDGE_SIZE)
 
     local left = CreateGoldHighlightEdge(owner, edgeLayer)
-    left:SetPoint("TOPLEFT")
-    left:SetPoint("BOTTOMLEFT")
+    left:SetPoint("TOPLEFT", owner, "TOPLEFT", 0, -GOLD_HIGHLIGHT_CORNER_RADIUS)
+    left:SetPoint("BOTTOMLEFT", owner, "BOTTOMLEFT", 0, GOLD_HIGHLIGHT_CORNER_RADIUS)
     left:SetWidth(GOLD_HIGHLIGHT_EDGE_SIZE)
 
     local right = CreateGoldHighlightEdge(owner, edgeLayer)
-    right:SetPoint("TOPRIGHT")
-    right:SetPoint("BOTTOMRIGHT")
+    right:SetPoint("TOPRIGHT", owner, "TOPRIGHT", 0, -GOLD_HIGHLIGHT_CORNER_RADIUS)
+    right:SetPoint("BOTTOMRIGHT", owner, "BOTTOMRIGHT", 0, GOLD_HIGHLIGHT_CORNER_RADIUS)
     right:SetWidth(GOLD_HIGHLIGHT_EDGE_SIZE)
 
-    return fill, {
-        top = top,
-        right = right,
-        bottom = bottom,
-        left = left,
-    }
+    local topLeft =
+        CreateGoldHighlightCorner(owner, edgeLayer, "TOPLEFT", GOLD_HIGHLIGHT_CORNER_STEP, -GOLD_HIGHLIGHT_CORNER_STEP)
+    local topRight = CreateGoldHighlightCorner(
+        owner,
+        edgeLayer,
+        "TOPRIGHT",
+        -GOLD_HIGHLIGHT_CORNER_STEP,
+        -GOLD_HIGHLIGHT_CORNER_STEP
+    )
+    local bottomLeft = CreateGoldHighlightCorner(
+        owner,
+        edgeLayer,
+        "BOTTOMLEFT",
+        GOLD_HIGHLIGHT_CORNER_STEP,
+        GOLD_HIGHLIGHT_CORNER_STEP
+    )
+    local bottomRight = CreateGoldHighlightCorner(
+        owner,
+        edgeLayer,
+        "BOTTOMRIGHT",
+        -GOLD_HIGHLIGHT_CORNER_STEP,
+        GOLD_HIGHLIGHT_CORNER_STEP
+    )
+
+    return fill,
+        {
+            top = top,
+            right = right,
+            bottom = bottom,
+            left = left,
+            topLeft = topLeft,
+            topRight = topRight,
+            bottomLeft = bottomLeft,
+            bottomRight = bottomRight,
+        }
 end
 
 local function StyleRaidRowTexture(texture)
@@ -886,8 +932,7 @@ end
 local function StyleRow(row, raidStyle)
     if raidStyle then
         StyleRaidRowTexture(row.background)
-        row.highlight:ClearAllPoints()
-        row.highlight:SetAllPoints(row)
+        AnchorGoldHighlightFill(row.highlight, row)
         SetSolidColor(
             row.highlight,
             GOLD_HIGHLIGHT_RED,
