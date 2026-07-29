@@ -1,4 +1,10 @@
 local calls = {}
+if type(rawget(string, "trim")) ~= "function" then
+    rawset(string, "trim", function(value)
+        return value:match("^%s*(.-)%s*$")
+    end)
+end
+
 local restoreAsAuthority = false
 local isRaidLeader = false
 local tenureLocalAuthority = false
@@ -10,6 +16,7 @@ local requestDisplayError = "request-failed"
 local versionQuerySucceeds = true
 local authorityReceiveAllowed = true
 local grouped = true
+local inRaid = true
 local scheduledTimers = {}
 local timerOrdinal = 0
 local layoutApplyResetCount = 0
@@ -29,6 +36,8 @@ local aceConfigCommandCalls = {}
 local pinMigrationResult = 0
 local pinMigrationForces = {}
 local treeUpdateCount = 0
+local raidControlRequests = 0
+local raidControlReclaims = 0
 
 local function Record(name, value)
     calls[#calls + 1] = {
@@ -162,6 +171,16 @@ AngryEra.utils.layout_editor = {
     CloseAllEditors = function()
         Record("close-auxiliary-editors")
     end,
+    RaidController = {
+        Reclaim = function()
+            raidControlReclaims = raidControlReclaims + 1
+            return true
+        end,
+        Request = function()
+            raidControlRequests = raidControlRequests + 1
+            return true
+        end,
+    },
 }
 
 function AngryEra:CaptureDisplayAuthorityRecovery()
@@ -184,6 +203,14 @@ end
 
 function AngryEra:IsPlayerRaidLeader()
     return isRaidLeader
+end
+
+function AngryEra:IsLocalAngryEraAuthority()
+    return isRaidLeader
+end
+
+function AngryEra:GetDelegatedRaidControl()
+    return nil
 end
 
 function AngryEra:ClearDisplayed(publish)
@@ -366,7 +393,7 @@ local function CommandInput(value)
 end
 
 function _G.IsInRaid()
-    return grouped
+    return grouped and inRaid
 end
 
 function _G.IsInGroup()
@@ -423,6 +450,25 @@ assert(
         and slashRegistrationOrder[2].Command == "aa",
     "startup should register only /ae as canonical and /aa as the compatibility alias, in that order"
 )
+
+calls = {}
+inRaid = false
+AngryEra:HandleRaidControllerCommand("")
+AngryEra:HandleRaidControllerCommand("request")
+AngryEra:HandleRaidControllerCommand("reclaim")
+assert(
+    raidControlRequests == 0 and raidControlReclaims == 0,
+    "Raid Controller slash actions must not route while the player is outside a raid"
+)
+assert(
+    #calls == 3
+        and calls[1].Value == "Raid Control is available only while you are in a raid."
+        and calls[2].Value == calls[1].Value
+        and calls[3].Value == calls[1].Value,
+    "status, request, and reclaim should consistently explain that Raid Control is raid-only"
+)
+inRaid = true
+
 AngryEra:ChatCommand(CommandInput("debug"))
 assert(AngryEra:IsSyncDebugEnabled(), "bare debug command should enable tracing")
 AngryEra:ChatCommand(CommandInput("debug status"))

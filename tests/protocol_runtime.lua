@@ -785,6 +785,32 @@ assert(firstSession.InstallationId == localInstallationId, "Session should use t
 assert(firstSession.SessionId == "local-session-1", "Injected session identity should be retained")
 
 do
+    -- GetServerTime() and GetTimePreciseSec() do not promise the same
+    -- fractional phase. Crossing an uptime-second boundary while the integer
+    -- epoch remains fixed must not move non-DISPLAY protocol time backwards.
+    local savedPreciseTime = preciseTime
+    sentMessages = {}
+    preciseTime = 42.999
+    local firstSent, firstResult = AngryEra:SendProtocolMessage("VERSION_QUERY", {})
+    assert(firstSent, firstResult)
+    local _, firstEnvelope = DecodeSent()
+    preciseTime = 43.001
+    local secondSent, secondResult = AngryEra:SendProtocolMessage("VERSION_QUERY", {})
+    assert(secondSent, secondResult)
+    local _, secondEnvelope = DecodeSent()
+    assert(
+        secondEnvelope.SentAt == firstEnvelope.SentAt + 1,
+        "non-display protocol timestamps should remain monotonic across an unsynchronized fractional-clock wrap"
+    )
+    assert(
+        AngryAssign_Meta.LastDisplaySentAt == secondEnvelope.SentAt,
+        "the persisted protocol timestamp watermark should include non-display envelopes"
+    )
+    preciseTime = savedPreciseTime
+    sentMessages = {}
+end
+
+do
     sentMessages = {}
     local pageSent, pageResult = AngryEra:SendProtocolPageUpsert(localUpsert)
     assert(pageSent, pageResult)
@@ -2050,7 +2076,7 @@ do
     sent, result = AngryEra:SendProtocolActivePageUpsert(debugUpsert, RecordActiveTransfer, "escaped")
     assert(sent, result)
     local activeSubmitTrace = timestampTest.FindPrintedTrace("page-stream-submit", debugBeforeActiveTransfer + 1)
-    local expectedActiveSentAt = currentTime * 1000 + math.floor(preciseTime * 1000) % 1000
+    local expectedActiveSentAt = AngryAssign_Meta.LastDisplaySentAt
     assert(
         activeSubmitTrace
             and activeSubmitTrace:find("sentAt=" .. tostring(expectedActiveSentAt), 1, true)
@@ -2450,6 +2476,7 @@ do
 end
 
 timestampTest.TimeBeforeRollback = currentTime
+timestampTest.ProtocolSentAtBeforeRollback = AngryAssign_Meta.LastDisplaySentAt
 currentTime = currentTime - 1
 sent, result = AngryEra:SendProtocolMessage("DISPLAY", {
     Displayed = false,
@@ -2457,8 +2484,8 @@ sent, result = AngryEra:SendProtocolMessage("DISPLAY", {
 assert(sent, result)
 timestampTest.RollbackDisplayEnvelope = select(2, DecodeSent())
 assert(
-    timestampTest.RollbackDisplayEnvelope.SentAt == debugDisplayEnvelope.SentAt + 1,
-    "A backwards clock should advance the display timestamp by one logical tick"
+    timestampTest.RollbackDisplayEnvelope.SentAt == timestampTest.ProtocolSentAtBeforeRollback + 1,
+    "A backwards clock should advance the protocol timestamp by one logical tick"
 )
 sentMessages[#sentMessages] = nil
 currentTime = timestampTest.TimeBeforeRollback
@@ -3786,6 +3813,135 @@ function AngryEra:RunAuthorityTenureTests()
 
         self.SendRequestDisplay = savedSendRequestDisplay
         self:ResetProtocolPeers()
+    end
+
+    do
+        -- A fresh correlated page can be the first reply after a hard follower
+        -- reset. Its sequence becomes the authority bootstrap floor, so an old
+        -- queued group DISPLAY from the same exact leader process cannot roll
+        -- the display back before the paired current response arrives.
+        local savedGetRaidLeader = self.GetRaidLeader
+        self.GetRaidLeader = function()
+            return "Beta-Realm"
+        end
+        RequestAndBind("Beta-Realm", installationB, "leader-b-bootstrap-floor", 50)
+        self:ResetProtocolPeers()
+        sentMessages = {}
+        local requestSent, requestId = self:SendProtocolDisplayRequest("Beta-Realm")
+        assert(requestSent, requestId)
+        local floorReference = {
+            SyncId = installationB .. ":page:95",
+            Revision = 1,
+            RevisionId = "fcs32:95959595",
+            ContextRevisionId = "fcs32:96969696",
+        }
+        local pageFirst = BuildRemoteEnvelope(
+            "leader-b-bootstrap-floor",
+            "PAGE_UPSERT",
+            PageUpsert(floorReference, installationB, "Beta-Realm"),
+            {
+                InstallationId = installationB,
+                ReplyTo = requestId,
+                Sequence = 100,
+            }
+        )
+        local pageAccepted, pageResult =
+            self:ReceiveProtocolMessage(protocol.PAGE_PREFIX, pageFirst, "WHISPER", "Beta-Realm")
+        assert(pageAccepted, pageResult)
+        assert(
+            self:GetProtocolDisplayAuthority().MinimumSequenceExclusive == 100,
+            "page-first authority bootstrap should retain its accepted sequence as the replay floor"
+        )
+
+        local delayedOldDisplay = BuildRemoteEnvelope("leader-b-bootstrap-floor", "DISPLAY", {
+            Displayed = false,
+            ActivePageChanges = true,
+        }, {
+            InstallationId = installationB,
+            Sequence = 90,
+        })
+        local oldAccepted, oldError =
+            self:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, delayedOldDisplay, "RAID", "Beta-Realm")
+        AssertError(
+            oldAccepted,
+            oldError,
+            "stale-display-authority-sequence",
+            "old group display below a page-first bootstrap floor"
+        )
+
+        local pairedDisplay = BuildRemoteEnvelope("leader-b-bootstrap-floor", "DISPLAY", {
+            Displayed = true,
+            SyncId = floorReference.SyncId,
+            Revision = floorReference.Revision,
+            RevisionId = floorReference.RevisionId,
+            ContextRevisionId = floorReference.ContextRevisionId,
+            PageFollows = true,
+            ActivePageChanges = true,
+        }, {
+            InstallationId = installationB,
+            ReplyTo = requestId,
+            Sequence = 101,
+        })
+        local displayAccepted, displayResult =
+            self:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, pairedDisplay, "WHISPER", "Beta-Realm")
+        assert(displayAccepted and not displayResult.RequestNeeded, displayResult)
+        assert(
+            self:GetProtocolDisplayAuthority().MinimumSequenceExclusive == 101,
+            "the paired current display should advance the bootstrap floor"
+        )
+
+        -- Preserve the inverse valid arrival order too: DISPLAY seq 101 may bind
+        -- first and wait for its already-sent PAGE seq 100. Exact ReplyTo
+        -- correlation lets only that companion cross the established floor.
+        self:ResetProtocolPeers()
+        sentMessages = {}
+        requestSent, requestId = self:SendProtocolDisplayRequest("Beta-Realm")
+        assert(requestSent, requestId)
+        local invertedReference = {
+            SyncId = installationB .. ":page:96",
+            Revision = 1,
+            RevisionId = "fcs32:97979797",
+            ContextRevisionId = "fcs32:98989898",
+        }
+        local displayFirst = BuildRemoteEnvelope("leader-b-bootstrap-inverted", "DISPLAY", {
+            Displayed = true,
+            SyncId = invertedReference.SyncId,
+            Revision = invertedReference.Revision,
+            RevisionId = invertedReference.RevisionId,
+            ContextRevisionId = invertedReference.ContextRevisionId,
+            PageFollows = true,
+            ActivePageChanges = true,
+        }, {
+            InstallationId = installationB,
+            ReplyTo = requestId,
+            Sequence = 101,
+        })
+        displayAccepted, displayResult =
+            self:ReceiveProtocolMessage(protocol.DISPLAY_PREFIX, displayFirst, "WHISPER", "Beta-Realm")
+        assert(displayAccepted and displayResult.RequestNeeded, displayResult)
+        assert(
+            self:GetProtocolDisplayAuthority().MinimumSequenceExclusive == 101,
+            "display-first bootstrap should establish its own sequence floor"
+        )
+        local pairedEarlierPage = BuildRemoteEnvelope(
+            "leader-b-bootstrap-inverted",
+            "PAGE_UPSERT",
+            PageUpsert(invertedReference, installationB, "Beta-Realm"),
+            {
+                InstallationId = installationB,
+                ReplyTo = requestId,
+                Sequence = 100,
+            }
+        )
+        pageAccepted, pageResult =
+            self:ReceiveProtocolMessage(protocol.PAGE_PREFIX, pairedEarlierPage, "WHISPER", "Beta-Realm")
+        assert(pageAccepted and pageResult.CompletedDisplay, pageResult)
+        assert(
+            self:GetProtocolDisplayAuthority().MinimumSequenceExclusive == 101,
+            "an exact lower-sequence companion must not lower the established bootstrap floor"
+        )
+        self:ResetProtocolPeers()
+        self.GetRaidLeader = savedGetRaidLeader
     end
 
     do

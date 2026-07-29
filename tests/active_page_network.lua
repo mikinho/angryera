@@ -104,6 +104,14 @@ function AngryEra:CanReceiveFrom(_, action)
     return action ~= "display" or canReceiveDisplay
 end
 
+function AngryEra:GetAngryEraAuthority()
+    return self:GetRaidLeader(true)
+end
+
+function AngryEra:GetDelegatedRaidControl()
+    return nil
+end
+
 local function Upsert(id)
     return {
         Page = {
@@ -846,7 +854,7 @@ assert(#calls == callsAfterDisplayRetryBudget, "an exhausted display retry must 
 
 currentPlayer = "Leader-Realm"
 sent, result = AngryEra:SendRequestDisplay()
-assert(not sent and result == "local-player-is-leader", "leader should not whisper a request to itself")
+assert(not sent and result == "local-player-is-authority", "authority should not whisper a request to itself")
 
 AngryAssign_State.displayed = 5
 assert(AngryEra:CaptureDisplayAuthorityRecovery(), "startup should capture a valid saved display page")

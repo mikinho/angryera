@@ -22,7 +22,7 @@ local primarySlashCommand = "ae"
 local legacySlashCommand = "aa"
 local raidLayoutApplyErrors = {
     ["not-in-raid"] = "You must be in a raid to rearrange groups.",
-    ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
+    ["not-authorized"] = "You are not authorized to rearrange raid groups.",
     ["in-combat"] = "Groups cannot be rearranged during combat.",
     ["no-layout"] = "The displayed page has no $LAYOUT.",
     ["no-bound-groups"] = "The displayed layout does not resolve to any raid members.",
@@ -45,7 +45,7 @@ local quietRaidLayoutApplyResults = {
     ["canceled"] = true,
     ["display-changed"] = true,
     ["no-pending-layout"] = true,
-    ["not-raid-leader"] = true,
+    ["not-raid-controller"] = true,
     ["superseded"] = true,
 }
 local raidAssignmentErrors = {
@@ -58,6 +58,10 @@ local raidAssignmentErrors = {
     ["assistant-state-unavailable"] = "This client does not expose Blizzard's raid-assistant state.",
     ["duplicate-assignment-member"] = "$TANKS or $ASSISTS resolves the same raid member more than once.",
     ["duplicate-assignment-name"] = "$TANKS or $ASSISTS contains the same name more than once.",
+    ["delegated-controller-demotion-blocked"] = "The active Raid Controller cannot be demoted from raid assistant.",
+    ["delegated-controller-everyone-assistant"] = "Turn off Blizzard's Everyone Is Assistant option before applying managed $ASSISTS while Raid Control is delegated.",
+    ["delegated-controller-missing-from-assists"] = "Managed $ASSISTS must include the active Raid Controller. Reclaim Raid Control first if the controller should be demoted.",
+    ["delegated-controller-state-unvalidated"] = "Raid Control is not currently validated; $TANKS and $ASSISTS are paused until control recovers or is reclaimed.",
     ["invalid-assignment-list"] = "$TANKS and $ASSISTS must be comma-separated name lists.",
     ["invalid-assignment-name"] = "$TANKS or $ASSISTS contains an invalid or empty name.",
     ["invalid-assignment-context"] = "Could not resolve the inherited variables for $TANKS or $ASSISTS.",
@@ -73,6 +77,10 @@ local raidAssignmentErrors = {
 
 local oncePerRaidAutomationWarnings = {
     assignments = {
+        ["delegated-controller-demotion-blocked"] = true,
+        ["delegated-controller-everyone-assistant"] = true,
+        ["delegated-controller-missing-from-assists"] = true,
+        ["delegated-controller-state-unvalidated"] = true,
         ["unknown-assignment-member"] = true,
     },
     layout = {
@@ -740,7 +748,7 @@ function AngryEra:OnInitialize()
                         type = "select",
                         order = 1,
                         name = "Receive Shared Page Changes",
-                        desc = "Choose who may change shared pages on this installation; only the group leader controls the display",
+                        desc = "Choose who may change shared pages on this installation. The raid leader controls the display unless they manually delegate Raid Controller authority.",
                         values = {
                             standard = "Leader + Qualified Assistants",
                             leaderOnly = "Leader Only",
@@ -878,6 +886,59 @@ function AngryEra:HandleOwnedCategoryPinMigrationCommand()
     self:Print("No additional locally owned categories needed pinning. Existing pins were kept.")
 end
 
+--- Handles session-only Raid Controller status and actions.
+-- @tparam[opt=""] string argument `request`, `reclaim`, or an empty status query.
+function AngryEra:HandleRaidControllerCommand(argument)
+    argument = type(argument) == "string" and argument:trim():lower() or ""
+    if type(IsInRaid) ~= "function" or not IsInRaid() then
+        self:Print("Raid Control is available only while you are in a raid.")
+        return false
+    end
+
+    local controllerUi = self.utils and self.utils.layout_editor and self.utils.layout_editor.RaidController or nil
+    if argument == "request" then
+        if controllerUi and type(controllerUi.Request) == "function" then
+            return controllerUi:Request()
+        end
+        self:Print("Raid Control is not available until the AngryEra editor finishes loading.")
+        return false
+    elseif argument == "reclaim" then
+        if controllerUi and type(controllerUi.Reclaim) == "function" then
+            return controllerUi:Reclaim()
+        end
+        self:Print("Raid Control is not available until the AngryEra editor finishes loading.")
+        return false
+    elseif argument ~= "" and argument ~= "status" then
+        self:Print("Usage: /ae control [request|reclaim]")
+        return false
+    end
+
+    local control = type(self.GetDelegatedRaidControl) == "function" and self:GetDelegatedRaidControl() or nil
+    if type(control) == "table" and control.PendingRole == true then
+        self:Print("Raid Controller activation is waiting for the raid roster to confirm assistant status.")
+        return true
+    end
+    if type(control) == "table" and control.PendingRecovery == true then
+        self:Print("Raid Controller state is recovering; shared changes are paused until the raid leader confirms it.")
+        return true
+    end
+    if type(control) == "table" and type(control.Controller) == "string" then
+        self:Print(
+            "Raid Controller: "
+                .. control.Controller
+                .. (type(control.Leader) == "string" and " (granted by " .. control.Leader .. ")." or ".")
+        )
+        return true
+    end
+    local leader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader() or nil
+    if leader then
+        self:Print("Raid Control is not delegated. AngryEra authority: " .. leader .. " (raid leader).")
+        return true
+    end
+    self:Print("Raid Control is unavailable because there is no current raid leader.")
+    return false
+end
+
 --- Slash command entry point (`/ae`).
 -- @tparam string input Raw slash command arguments.
 function AngryEra:ChatCommand(input)
@@ -891,13 +952,18 @@ function AngryEra:ChatCommand(input)
         local command = input:trim():lower()
         if command == "first" then
             self:FirstPage()
+        elseif command == "control" then
+            self:HandleRaidControllerCommand("")
         elseif command == "migratepins" then
             self:HandleOwnedCategoryPinMigrationCommand()
         elseif command == "debug" then
             self:HandleSyncDebugCommand("")
         else
+            local controlArgument = command:match("^control%s+(.+)$")
             local debugArgument = command:match("^debug%s+(.+)$")
-            if debugArgument then
+            if controlArgument then
+                self:HandleRaidControllerCommand(controlArgument)
+            elseif debugArgument then
                 self:HandleSyncDebugCommand(debugArgument)
             else
                 LibStub("AceConfigCmd-3.0").HandleCommand(self, primarySlashCommand, "AngryEra", input)
@@ -1175,16 +1241,21 @@ function AngryEra:PARTY_LEADER_CHANGED()
     end
     self:PermissionsUpdated()
     if self._protocolStarted then
-        local localAuthority = false
+        local localAuthority = type(self.IsLocalAngryEraAuthority) == "function"
+            and self:IsLocalAngryEraAuthority() == true
+        local actualLeader = type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() == true
         if tenure then
             localAuthority = tenure.LocalAuthority == true
-        elseif type(self.IsPlayerRaidLeader) == "function" then
-            localAuthority = self:IsPlayerRaidLeader() == true
         end
-        if localAuthority then
+        if actualLeader then
             self:SendProtocolVersionQuery(tenure and tenure.Rotated == true)
         end
-        if localAuthority and type(self.RestoreDisplayAuthority) == "function" then
+        if
+            actualLeader
+            and type(self.GetDelegatedRaidControl) == "function"
+            and self:GetDelegatedRaidControl() == nil
+            and type(self.RestoreDisplayAuthority) == "function"
+        then
             local _, _, isLocalAuthority = self:RestoreDisplayAuthority()
             localAuthority = isLocalAuthority == true
         end
@@ -1368,7 +1439,13 @@ function AngryEra:ReconcileProtocolLeadershipFromRoster()
 
     if result.LocalAuthority == true then
         self:SendProtocolVersionQuery(result.Rotated == true)
-        if type(self.RestoreDisplayAuthority) == "function" then
+        if
+            type(self.IsPlayerRaidLeader) == "function"
+            and self:IsPlayerRaidLeader()
+            and type(self.GetDelegatedRaidControl) == "function"
+            and self:GetDelegatedRaidControl() == nil
+            and type(self.RestoreDisplayAuthority) == "function"
+        then
             self:RestoreDisplayAuthority()
         end
         if type(self.RetryObservedGroupLayoutAutoApply) == "function" then

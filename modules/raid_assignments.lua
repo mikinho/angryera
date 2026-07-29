@@ -502,6 +502,46 @@ function raidAssignments.PlanOperations(rosterState, desired, everyoneAssistant)
     return operations
 end
 
+--- Prevents managed assistant automation from removing the active controller's
+-- Blizzard assist rank before the leader-authored lease can be revoked.
+function raidAssignments.ValidateDelegatedController(self, desired, everyoneAssistant)
+    local rawControl
+    if type(self.GetDelegatedRaidControl) == "function" then
+        local called, result = pcall(self.GetDelegatedRaidControl, self)
+        if not called then
+            return false, "delegated-controller-state-unvalidated"
+        end
+        rawControl = type(result) == "table" and result or nil
+    end
+
+    local control
+    if type(self.GetValidatedDelegatedRaidControl) == "function" then
+        local called, result = pcall(self.GetValidatedDelegatedRaidControl, self)
+        if not called then
+            return false, "delegated-controller-state-unvalidated"
+        end
+        control = type(result) == "table" and result or nil
+    end
+    if rawControl and not control then
+        -- A pending recovery or invalid unreconciled lease is an authority
+        -- barrier. The Blizzard leader remains the protected executor, but
+        -- must not fall back to page-driven mutations until protocol state
+        -- validates the controller or clears/reclaims the lease.
+        return false, "delegated-controller-state-unvalidated"
+    end
+    if not control or not desired.AssistsPresent then
+        return true
+    end
+    if everyoneAssistant then
+        return false, "delegated-controller-everyone-assistant"
+    end
+    local controllerIdentity = type(control.Controller) == "string" and control.Controller:lower() or nil
+    if not controllerIdentity or not desired.Assists[controllerIdentity] then
+        return false, "delegated-controller-missing-from-assists"
+    end
+    return true
+end
+
 local function CancelTimer(self)
     reconcileGeneration = reconcileGeneration + 1
     local timer = reconcileTimer
@@ -826,6 +866,12 @@ function AngryEra:PollDisplayedRaidAssignments(generation)
         ReportFailure(self, "assignment-api-unavailable")
         return false, "assignment-api-unavailable"
     end
+    local controllerSafe, controllerError =
+        raidAssignments.ValidateDelegatedController(self, desired, everyoneAssistant)
+    if not controllerSafe then
+        ReportFailure(self, controllerError)
+        return false, controllerError
+    end
 
     local operations = raidAssignments.PlanOperations(rosterState, desired, everyoneAssistant)
     Trace(
@@ -872,6 +918,16 @@ function AngryEra:PollDisplayedRaidAssignments(generation)
     operation.SentAt = now
     outstandingOperation = operation
     lastOperationSentAt = now
+    if
+        operation.Kind == "demote-assistant"
+        and type(self.IsDelegatedRaidController) == "function"
+        and self:IsDelegatedRaidController(operation.FullName)
+    then
+        outstandingOperation = nil
+        CancelTimer(self)
+        ReportFailure(self, "delegated-controller-demotion-blocked")
+        return false, "delegated-controller-demotion-blocked"
+    end
     if not IssueOperation(self, operation, rosterState) then
         outstandingOperation = nil
         CancelTimer(self)

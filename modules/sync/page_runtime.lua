@@ -242,11 +242,7 @@ local function IsAuthorized(self, sender, action)
 end
 
 local function IsCurrentDisplayAuthority(self, sender)
-    if not IsAuthorized(self, sender, "display") or type(self.GetGroupRole) ~= "function" then
-        return false
-    end
-    local ok, role = pcall(self.GetGroupRole, self, sender)
-    return ok and role == "leader"
+    return IsAuthorized(self, sender, "display")
 end
 
 local function CanPublish(self, action)
@@ -1577,11 +1573,7 @@ local function BuildChangeProposalResult(status, syncId, indexed, pageUpsert)
 end
 
 local function IsLocalProposalAuthority(self)
-    if type(self.IsPlayerRaidLeader) ~= "function" then
-        return false
-    end
-    local ok, isLeader = pcall(self.IsPlayerRaidLeader, self)
-    return ok and isLeader == true and CanPublish(self, "pageUpsert")
+    return CanPublish(self, "display") and CanPublish(self, "pageUpsert")
 end
 
 --- Builds a detached CHANGE_PROPOSE payload for the exact active display tuple.
@@ -2105,9 +2097,6 @@ function AngryEra:BuildActiveDisplayRequestResponse(auth, payload, options)
     if not IsAuthorized(self, safeAuth.Sender, "request") then
         return nil, "unauthorized-display-request"
     end
-    if type(self.IsPlayerRaidLeader) ~= "function" or self:IsPlayerRaidLeader() ~= true then
-        return nil, "not-display-authority"
-    end
     if not CanPublish(self, "display") then
         return nil, "local-display-publish-not-authorized"
     end
@@ -2626,8 +2615,8 @@ local function PendingDisplay(auth, payload)
     }
 end
 
--- A leadership handoff may leave the exact immutable page/context tuple cached
--- under the former publisher's sender/session. The current leader may rebind
+-- An authority handoff may leave the exact immutable page/context tuple cached
+-- under the former publisher's sender/session. The current authority may rebind
 -- that already validated tuple for display only; changed or unknown tuples
 -- still require PAGE_UPSERT and take the pending request path.
 local function BuildReboundDisplayContexts(self, capture, auth, reference)

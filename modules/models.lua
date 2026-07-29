@@ -116,8 +116,8 @@ local function PublishPageRevision(self, id)
         end
         return published, publishResult, activatedLocally
     end
-    -- A qualified assistant may still publish an edit to the active page, but
-    -- only the current group leader may choose or replace the shared display.
+    -- A qualified assistant may still propose an edit to the active page, but
+    -- only the current AngryEra authority may choose or replace the display.
     return self:SendPage(id, true)
 end
 
@@ -220,6 +220,14 @@ local function IsGrouped()
     local inRaid = type(IsInRaid) == "function" and IsInRaid()
     local inGroup = type(IsInGroup) == "function" and IsInGroup()
     return inRaid == true or inGroup == true
+end
+
+local function CanPublishSharedDisplay(self)
+    if type(self.CanLocalPlayerPublish) ~= "function" then
+        return false
+    end
+    local checked, canPublish = pcall(self.CanLocalPlayerPublish, self, "display")
+    return checked and canPublish == true
 end
 
 local function SubmitSharedPageMutation(self, id, page, changedField, changedValue)
@@ -485,8 +493,8 @@ function AngryEra:DisplayPage(id, options)
     local retry = type(options) == "table" and options.AutoAdvanceRetry or nil
     local forcePublication = type(options) == "table" and options.ForcePublication == true
 
-    if not self:CanLocalPlayerPublish("display") then
-        return
+    if not CanPublishSharedDisplay(self) then
+        return nil, "not-angryera-authority", false, "not-angryera-authority"
     end
 
     local published, displayResult, activatedLocally = self:SendDisplay(id, forcePublication)
@@ -981,10 +989,18 @@ end
 -- ----------------------------------
 
 function AngryEra:PrevPage()
-    self:NextPage(true)
+    return self:NextPage(true)
 end
 
 function AngryEra:NextPage(reverse)
+    -- Authority must be checked before consulting the local library. While
+    -- control is delegated, the Blizzard leader may not have the controller's
+    -- category or page hierarchy and must not make navigation decisions from
+    -- that unrelated local state.
+    if not CanPublishSharedDisplay(self) then
+        return nil, "not-angryera-authority"
+    end
+
     local page = AngryAssign_Pages[AngryAssign_State.displayed]
     if not page then
         return
@@ -1023,7 +1039,7 @@ function AngryEra:NextPage(reverse)
         if p.Id == page.Id then
             local dest = siblings[reverse and (i - 1) or (i + 1)]
             if dest then
-                self:DisplayPage(dest.Id)
+                return self:DisplayPage(dest.Id)
             else
                 self:Print(reverse and "Already at first page." or "Already at last page.")
             end
@@ -1033,6 +1049,12 @@ function AngryEra:NextPage(reverse)
 end
 
 function AngryEra:FirstPage()
+    -- See NextPage: delegated control makes the controller's hierarchy
+    -- canonical, so unauthorized clients must stop before reading their own.
+    if not CanPublishSharedDisplay(self) then
+        return nil, "not-angryera-authority"
+    end
+
     local page = AngryAssign_Pages[AngryAssign_State.displayed]
     if not page or not page.CategoryId then
         return
@@ -1073,15 +1095,23 @@ function AngryEra:FirstPage()
         -- We are already on the first page. Snap back to the last selected page?
         local lastPage = self.lastNonFirstPageId and AngryAssign_Pages[self.lastNonFirstPageId]
         if lastPage and lastPage.CategoryId == page.CategoryId then
-            self:DisplayPage(self.lastNonFirstPageId)
+            local displayed, displayError, published, publicationResult = self:DisplayPage(self.lastNonFirstPageId)
             self.lastNonFirstPageId = nil
+            return displayed, displayError, published, publicationResult
         else
             self:Print("Already on the first page.")
         end
     else
         self.lastNonFirstPageId = page.Id
-        self:DisplayPage(firstSib.Id)
+        return self:DisplayPage(firstSib.Id)
     end
+end
+
+--- Clears transient navigation memory after canonical display authority changes.
+-- A new controller must never inherit the previous authority's local
+-- first-page toggle destination.
+function AngryEra:ResetDisplayNavigationState()
+    self.lastNonFirstPageId = nil
 end
 
 function AngryEra:SelectedId()
@@ -1734,4 +1764,17 @@ function AngryEra:ClearDisplayed(publish)
         return false, publishError
     end
     return true
+end
+
+--- Publishes a canonical shared clear without first mutating local display state
+-- on an unauthorized client.
+-- Local teardown paths should continue to call `ClearDisplayed(false)` (or omit
+-- the argument) so leaving a group and reloading can always clean up locally.
+-- @treturn boolean ok
+-- @treturn string|nil errorCode
+function AngryEra:ClearSharedDisplay()
+    if not CanPublishSharedDisplay(self) then
+        return false, "not-angryera-authority"
+    end
+    return self:ClearDisplayed(true)
 end

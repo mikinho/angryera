@@ -38,6 +38,7 @@ local inRaid = true
 local inGroup = true
 local isLeader = true
 local isAssistant = false
+local isAngryEraAuthority = true
 
 _G.IsInRaid = function()
     return inRaid
@@ -135,6 +136,9 @@ end
 local AngryEra = {
     utils = {},
 }
+function AngryEra:IsLocalAngryEraAuthority()
+    return isAngryEraAuthority
+end
 local app = {
     AngryEra = AngryEra,
 }
@@ -149,6 +153,7 @@ local function Reset()
     markerWritesEnabled = true
     isLeader = true
     isAssistant = false
+    isAngryEraAuthority = true
     inRaid = true
     inGroup = true
     AngryEra_ApplyAutoMarkers(nil, nil)
@@ -410,6 +415,124 @@ assert(currentMarkers["Zessy-Pagle"] == nil, "restored authority should clear th
 assert(#assignments == 1 and assignments[1].index == 0, "restored authority should perform exactly one deferred clear")
 isLeader = true
 isAssistant = false
+
+-- Losing AngryEra authority releases only this client's marker ownership. A
+-- retained page keeps its matching marker, while a later canonical note change
+-- clears the former authority's stale ownership without ever applying a plan.
+Reset()
+AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" }, nil, "page:authority-one")
+assignments = {}
+isAngryEraAuthority = false
+AngryEra:ReleaseOwnedDisplayedNoteMarkers()
+assert(currentMarkers["Zessy-Pagle"] == 6, "the retained display should keep its matching marker on handoff")
+assert(#assignments == 0, "the handoff itself should not race the new authority by clearing markers")
+
+function AngryEra:GetDisplayedMeta()
+    return { SQUARE = "Zessy" }
+end
+function AngryEra:GetDisplayedVars()
+    return {}
+end
+applied = AngryEra:ApplyDisplayedNoteMarkers()
+assert(applied == 0 and #assignments == 0, "a follower should retain but never reapply an unchanged marker plan")
+
+function AngryEra:GetDisplayedMeta()
+    return nil
+end
+assignments = {}
+applied = AngryEra:ApplyDisplayedNoteMarkers()
+assert(applied == 0, "follower cleanup should not count as a marker application")
+assert(currentMarkers["Zessy-Pagle"] == nil, "a later blank note should clear the stale locally owned marker")
+assert(#assignments == 1 and assignments[1].index == 0, "the later note should issue one owned-marker clear")
+
+assignments = {}
+isAngryEraAuthority = true
+AngryEra:RetryDisplayedNoteMarkers()
+assert(#assignments == 0, "regaining authority must not resurrect a released marker plan")
+AngryEra.GetDisplayedMeta = nil
+AngryEra.GetDisplayedVars = nil
+
+-- A marker changed by somebody else before the handoff is no longer ours and
+-- survives cleanup.
+Reset()
+AngryEra_ApplyAutoMarkers({ SQUARE = "Zessy" }, nil, "page:authority-two")
+currentMarkers["Zessy-Pagle"] = 1
+assignments = {}
+isAngryEraAuthority = false
+AngryEra:ReleaseOwnedDisplayedNoteMarkers()
+function AngryEra:GetDisplayedMeta()
+    return nil
+end
+AngryEra:ApplyDisplayedNoteMarkers()
+assert(#assignments == 0, "later follower cleanup must preserve a manually changed marker")
+assert(currentMarkers["Zessy-Pagle"] == 1, "the manually changed marker should remain")
+AngryEra.GetDisplayedMeta = nil
+
+-- The new authority adopts an already-correct retained marker without
+-- rewriting it, so cleanup is not stranded if the former authority leaves.
+Reset()
+currentMarkers["Zessy-Pagle"] = 6
+function AngryEra:GetDisplayedMeta()
+    return { SQUARE = "Zessy" }
+end
+function AngryEra:GetDisplayedVars()
+    return {}
+end
+assignments = {}
+AngryEra:ReleaseOwnedDisplayedNoteMarkers()
+assert(#assignments == 0, "authority handoff adoption must not rewrite an already-correct marker")
+function AngryEra:GetDisplayedMeta()
+    return nil
+end
+AngryEra:ApplyDisplayedNoteMarkers()
+assert(currentMarkers["Zessy-Pagle"] == nil, "the new authority should later clear its adopted stale marker")
+assert(#assignments == 1 and assignments[1].index == 0, "adopted ownership should issue one later clear")
+AngryEra.GetDisplayedMeta = nil
+AngryEra.GetDisplayedVars = nil
+
+-- An unresolved retained marker plan survives an authority handoff. The new
+-- authority does not mark during the handoff itself, but a later roster retry
+-- applies the plan when the named player joins.
+Reset()
+function AngryEra:GetDisplayedMeta()
+    return { SKULL = "Late-OtherRealm" }
+end
+function AngryEra:GetDisplayedVars()
+    return {}
+end
+assignments = {}
+AngryEra:ReleaseOwnedDisplayedNoteMarkers()
+assert(#assignments == 0, "an unresolved handoff plan must not write a marker during the handoff")
+raidRoster[#raidRoster + 1] = { name = "Late-OtherRealm", rank = 0 }
+applied = AngryEra:RetryDisplayedNoteMarkers()
+assert(applied == 1, "the new authority should retain an unresolved handoff plan for roster retry")
+assert(FindAssignment(8) == "raid9", "the retained handoff plan should mark the late roster member")
+AngryEra.GetDisplayedMeta = nil
+AngryEra.GetDisplayedVars = nil
+
+-- If the late player arrives with the requested marker already assigned
+-- manually, the seeded handoff plan is a no-op and never claims ownership.
+Reset()
+function AngryEra:GetDisplayedMeta()
+    return { SKULL = "Late-OtherRealm" }
+end
+function AngryEra:GetDisplayedVars()
+    return {}
+end
+AngryEra:ReleaseOwnedDisplayedNoteMarkers()
+raidRoster[#raidRoster + 1] = { name = "Late-OtherRealm", rank = 0 }
+currentMarkers["Late-OtherRealm"] = 8
+assignments = {}
+applied = AngryEra:RetryDisplayedNoteMarkers()
+assert(applied == 0 and #assignments == 0, "a matching manual marker must remain an unowned handoff no-op")
+function AngryEra:GetDisplayedMeta()
+    return nil
+end
+AngryEra:ApplyDisplayedNoteMarkers()
+assert(currentMarkers["Late-OtherRealm"] == 8, "clearing the page must preserve the unowned matching manual marker")
+assert(#assignments == 0, "an unowned matching manual marker must never receive a cleanup write")
+AngryEra.GetDisplayedMeta = nil
+AngryEra.GetDisplayedVars = nil
 
 -- Failed marker writes remain pending instead of being treated as resolved.
 Reset()

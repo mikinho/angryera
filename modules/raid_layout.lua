@@ -3,9 +3,9 @@
 --
 -- Applies a group layout to the actual raid by moving members between raid
 -- subgroups. The move planner is pure and deterministic; the driver is gated to
--- the raid leader or a qualified assistant. Explicit requests made in combat
+-- an authorized raid member. Explicit requests made in combat
 -- wait for the exact displayed page/context, and optional display-driven applies
--- are restricted to the local raid leader.
+-- are restricted to the current AngryEra authority.
 --
 -- SetRaidSubgroup/SwapRaidSubgroup are #nocombat and cap subgroups at 5, so the
 -- plan uses SetRaidSubgroup into a non-full target and SwapRaidSubgroup
@@ -323,12 +323,12 @@ local function AutoApplyEnabled(self, snapshot)
     return MetadataFlagEnabled(MetadataValue(meta, "AUTOAPPLYLAYOUT"))
 end
 
-local function IsLocalRaidLeader(self)
-    if type(self.IsPlayerRaidLeader) ~= "function" then
+local function IsLocalRaidController(self)
+    if type(self.IsLocalAngryEraAuthority) ~= "function" then
         return false
     end
-    local called, isLeader = pcall(self.IsPlayerRaidLeader, self)
-    return called and isLeader == true
+    local called, isAuthority = pcall(self.IsLocalAngryEraAuthority, self)
+    return called and isAuthority == true
 end
 
 local function RequestStillAuthorized(self, request)
@@ -342,8 +342,8 @@ local function RequestStillAuthorized(self, request)
         if not AutoApplyEnabled(self) then
             return false, "auto-disabled"
         end
-        if not IsLocalRaidLeader(self) then
-            return false, "not-raid-leader"
+        if not IsLocalRaidController(self) then
+            return false, "not-raid-controller"
         end
     end
     return true
@@ -612,7 +612,7 @@ local function NotifyFinished(self, success, result, request)
     if
         request.Origin == "auto"
         and success ~= true
-        and (result == "no-layout" or result == "auto-disabled" or result == "not-raid-leader")
+        and (result == "no-layout" or result == "auto-disabled" or result == "not-raid-controller")
     then
         return
     end
@@ -926,7 +926,7 @@ local function SubmitRequest(self, origin, suppliedReference)
             origin == "auto"
             and validationError ~= "no-layout"
             and validationError ~= "auto-disabled"
-            and validationError ~= "not-raid-leader"
+            and validationError ~= "not-raid-controller"
         then
             request.Notify = true
             NotifyFinished(self, false, validationError, request)
@@ -1067,8 +1067,13 @@ function AngryEra:InvalidatePendingGroupLayoutApply(reference)
 end
 
 --- Resets every session-local request, including lifecycle/leadership changes.
+-- Authority handoffs retain the current canonical display, so callers may
+-- preserve it as the observation baseline. This cancels all old-authority work
+-- without causing the new authority's first real page transition to be mistaken
+-- for the addon's initial display observation.
+-- @tparam[opt=false] boolean preserveDisplayedReference
 -- @treturn boolean canceled
-function AngryEra:ResetGroupLayoutApplyState()
+function AngryEra:ResetGroupLayoutApplyState(preserveDisplayedReference)
     local canceled = self:CancelPendingGroupLayoutApply("canceled")
     if activeGroupLayoutApply then
         local active = activeGroupLayoutApply
@@ -1077,9 +1082,14 @@ function AngryEra:ResetGroupLayoutApplyState()
         canceled = true
     end
     CancelApplyTimer(self)
-    observedDisplayedPage = nil
     observedGroupLayoutAutoIntent = nil
-    hasObservedDisplayedPage = false
+    if preserveDisplayedReference == true then
+        observedDisplayedPage = CurrentDisplayReference(self)
+        hasObservedDisplayedPage = observedDisplayedPage ~= nil
+    else
+        observedDisplayedPage = nil
+        hasObservedDisplayedPage = false
+    end
     lastRaidApiCallAt = nil
     return canceled
 end
@@ -1089,7 +1099,7 @@ function AngryEra:ResetPendingGroupLayoutApply()
 end
 
 --- Tracks exact page identity, cancels stale work, and optionally auto-applies.
--- Automatic work is leader-only and starts only on a real SyncId transition.
+-- Automatic work is controller-only and starts only on a real SyncId transition.
 -- @tparam table|nil snapshot Canonical displayed-note snapshot.
 -- @treturn boolean requested
 -- @treturn number|string status
@@ -1117,16 +1127,16 @@ function AngryEra:ObserveDisplayedRaidLayout(snapshot)
     if not autoApplyEnabled then
         return false, canceled and "canceled" or "auto-disabled"
     end
-    if not IsLocalRaidLeader(self) then
+    if not IsLocalRaidController(self) then
         observedGroupLayoutAutoIntent = CopyDisplayReference(reference)
-        return false, canceled and "canceled" or "not-raid-leader"
+        return false, canceled and "canceled" or "not-raid-controller"
     end
     observedGroupLayoutAutoIntent = nil
     return self:RequestGroupLayoutApply("auto")
 end
 
---- Retries a page-bound automatic intent after raid leadership has settled.
--- The intent survives a transient non-leader observation, but only the exact
+--- Retries a page-bound automatic intent after raid authority has settled.
+-- The intent survives a transient non-controller observation, but only the exact
 -- still-active tuple may start and only while automatic applies remain enabled.
 -- @treturn boolean requested
 -- @treturn number|string status
@@ -1147,13 +1157,13 @@ function AngryEra:RetryObservedGroupLayoutAutoApply()
         observedGroupLayoutAutoIntent = nil
         return false, "display-changed"
     end
-    if not IsLocalRaidLeader(self) then
-        return false, "not-raid-leader"
+    if not IsLocalRaidController(self) then
+        return false, "not-raid-controller"
     end
 
     observedGroupLayoutAutoIntent = nil
     local requested, status = self:RequestGroupLayoutApply("auto")
-    if not requested and status == "not-raid-leader" then
+    if not requested and status == "not-raid-controller" then
         observedGroupLayoutAutoIntent = reference
     end
     return requested, status

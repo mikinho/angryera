@@ -36,6 +36,10 @@ function AngryEra:IsPlayerRaidLeader()
     return isLeader
 end
 
+function AngryEra:IsLocalAngryEraAuthority()
+    return isLeader
+end
+
 local displayedNote
 function AngryEra:GetDisplayedNote()
     return displayedNote
@@ -437,12 +441,12 @@ Reset(40, { AUTOADVANCE = true }, false)
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 9999, "Unknown", 9, 40, 1)
 assert(advanced == false and result == "display-sequence-unavailable", "uncategorized pages cannot advance")
 
--- Non-leaders in a group never advance.
+-- Non-controllers in a group never advance.
 Reset(10, { AUTOADVANCE = true })
 isLeader = false
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
-assert(advanced == false and result == "not-raid-leader", "only the leader advances in a group")
-assert(#displayedCalls == 0, "non-leaders must not display")
+assert(advanced == false and result == "not-raid-controller", "only the AngryEra authority advances in a group")
+assert(#displayedCalls == 0, "non-controllers must not display")
 isLeader = true
 
 -- Solo players advance their own preview.

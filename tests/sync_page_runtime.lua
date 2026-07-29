@@ -900,11 +900,22 @@ AssertEqual(
     "unchanged variables and hierarchy retain authoritative context identity"
 )
 
-local rollbackAuth = Auth({
-    Sender = "Assistant",
-})
+function AngryEra:RemoveMatchingContextsForTest(reference)
+    for key, context in pairs(self._activePageContexts) do
+        if
+            context.SyncId == reference.SyncId
+            and context.Revision == reference.Revision
+            and context.RevisionId == reference.RevisionId
+            and context.ContextRevisionId == reference.ContextRevisionId
+        then
+            self._activePageContexts[key] = nil
+        end
+    end
+end
+AngryEra:RemoveMatchingContextsForTest(proactiveDisplay)
+local rollbackAuth = Auth()
 accepted, result = AngryEra:AcceptActiveDisplay(rollbackAuth, proactiveDisplay)
-Assert(accepted and result.RequestNeeded, "assistant cannot consume locally prepared context without its own tuple")
+Assert(accepted and result.RequestNeeded, "an authority without the exact tuple requests its context")
 local pendingForRollback = result.RequestPayload
 local pagesBeforeContextOnly = AngryAssign_Pages
 local pageBeforeContextOnly = AngryAssign_Pages[4]
@@ -1001,14 +1012,11 @@ AssertEqual(
     "prepared activation installs the exact volatile reference"
 )
 
-accepted, result = AngryEra:AcceptActiveDisplay(
-    Auth({
-        Sender = "Assistant",
-        SenderSessionId = "pending_clear_session",
-    }),
-    secondProactiveDisplay
-)
-Assert(accepted and result.RequestNeeded, "missing remote-source tuple creates pending state for clear test")
+AngryEra._testMissingContextDisplay = DeepCopy(secondProactiveDisplay)
+AngryEra._testMissingContextDisplay.ContextRevisionId = "fcs32:00000000"
+accepted, result = AngryEra:AcceptActiveDisplay(Auth(), AngryEra._testMissingContextDisplay)
+AngryEra._testMissingContextDisplay = nil
+Assert(accepted and result.RequestNeeded, "missing exact tuple creates pending state for clear test")
 local contextsBeforeClear = AngryEra._activePageContexts
 local cleared, clearResult = AngryEra:ClearActiveDisplayReference()
 Assert(cleared and clearResult.Applied, "volatile display clear succeeds")
@@ -1247,10 +1255,10 @@ AssertEqual(
     "missing remote context preserves revision identity"
 )
 
--- A current leader can select an exact tuple already cached under the former
--- publisher without waiting for a redundant PAGE_UPSERT. Assistants, changed
--- tuples, unknown pages, and invalid cached payloads must retain the pending
--- request behavior.
+-- A current canonical authority can select an exact tuple already cached under
+-- the former publisher without waiting for a redundant PAGE_UPSERT.
+-- Unauthorized publishers, changed tuples, unknown pages, and invalid cached
+-- payloads must not rebind it.
 do
     ResetStorage()
     local exactPayload = MakePayload(1, "Handoff exact", "raid=handoff")
@@ -1287,36 +1295,30 @@ do
     local pageBeforeRebind = AngryAssign_Pages[result.LocalId]
     local indexesBeforeRebind = AngryEra.entitySyncIndexes
 
+    authorization.display = false
     accepted, result = AngryEra:AcceptActiveDisplay(assistantAuth, exactDisplay)
-    Assert(accepted and result.RequestNeeded and not result.Applied, result)
-    Assert(AngryAssign_State == stateBeforeRebind, "assistant display cannot replace persisted display state")
-    Assert(AngryEra._activePageContexts == contextsBeforeRebind, "assistant display cannot rebind an exact context")
-    AssertEqual(
-        AngryEra:GetPendingActiveDisplayRequest().Sender,
-        "Assistant-Realm",
-        "assistant exact tuple remains pending"
-    )
+    authorization.display = true
+    AssertError(accepted, result, "unauthorized-display", "unauthorized exact display")
+    Assert(AngryAssign_State == stateBeforeRebind, "unauthorized display preserves persisted display state")
+    Assert(AngryEra._activePageContexts == contextsBeforeRebind, "unauthorized display cannot rebind context")
 
-    local pendingBeforeRoleChange = AngryEra._activePendingDisplay
-    local defaultGetGroupRole = AngryEra.GetGroupRole
-    local leaderRoleChecks = 0
-    function AngryEra:GetGroupRole(sender)
-        if sender == "Leader-Realm" then
-            leaderRoleChecks = leaderRoleChecks + 1
-            return leaderRoleChecks == 1 and "leader" or "assistant"
+    local displayAuthorizationChecks = 0
+    authorizationHook = function(_, _, action)
+        if action == "display" then
+            displayAuthorizationChecks = displayAuthorizationChecks + 1
+            if displayAuthorizationChecks == 2 then
+                authorization.display = false
+            end
         end
-        return defaultGetGroupRole(self, sender)
     end
     accepted, result = AngryEra:AcceptActiveDisplay(newLeaderAuth, exactDisplay)
+    authorizationHook = nil
+    authorization.display = true
     AssertError(accepted, result, "display-authorization-changed", "leader role revoked before context rebind commit")
-    AssertEqual(leaderRoleChecks, 2, "context rebind rechecks current leadership before commit")
+    AssertEqual(displayAuthorizationChecks, 3, "context rebind rechecks canonical authority before commit")
     Assert(AngryAssign_State == stateBeforeRebind, "revoked rebind preserves persisted display state")
     Assert(AngryEra._activePageContexts == contextsBeforeRebind, "revoked rebind preserves cached contexts")
-    Assert(
-        AngryEra._activePendingDisplay == pendingBeforeRoleChange,
-        "revoked rebind preserves the prior pending display"
-    )
-    AngryEra.GetGroupRole = defaultGetGroupRole
+    Assert(AngryEra._activePendingDisplay == nil, "revoked rebind creates no pending display")
 
     accepted, result = AngryEra:AcceptActiveDisplay(newLeaderAuth, exactDisplay)
     Assert(accepted and result.Applied and result.ContextRebound and not result.RequestNeeded, result)
@@ -1550,6 +1552,7 @@ AssertError(accepted, result, "page-revision-divergence", "same-revision changed
 Assert(AngryEra._activePageContexts == contextsBeforeChangedLocalOwnerRelay, "changed relay does not mutate context")
 AssertEqual(localOwnerPage.Contents, "Private", "changed relay does not mutate local-owned content")
 
+authorization.pageUpsert = false
 accepted, result = AngryEra:AcceptActivePageUpsert(
     Auth({
         Sender = "Assistant",
@@ -1558,10 +1561,11 @@ accepted, result = AngryEra:AcceptActivePageUpsert(
     }),
     localOwnerPayload
 )
-AssertError(accepted, result, "local-namespace-collision", "assistant local-owner relay")
+authorization.pageUpsert = true
+AssertError(accepted, result, "unauthorized-page-upsert", "unauthorized local-owner relay")
 Assert(
     AngryEra._activePageContexts == contextsBeforeChangedLocalOwnerRelay,
-    "ordinary assistant cannot add a local-owner relay context"
+    "an unauthorized publisher cannot add a local-owner relay context"
 )
 
 local localOwnerPageAuthorizationChecks = 0

@@ -10,6 +10,8 @@ local displayRequestCalls = 0
 local versionQueryCalls = 0
 local activeDisplayReference
 local delegatedControl
+local reconcileCalls = {}
+local reconcileClearsControl = false
 
 local function EnsureUnitFullName(name)
     if name and not name:find("-", 1, true) then
@@ -58,6 +60,10 @@ function AngryEra:GetConfig(key)
     return configDefaults[key]
 end
 
+function AngryEra:SetConfig(key, value)
+    config[key] = value
+end
+
 function AngryEra:GetRaidLeader()
     for _, member in ipairs(groupRoster) do
         if member.rank == 2 then
@@ -75,6 +81,13 @@ function AngryEra:GetDelegatedRaidControl()
         copy[key] = value
     end
     return copy
+end
+
+function AngryEra:GetProtocolSession()
+    return {
+        InstallationId = "ae3i:1:2:3:4",
+        SessionId = "controller-session",
+    }
 end
 
 function AngryEra:IsLocallyOwned(entity)
@@ -101,6 +114,13 @@ function AngryEra:SendProtocolVersionQuery()
 end
 function AngryEra:ClearDisplayed()
     clearDisplayedCalls = clearDisplayedCalls + 1
+end
+function AngryEra:ReconcileDelegatedRaidControl(reason)
+    reconcileCalls[#reconcileCalls + 1] = reason
+    if reconcileClearsControl then
+        delegatedControl = nil
+    end
+    return true
 end
 
 local app = { AngryEra = AngryEra }
@@ -422,6 +442,14 @@ assert(
 config.receiveMode = "standard"
 currentPlayer = "PugLeader-Realm"
 assert(not AngryEra:CanLocalPlayerPublish("display"), "the Blizzard leader should not publish while delegated")
+assert(
+    not AngryEra:CanLocalPlayerPublish("changeProposal"),
+    "the Blizzard leader should not propose AngryEra changes while delegated"
+)
+assert(
+    not AngryEra:CanReceiveFrom("PugLeader-Realm", "changeProposal"),
+    "followers should reject Blizzard-leader change proposals while delegated"
+)
 assert(not AngryEra:CanLocalPlayerApplyRaidLayout(), "the Blizzard leader should not race controller layouts")
 assert(AngryEra:CanLocalPlayerPublish("controlGrant"), "only the Blizzard leader should grant control")
 assert(AngryEra:CanLocalPlayerPublish("controlRevoke"), "only the Blizzard leader should revoke control")
@@ -434,6 +462,19 @@ assert(
     "an invalid but unreconciled lease must not silently reactivate the leader"
 )
 assert(not AngryEra:CanLocalPlayerPublish("display"), "an invalid lease should leave no local publisher")
+assert(
+    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "an invalid but unreconciled lease must not silently reactivate leader layout mutations"
+)
+delegatedControl = {
+    GrantId = "ae3i:5:6:7:8:leader-session:1",
+    Leader = "PugLeader-Realm",
+    PendingRecovery = true,
+}
+assert(
+    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    "a recovery barrier must pause layout mutations until explicit authority recovery"
+)
 groupRoster[2].rank = 1
 delegatedControl = nil
 assert(AngryEra:GetAngryEraAuthority() == "PugLeader-Realm", "reclaim should restore the Blizzard leader")
@@ -511,6 +552,14 @@ config.receiveMode = "ignoreShared"
 config.allowAllAssistants = false
 config.trustedPublishers = ""
 assert(
+    AngryEra:CanLocalPlayerPublish("controlRequest"),
+    "Any current raid assistant may request control without trusting itself on this installation"
+)
+assert(
+    not AngryEra:CanReceiveFrom("OrdinaryAssist-Realm", "controlRequest"),
+    "The leader-side receiver must still qualify an inbound controller request"
+)
+assert(
     AngryEra:CanLocalPlayerPublish("changeProposal"),
     "Any current assistant may attempt a normal change for receivers to authorize"
 )
@@ -539,6 +588,42 @@ assert(versionQueryCalls == 0, "A receive-mode transition should not trigger unr
 requested, requestResult = AngryEra:ReceiveModeUpdated("standard")
 assert(not requested and requestResult == "not-needed", "An accepting-to-accepting transition needs no request")
 assert(displayRequestCalls == 1, "Equivalent accepting modes must not request the active page again")
+
+delegatedControl = {
+    Controller = "OrdinaryAssist-Realm",
+    Leader = "PugLeader-Realm",
+    ControllerInstallationId = "ae3i:1:2:3:4",
+    ControllerSessionId = "controller-session",
+    GrantId = "ae3i:9:9:9:9:controller-session:1",
+}
+currentPlayer = "OrdinaryAssist-Realm"
+config.receiveMode = "ignoreShared"
+reconcileClearsControl = false
+requested, requestResult = AngryEra:ReceiveModeUpdated("standard")
+assert(
+    not requested and requestResult == "raid-controller-sharing-required",
+    "The active controller must reject Ignore Shared locally"
+)
+assert(config.receiveMode == "standard", "Rejecting Ignore Shared must immediately restore the controller's prior mode")
+assert(delegatedControl ~= nil, "Rejecting Ignore Shared must preserve the active controller grant")
+
+currentPlayer = "PugLeader-Realm"
+config.receiveMode = "ignoreShared"
+reconcileClearsControl = true
+requested, requestResult = AngryEra:ReceiveModeUpdated("standard")
+assert(
+    requested and requestResult == "raid-controller-revoked",
+    "The actual leader selecting Ignore Shared should revoke delegated control normally"
+)
+assert(config.receiveMode == "ignoreShared", "The actual leader may retain Ignore Shared after reclaiming control")
+assert(delegatedControl == nil, "The actual leader's Ignore Shared transition should clear the delegated grant")
+assert(
+    reconcileCalls[#reconcileCalls] == "raid-leader-ignore-shared",
+    "The leader transition should use the normal delegated-control reconciliation path"
+)
+reconcileClearsControl = false
+currentPlayer = "OrdinaryAssist-Realm"
+
 AngryEra._protocolStarted = false
 requested, requestResult = AngryEra:ReceiveModeUpdated("ignoreShared")
 assert(not requested and requestResult == "not-needed", "A disabled protocol cannot request shared state")

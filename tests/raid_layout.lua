@@ -307,6 +307,10 @@ function AngryEra:IsPlayerRaidLeader()
     return localRaidLeader
 end
 
+function AngryEra:IsLocalAngryEraAuthority()
+    return localRaidLeader
+end
+
 function AngryEra:ScheduleTimer(method, delay, ...)
     if failScheduleTimer then
         return nil
@@ -845,8 +849,8 @@ localRaidLeader = false
 applied, reason = RequestAndFinish("manual")
 assert(applied and reason == 1, "a qualified assistant may still apply manually")
 
--- Automatic observation is leader-only. A page seen during transient roster
--- ordering retains one exact intent that settled leadership can retry.
+-- Automatic observation is controller-only. A page seen during transient
+-- authority ordering retains one exact intent that settled control can retry.
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
 local observed, observationStatus = AngryEra:ObserveDisplayedRaidLayout(activeReference)
 assert(
@@ -881,9 +885,9 @@ AngryEra:ObserveDisplayedRaidLayout(activeReference)
 activeReference = Reference("page-b", 1, "revision-b", "context-b")
 localRaidLeader = false
 applied, reason = AngryEra:ObserveDisplayedRaidLayout(activeReference)
-assert(not applied and reason == "not-raid-leader", "assistants never auto-apply")
+assert(not applied and reason == "not-raid-controller", "non-controllers never auto-apply")
 applied, reason = AngryEra:RetryObservedGroupLayoutAutoApply()
-assert(not applied and reason == "not-raid-leader" and #operations == 0, "the intent waits for settled leadership")
+assert(not applied and reason == "not-raid-controller" and #operations == 0, "the intent waits for settled control")
 localRaidLeader = true
 applied, reason = AngryEra:RetryObservedGroupLayoutAutoApply()
 assert(applied and reason == "started", "promotion retries the still-active page exactly once")
@@ -951,6 +955,39 @@ applied, reason = AngryEra:FlushPendingGroupLayoutApply()
 assert(not applied and reason == "auto-disabled", "combat flush rechecks current automatic-layout metadata")
 assert(#operations == 0 and #finishEvents == 0, "disabled stale automatic work remains a quiet no-op")
 
+-- A controller handoff clears combat-queued automatic work before the new
+-- authority can begin publishing the retained page. The protocol runtime calls
+-- this same reset boundary for every accepted grant/revoke transition.
+Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
+autoApplyLayoutValue = true
+localRaidLeader = true
+AngryEra:ObserveDisplayedRaidLayout(activeReference)
+inCombat = true
+activeReference = Reference("page-b", 1, "revision-b", "context-b")
+applied, reason = AngryEra:ObserveDisplayedRaidLayout(activeReference)
+assert(applied and reason == "queued", "authority-handoff fixture should have one queued automatic apply")
+localRaidLeader = false
+assert(AngryEra:ResetGroupLayoutApplyState(true), "authority handoff should cancel the queued automatic apply")
+assert(
+    #finishEvents == 1 and finishEvents[1].Origin == "auto" and finishEvents[1].Result == "canceled",
+    "handoff cancellation should terminate the old authority's exact request once"
+)
+inCombat = false
+applied, reason = AngryEra:FlushPendingGroupLayoutApply()
+assert(not applied and reason == "no-pending-layout", "post-handoff combat flush must find no stale layout")
+assert(#operations == 0, "the former authority must never mutate the raid after handoff")
+localRaidLeader = true
+applied, reason = AngryEra:RetryObservedGroupLayoutAutoApply()
+assert(not applied and reason == "no-auto-intent", "handoff reset must also discard the retained auto intent")
+activeReference = Reference("page-c", 1, "revision-c", "context-c")
+applied, reason = AngryEra:ObserveDisplayedRaidLayout(activeReference)
+assert(applied and reason == "started", "new authority's first real page transition must still auto-apply")
+RunTimers()
+assert(
+    #operations == 1 and operations[1].Kind == "set" and operations[1].Subgroup == 2,
+    "handoff observation baseline should preserve normal destination layout application"
+)
+
 -- Disabling automatic behavior cancels only auto-origin work; manual work is
 -- retained through combat.
 Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
@@ -981,7 +1018,7 @@ Setup({ { Name = "Alice-Home", Subgroup = 1 } }, "Move/2: Alice")
 autoApplyLayoutValue = true
 localRaidLeader = false
 applied, reason = AngryEra:RequestGroupLayoutApply("auto")
-assert(not applied and reason == "not-raid-leader" and #finishEvents == 0, "non-leader auto rejection is quiet")
+assert(not applied and reason == "not-raid-controller" and #finishEvents == 0, "non-controller auto rejection is quiet")
 
 -- Blizzard API errors are contained, cancel the pre-secured poll, and leave no
 -- operation that could overlap a later request.

@@ -2,7 +2,7 @@
 -- Angry Era: modules/encounters.lua
 --
 -- Kill-driven page advancement. After a successful ENCOUNTER_END the raid
--- leader's client advances the display to the next page so the upcoming
+-- authority's client advances the display to the next page so the upcoming
 -- assignments are visible ahead of the pull. Wipes never advance.
 -- -------------------------------------------------------------------------------
 
@@ -404,7 +404,7 @@ end
 
 --- Retries only the shared publication for an already activated auto-advance.
 -- The retry is abandoned when another display replaces the target or the
--- client no longer has leader authority.
+-- client no longer has AngryEra authority.
 -- @tparam table retry Opaque retry state supplied by AceTimer.
 function AngryEra:RetryAutoAdvanceDisplay(retry)
     if self._autoAdvancePublishRetry ~= retry or not IsPlainTable(retry) then
@@ -414,7 +414,7 @@ function AngryEra:RetryAutoAdvanceDisplay(retry)
     if
         not IsPlainTable(AngryAssign_State)
         or AngryAssign_State.displayed ~= retry.PageId
-        or ((IsInRaid() or IsInGroup()) and not self:IsPlayerRaidLeader())
+        or ((IsInRaid() or IsInGroup()) and not self:IsLocalAngryEraAuthority())
     then
         self:CancelAutoAdvancePublishRetry()
         return false, "retry-cancelled"
@@ -503,7 +503,7 @@ function AngryEra:AdvanceDisplayedPageAfterEncounter(encounterId, encounterName)
 end
 
 --- ENCOUNTER_END handler: kills advance, wipes never do.
--- Only the raid leader drives shared advancement; solo players may advance
+-- Only the current AngryEra authority drives shared advancement; solo players may advance
 -- their own display while previewing.
 function AngryEra:ENCOUNTER_END(_, encounterId, encounterName, _, _, success)
     if success ~= 1 and success ~= true then
@@ -516,15 +516,15 @@ function AngryEra:ENCOUNTER_END(_, encounterId, encounterName, _, _, success)
         )
         return false, "encounter-not-defeated"
     end
-    if (IsInRaid() or IsInGroup()) and not self:IsPlayerRaidLeader() then
+    if (IsInRaid() or IsInGroup()) and not self:IsLocalAngryEraAuthority() then
         TraceAutoAdvance(
             self,
             "auto-advance",
-            "encounter=%s id=%s reason=not-raid-leader",
+            "encounter=%s id=%s reason=not-raid-controller",
             tostring(encounterName),
             tostring(encounterId)
         )
-        return false, "not-raid-leader"
+        return false, "not-raid-controller"
     end
     local advanced, result = self:AdvanceDisplayedPageAfterEncounter(encounterId, encounterName)
     TraceAutoAdvance(

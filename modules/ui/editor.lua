@@ -38,7 +38,7 @@ local VARIABLE_SAVE_ERRORS = {
     ["invalid-variables"] = "Variables must be valid JSON or Key=Value lines.",
     ["no-assigned-roles"] = "No group members currently have Tank, Healer, or Damage roles assigned.",
     ["not-grouped"] = "Join a party or raid before importing assigned roles.",
-    ["privileged-raid-assignment-change"] = "Only the raid leader may change effective $TANKS or $ASSISTS metadata.",
+    ["privileged-raid-assignment-change"] = "Only the current Raid Controller may change effective $TANKS or $ASSISTS metadata.",
     ["raid-roster-too-large"] = "The assigned-role roster is too large.",
     ["resolved-variables-too-large"] = "The resolved variables are too large.",
     ["role-api-failed"] = "Could not read every assigned role from Blizzard's group roster.",
@@ -942,7 +942,10 @@ local function AngryEra_DisplayPage(widget, event, value)
 end
 
 local function AngryEra_ClearPage(widget, event, value)
-    AngryEra:ClearDisplayed(true)
+    local cleared, clearError = AngryEra:ClearSharedDisplay()
+    if not cleared and clearError == "not-angryera-authority" then
+        AngryEra:Print("Only the current Raid Controller can clear the shared page.")
+    end
 end
 -- Expose for init.lua options table
 AngryEra._AngryEra_ClearPage = AngryEra_ClearPage
@@ -1886,7 +1889,7 @@ local LAYOUT_EDIT_ERRORS = {
 
 local RAID_LAYOUT_APPLY_ERRORS = {
     ["not-in-raid"] = "You must be in a raid to rearrange groups.",
-    ["not-authorized"] = "Only the raid leader or a qualified raid assistant can rearrange groups.",
+    ["not-authorized"] = "You are not authorized to rearrange raid groups.",
     ["in-combat"] = "Groups cannot be rearranged during combat.",
     ["no-layout"] = "The displayed page has no $LAYOUT.",
     ["no-bound-groups"] = "The displayed layout does not resolve to any raid members.",
@@ -2851,7 +2854,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         end
         if proposed then
             self:Print(
-                "Submitted the layout change to the raid leader. Apply is available after it is accepted and displayed."
+                "Submitted the layout change to the Raid Controller. Apply is available after it is accepted and displayed."
             )
             return true, true, savedEffectiveSource or ""
         end
@@ -3232,10 +3235,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         if type(self.CanLocalPlayerApplyRaidLayout) == "function" then
             local allowed, reason = self:CanLocalPlayerApplyRaidLayout()
             if allowed ~= true then
-                self:Print(
-                    "Could not apply the layout: "
-                        .. tostring(reason or "only the raid leader or a qualified raid assistant may apply it")
-                )
+                self:Print("Could not apply the layout: " .. tostring(reason or "you are not authorized to apply it"))
                 return
             end
         end
@@ -3266,7 +3266,7 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         reference.EntityType == "category"
                 and "Category layouts are inherited. Display a descendant page, then apply the resolved layout from that page's editor."
             or "Saves this displayed page's layout, then moves raid members into the subgroups it defines. "
-                .. "Requires the raid leader or a qualified raid assistant. During combat, the exact page waits until combat ends; changing pages cancels it."
+                .. "Requires an authorized raid member. During combat, the exact page waits until combat ends; changing pages cancels it."
     )
     footer:AddChild(applyButton)
 
@@ -3630,8 +3630,551 @@ end
 
 -- ── Main Menu and Window ────────────────────────────────────────────────────
 
+local controllerUi = {
+    AnnouncedGrantId = nil,
+    AnnouncedRevokeId = nil,
+    Incoming = {},
+    OutgoingExpiresAt = nil,
+    OutgoingLeaderKey = nil,
+    OutgoingRequestId = nil,
+    PopupName = "AngryEra_RaidControllerRequest",
+    RequestTtl = 2 * 60,
+}
+layoutEditor.RaidController = controllerUi
+
+function controllerUi:Now()
+    if type(GetTime) == "function" then
+        local called, value = pcall(GetTime)
+        if called and type(value) == "number" then
+            return value
+        end
+    end
+    return 0
+end
+
+function controllerUi:IsInRaid()
+    if type(IsInRaid) ~= "function" then
+        return false
+    end
+    local called, result = pcall(IsInRaid)
+    return called and result == true
+end
+
+function controllerUi:IsActualLeader()
+    if type(AngryEra.IsPlayerRaidLeader) ~= "function" then
+        return false
+    end
+    local called, result = pcall(AngryEra.IsPlayerRaidLeader, AngryEra)
+    return called and result == true
+end
+
+function controllerUi:CanRequest()
+    if not self:IsInRaid() or type(AngryEra.CanLocalPlayerPublish) ~= "function" then
+        return false
+    end
+    local called, result = pcall(AngryEra.CanLocalPlayerPublish, AngryEra, "controlRequest")
+    return called and result == true
+end
+
+function controllerUi:CurrentControl()
+    if type(AngryEra.GetDelegatedRaidControl) ~= "function" then
+        return nil
+    end
+    local called, control = pcall(AngryEra.GetDelegatedRaidControl, AngryEra)
+    return called and type(control) == "table" and control or nil
+end
+
+function controllerUi:RaidLeader()
+    if type(AngryEra.GetRaidLeader) ~= "function" then
+        return nil
+    end
+    local called, leader = pcall(AngryEra.GetRaidLeader, AngryEra)
+    return called and type(leader) == "string" and leader ~= "" and leader or nil
+end
+
+function controllerUi:RaidLeaderKey()
+    local leader = self:RaidLeader()
+    return type(leader) == "string" and leader:lower() or nil
+end
+
+function controllerUi:ClearOutgoing()
+    self.OutgoingExpiresAt = nil
+    self.OutgoingLeaderKey = nil
+    self.OutgoingRequestId = nil
+end
+
+function controllerUi:DisplayName(name)
+    if type(name) ~= "string" or name == "" then
+        return "Unknown"
+    end
+    local called, displayName = pcall(EnsureUnitShortName, name)
+    return called and type(displayName) == "string" and displayName ~= "" and displayName or name
+end
+
+function controllerUi:RequestRecord(requestId)
+    if type(requestId) ~= "string" or type(AngryEra.GetPendingDelegatedControlRequest) ~= "function" then
+        return nil
+    end
+    local called, request = pcall(AngryEra.GetPendingDelegatedControlRequest, AngryEra, requestId)
+    return called and type(request) == "table" and request or nil
+end
+
+function controllerUi:OutgoingRequestRecord(requestId)
+    if type(requestId) ~= "string" or type(AngryEra.GetPendingOutgoingDelegatedControlRequest) ~= "function" then
+        return nil, false
+    end
+    local called, request = pcall(AngryEra.GetPendingOutgoingDelegatedControlRequest, AngryEra, requestId)
+    return called and type(request) == "table" and request or nil, true
+end
+
+function controllerUi:Prune()
+    local control = self:CurrentControl()
+    if not self:IsInRaid() then
+        self.Incoming = {}
+        self:ClearOutgoing()
+    elseif
+        self.OutgoingRequestId
+        and self.OutgoingLeaderKey ~= nil
+        and self.OutgoingLeaderKey ~= self:RaidLeaderKey()
+    then
+        self:ClearOutgoing()
+    end
+    if self.OutgoingRequestId then
+        local outgoing, runtimeTracksOutgoing = self:OutgoingRequestRecord(self.OutgoingRequestId)
+        local targetKey = outgoing and outgoing.TargetKey
+        if type(targetKey) == "string" then
+            targetKey = targetKey:lower()
+        end
+        if runtimeTracksOutgoing and (not outgoing or (targetKey ~= nil and targetKey ~= self:RaidLeaderKey())) then
+            self:ClearOutgoing()
+        end
+    end
+    if control and control.PendingRole ~= true then
+        self.Incoming = {}
+        self:ClearOutgoing()
+    else
+        local incoming = {}
+        for requestId in pairs(self.Incoming) do
+            local request = self:RequestRecord(requestId)
+            if request then
+                incoming[requestId] = request
+            end
+        end
+        self.Incoming = incoming
+
+        if self.OutgoingRequestId and self.OutgoingExpiresAt and self:Now() >= self.OutgoingExpiresAt then
+            self:ClearOutgoing()
+        end
+    end
+    if self.OpenRequestId and (not self:IsActualLeader() or self.Incoming[self.OpenRequestId] == nil) then
+        self:CloseRequestPopup()
+    end
+    return control
+end
+
+function controllerUi:CompatibilityFailure(detail)
+    if type(detail) ~= "table" then
+        return "Raid Control could not be granted because the raid is not delegation-compatible."
+    end
+    if detail.LocalReceiveMode == "ignoreShared" then
+        return "Raid Control requires this client to accept shared AngryEra pages."
+    end
+    if type(detail.Incompatible) == "table" and #detail.Incompatible > 0 then
+        return "Raid Control requires AngryEra 3.3.0-BETA or newer on participating addon users. Update: "
+            .. table.concat(detail.Incompatible, ", ")
+            .. "."
+    end
+    return "Raid Control could not be granted because the raid is not delegation-compatible."
+end
+
+function controllerUi:FailureText(action, reason, detail)
+    local messages = {
+        ["already-controller"] = "You are already the Raid Controller.",
+        ["already-pending"] = "Your Raid Control request is already waiting for the raid leader.",
+        ["controller-busy"] = "This raid already has a Raid Controller.",
+        ["invalid-local-control-envelope"] = "AngryEra could not establish the local Raid Control session.",
+        ["leader-unavailable"] = "The current raid leader is unavailable.",
+        ["not-delegated"] = "Raid Control is not currently delegated.",
+        ["session-not-started"] = "AngryEra synchronization is not ready yet.",
+        ["stale-control-request"] = "That Raid Control request expired. Ask the assistant to request control again.",
+        ["unauthorized"] = action == "request"
+                and "Only a raid assistant can submit a Raid Control request. The raid leader determines whether it qualifies."
+            or "Only the current raid leader can perform that Raid Control action.",
+    }
+    if reason == "incompatible" then
+        return self:CompatibilityFailure(detail)
+    end
+    return messages[reason] or ("Raid Control failed (" .. tostring(reason or "unknown error") .. ").")
+end
+
+function controllerUi:CloseRequestPopup()
+    self.OpenRequestId = nil
+    if type(StaticPopup_Hide) == "function" then
+        pcall(StaticPopup_Hide, self.PopupName)
+    end
+end
+
+function controllerUi:Refresh()
+    self:Prune()
+    if type(AngryEra.UpdateSelected) == "function" then
+        pcall(AngryEra.UpdateSelected, AngryEra)
+    end
+end
+
+function controllerUi:ScheduleReview(requestId, readyAt)
+    if type(C_Timer) ~= "table" or type(C_Timer.After) ~= "function" then
+        AngryEra:Print("AngryEra is still checking raid compatibility. Review the request again from Menu.")
+        return
+    end
+    local delay = 0.25
+    if type(readyAt) == "number" then
+        delay = math.max(0.05, readyAt - self:Now() + 0.05)
+    end
+    C_Timer.After(delay, function()
+        if controllerUi:IsActualLeader() and controllerUi:RequestRecord(requestId) then
+            controllerUi:ShowRequest(requestId)
+        end
+    end)
+end
+
+function controllerUi:ScheduleRequestPopupExpiry(requestId, expiresAt)
+    if
+        type(requestId) ~= "string"
+        or type(expiresAt) ~= "number"
+        or type(C_Timer) ~= "table"
+        or type(C_Timer.After) ~= "function"
+    then
+        return
+    end
+
+    C_Timer.After(math.max(0.05, expiresAt - self:Now() + 0.05), function()
+        if controllerUi.OpenRequestId ~= requestId then
+            return
+        end
+
+        local request = controllerUi:RequestRecord(requestId)
+        if request and type(request.ExpiresAt) == "number" and request.ExpiresAt > controllerUi:Now() then
+            controllerUi:ScheduleRequestPopupExpiry(requestId, request.ExpiresAt)
+            return
+        end
+
+        controllerUi.Incoming[requestId] = nil
+        controllerUi:Refresh()
+    end)
+end
+
+function controllerUi:Grant(requestId)
+    local request = self:RequestRecord(requestId)
+    if not request then
+        self.Incoming[requestId] = nil
+        AngryEra:Print("That Raid Control request is no longer available.")
+        self:Refresh()
+        return false
+    end
+    if type(AngryEra.GrantDelegatedRaidControl) ~= "function" then
+        AngryEra:Print("Raid Control is not available in this AngryEra version.")
+        return false
+    end
+
+    local called, granted, reason, detail = pcall(AngryEra.GrantDelegatedRaidControl, AngryEra, requestId)
+    if called and granted then
+        self.Incoming = {}
+        self.AnnouncedGrantId = reason
+        self.AnnouncedRevokeId = nil
+        AngryEra:Print(self:DisplayName(request.Controller) .. " is now the Raid Controller for this raid.")
+        self:Refresh()
+        return true
+    end
+    if called and reason == "capability-check-pending" then
+        AngryEra:Print("Checking the raid's AngryEra versions before granting Raid Control...")
+        self:ScheduleReview(requestId, detail)
+        return false
+    end
+
+    if reason == "incompatible" or reason == "stale-control-request" then
+        self.Incoming[requestId] = nil
+    end
+    AngryEra:Print(self:FailureText("grant", called and reason or granted, detail))
+    self:Refresh()
+    return false
+end
+
+function controllerUi:Decline(requestId)
+    local request = self:RequestRecord(requestId)
+    if not request then
+        self.Incoming[requestId] = nil
+        self:Refresh()
+        return false
+    end
+    if type(AngryEra.DeclineDelegatedRaidControl) ~= "function" then
+        AngryEra:Print("Raid Control is not available in this AngryEra version.")
+        return false
+    end
+
+    local called, declined, reason = pcall(AngryEra.DeclineDelegatedRaidControl, AngryEra, requestId)
+    if called and declined then
+        self.Incoming[requestId] = nil
+        AngryEra:Print("Declined " .. self:DisplayName(request.Controller) .. "'s Raid Control request.")
+        self:Refresh()
+        return true
+    end
+    if reason == "stale-control-request" then
+        self.Incoming[requestId] = nil
+    end
+    AngryEra:Print(self:FailureText("decline", called and reason or declined))
+    self:Refresh()
+    return false
+end
+
+function controllerUi:EnsureRequestPopup()
+    if type(StaticPopupDialogs) ~= "table" or StaticPopupDialogs[self.PopupName] ~= nil then
+        return
+    end
+    StaticPopupDialogs[self.PopupName] = {
+        text = "%s wants to become Raid Controller.\n\nGranting gives them complete AngryEra control for this raid. Their own categories, pages, and page order become canonical. You remain the Blizzard raid leader and can Reclaim Raid Control from Menu.",
+        button1 = "Grant Control",
+        button2 = "Decline",
+        whileDead = true,
+        hideOnEscape = true,
+        preferredIndex = 3,
+        OnAccept = function(popup)
+            controllerUi.OpenRequestId = nil
+            local data = popup.data
+            if type(data) == "table" then
+                controllerUi:Grant(data.RequestId)
+            end
+        end,
+        OnCancel = function(popup, data, reason)
+            controllerUi.OpenRequestId = nil
+            -- Escape merely dismisses the prompt. The request remains available
+            -- from Menu until it is explicitly granted, declined, or expires.
+            if reason == "clicked" then
+                data = type(data) == "table" and data or popup.data
+                if type(data) == "table" then
+                    controllerUi:Decline(data.RequestId)
+                end
+            end
+        end,
+    }
+end
+
+function controllerUi:ShowRequest(requestId)
+    local request = self:RequestRecord(requestId)
+    if not request then
+        self.Incoming[requestId] = nil
+        self:Refresh()
+        return false
+    end
+    self.Incoming[requestId] = request
+    if not self:IsActualLeader() then
+        self:Refresh()
+        return false
+    end
+
+    self:EnsureRequestPopup()
+    if type(StaticPopup_Show) ~= "function" then
+        AngryEra:Print("Review " .. self:DisplayName(request.Controller) .. "'s Raid Control request from Menu.")
+        return false
+    end
+    if type(CloseDropDownMenus) == "function" then
+        CloseDropDownMenus()
+    end
+    local popup = StaticPopup_Show(self.PopupName, self:DisplayName(request.Controller), nil, {
+        Controller = request.Controller,
+        RequestId = request.MessageId,
+    })
+    self.OpenRequestId = popup and request.MessageId or nil
+    if self.OpenRequestId then
+        self:ScheduleRequestPopupExpiry(request.MessageId, request.ExpiresAt)
+    end
+    self:Refresh()
+    return popup ~= nil
+end
+
+function controllerUi:Request()
+    if type(AngryEra.RequestDelegatedRaidControl) ~= "function" then
+        AngryEra:Print("Raid Control is not available in this AngryEra version.")
+        return false
+    end
+    local called, sent, result, pendingId = pcall(AngryEra.RequestDelegatedRaidControl, AngryEra)
+    if called and sent then
+        self.OutgoingRequestId = result
+        self.OutgoingExpiresAt = self:Now() + self.RequestTtl
+        self.OutgoingLeaderKey = self:RaidLeaderKey()
+        local leader = self:RaidLeader()
+        AngryEra:Print("Requested Raid Control" .. (leader and " from " .. self:DisplayName(leader) or "") .. ".")
+        self:Refresh()
+        return true
+    end
+    if called and result == "already-pending" and type(pendingId) == "string" then
+        self.OutgoingRequestId = pendingId
+        self.OutgoingExpiresAt = self:Now() + self.RequestTtl
+        self.OutgoingLeaderKey = self:RaidLeaderKey()
+    end
+    AngryEra:Print(self:FailureText("request", called and result or sent))
+    self:Refresh()
+    return false
+end
+
+function controllerUi:Reclaim()
+    if type(AngryEra.ReclaimDelegatedRaidControl) ~= "function" then
+        AngryEra:Print("Raid Control is not available in this AngryEra version.")
+        return false
+    end
+    local called, reclaimed, reason = pcall(AngryEra.ReclaimDelegatedRaidControl, AngryEra)
+    if called and reclaimed then
+        self.Incoming = {}
+        self.AnnouncedGrantId = nil
+        self.AnnouncedRevokeId = reason
+        AngryEra:Print("Raid Control returned to the raid leader.")
+        self:Refresh()
+        return true
+    end
+    AngryEra:Print(self:FailureText("reclaim", called and reason or reclaimed))
+    self:Refresh()
+    return false
+end
+
+function controllerUi:MenuEntries()
+    local control = self:Prune()
+    if
+        not self:IsInRaid()
+        or type(AngryEra.GetDelegatedRaidControl) ~= "function"
+        or type(AngryEra.GetRaidLeader) ~= "function"
+    then
+        return {}
+    end
+
+    local leader = self:RaidLeader()
+    local entries = {}
+    local status
+    if control and control.PendingRole == true then
+        status = "Raid Controller: activating"
+    elseif control and control.PendingRecovery == true then
+        status = "Raid Controller: recovering"
+    elseif control and type(control.Controller) == "string" then
+        status = "Raid Controller: " .. self:DisplayName(control.Controller)
+        if type(control.Leader) == "string" then
+            status = status .. " (raid leader: " .. self:DisplayName(control.Leader) .. ")"
+        end
+    elseif leader then
+        status = "Raid Controller: " .. self:DisplayName(leader) .. " (raid leader)"
+    else
+        status = "Raid Controller: unavailable"
+    end
+    entries[#entries + 1] = { text = status, isTitle = true, notCheckable = true }
+
+    if control and control.PendingRole ~= true then
+        if self:IsActualLeader() then
+            entries[#entries + 1] = {
+                text = "Reclaim Raid Control",
+                func = function()
+                    controllerUi:Reclaim()
+                end,
+                notCheckable = true,
+            }
+        end
+        return entries
+    end
+
+    if self:IsActualLeader() then
+        local requests = {}
+        for _, request in pairs(self.Incoming) do
+            requests[#requests + 1] = request
+        end
+        table.sort(requests, function(left, right)
+            if left.Controller == right.Controller then
+                return left.MessageId < right.MessageId
+            end
+            return left.Controller < right.Controller
+        end)
+        for _, request in ipairs(requests) do
+            local requestId = request.MessageId
+            entries[#entries + 1] = {
+                text = "Review Request: " .. self:DisplayName(request.Controller),
+                func = function()
+                    controllerUi:ShowRequest(requestId)
+                end,
+                notCheckable = true,
+            }
+        end
+    elseif self:CanRequest() then
+        if self.OutgoingRequestId then
+            entries[#entries + 1] = {
+                text = "Raid Control Request Pending",
+                disabled = true,
+                notCheckable = true,
+            }
+        else
+            entries[#entries + 1] = {
+                text = "Request Raid Control",
+                func = function()
+                    controllerUi:Request()
+                end,
+                notCheckable = true,
+            }
+        end
+    end
+    return entries
+end
+
+function AngryEra:ShowDelegatedControlRequest(messageId)
+    if type(messageId) ~= "string" then
+        return false
+    end
+    controllerUi.Incoming[messageId] = true
+    return controllerUi:ShowRequest(messageId)
+end
+
+function AngryEra:UpdateRaidControllerControls()
+    controllerUi:Refresh()
+end
+
+function AngryEra:DelegatedControlStateUpdated(state, result)
+    controllerUi.Incoming = {}
+    controllerUi:ClearOutgoing()
+    controllerUi:CloseRequestPopup()
+    if state == "granted" then
+        local control = controllerUi:CurrentControl() or result
+        if type(control) == "table" and type(control.Controller) == "string" then
+            if controllerUi.AnnouncedGrantId ~= control.GrantId then
+                self:Print(controllerUi:DisplayName(control.Controller) .. " is now the Raid Controller for this raid.")
+            end
+            controllerUi.AnnouncedGrantId = control.GrantId
+            controllerUi.AnnouncedRevokeId = nil
+        end
+    elseif state == "revoked" then
+        local grantId = type(result) == "table" and result.GrantId or nil
+        if controllerUi.AnnouncedRevokeId ~= grantId then
+            self:Print("Raid Control returned to the raid leader.")
+        end
+        controllerUi.AnnouncedGrantId = nil
+        controllerUi.AnnouncedRevokeId = grantId
+    end
+    controllerUi:Refresh()
+end
+
+function AngryEra:DelegatedControlRequestCompleted(result)
+    if type(result) ~= "table" then
+        return
+    end
+    if result.RequestId == controllerUi.OutgoingRequestId then
+        controllerUi:ClearOutgoing()
+    end
+    local messages = {
+        busy = "Raid Control was not granted because this raid already has a controller.",
+        declined = "The raid leader declined your Raid Control request.",
+        incompatible = "Raid Control was not granted because a participating AngryEra client is not compatible.",
+        unauthorized = "The raid leader could not authorize your Raid Control request.",
+    }
+    if messages[result.Status] then
+        self:Print(messages[result.Status])
+    end
+    controllerUi:Refresh()
+end
+
 local function AngryEra_MainMenuEntries()
-    return {
+    local menu = {
         { text = "Add Page", func = AngryEra_AddPage, notCheckable = true },
         { text = "Add Category", func = AngryEra_AddCategory, notCheckable = true },
         { text = "Load Raid Template", func = AngryEra_LoadRaidMenu, notCheckable = true },
@@ -3664,17 +4207,25 @@ local function AngryEra_MainMenuEntries()
                 },
             },
         },
-        { text = " ", isTitle = true, notCheckable = true },
-        {
-            text = "Manage Pages",
-            func = function()
-                AngryEra:ShowBulkManagement()
-            end,
-            notCheckable = true,
-        },
-        { text = "Wipe Unpinned", func = AngryEra_WipeUnpinned, notCheckable = true },
-        { text = "Clear Page", func = AngryEra_ClearPage, notCheckable = true },
     }
+    local controlEntries = controllerUi:MenuEntries()
+    if #controlEntries > 0 then
+        menu[#menu + 1] = { text = " ", isTitle = true, notCheckable = true }
+        for _, entry in ipairs(controlEntries) do
+            menu[#menu + 1] = entry
+        end
+    end
+    menu[#menu + 1] = { text = " ", isTitle = true, notCheckable = true }
+    menu[#menu + 1] = {
+        text = "Manage Pages",
+        func = function()
+            AngryEra:ShowBulkManagement()
+        end,
+        notCheckable = true,
+    }
+    menu[#menu + 1] = { text = "Wipe Unpinned", func = AngryEra_WipeUnpinned, notCheckable = true }
+    menu[#menu + 1] = { text = "Clear Page", func = AngryEra_ClearPage, notCheckable = true }
+    return menu
 end
 layoutEditor.MainMenuEntries = AngryEra_MainMenuEntries
 

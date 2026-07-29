@@ -796,7 +796,7 @@ function AngryEra:SubmitSharedPageChangeProposal(proposal)
     return true, result
 end
 
---- Sends the newest debounced desired state to the current leader.
+--- Sends the newest debounced desired state to the current AngryEra authority.
 function AngryEra:FlushSharedPageChangeProposal(generation)
     local draft = sharedPageChangeDraft
     if not draft or draft.FlushGeneration ~= generation then
@@ -829,11 +829,11 @@ function AngryEra:FlushSharedPageChangeProposal(generation)
         return false, buildError
     end
 
-    local target = self:GetRaidLeader(true)
+    local target = type(self.GetAngryEraAuthority) == "function" and self:GetAngryEraAuthority(true) or nil
     if not target or SamePlayer(target, PlayerFullName()) then
         draft.Halted = true
-        SetSharedPageChangeConflict(self, draft, "unavailable", "leader-unavailable", current)
-        return false, "leader-unavailable"
+        SetSharedPageChangeConflict(self, draft, "unavailable", "raid-controller-unavailable", current)
+        return false, "raid-controller-unavailable"
     end
     local sent, messageId = self:SendProtocolChangeProposal(target, payload)
     if not sent then
@@ -1135,11 +1135,14 @@ function AngryEra:RetryDisplayRequest(generation)
         return false, "not-grouped"
     end
 
-    local target = self:GetRaidLeader(true)
+    local target = type(self.GetAngryEraAuthority) == "function" and self:GetAngryEraAuthority(true) or nil
     if SamePlayer(target, PlayerFullName()) then
         self:CancelDisplayRequestWatchdog()
-        local restored, result = self:RestoreDisplayAuthority()
-        return restored, result
+        if type(self.IsPlayerRaidLeader) == "function" and self:IsPlayerRaidLeader() then
+            local restored, result = self:RestoreDisplayAuthority()
+            return restored, result
+        end
+        return true, "local-player-is-authority"
     end
     if target and not CanReceiveSharedDisplayFrom(self, target) then
         self:CancelDisplayRequestWatchdog()
@@ -1156,7 +1159,7 @@ function AngryEra:RetryDisplayRequest(generation)
             record.Target = target
         end
     else
-        sent, result = false, "leader-unavailable"
+        sent, result = false, "raid-controller-unavailable"
     end
 
     local scheduled, scheduleStatus = ScheduleDisplayRequestWatchdog(self, record)
@@ -1297,8 +1300,8 @@ end
 
 --- Recovers a still-missing exact tuple without amplifying normal page transit.
 -- The first attempt asks the authenticated publisher for only the referenced
--- tuple. Later bounded attempts ask the current leader, which also handles a
--- leadership change while recovery was pending.
+-- tuple. Later bounded attempts ask the current AngryEra authority, which also
+-- handles an authority change while recovery was pending.
 -- @tparam number generation Recovery generation captured by AceTimer.
 -- @treturn boolean sentOrNotNeeded
 -- @treturn string|nil messageIdOrStatus
@@ -1333,14 +1336,14 @@ function AngryEra:RecoverPendingDisplay(generation)
     local sent
     local result
     if recovery.Attempts == 1 then
-        local leader
-        if type(self.GetRaidLeader) == "function" then
-            local leaderOk, currentLeader = pcall(self.GetRaidLeader, self, true)
-            if leaderOk then
-                leader = currentLeader
+        local authority
+        if type(self.GetAngryEraAuthority) == "function" then
+            local authorityOk, currentAuthority = pcall(self.GetAngryEraAuthority, self, true)
+            if authorityOk then
+                authority = currentAuthority
             end
         end
-        if SamePlayer(leader, recovery.Sender) then
+        if SamePlayer(authority, recovery.Sender) then
             sent, result = self:SendProtocolPageRequest(recovery.Sender, recovery.DisplayEnvelope, recovery.Reference)
         end
         if not sent then
@@ -1698,18 +1701,21 @@ function AngryEra:SendRequestDisplay(suppressWatchdog)
         return false, "not-grouped"
     end
 
-    local target = self:GetRaidLeader(true)
+    local target = type(self.GetAngryEraAuthority) == "function" and self:GetAngryEraAuthority(true) or nil
+    if not target and type(self.GetDelegatedRaidControl) == "function" and self:GetDelegatedRaidControl() then
+        target = self:GetRaidLeader(true)
+    end
     if not target then
         if suppressWatchdog ~= true then
             self:CancelDisplayRequestWatchdog()
         end
-        return false, "leader-unavailable"
+        return false, "raid-controller-unavailable"
     end
     if SamePlayer(target, PlayerFullName()) then
         if suppressWatchdog ~= true then
             self:CancelDisplayRequestWatchdog()
         end
-        return false, "local-player-is-leader"
+        return false, "local-player-is-authority"
     end
     if not CanReceiveSharedDisplayFrom(self, target) then
         self:CancelDisplayRequestWatchdog()

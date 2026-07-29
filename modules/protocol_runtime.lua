@@ -64,11 +64,41 @@ local ACECOMM_ESCAPE = "\004"
 
 local protocolSession
 local boundDisplayAuthority
+local delegation = {
+    Control = nil,
+    ControlLeader = nil,
+    Incoming = {},
+    LastRecoveryAt = nil,
+    LastRevoke = nil,
+    MaxRetiredLeaders = 16,
+    Outgoing = {},
+    PendingGrant = nil,
+    PendingGrantGeneration = 0,
+    PendingGrantTimer = nil,
+    PendingGrantTimerOwner = nil,
+    PendingRoleRetryDelays = { 0.25, 0.5, 1, 2, 4 },
+    RecoveryAttempts = 0,
+    RecoveryBarrier = nil,
+    RecoveryGeneration = 0,
+    RecoveryRetryDelays = {
+        REPLY_THROTTLE_SECONDS + 0.25,
+        REPLY_THROTTLE_SECONDS * 2,
+        REPLY_THROTTLE_SECONDS * 4,
+        REPLY_THROTTLE_SECONDS * 8,
+    },
+    RecoveryTimer = nil,
+    RecoveryTimerOwner = nil,
+    RequestTtl = 2 * 60,
+    RetiredLeaderCount = 0,
+    RetiredLeaderOrdinal = 0,
+    RetiredLeaders = {},
+}
 local localLeadershipTenureActive = false
 local peers = {}
 local peerQueryOrdinals = {}
 local pendingQueries = {}
 local pendingDisplayRequests = {}
+local pendingDisplayAuthorityHints = {}
 local pendingPageRequests = {}
 local pendingChangeProposals = {}
 local outboundDisplays = {}
@@ -81,7 +111,7 @@ local lastVersionReplyGlobalAt
 local lastQueryAt
 local warnedOutOfDate = false
 local transportOrdinal = 0
-local lastDisplaySentAt
+local lastProtocolSentAt
 local activePageTransfer
 local activePageTransferGeneration = 0
 local activePageOutstandingFrame
@@ -346,14 +376,17 @@ local function CurrentEpochMilliseconds()
     return seconds * TIMESTAMP_MILLISECONDS_PER_SECOND + CurrentPreciseMillisecond()
 end
 
-local function NextDisplaySentAt()
+local function NextProtocolSentAt()
     local candidate = CurrentEpochMilliseconds()
     if not candidate then
         return nil, "invalid-clock"
     end
 
-    local previous = lastDisplaySentAt
+    local previous = lastProtocolSentAt
     local meta = IsPlainTable(AngryAssign_Meta) and AngryAssign_Meta or nil
+    -- Keep the existing saved-variable key so upgrades retain the display
+    -- ordering watermark. It now fences every protocol envelope because
+    -- control/session ordering must use the same monotonic epoch clock.
     local persisted = meta and rawget(meta, "LastDisplaySentAt") or nil
     if
         previous == nil
@@ -371,7 +404,7 @@ local function NextDisplaySentAt()
         sentAt = previous + 1
     end
 
-    lastDisplaySentAt = sentAt
+    lastProtocolSentAt = sentAt
     if meta then
         meta.LastDisplaySentAt = sentAt
     end
@@ -1136,6 +1169,34 @@ local function ActivePageChangeHandlersLive()
     return HANDLERS ~= nil and HANDLERS.CHANGE_PROPOSE ~= nil and HANDLERS.CHANGE_RESULT ~= nil
 end
 
+function delegation:HandlersLive()
+    local required = {
+        "GetDelegatedRaidControl",
+        "HandleProtocolControlRequest",
+        "HandleProtocolControlGrant",
+        "HandleProtocolControlRevoke",
+        "HandleProtocolControlResult",
+        "RequestDelegatedRaidControl",
+        "GrantDelegatedRaidControl",
+        "DeclineDelegatedRaidControl",
+        "RevokeDelegatedRaidControl",
+        "SendProtocolControlGrant",
+        "SendProtocolControlRequest",
+        "SendProtocolControlResult",
+        "SendProtocolControlRevoke",
+    }
+    for _, name in ipairs(required) do
+        if type(AngryEra[name]) ~= "function" then
+            return false
+        end
+    end
+    return HANDLERS ~= nil
+        and HANDLERS.CONTROL_REQUEST ~= nil
+        and HANDLERS.CONTROL_GRANT ~= nil
+        and HANDLERS.CONTROL_REVOKE ~= nil
+        and HANDLERS.CONTROL_RESULT ~= nil
+end
+
 local function LocalCapabilities()
     if ActivePageHandlersLive() then
         local capabilities = {
@@ -1143,6 +1204,9 @@ local function LocalCapabilities()
         }
         if ActivePageChangeHandlersLive() then
             capabilities[protocol.ACTIVE_PAGE_CHANGES_CAPABILITY] = protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION
+        end
+        if delegation:HandlersLive() then
+            capabilities[protocol.DELEGATED_CONTROL_CAPABILITY] = protocol.DELEGATED_CONTROL_CAPABILITY_VERSION
         end
         return capabilities
     end
@@ -1283,15 +1347,18 @@ local controlCodec = {
     decode = compactPageCodec.decode,
 }
 
-local CONTROL_MESSAGE_TYPES = {
+local BOUNDED_CONTROL_MESSAGE_TYPES = {
+    CONTROL_REQUEST = true,
     DISPLAY_REQUEST = true,
     VERSION_QUERY = true,
 }
 
 -- Authority bootstrap must never depend on AceComm multipart reassembly.
--- The serialized allowance is deliberately small because both supported
--- controls have empty payloads; the encoded ceiling also bounds fallback work
--- on untrusted generic-prefix traffic.
+-- The serialized allowance is deliberately small because these controls have
+-- empty payloads; the encoded ceiling also bounds fallback work on untrusted
+-- generic-prefix traffic. Grant/revoke/result carry correlated identities and
+-- deliberately use the normal bounded generic codec rather than pretending
+-- every legal identity tuple can fit one physical frame.
 local CONTROL_WIRE_LIMITS = {
     EncodedBytes = ACECOMM_MULTIPART_BYTES,
     CompressedBytes = ACECOMM_MULTIPART_BYTES,
@@ -1412,16 +1479,49 @@ local function RememberPendingQuery(messageId, now)
     }
 end
 
-local function ResetTransportTables(preserveRetiredDisplayAuthorities)
+local function FindRecentPendingQuery(now)
+    CleanupPendingQueries(now)
+    local newestId
+    local newest
+    for messageId, pending in pairs(pendingQueries) do
+        if
+            now - pending.CreatedAt < QUERY_THROTTLE_SECONDS
+            and (not newest or pending.CreatedOrdinal > newest.CreatedOrdinal)
+        then
+            newestId = messageId
+            newest = pending
+        end
+    end
+    return newestId, newest
+end
+
+function delegation:AssignDiscoveryQuery(request, queryId, query)
+    if not IsPlainTable(request) or type(queryId) ~= "string" or not IsPlainTable(query) then
+        return false
+    end
+    request.CapabilityNotBefore = query.CreatedAt + QUERY_THROTTLE_SECONDS
+    request.DiscoveryQueryId = queryId
+    return true
+end
+
+local function ResetTransportTables(preserveRetiredDisplayAuthorities, preserveDisplayAuthoritySignals)
     if CancelActivePageTransfer then
         CancelActivePageTransfer("reset")
     end
+    delegation:CancelPendingGrantTimer(delegation.PendingGrantTimerOwner)
+    delegation:ClearRecoveryBarrier(delegation.RecoveryTimerOwner)
     peers = {}
     peerQueryOrdinals = {}
     pendingQueries = {}
     pendingDisplayRequests = {}
+    pendingDisplayAuthorityHints = {}
     pendingPageRequests = {}
     pendingChangeProposals = {}
+    delegation.Outgoing = {}
+    delegation.Incoming = {}
+    delegation.PendingGrant = nil
+    delegation.LastRecoveryAt = nil
+    delegation.LastRevoke = nil
     outboundDisplays = {}
     displayRequestReplies = {}
     replayPlayers = {}
@@ -1438,6 +1538,11 @@ local function ResetTransportTables(preserveRetiredDisplayAuthorities)
         retiredDisplayAuthorities = {}
         retiredDisplayAuthorityCount = 0
         retiredDisplayAuthorityOrdinal = 0
+        delegation.RetiredLeaders = {}
+        delegation.RetiredLeaderCount = 0
+        delegation.RetiredLeaderOrdinal = 0
+    end
+    if preserveRetiredDisplayAuthorities ~= true or preserveDisplayAuthoritySignals == false then
         displayAuthoritySignals = {}
         displayAuthoritySignalCount = 0
         displayAuthoritySignalOrdinal = 0
@@ -1463,6 +1568,116 @@ local function DisplayAuthorityIdentityKey(authority)
         authority.SenderInstallationId,
         authority.SenderSessionId,
     }, "\0")
+end
+
+local function RememberDisplayAuthorityHint(auth, now)
+    local key = DisplayAuthorityIdentityKey(auth)
+    local ownerKey = NormalizePlayerKey(auth and auth.Sender)
+    if not key or not ownerKey then
+        return false
+    end
+    return RememberInteraction(pendingDisplayAuthorityHints, key, {
+        OwnerKey = ownerKey,
+    }, now)
+end
+
+local function ConsumeDisplayAuthorityHint(authority, now)
+    CleanupRecords(pendingDisplayAuthorityHints, now)
+    local key = DisplayAuthorityIdentityKey(authority)
+    if not key or pendingDisplayAuthorityHints[key] == nil then
+        return false
+    end
+    pendingDisplayAuthorityHints[key] = nil
+    return true
+end
+
+function delegation:ParseMessageSequence(messageId)
+    if type(messageId) ~= "string" then
+        return nil
+    end
+    local sequenceText = messageId:match(":([0-9]+)$")
+    local sequence = tonumber(sequenceText)
+    if
+        not sequence
+        or sequence < 1
+        or sequence > protocol.LIMITS.Sequence
+        or sequence ~= math.floor(sequence)
+        or sequenceText ~= tostring(sequence)
+    then
+        return nil
+    end
+    return sequence
+end
+
+function delegation:RetireLeader(authority)
+    local key = DisplayAuthorityIdentityKey(authority)
+    if not key then
+        return false
+    end
+    self.RetiredLeaderOrdinal = self.RetiredLeaderOrdinal + 1
+    local existing = self.RetiredLeaders[key]
+    if existing then
+        existing.Ordinal = self.RetiredLeaderOrdinal
+        return true
+    end
+    if self.RetiredLeaderCount >= self.MaxRetiredLeaders then
+        local oldestKey
+        local oldestOrdinal
+        for candidateKey, record in pairs(self.RetiredLeaders) do
+            if oldestOrdinal == nil or record.Ordinal < oldestOrdinal then
+                oldestKey = candidateKey
+                oldestOrdinal = record.Ordinal
+            end
+        end
+        if oldestKey then
+            self.RetiredLeaders[oldestKey] = nil
+            self.RetiredLeaderCount = self.RetiredLeaderCount - 1
+        end
+    end
+    self.RetiredLeaders[key] = {
+        Ordinal = self.RetiredLeaderOrdinal,
+    }
+    self.RetiredLeaderCount = self.RetiredLeaderCount + 1
+    return true
+end
+
+function delegation:IsRetiredLeader(authority)
+    local key = DisplayAuthorityIdentityKey(authority)
+    return key ~= nil and self.RetiredLeaders[key] ~= nil
+end
+
+function delegation:ReactivateLeader(authority)
+    local key = DisplayAuthorityIdentityKey(authority)
+    if not key or not self.RetiredLeaders[key] then
+        return false
+    end
+    self.RetiredLeaders[key] = nil
+    self.RetiredLeaderCount = math.max(self.RetiredLeaderCount - 1, 0)
+    return true
+end
+
+function delegation:ValidateLeaderSession(authority, allowCorrelatedReplacement)
+    if self:IsRetiredLeader(authority) and allowCorrelatedReplacement ~= true then
+        return false, "stale-control-leader"
+    end
+
+    local current = self.ControlLeader
+    local currentKey = DisplayAuthorityIdentityKey(current)
+    local incomingKey = DisplayAuthorityIdentityKey(authority)
+    if currentKey == incomingKey then
+        return true
+    end
+    if
+        allowCorrelatedReplacement ~= true
+        and current
+        and current.PlayerKey == NormalizePlayerKey(authority and authority.Sender)
+        and type(current.HighestSentAt) == "number"
+        and type(authority.SentAt) == "number"
+        and authority.SentAt <= current.HighestSentAt
+    then
+        return false, "stale-control-leader"
+    end
+    return true
 end
 
 local function RetireDisplayAuthority(authority)
@@ -1493,6 +1708,16 @@ local function RetireDisplayAuthority(authority)
         Ordinal = retiredDisplayAuthorityOrdinal,
     }
     retiredDisplayAuthorityCount = retiredDisplayAuthorityCount + 1
+    return true
+end
+
+local function ReactivateDisplayAuthority(authority)
+    local key = DisplayAuthorityIdentityKey(authority)
+    if not key or not retiredDisplayAuthorities[key] then
+        return false
+    end
+    retiredDisplayAuthorities[key] = nil
+    retiredDisplayAuthorityCount = math.max(retiredDisplayAuthorityCount - 1, 0)
     return true
 end
 
@@ -1599,6 +1824,7 @@ local function BuildAuth(sender, envelope, receivedAt)
         Sender = sender,
         SenderInstallationId = envelope.SenderInstallationId,
         SenderSessionId = envelope.SenderSessionId,
+        Sequence = envelope.Sequence,
         SentAt = envelope.SentAt,
         ReceivedAt = receivedAt,
     }
@@ -1748,6 +1974,13 @@ local function ValidateDisplayOrder(playerState, sessionKey, sequence, sentAt)
     end
     if
         displaySession
+        and type(displaySession.MinimumSequenceExclusive) == "number"
+        and sequence <= displaySession.MinimumSequenceExclusive
+    then
+        return false, "stale-display"
+    end
+    if
+        displaySession
         and playerState.ActiveDisplaySessionKey == sessionKey
         and displaySession.HighestSequence ~= nil
         and sequence <= displaySession.HighestSequence
@@ -1792,6 +2025,64 @@ local function CommitDisplayOrder(playerState, sessionKey, sequence, sentAt)
     playerState.HighestDisplaySentAt = sentAt
 end
 
+local function RetireControllerDisplaySession(control)
+    if not IsPlainTable(control) or type(control.ControllerKey) ~= "string" then
+        return false
+    end
+    local playerState = replayPlayers[control.ControllerKey]
+    if not playerState then
+        return false
+    end
+    local sessionKey = control.ControllerInstallationId .. "\0" .. control.ControllerSessionId
+    local displaySession = playerState.DisplaySessions[sessionKey]
+    if not displaySession then
+        return false
+    end
+    displaySession.Retired = true
+    return true
+end
+
+-- A revoked exact controller session remains a replay tombstone until the
+-- actual leader accepts a newer request from that same session. The request's
+-- sequence is then the new exclusive floor, so neither the former display
+-- stream nor a replayed grant can silently revive old controller traffic.
+local function ReactivateControllerDisplaySession(control)
+    if not IsPlainTable(control) or type(control.ControllerKey) ~= "string" then
+        return false, "invalid-control-identity"
+    end
+    local playerState = replayPlayers[control.ControllerKey]
+    if not playerState then
+        return true
+    end
+    local sessionKey = control.ControllerInstallationId .. "\0" .. control.ControllerSessionId
+    local displaySession = playerState.DisplaySessions[sessionKey]
+    if not displaySession then
+        return true
+    end
+    local highestSequence = displaySession.HighestSequence
+    if type(highestSequence) == "number" and control.ControllerSequenceFloor <= highestSequence then
+        return false, "stale-controller-sequence-floor"
+    end
+    local minimumSequence = displaySession.MinimumSequenceExclusive
+    if type(minimumSequence) == "number" and control.ControllerSequenceFloor <= minimumSequence then
+        return false, "stale-controller-sequence-floor"
+    end
+
+    if playerState.ActiveDisplaySessionKey ~= sessionKey then
+        local activeSession = playerState.DisplaySessions[playerState.ActiveDisplaySessionKey]
+        if activeSession then
+            activeSession.Retired = true
+        end
+        playerState.DisplayEpoch = playerState.DisplayEpoch + 1
+        displaySession.Epoch = playerState.DisplayEpoch
+        displaySession.FirstAcceptedOrdinal = NextTransportOrdinal()
+        playerState.ActiveDisplaySessionKey = sessionKey
+    end
+    displaySession.MinimumSequenceExclusive = control.ControllerSequenceFloor
+    displaySession.Retired = false
+    return true
+end
+
 local function SafeCanReceive(self, sender, action)
     if type(self.CanReceiveFrom) ~= "function" then
         return false
@@ -1809,11 +2100,14 @@ local function SafeCanPublish(self, action)
 end
 
 local function IsLocalDisplayAuthority(self)
-    if not SafeCanPublish(self, "display") or type(self.IsPlayerRaidLeader) ~= "function" then
+    if not SafeCanPublish(self, "display") then
         return false
     end
-    local ok, isLeader = pcall(self.IsPlayerRaidLeader, self)
-    return ok and isLeader == true
+    local control = delegation.Control
+    if control and control.ControllerKey == NormalizePlayerKey(PlayerFullName()) then
+        return delegation:LocalControllerSessionMatches(control)
+    end
+    return true
 end
 
 local LEADER_TENURE_MESSAGE_TYPES = {
@@ -1838,6 +2132,7 @@ local function BindDisplayAuthority(auth)
         Sender = auth.Sender,
         SenderInstallationId = auth.SenderInstallationId,
         SenderSessionId = auth.SenderSessionId,
+        MinimumSequenceExclusive = auth.MinimumSequenceExclusive,
     }
 end
 
@@ -1898,6 +2193,745 @@ local function ResetSharedProposalForAuthorityChange(self)
     elseif type(self.ResetDisplayPublicationState) == "function" then
         pcall(self.ResetDisplayPublicationState, self)
     end
+end
+
+function delegation:NotifyChanged(addon, reason)
+    if CancelActivePageTransfer then
+        CancelActivePageTransfer(reason or "raid-controller-changed")
+    end
+    ancestorContexts:ResetOutbound()
+    ancestorContexts:ResetMissState()
+    if type(addon.CancelAutoAdvancePublishRetry) == "function" then
+        pcall(addon.CancelAutoAdvancePublishRetry, addon)
+    end
+    if type(addon.ResetGroupLayoutApplyState) == "function" then
+        pcall(addon.ResetGroupLayoutApplyState, addon, true)
+    end
+    if type(addon.ReleaseOwnedDisplayedNoteMarkers) == "function" then
+        pcall(addon.ReleaseOwnedDisplayedNoteMarkers, addon)
+    end
+    if type(addon.ResetDisplayPublicationState) == "function" then
+        pcall(addon.ResetDisplayPublicationState, addon)
+    end
+    if type(addon.ResetSharedPageChangeState) == "function" then
+        pcall(addon.ResetSharedPageChangeState, addon, reason or "raid-controller-changed")
+    end
+    if type(addon.ResetDisplayNavigationState) == "function" then
+        pcall(addon.ResetDisplayNavigationState, addon)
+    end
+    if type(addon.PermissionsUpdated) == "function" then
+        pcall(addon.PermissionsUpdated, addon)
+    end
+    if type(addon.UpdateRaidControllerControls) == "function" then
+        pcall(addon.UpdateRaidControllerControls, addon)
+    end
+end
+
+function delegation:SameIdentity(control, payload, leaderAuth)
+    return IsPlainTable(control)
+        and control.GrantId == payload.RequestId
+        and control.LeaderKey == NormalizePlayerKey(leaderAuth.Sender)
+        and control.LeaderInstallationId == leaderAuth.SenderInstallationId
+        and control.LeaderSessionId == leaderAuth.SenderSessionId
+        and control.ControllerKey == NormalizePlayerKey(payload.Controller)
+        and control.ControllerInstallationId == payload.ControllerInstallationId
+        and control.ControllerSessionId == payload.ControllerSessionId
+end
+
+function delegation:BuildControl(leaderAuth, payload)
+    local requestSequence = self:ParseMessageSequence(payload.RequestId)
+    local controller = EnsureUnitFullName(payload.Controller)
+    local leader = EnsureUnitFullName(leaderAuth.Sender)
+    if
+        not requestSequence
+        or not controller
+        or payload.Controller ~= controller
+        or not leader
+        or leaderAuth.Sender ~= leader
+    then
+        return nil, "invalid-control-identity"
+    end
+    return {
+        GrantId = payload.RequestId,
+        RequestId = payload.RequestId,
+        Controller = controller,
+        ControllerKey = NormalizePlayerKey(controller),
+        ControllerInstallationId = payload.ControllerInstallationId,
+        ControllerSessionId = payload.ControllerSessionId,
+        ControllerSequenceFloor = requestSequence,
+        Leader = leader,
+        LeaderKey = NormalizePlayerKey(leader),
+        LeaderInstallationId = leaderAuth.SenderInstallationId,
+        LeaderSessionId = leaderAuth.SenderSessionId,
+        GrantedAt = leaderAuth.ReceivedAt or Now(),
+    }
+end
+
+function delegation:LocalControllerSessionMatches(control)
+    if not IsPlainTable(control) or NormalizePlayerKey(control.Controller) ~= NormalizePlayerKey(PlayerFullName()) then
+        return true
+    end
+    return protocolSession ~= nil
+        and control.ControllerInstallationId == protocolSession.InstallationId
+        and control.ControllerSessionId == protocolSession.SessionId
+end
+
+function delegation:ControllerAuthMatches(auth)
+    local control = self.Control
+    return control ~= nil
+        and control.ControllerKey == NormalizePlayerKey(auth and auth.Sender)
+        and control.ControllerInstallationId == auth.SenderInstallationId
+        and control.ControllerSessionId == auth.SenderSessionId
+end
+
+function delegation:TimestampValid(sentAt)
+    local seconds = CurrentEpochSeconds()
+    if not seconds then
+        return false
+    end
+    local sentSeconds = math.floor(sentAt / TIMESTAMP_MILLISECONDS_PER_SECOND)
+    return sentSeconds >= seconds - self.RequestTtl and sentSeconds <= seconds + DISPLAY_TIMESTAMP_MAX_FUTURE_SECONDS
+end
+
+function delegation:CancelScheduledTimer(addon, timerField, ownerField)
+    local timer = self[timerField]
+    local owner = self[ownerField] or addon
+    self[timerField] = nil
+    self[ownerField] = nil
+    if timer and owner and type(owner.CancelTimer) == "function" then
+        pcall(owner.CancelTimer, owner, timer)
+    end
+    return timer ~= nil
+end
+
+function delegation:CancelPendingGrantTimer(addon)
+    local canceled = self:CancelScheduledTimer(addon, "PendingGrantTimer", "PendingGrantTimerOwner")
+    self.PendingGrantGeneration = self.PendingGrantGeneration + 1
+    return canceled
+end
+
+function delegation:CancelRecovery(addon)
+    local canceled = self:CancelScheduledTimer(addon, "RecoveryTimer", "RecoveryTimerOwner")
+    self.RecoveryGeneration = self.RecoveryGeneration + 1
+    self.RecoveryAttempts = 0
+    self.LastRecoveryAt = nil
+    return canceled
+end
+
+function delegation:ClearRecoveryBarrier(addon)
+    local hadBarrier = self.RecoveryBarrier ~= nil
+    self.RecoveryBarrier = nil
+    self:CancelRecovery(addon)
+    return hadBarrier
+end
+
+function delegation:BeginRecoveryBarrier(addon, control, reason, roleExpired, requiresRevoke)
+    local grantId = control and control.GrantId
+    local existing = self.RecoveryBarrier
+    if existing and existing.GrantId == grantId then
+        existing.Reason = reason or existing.Reason
+        existing.RoleExpired = existing.RoleExpired == true or roleExpired == true
+        existing.RequiresRevoke = existing.RequiresRevoke == true or requiresRevoke == true
+        return false, existing
+    end
+
+    self:ClearRecoveryBarrier(addon)
+    self.RecoveryBarrier = {
+        Controller = control and control.Controller,
+        GrantId = grantId,
+        Leader = control and control.Leader,
+        LeaderInstallationId = control and control.LeaderInstallationId,
+        LeaderSessionId = control and control.LeaderSessionId,
+        Reason = reason or "raid-controller-recovery",
+        RequiresRevoke = requiresRevoke == true,
+        RoleExpired = roleExpired == true,
+    }
+    if type(addon.CancelDisplayRequestWatchdog) == "function" then
+        pcall(addon.CancelDisplayRequestWatchdog, addon)
+    end
+    self:NotifyChanged(addon, reason or "raid-controller-recovery")
+    return true, self.RecoveryBarrier
+end
+
+function delegation:SchedulePendingGrant(addon)
+    local pending = self.PendingGrant
+    if
+        not pending
+        or self.PendingGrantTimer
+        or type(addon.ScheduleTimer) ~= "function"
+        or pending.Generation ~= self.PendingGrantGeneration
+    then
+        return false, "unavailable"
+    end
+
+    local delay
+    if pending.FinalScheduled == true then
+        delay = math.max(pending.ExpiresAt - Now(), 0.05)
+    else
+        local attempt = (pending.Attempts or 0) + 1
+        delay = self.PendingRoleRetryDelays[attempt]
+        if type(delay) == "number" then
+            pending.Attempts = attempt
+            if Now() + delay >= pending.ExpiresAt then
+                delay = math.max(pending.ExpiresAt - Now(), 0.05)
+                pending.FinalScheduled = true
+            end
+        else
+            delay = math.max(pending.ExpiresAt - Now(), 0.05)
+            pending.FinalScheduled = true
+        end
+    end
+
+    local called, timer =
+        pcall(addon.ScheduleTimer, addon, "RetryPendingDelegatedRaidControl", delay, pending.Generation)
+    if not called or not timer then
+        return false, "schedule-failed"
+    end
+    self.PendingGrantTimer = timer
+    self.PendingGrantTimerOwner = addon
+    return true, "scheduled"
+end
+
+function delegation:BeginPendingGrant(addon, leaderAuth, payload, options)
+    local previous = self.PendingGrant
+    local sameGrant = previous ~= nil
+        and previous.Payload
+        and previous.Payload.RequestId == payload.RequestId
+        and DisplayAuthorityIdentityKey(previous.LeaderAuth) == DisplayAuthorityIdentityKey(leaderAuth)
+    local expiresAt = sameGrant and previous.ExpiresAt or Now() + self.RequestTtl
+
+    self:CancelPendingGrantTimer(addon)
+    self:ClearRecoveryBarrier(addon)
+    self.PendingGrant = {
+        Attempts = 0,
+        ExpiresAt = expiresAt,
+        Generation = self.PendingGrantGeneration,
+        LeaderAuth = CopyMap(leaderAuth),
+        Payload = CopyMap(payload),
+        RecoverDisplay = (sameGrant and previous.RecoverDisplay == true)
+            or (IsPlainTable(options) and options.RecoverDisplay == true),
+    }
+    self:SchedulePendingGrant(addon)
+    return self.PendingGrant
+end
+
+function delegation:ScheduleRecovery(addon)
+    if
+        self.RecoveryTimer
+        or not (self.Control or self.PendingGrant or self.RecoveryBarrier)
+        or type(addon.ScheduleTimer) ~= "function"
+    then
+        return false, "unavailable"
+    end
+    local attempt = self.RecoveryAttempts + 1
+    local delay = self.RecoveryRetryDelays[attempt]
+    if type(delay) ~= "number" then
+        return false, "exhausted"
+    end
+    self.RecoveryAttempts = attempt
+    local called, timer =
+        pcall(addon.ScheduleTimer, addon, "RetryDelegatedControlRecovery", delay, self.RecoveryGeneration)
+    if not called or not timer then
+        return false, "schedule-failed"
+    end
+    self.RecoveryTimer = timer
+    self.RecoveryTimerOwner = addon
+    return true, "scheduled"
+end
+
+function delegation:RequestRecovery(addon)
+    if not (self.Control or self.PendingGrant or self.RecoveryBarrier) then
+        self:ClearRecoveryBarrier(addon)
+        if type(addon.SendRequestDisplay) == "function" then
+            local called, sent, result = pcall(addon.SendRequestDisplay, addon)
+            if called then
+                return sent, result
+            end
+            return false, "display-request-failed"
+        end
+    elseif self.Control and not self.RecoveryBarrier then
+        self:BeginRecoveryBarrier(addon, self.Control, "raid-controller-recovery")
+    end
+
+    local now = Now()
+    if self.LastRecoveryAt and now - self.LastRecoveryAt < REPLY_THROTTLE_SECONDS then
+        self:ScheduleRecovery(addon)
+        return false, "throttled"
+    end
+    local leader = type(addon.GetRaidLeader) == "function" and addon:GetRaidLeader(true) or nil
+    if not leader or NormalizePlayerKey(leader) == NormalizePlayerKey(PlayerFullName()) then
+        self:ScheduleRecovery(addon)
+        return false, "leader-unavailable"
+    end
+    if type(addon.SendProtocolDisplayRequest) ~= "function" then
+        self:ScheduleRecovery(addon)
+        return false, "display-request-unavailable"
+    end
+    local called, sent, result = pcall(addon.SendProtocolDisplayRequest, addon, leader)
+    if not called then
+        self:ScheduleRecovery(addon)
+        return false, "display-request-failed"
+    end
+    if sent then
+        self.LastRecoveryAt = now
+    end
+    self:ScheduleRecovery(addon)
+    return sent, result
+end
+
+function AngryEra:RetryPendingDelegatedRaidControl(generation)
+    local pending = delegation.PendingGrant
+    if not pending or pending.Generation ~= generation or generation ~= delegation.PendingGrantGeneration then
+        return true, "superseded"
+    end
+    delegation.PendingGrantTimer = nil
+    delegation.PendingGrantTimerOwner = nil
+    local reconciled, result = self:ReconcileDelegatedRaidControl("raid-controller-role-retry")
+    if delegation.PendingGrant == pending then
+        delegation:SchedulePendingGrant(self)
+    end
+    return reconciled, result
+end
+
+function AngryEra:RetryDelegatedControlRecovery(generation)
+    if generation ~= delegation.RecoveryGeneration then
+        return true, "superseded"
+    end
+    delegation.RecoveryTimer = nil
+    delegation.RecoveryTimerOwner = nil
+    if not (delegation.Control or delegation.PendingGrant or delegation.RecoveryBarrier) then
+        delegation:CancelRecovery(self)
+        return true, "resolved"
+    end
+    local leader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader(true) or nil
+    if delegation.Control and NormalizePlayerKey(leader) == NormalizePlayerKey(PlayerFullName()) then
+        return self:ReconcileDelegatedRaidControl("raid-controller-recovery")
+    end
+    return delegation:RequestRecovery(self)
+end
+
+function delegation:RetargetPendingDisplayBootstrap(addon, needsRequest, controller)
+    if
+        needsRequest
+        and NormalizePlayerKey(controller) ~= NormalizePlayerKey(PlayerFullName())
+        and type(addon.SendRequestDisplay) == "function"
+    then
+        if type(addon.CancelPendingDisplayRecovery) == "function" then
+            pcall(addon.CancelPendingDisplayRecovery, addon)
+        end
+        pcall(addon.SendRequestDisplay, addon)
+    end
+end
+
+-- A request may be sent before version discovery has learned the leader's
+-- exact process identity. Bind that missing identity on the first accepted
+-- leader packet; if a later accepted packet proves a different process,
+-- terminate the request immediately so the UI can offer Request again.
+function delegation:ReconcileOutgoingLeaderSession(addon, auth)
+    if
+        not IsPlainTable(auth)
+        or type(auth.SenderInstallationId) ~= "string"
+        or type(auth.SenderSessionId) ~= "string"
+        or type(addon.GetRaidLeader) ~= "function"
+        or NormalizePlayerKey(addon:GetRaidLeader()) ~= NormalizePlayerKey(auth.Sender)
+    then
+        return false, 0
+    end
+
+    CleanupRecords(self.Outgoing, Now())
+    local senderKey = NormalizePlayerKey(auth.Sender)
+    local invalidated = {}
+    local bound = 0
+    for messageId, pending in pairs(self.Outgoing) do
+        if pending.TargetKey == senderKey then
+            local installationMismatch = pending.SenderInstallationId ~= nil
+                and pending.SenderInstallationId ~= auth.SenderInstallationId
+            local sessionMismatch = pending.SenderSessionId ~= nil and pending.SenderSessionId ~= auth.SenderSessionId
+            if installationMismatch or sessionMismatch then
+                invalidated[#invalidated + 1] = {
+                    MessageId = messageId,
+                    Pending = pending,
+                }
+            else
+                local identityBound = pending.SenderInstallationId == nil or pending.SenderSessionId == nil
+                if pending.SenderInstallationId == nil then
+                    pending.SenderInstallationId = auth.SenderInstallationId
+                end
+                if pending.SenderSessionId == nil then
+                    pending.SenderSessionId = auth.SenderSessionId
+                end
+                if identityBound then
+                    bound = bound + 1
+                end
+            end
+        end
+    end
+
+    for _, record in ipairs(invalidated) do
+        self.Outgoing[record.MessageId] = nil
+        local result = {
+            Leader = auth.Sender,
+            Reason = "leader-session-changed",
+            RequestId = record.MessageId,
+            Status = "stale",
+        }
+        if type(addon.DelegatedControlRequestCompleted) == "function" then
+            pcall(addon.DelegatedControlRequestCompleted, addon, result)
+        elseif type(addon.UpdateRaidControllerControls) == "function" then
+            pcall(addon.UpdateRaidControllerControls, addon)
+        end
+    end
+    return #invalidated > 0 or bound > 0, #invalidated
+end
+
+function delegation:ApplyGrant(addon, leaderAuth, payload, options)
+    local control, controlError = self:BuildControl(leaderAuth, payload)
+    if not control then
+        return false, controlError
+    end
+    if not self:LocalControllerSessionMatches(control) then
+        return false, "stale-controller-session"
+    end
+    if type(addon.GetGroupRole) ~= "function" or addon:GetGroupRole(control.Controller) ~= "assistant" then
+        local recovery = self.RecoveryBarrier
+        if recovery and recovery.RoleExpired == true and recovery.GrantId == control.GrantId then
+            self:RequestRecovery(addon)
+            return false, "controller-role-expired"
+        end
+        if self.Control then
+            if self:SameIdentity(self.Control, payload, leaderAuth) then
+                self:BeginRecoveryBarrier(addon, self.Control, "raid-controller-role-invalid", false, true)
+                self:RequestRecovery(addon)
+                return false, "controller-role-pending"
+            end
+            self:Clear(addon, "raid-controller-role-pending")
+        elseif boundDisplayAuthority then
+            ResetLeaderBoundInteractions({}, true)
+            self:NotifyChanged(addon, "raid-controller-role-pending")
+        end
+        self:BeginPendingGrant(addon, leaderAuth, payload, options)
+        return false, "controller-role-pending"
+    end
+
+    if
+        control.ControllerKey == NormalizePlayerKey(PlayerFullName())
+        and type(addon.GetConfig) == "function"
+        and addon:GetConfig("receiveMode") == "ignoreShared"
+    then
+        if type(addon.SetConfig) ~= "function" then
+            return false, "raid-controller-sharing-required"
+        end
+        local changed = pcall(addon.SetConfig, addon, "receiveMode", "standard")
+        if not changed or type(addon.GetConfig) ~= "function" or addon:GetConfig("receiveMode") == "ignoreShared" then
+            return false, "raid-controller-sharing-required"
+        end
+        if type(addon.Print) == "function" then
+            pcall(
+                addon.Print,
+                addon,
+                "The Raid Controller must accept shared changes. Receive mode was reset to Leader + Qualified Assistants."
+            )
+        end
+    end
+
+    local sameControl = self:SameIdentity(self.Control, payload, leaderAuth)
+    if not sameControl then
+        local canReactivate, reactivationError = ReactivateControllerDisplaySession(control)
+        if not canReactivate then
+            return false, reactivationError
+        end
+    end
+
+    self:CancelPendingGrantTimer(addon)
+    self.PendingGrant = nil
+    local recovered = self:ClearRecoveryBarrier(addon)
+    local controllerAuth = {
+        Sender = control.Controller,
+        SenderInstallationId = control.ControllerInstallationId,
+        SenderSessionId = control.ControllerSessionId,
+        MinimumSequenceExclusive = control.ControllerSequenceFloor,
+    }
+    local needsRetarget = IsPlainTable(options) and options.RecoverDisplay == true
+    if ConsumeDisplayAuthorityHint(controllerAuth, Now()) then
+        needsRetarget = true
+    end
+    if sameControl then
+        CleanupRecords(pendingDisplayRequests, Now())
+        for _, pending in pairs(pendingDisplayRequests) do
+            if pending.TargetKey == control.LeaderKey then
+                needsRetarget = true
+                break
+            end
+        end
+        if not DisplayAuthorityMatches(controllerAuth) then
+            ResetLeaderBoundInteractions({}, boundDisplayAuthority ~= nil)
+            BindDisplayAuthority(controllerAuth)
+            localLeadershipTenureActive = IsLocalDisplayAuthority(addon)
+            self:NotifyChanged(addon, "raid-controller-rebound")
+        elseif recovered then
+            self:NotifyChanged(addon, "raid-controller-recovered")
+        end
+        self:RetargetPendingDisplayBootstrap(addon, needsRetarget, control.Controller)
+        return true, CopyMap(self.Control)
+    end
+
+    ResetLeaderBoundInteractions({}, boundDisplayAuthority ~= nil)
+    self.Control = control
+    self.LastRevoke = nil
+    ReactivateDisplayAuthority(controllerAuth)
+    BindDisplayAuthority(controllerAuth)
+    localLeadershipTenureActive = IsLocalDisplayAuthority(addon)
+    self:NotifyChanged(addon, "raid-controller-granted")
+    -- CONTROL_GRANT and the controller's first DISPLAY originate on different
+    -- clients, so the addon channel cannot order them. Challenge the controller
+    -- only when this follower actually observed a pre-grant DISPLAY race or is
+    -- recovering the lease through its own correlated request. This avoids a
+    -- full-raid request burst on every ordinary grant.
+    self:RetargetPendingDisplayBootstrap(addon, needsRetarget, control.Controller)
+    return true, CopyMap(control)
+end
+
+function delegation:ApplyRevoke(addon, leaderAuth, grantId, reason)
+    local control = self.Control
+    local matched = control ~= nil and control.GrantId == grantId
+    local needsRetarget = next(pendingDisplayRequests) ~= nil or ConsumeDisplayAuthorityHint(leaderAuth, Now())
+    if control then
+        RetireDisplayAuthority({
+            Sender = control.Controller,
+            SenderInstallationId = control.ControllerInstallationId,
+            SenderSessionId = control.ControllerSessionId,
+        })
+        RetireControllerDisplaySession(control)
+    end
+    ResetLeaderBoundInteractions({}, boundDisplayAuthority ~= nil)
+    self:CancelPendingGrantTimer(addon)
+    self:ClearRecoveryBarrier(addon)
+    self.Control = nil
+    self.PendingGrant = nil
+    self.LastRevoke = {
+        GrantId = grantId,
+        Leader = leaderAuth.Sender,
+        LeaderInstallationId = leaderAuth.SenderInstallationId,
+        LeaderSessionId = leaderAuth.SenderSessionId,
+    }
+    local leaderBinding = CopyMap(leaderAuth)
+    leaderBinding.MinimumSequenceExclusive = leaderAuth.Sequence or leaderAuth.MinimumSequenceExclusive
+    BindDisplayAuthority(leaderBinding)
+    localLeadershipTenureActive = IsLocalDisplayAuthority(addon)
+    self:NotifyChanged(addon, reason or "raid-controller-revoked")
+    if needsRetarget and not IsLocalDisplayAuthority(addon) and type(addon.SendRequestDisplay) == "function" then
+        pcall(addon.SendRequestDisplay, addon)
+    end
+    return true,
+        {
+            GrantId = grantId,
+            Matched = matched,
+            Previous = control and CopyMap(control) or nil,
+        }
+end
+
+function delegation:Clear(addon, reason, nextLeaderAuth)
+    local control = self.Control
+    self:CancelPendingGrantTimer(addon)
+    self:ClearRecoveryBarrier(addon)
+    self.PendingGrant = nil
+    if not control then
+        return false, "not-delegated"
+    end
+    RetireDisplayAuthority({
+        Sender = control.Controller,
+        SenderInstallationId = control.ControllerInstallationId,
+        SenderSessionId = control.ControllerSessionId,
+    })
+    RetireControllerDisplaySession(control)
+    ResetLeaderBoundInteractions({}, boundDisplayAuthority ~= nil)
+    self.Control = nil
+    if nextLeaderAuth then
+        BindDisplayAuthority(nextLeaderAuth)
+    end
+    localLeadershipTenureActive = IsLocalDisplayAuthority(addon)
+    self:NotifyChanged(addon, reason or "raid-controller-cleared")
+    return true, CopyMap(control)
+end
+
+function delegation:ValidateLeaderOrder(auth, envelope, allowCorrelatedReplacement)
+    if envelope.Type ~= "CONTROL_GRANT" and envelope.Type ~= "CONTROL_REVOKE" then
+        return true
+    end
+    local validSession, sessionError = self:ValidateLeaderSession(auth, allowCorrelatedReplacement)
+    if not validSession then
+        return false, sessionError
+    end
+    local currentKey = DisplayAuthorityIdentityKey(self.ControlLeader)
+    local incomingKey = DisplayAuthorityIdentityKey(auth)
+    if currentKey == incomingKey then
+        if
+            type(self.ControlLeader.HighestSequence) == "number"
+            and envelope.Sequence <= self.ControlLeader.HighestSequence
+        then
+            return false, "stale-control-order"
+        end
+        return true
+    end
+    return true
+end
+
+function delegation:CommitLeaderOrder(auth, envelope)
+    local currentKey = DisplayAuthorityIdentityKey(self.ControlLeader)
+    local incomingKey = DisplayAuthorityIdentityKey(auth)
+    if currentKey ~= incomingKey then
+        self:RetireLeader(self.ControlLeader)
+        self.ControlLeader = {
+            PlayerKey = NormalizePlayerKey(auth.Sender),
+            Sender = auth.Sender,
+            SenderInstallationId = auth.SenderInstallationId,
+            SenderSessionId = auth.SenderSessionId,
+        }
+    end
+    local highestSequence = self.ControlLeader.HighestSequence
+    if type(highestSequence) ~= "number" or envelope.Sequence > highestSequence then
+        self.ControlLeader.HighestSequence = envelope.Sequence
+    end
+    local highestSentAt = self.ControlLeader.HighestSentAt
+    if type(auth.SentAt) == "number" and (type(highestSentAt) ~= "number" or auth.SentAt > highestSentAt) then
+        self.ControlLeader.HighestSentAt = auth.SentAt
+    end
+end
+
+function delegation:ObserveLeaderSession(addon, auth, options)
+    options = IsPlainTable(options) and options or {}
+    local validSession, sessionError = self:ValidateLeaderSession(auth, options.AllowCorrelatedReplacement)
+    if not validSession then
+        return false, sessionError
+    end
+    local currentKey = DisplayAuthorityIdentityKey(self.ControlLeader)
+    local incomingKey = DisplayAuthorityIdentityKey(auth)
+    if currentKey == incomingKey then
+        local highestSequence = self.ControlLeader.HighestSequence
+        if type(highestSequence) ~= "number" or auth.Sequence > highestSequence then
+            self.ControlLeader.HighestSequence = auth.Sequence
+        end
+        local highestSentAt = self.ControlLeader.HighestSentAt
+        if type(highestSentAt) ~= "number" or auth.SentAt > highestSentAt then
+            self.ControlLeader.HighestSentAt = auth.SentAt
+        end
+        return true
+    end
+    self:RetireLeader(self.ControlLeader)
+    self:CancelPendingGrantTimer(addon)
+    local hadPendingState = self.PendingGrant ~= nil or self.RecoveryBarrier ~= nil
+    self.PendingGrant = nil
+    self:ClearRecoveryBarrier(addon)
+    self.ControlLeader = {
+        PlayerKey = NormalizePlayerKey(auth.Sender),
+        Sender = auth.Sender,
+        SenderInstallationId = auth.SenderInstallationId,
+        SenderSessionId = auth.SenderSessionId,
+        HighestSequence = auth.Sequence or 0,
+        HighestSentAt = auth.SentAt,
+    }
+    local control = self.Control
+    if
+        control
+        and (
+            control.LeaderKey ~= self.ControlLeader.PlayerKey
+            or control.LeaderInstallationId ~= auth.SenderInstallationId
+            or control.LeaderSessionId ~= auth.SenderSessionId
+        )
+    then
+        local leaderBinding = CopyMap(auth)
+        leaderBinding.MinimumSequenceExclusive = options.AcceptCurrentSequence == true
+                and math.max((auth.Sequence or 1) - 1, 0)
+            or auth.Sequence
+        self:Clear(addon, "raid-leader-session-changed", leaderBinding)
+        if
+            options.SuppressDisplayRequest ~= true
+            and not IsLocalDisplayAuthority(addon)
+            and type(addon.SendRequestDisplay) == "function"
+        then
+            pcall(addon.SendRequestDisplay, addon)
+        end
+    elseif hadPendingState then
+        self:NotifyChanged(addon, "raid-leader-session-changed")
+        if
+            options.SuppressDisplayRequest ~= true
+            and not IsLocalDisplayAuthority(addon)
+            and type(addon.SendRequestDisplay) == "function"
+        then
+            pcall(addon.SendRequestDisplay, addon)
+        end
+    end
+    return true
+end
+
+function delegation:IsActualLeaderReplacement(addon, auth, envelope)
+    local control = self.Control
+    if
+        not control
+        or not IsPlainTable(envelope)
+        or (envelope.Type ~= "DISPLAY" and envelope.Type ~= "PAGE_UPSERT")
+        or type(addon.GetRaidLeader) ~= "function"
+        or NormalizePlayerKey(addon:GetRaidLeader()) ~= NormalizePlayerKey(auth and auth.Sender)
+        or self:IsRetiredLeader(auth)
+    then
+        return false
+    end
+    return control.LeaderKey ~= NormalizePlayerKey(auth.Sender)
+        or control.LeaderInstallationId ~= auth.SenderInstallationId
+        or control.LeaderSessionId ~= auth.SenderSessionId
+end
+
+function delegation:RequestLeaderSessionRecovery(addon, auth)
+    local senderKey = NormalizePlayerKey(auth and auth.Sender)
+    if not senderKey or type(addon.SendProtocolDisplayRequest) ~= "function" then
+        return false, "display-request-unavailable"
+    end
+
+    CleanupRecords(pendingDisplayRequests, Now())
+    for messageId, pending in pairs(pendingDisplayRequests) do
+        if
+            pending.TargetKey == senderKey
+            and pending.SenderInstallationId == auth.SenderInstallationId
+            and pending.SenderSessionId == auth.SenderSessionId
+        then
+            return true, messageId
+        end
+    end
+
+    local called, sent, result = pcall(addon.SendProtocolDisplayRequest, addon, auth.Sender)
+    if not called or not sent then
+        return false, called and result or "display-request-failed"
+    end
+    local pending = pendingDisplayRequests[result]
+    if pending then
+        pending.SenderInstallationId = auth.SenderInstallationId
+        pending.SenderSessionId = auth.SenderSessionId
+    end
+    return true, result
+end
+
+function delegation:RecoverFromCorrelatedLeaderReply(addon, auth, envelope, correlationKind, correlationRecord)
+    if
+        correlationKind ~= "display-request"
+        or not IsPlainTable(correlationRecord)
+        or not self:IsActualLeaderReplacement(addon, auth, envelope)
+    then
+        return false, "not-correlated-leader-recovery"
+    end
+
+    local observed, observeError = self:ObserveLeaderSession(addon, auth, {
+        AcceptCurrentSequence = true,
+        AllowCorrelatedReplacement = true,
+        SuppressDisplayRequest = true,
+    })
+    if not observed then
+        return false, observeError
+    end
+    self:ReconcileOutgoingLeaderSession(addon, auth)
+    if self.Control ~= nil then
+        return false, "raid-controller-recovery-failed"
+    end
+    return true
 end
 
 -- VERSION_QUERY is the first authenticated signal emitted by a leader after an
@@ -1964,14 +2998,56 @@ end
 -- and session proven by a correlated DISPLAY_REQUEST reply. This closes the
 -- A -> B -> A handoff window where delayed packets from A's former tenure
 -- would otherwise become role-authorized again after A is re-promoted.
+function delegation:CanRecoverRetiredLeader(addon, auth, envelope, correlationKind)
+    return self.Control == nil
+        and correlationKind == "display-request"
+        and IsPlainTable(envelope)
+        and (envelope.Type == "DISPLAY" or envelope.Type == "PAGE_UPSERT")
+        and type(addon.GetRaidLeader) == "function"
+        and NormalizePlayerKey(addon:GetRaidLeader()) == NormalizePlayerKey(auth and auth.Sender)
+end
+
 local function ValidateDisplayAuthorityTenure(self, auth, envelope, correlationKind)
     if not LEADER_TENURE_MESSAGE_TYPES[envelope.Type] or IsLocalDisplayAuthority(self) then
         return true, nil, false
     end
+    local control = delegation.Control
+    if
+        control
+        and control.ControllerKey == NormalizePlayerKey(auth.Sender)
+        and (
+            control.ControllerInstallationId ~= auth.SenderInstallationId
+            or control.ControllerSessionId ~= auth.SenderSessionId
+        )
+    then
+        return false, "stale-delegated-authority"
+    end
+    if
+        control
+        and control.ControllerKey == NormalizePlayerKey(auth.Sender)
+        and control.ControllerInstallationId == auth.SenderInstallationId
+        and control.ControllerSessionId == auth.SenderSessionId
+        and envelope.Sequence <= control.ControllerSequenceFloor
+    then
+        return false, "stale-delegated-authority"
+    end
     if DisplayAuthorityMatches(auth) then
+        if
+            type(boundDisplayAuthority.MinimumSequenceExclusive) == "number"
+            and envelope.Sequence <= boundDisplayAuthority.MinimumSequenceExclusive
+            and not (
+                correlationKind == "display-request"
+                and (envelope.Type == "DISPLAY" or envelope.Type == "PAGE_UPSERT")
+            )
+        then
+            return false, "stale-display-authority-sequence"
+        end
         return true, nil, false
     end
     if IsRetiredDisplayAuthority(auth) then
+        if delegation:CanRecoverRetiredLeader(self, auth, envelope, correlationKind) then
+            return true, nil, true
+        end
         return false, "stale-display-authority"
     end
     if correlationKind == "display-request" and (envelope.Type == "DISPLAY" or envelope.Type == "PAGE_UPSERT") then
@@ -1996,6 +3072,14 @@ local function RequiredAction(messageType)
         return "changeProposal"
     elseif messageType == "CHANGE_RESULT" then
         return "changeResult"
+    elseif messageType == "CONTROL_REQUEST" then
+        return "controlRequest"
+    elseif messageType == "CONTROL_GRANT" then
+        return "controlGrant"
+    elseif messageType == "CONTROL_REVOKE" then
+        return "controlRevoke"
+    elseif messageType == "CONTROL_RESULT" then
+        return "controlResult"
     end
 end
 
@@ -2085,13 +3169,62 @@ local function ValidateChannelAndCorrelation(auth, channel, envelope, now)
     CleanupRecords(pendingDisplayRequests, now)
     CleanupRecords(pendingPageRequests, now)
     CleanupRecords(pendingChangeProposals, now)
+    CleanupRecords(delegation.Outgoing, now)
     CleanupRecords(outboundDisplays, now)
 
     local messageType = envelope.Type
     local replyTo = envelope.ReplyTo
     local correlationKind
     local correlationRecord
-    if messageType == "VERSION_QUERY" then
+    if messageType == "CONTROL_REQUEST" then
+        if channel ~= "WHISPER" then
+            return false, "invalid-channel"
+        end
+        if replyTo ~= nil then
+            return false, "unexpected-reply-to"
+        end
+    elseif messageType == "CONTROL_GRANT" then
+        if IsCurrentGroupChannel(channel) then
+            if replyTo ~= nil then
+                return false, "unexpected-reply-to"
+            end
+        elseif channel == "WHISPER" then
+            local pending = replyTo and pendingDisplayRequests[replyTo]
+            if not pending or not PendingDisplayRequestMatches(pending, auth) then
+                return false, "uncorrelated-reply"
+            end
+            correlationKind = "display-request-control"
+            correlationRecord = pending
+        else
+            return false, "invalid-channel"
+        end
+    elseif messageType == "CONTROL_REVOKE" then
+        if not IsCurrentGroupChannel(channel) then
+            return false, "invalid-channel"
+        end
+        if replyTo ~= nil then
+            return false, "unexpected-reply-to"
+        end
+    elseif messageType == "CONTROL_RESULT" then
+        if channel ~= "WHISPER" then
+            return false, "invalid-channel"
+        end
+        local pending = replyTo and delegation.Outgoing[replyTo]
+        if not pending or pending.TargetKey ~= NormalizePlayerKey(auth.Sender) then
+            return false, "uncorrelated-reply"
+        end
+        if
+            pending.SenderInstallationId ~= nil
+            and (
+                pending.SenderInstallationId ~= auth.SenderInstallationId
+                or pending.SenderSessionId ~= auth.SenderSessionId
+            )
+        then
+            return false, "uncorrelated-reply"
+        end
+        correlationKind = "control-request"
+        correlationRecord = pending
+    elseif messageType == "VERSION_QUERY" then
         if not IsCurrentGroupChannel(channel) then
             return false, "invalid-channel"
         end
@@ -2321,6 +3454,8 @@ function AngryEra:StartProtocolSession(sessionId)
     end
 
     protocolSession = nil
+    delegation.Control = nil
+    delegation.ControlLeader = nil
     ResetTransportTables()
     if type(self.ResetActivePageTransientState) == "function" then
         local resetOk = pcall(self.ResetActivePageTransientState, self)
@@ -2355,6 +3490,32 @@ end
 function AngryEra:RefreshProtocolLeadershipTenure(sessionId, forceLocalRotation)
     if not protocolSession then
         return false, "session-not-started"
+    end
+
+    self:ReconcileDelegatedRaidControl("group-roster-updated")
+    local control = delegation.Control
+    if control then
+        local controllerAuth = {
+            Sender = control.Controller,
+            SenderInstallationId = control.ControllerInstallationId,
+            SenderSessionId = control.ControllerSessionId,
+            MinimumSequenceExclusive = control.ControllerSequenceFloor,
+        }
+        if not DisplayAuthorityMatches(controllerAuth) then
+            ResetLeaderBoundInteractions({}, boundDisplayAuthority ~= nil)
+            BindDisplayAuthority(controllerAuth)
+            delegation:NotifyChanged(self, "raid-controller-rebound")
+        end
+        localLeadershipTenureActive = IsLocalDisplayAuthority(self)
+        return true,
+            {
+                Changed = false,
+                Delegated = true,
+                LocalAuthority = IsLocalDisplayAuthority(self),
+                PendingDisplayBootstrap = false,
+                Rotated = false,
+                SessionId = protocolSession.SessionId,
+            }
     end
 
     local isLocalAuthority = IsLocalDisplayAuthority(self)
@@ -2454,7 +3615,18 @@ end
 --- Clears discovery, replay, correlation, and active-page state while retaining
 -- the current protocol session.
 function AngryEra:ResetProtocolPeers()
-    ResetTransportTables()
+    delegation:RetireLeader(delegation.ControlLeader)
+    RetireDisplayAuthority(boundDisplayAuthority)
+    if delegation.Control then
+        RetireDisplayAuthority({
+            Sender = delegation.Control.Controller,
+            SenderInstallationId = delegation.Control.ControllerInstallationId,
+            SenderSessionId = delegation.Control.ControllerSessionId,
+        })
+    end
+    delegation.Control = nil
+    delegation.ControlLeader = nil
+    ResetTransportTables(true, false)
     localLeadershipTenureActive = false
     if type(self.ResetActivePageTransientState) == "function" then
         pcall(self.ResetActivePageTransientState, self)
@@ -2462,6 +3634,322 @@ function AngryEra:ResetProtocolPeers()
     if type(self.ResetDisplayPublicationState) == "function" then
         pcall(self.ResetDisplayPublicationState, self)
     end
+end
+
+--- Returns a detached copy of the current session-only Raid Controller lease.
+function AngryEra:GetDelegatedRaidControl()
+    if IsPlainTable(delegation.RecoveryBarrier) then
+        return {
+            GrantId = delegation.RecoveryBarrier.GrantId,
+            Leader = delegation.RecoveryBarrier.Leader,
+            PendingRecovery = true,
+            Reason = delegation.RecoveryBarrier.Reason,
+            RoleExpired = delegation.RecoveryBarrier.RoleExpired == true,
+        }
+    end
+    if IsPlainTable(delegation.Control) then
+        return CopyMap(delegation.Control)
+    end
+    if IsPlainTable(delegation.PendingGrant) then
+        return {
+            GrantId = delegation.PendingGrant.Payload and delegation.PendingGrant.Payload.RequestId,
+            Leader = delegation.PendingGrant.LeaderAuth and delegation.PendingGrant.LeaderAuth.Sender,
+            PendingRole = true,
+        }
+    end
+    return nil
+end
+
+--- Returns one still-live local outgoing controller request.
+-- The detached snapshot lets UI state follow runtime resets/expiry without
+-- retaining authority-bearing transport records of its own.
+function AngryEra:GetPendingOutgoingDelegatedControlRequest(messageId)
+    CleanupRecords(delegation.Outgoing, Now())
+    local pending = type(messageId) == "string" and delegation.Outgoing[messageId] or nil
+    if not pending then
+        return nil
+    end
+    return {
+        CreatedAt = pending.CreatedAt,
+        ExpiresAt = pending.ExpiresAt,
+        MessageId = messageId,
+        RequestId = messageId,
+        SenderInstallationId = pending.SenderInstallationId,
+        SenderSessionId = pending.SenderSessionId,
+        Status = pending.Status,
+        Target = pending.Target,
+        TargetInstallationId = pending.SenderInstallationId,
+        TargetKey = pending.TargetKey,
+        TargetSessionId = pending.SenderSessionId,
+    }
+end
+
+--- Returns one leader-side pending controller request for UI confirmation.
+function AngryEra:GetPendingDelegatedControlRequest(messageId)
+    CleanupRecords(delegation.Incoming, Now())
+    local pending = type(messageId) == "string" and delegation.Incoming[messageId] or nil
+    if not pending then
+        return nil
+    end
+    return {
+        Controller = pending.Controller,
+        ControllerInstallationId = pending.ControllerInstallationId,
+        ControllerSessionId = pending.ControllerSessionId,
+        ExpiresAt = pending.ExpiresAt,
+        MessageId = messageId,
+    }
+end
+
+--- Returns whether every currently known AngryEra peer supports delegation.
+-- Players without a discovered AngryEra version are intentionally absent:
+-- addon-free raid members do not participate, while any known older client
+-- blocks activation to avoid a split canonical display.
+-- When a pending request is supplied, the exact requesting installation/session
+-- must also have answered that request's discovery query and opted into shared
+-- state. Other opted-out followers remain nonparticipants rather than vetoes.
+function AngryEra:GetDelegatedControlCompatibility(request)
+    CleanupPendingQueries(Now())
+    local incompatible = {}
+    for _, peer in pairs(peers) do
+        if
+            type(peer.AddonVersion) == "string"
+            and self:GetGroupRole(peer.Sender) ~= "absent"
+            and peer.AcceptsCurrentGroup ~= false
+            and not protocol.Supports(
+                peer.Capabilities,
+                protocol.DELEGATED_CONTROL_CAPABILITY,
+                protocol.DELEGATED_CONTROL_CAPABILITY_VERSION
+            )
+        then
+            incompatible[#incompatible + 1] = peer.Sender
+        end
+    end
+    table.sort(incompatible)
+
+    local controllerStatus
+    local controllerPeer
+    if IsPlainTable(request) then
+        controllerStatus = "pending"
+        local query = type(request.DiscoveryQueryId) == "string" and pendingQueries[request.DiscoveryQueryId] or nil
+        local controllerKey = NormalizePlayerKey(request.Controller)
+        controllerPeer = query and controllerKey and query.Responders[controllerKey] or nil
+        if controllerPeer then
+            if
+                controllerPeer.SenderInstallationId ~= request.ControllerInstallationId
+                or controllerPeer.SenderSessionId ~= request.ControllerSessionId
+            then
+                controllerStatus = "session-changed"
+            elseif
+                not protocol.Supports(
+                    controllerPeer.Capabilities,
+                    protocol.DELEGATED_CONTROL_CAPABILITY,
+                    protocol.DELEGATED_CONTROL_CAPABILITY_VERSION
+                )
+            then
+                controllerStatus = "unsupported"
+            elseif controllerPeer.AcceptsCurrentGroup ~= true then
+                controllerStatus = "sharing-disabled"
+            else
+                controllerStatus = "ready"
+            end
+        end
+    end
+
+    local receiveMode = type(self.GetConfig) == "function" and self:GetConfig("receiveMode") or "standard"
+    return {
+        Compatible = #incompatible == 0
+            and receiveMode ~= "ignoreShared"
+            and (controllerStatus == nil or controllerStatus == "ready"),
+        ControllerPeer = controllerPeer and CopyPeer(controllerPeer) or nil,
+        ControllerStatus = controllerStatus,
+        Incompatible = incompatible,
+        LocalReceiveMode = receiveMode,
+    }
+end
+
+--- Clears an in-memory delegation at a hard group/session boundary.
+function AngryEra:ResetDelegatedRaidControl(reason)
+    delegation.Outgoing = {}
+    delegation.Incoming = {}
+    delegation.LastRevoke = nil
+    delegation:RetireLeader(delegation.ControlLeader)
+    delegation.ControlLeader = nil
+    return delegation:Clear(self, reason or "raid-controller-reset")
+end
+
+--- Invalidates delegation when the actual leader or controller roster role changes.
+function AngryEra:ReconcileDelegatedRaidControl(reason)
+    local control = delegation.Control
+    local pendingGrant = delegation.PendingGrant
+    if not control and pendingGrant then
+        local pendingControl = delegation:BuildControl(pendingGrant.LeaderAuth, pendingGrant.Payload)
+        local leader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader() or nil
+        local now = Now()
+        local exactControlLeader = DisplayAuthorityIdentityKey(pendingGrant.LeaderAuth)
+                == DisplayAuthorityIdentityKey(delegation.ControlLeader)
+            and not delegation:IsRetiredLeader(pendingGrant.LeaderAuth)
+        if
+            pendingControl
+            and pendingGrant.ExpiresAt > now
+            and NormalizePlayerKey(leader) == pendingControl.LeaderKey
+            and exactControlLeader
+            and type(self.GetGroupRole) == "function"
+            and self:GetGroupRole(pendingControl.Controller) == "assistant"
+        then
+            local applied, result = delegation:ApplyGrant(self, pendingGrant.LeaderAuth, pendingGrant.Payload, {
+                RecoverDisplay = pendingGrant.RecoverDisplay == true,
+            })
+            return true,
+                {
+                    Changed = applied == true,
+                    Control = type(result) == "table" and result or nil,
+                    Reason = applied and "controller-role-ready" or result,
+                }
+        end
+
+        local leaderChanged = not pendingControl or NormalizePlayerKey(leader) ~= pendingControl.LeaderKey
+        if leaderChanged or not exactControlLeader then
+            delegation:CancelPendingGrantTimer(self)
+            delegation.PendingGrant = nil
+            delegation:ClearRecoveryBarrier(self)
+            delegation:RetireLeader(delegation.ControlLeader)
+            delegation.ControlLeader = nil
+            delegation:NotifyChanged(self, reason or "raid-leader-changed")
+            if leader and type(self.SendRequestDisplay) == "function" then
+                pcall(self.SendRequestDisplay, self)
+            end
+            return true,
+                {
+                    Changed = true,
+                    Pending = false,
+                    Reason = reason or "raid-leader-changed",
+                }
+        end
+        if pendingGrant.ExpiresAt <= now then
+            delegation:CancelPendingGrantTimer(self)
+            delegation.PendingGrant = nil
+            delegation:BeginRecoveryBarrier(self, pendingControl, reason or "raid-controller-role-expired", true)
+            delegation:RequestRecovery(self)
+            return true,
+                {
+                    Changed = true,
+                    Pending = false,
+                    PendingRecovery = true,
+                    Reason = reason or "raid-controller-role-expired",
+                }
+        end
+        delegation:SchedulePendingGrant(self)
+        return true, {
+            Changed = false,
+            Pending = true,
+        }
+    end
+    if not control then
+        if delegation.RecoveryBarrier then
+            delegation:RequestRecovery(self)
+            return true,
+                {
+                    Changed = false,
+                    PendingRecovery = true,
+                    Reason = delegation.RecoveryBarrier.Reason,
+                }
+        end
+        return true, {
+            Changed = false,
+        }
+    end
+
+    local leader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader() or nil
+    local leaderKey = NormalizePlayerKey(leader)
+    local playerKey = NormalizePlayerKey(PlayerFullName())
+    local leaderChanged = leaderKey ~= control.LeaderKey
+    local localRole = type(self.GetGroupRole) == "function" and self:GetGroupRole(PlayerFullName()) or "absent"
+    local exactLocalLeader = leaderKey ~= nil and leaderKey == playerKey and localRole == "leader"
+    local localLeaderIgnoringShared = exactLocalLeader
+        and type(self.GetConfig) == "function"
+        and self:GetConfig("receiveMode") == "ignoreShared"
+    local authorityMismatch = delegation.RecoveryBarrier == nil
+        and type(self.GetAngryEraAuthority) == "function"
+        and NormalizePlayerKey(self:GetAngryEraAuthority()) ~= control.ControllerKey
+    local controllerInvalid = type(self.GetGroupRole) ~= "function"
+        or self:GetGroupRole(control.Controller) ~= "assistant"
+        or not delegation:LocalControllerSessionMatches(control)
+        or authorityMismatch
+        or (delegation.RecoveryBarrier and delegation.RecoveryBarrier.RequiresRevoke == true)
+        or localLeaderIgnoringShared
+
+    if not leaderChanged and not controllerInvalid and not delegation.RecoveryBarrier then
+        return true, {
+            Changed = false,
+            Control = CopyMap(control),
+        }
+    end
+
+    local reconcileReason = reason or (leaderChanged and "raid-leader-changed" or "raid-controller-invalid")
+    if
+        not leaderChanged
+        and not controllerInvalid
+        and delegation.RecoveryBarrier
+        and exactLocalLeader
+        and SafeCanPublish(self, "controlGrant")
+    then
+        local rebroadcast, result = self:BroadcastDelegatedRaidControl()
+        if rebroadcast then
+            delegation:ClearRecoveryBarrier(self)
+            delegation:NotifyChanged(self, "raid-controller-recovered")
+        else
+            delegation:ScheduleRecovery(self)
+        end
+        return true,
+            {
+                Changed = rebroadcast == true,
+                Control = CopyMap(control),
+                PendingRecovery = rebroadcast ~= true,
+                Reason = reconcileReason,
+                Result = result,
+            }
+    end
+
+    if exactLocalLeader and SafeCanPublish(self, "controlRevoke") then
+        local revoked, revokeResult = self:RevokeDelegatedRaidControl(reconcileReason)
+        if not revoked then
+            delegation:BeginRecoveryBarrier(self, control, reconcileReason, false, true)
+            delegation:ScheduleRecovery(self)
+        end
+        return true,
+            {
+                Changed = revoked == true,
+                PendingRecovery = revoked ~= true,
+                Previous = CopyMap(control),
+                Reason = reconcileReason,
+                Result = revokeResult,
+            }
+    end
+
+    if leaderChanged then
+        delegation:RetireLeader(delegation.ControlLeader)
+        delegation.ControlLeader = nil
+        local cleared, result = delegation:Clear(self, reconcileReason)
+        if cleared and leader and type(self.SendRequestDisplay) == "function" then
+            pcall(self.SendRequestDisplay, self)
+        end
+        return true,
+            {
+                Changed = cleared == true,
+                Previous = type(result) == "table" and result or nil,
+                Reason = reconcileReason,
+            }
+    end
+
+    delegation:BeginRecoveryBarrier(self, control, reconcileReason, false, true)
+    delegation:RequestRecovery(self)
+    return true,
+        {
+            Changed = true,
+            PendingRecovery = true,
+            Previous = CopyMap(control),
+            Reason = reconcileReason,
+        }
 end
 
 --- Returns current protocol session state for diagnostics.
@@ -2491,14 +3979,7 @@ local function PrepareProtocolPacket(messageType, payload, options, compactPageO
         return nil, "missing-target"
     end
 
-    local sentAt
-    local sentAtError
-    if messageType == "DISPLAY" then
-        sentAt, sentAtError = NextDisplaySentAt()
-    else
-        sentAt = CurrentEpochMilliseconds()
-        sentAtError = sentAt and nil or "invalid-clock"
-    end
+    local sentAt, sentAtError = NextProtocolSentAt()
     if not sentAt then
         return nil, sentAtError
     end
@@ -2521,7 +4002,7 @@ local function PrepareProtocolPacket(messageType, payload, options, compactPageO
             protocol.EncodeCompactPageEnvelope(envelope, compactPageCodec, compactPageOptions or {
                 IncludeAncestorContext = true,
             })
-    elseif CONTROL_MESSAGE_TYPES[messageType] then
+    elseif BOUNDED_CONTROL_MESSAGE_TYPES[messageType] then
         encoded, encodeError = protocol.EncodeEnvelope(envelope, controlCodec, CONTROL_WIRE_LIMITS)
     else
         encoded, encodeError = protocol.EncodeEnvelope(envelope, protocolCodec, GENERIC_WIRE_LIMITS)
@@ -2645,7 +4126,7 @@ function AngryEra:SendProtocolMessage(messageType, payload, options)
     if not sent then
         return false, "send-failed"
     end
-    return true, packet.Envelope.MessageId
+    return true, packet.Envelope.MessageId, packet.Envelope.SentAt
 end
 
 local function FinishActivePageTransfer(state, succeeded, status)
@@ -3053,6 +4534,313 @@ function AngryEra:SendProtocolVersion(target, replyTo)
     })
 end
 
+function delegation:LocalAuth(messageId, sentAt)
+    if not protocolSession or not IsSafeInteger(sentAt) then
+        return nil
+    end
+    local sequence = self:ParseMessageSequence(messageId)
+    if not sequence then
+        return nil
+    end
+    return {
+        Sender = PlayerFullName(),
+        SenderInstallationId = protocolSession.InstallationId,
+        SenderSessionId = protocolSession.SessionId,
+        ReceivedAt = Now(),
+        Sequence = sequence,
+        SentAt = sentAt,
+    }
+end
+
+--- Whispers a request for exclusive AngryEra control to the actual raid leader.
+function AngryEra:SendProtocolControlRequest(target)
+    local targetKey = NormalizePlayerKey(target)
+    if not targetKey or not SafeCanReceive(self, target, "controlResult") then
+        return false, "invalid-target"
+    end
+    local fullTarget = EnsureUnitFullName(target)
+    local sent, messageId = self:SendProtocolMessage("CONTROL_REQUEST", {}, {
+        Channel = "WHISPER",
+        Priority = "ALERT",
+        Target = fullTarget,
+    })
+    if not sent then
+        return false, messageId
+    end
+    local peer = peers[targetKey]
+    local remembered, rememberError = RememberInteraction(delegation.Outgoing, messageId, {
+        OwnerKey = targetKey,
+        Target = fullTarget,
+        TargetKey = targetKey,
+        SenderInstallationId = peer and peer.SenderInstallationId or nil,
+        SenderSessionId = peer and peer.SenderSessionId or nil,
+        Status = "pending",
+    }, Now())
+    if not remembered then
+        return false, rememberError
+    end
+    delegation.Outgoing[messageId].ExpiresAt = Now() + delegation.RequestTtl
+    return true, messageId
+end
+
+--- Sends a leader-authored controller grant.
+-- Normal grants are group broadcasts. A leader may instead whisper the exact
+-- stable lease in reply to a follower's fresh DISPLAY_REQUEST so a reset or
+-- reloaded follower can recover the already-active control state.
+function AngryEra:SendProtocolControlGrant(payload, options)
+    if not SafeCanPublish(self, "controlGrant") then
+        return false, "unauthorized"
+    end
+    if options ~= nil and not IsPlainTable(options) then
+        return false, "invalid-options"
+    end
+    local sendOptions = CopyMap(options or {})
+    sendOptions.Priority = "ALERT"
+    return self:SendProtocolMessage("CONTROL_GRANT", payload, sendOptions)
+end
+
+--- Broadcasts a leader-authored controller revocation.
+function AngryEra:SendProtocolControlRevoke(grantId)
+    if not SafeCanPublish(self, "controlRevoke") then
+        return false, "unauthorized"
+    end
+    return self:SendProtocolMessage("CONTROL_REVOKE", {
+        GrantId = grantId,
+    }, {
+        Priority = "ALERT",
+    })
+end
+
+--- Whispers the outcome of one controller request.
+function AngryEra:SendProtocolControlResult(target, replyTo, status, grantId)
+    if not SafeCanPublish(self, "controlResult") then
+        return false, "unauthorized"
+    end
+    local payload = {
+        Status = status,
+    }
+    if status == "granted" then
+        payload.GrantId = grantId
+    end
+    return self:SendProtocolMessage("CONTROL_RESULT", payload, {
+        Channel = "WHISPER",
+        Priority = "ALERT",
+        Target = EnsureUnitFullName(target),
+        ReplyTo = replyTo,
+    })
+end
+
+--- Requests manual, session-bound Raid Controller authority for this raid.
+function AngryEra:RequestDelegatedRaidControl()
+    if not protocolSession then
+        return false, "session-not-started"
+    end
+    if delegation.Control then
+        if delegation.Control.ControllerKey == NormalizePlayerKey(PlayerFullName()) then
+            return false, "already-controller"
+        end
+        return false, "controller-busy"
+    end
+    if not SafeCanPublish(self, "controlRequest") then
+        return false, "unauthorized"
+    end
+    local leader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader(true) or nil
+    local leaderKey = NormalizePlayerKey(leader)
+    if not leaderKey or leaderKey == NormalizePlayerKey(PlayerFullName()) then
+        return false, "leader-unavailable"
+    end
+    CleanupRecords(delegation.Outgoing, Now())
+    for messageId, pending in pairs(delegation.Outgoing) do
+        if pending.TargetKey == leaderKey then
+            return false, "already-pending", messageId
+        end
+    end
+
+    return self:SendProtocolControlRequest(leader)
+end
+
+function delegation:PayloadFromRequest(request)
+    return {
+        Controller = request.Controller,
+        ControllerInstallationId = request.ControllerInstallationId,
+        ControllerSessionId = request.ControllerSessionId,
+        RequestId = request.MessageId,
+    }
+end
+
+--- Grants one exact pending request. The request id is the stable lease id.
+function AngryEra:GrantDelegatedRaidControl(requestId)
+    if not SafeCanPublish(self, "controlGrant") then
+        return false, "unauthorized"
+    end
+    if delegation.Control then
+        return false, "controller-busy"
+    end
+    CleanupRecords(delegation.Incoming, Now())
+    local request = delegation.Incoming[requestId]
+    if not request then
+        return false, "stale-control-request"
+    end
+    if type(request.CapabilityNotBefore) ~= "number" or Now() < request.CapabilityNotBefore then
+        return false, "capability-check-pending", request.CapabilityNotBefore
+    end
+    if
+        self:GetGroupRole(request.Controller) ~= "assistant"
+        or not SafeCanReceive(self, request.Controller, "controlRequest")
+    then
+        delegation.Incoming[requestId] = nil
+        self:SendProtocolControlResult(request.Controller, requestId, "unauthorized")
+        return false, "unauthorized"
+    end
+    local compatibility = self:GetDelegatedControlCompatibility(request)
+    if compatibility.ControllerStatus == "pending" then
+        local sent, queryId = self:SendProtocolVersionQuery(true)
+        local query = sent and pendingQueries[queryId] or nil
+        if query then
+            delegation:AssignDiscoveryQuery(request, queryId, query)
+        end
+        return false, "capability-check-pending", request.CapabilityNotBefore, compatibility
+    end
+    if compatibility.ControllerStatus == "session-changed" then
+        delegation.Incoming[requestId] = nil
+        self:SendProtocolControlResult(request.Controller, requestId, "stale")
+        return false, "stale-control-request", compatibility
+    end
+    if not compatibility.Compatible then
+        delegation.Incoming[requestId] = nil
+        self:SendProtocolControlResult(request.Controller, requestId, "incompatible")
+        return false, "incompatible", compatibility
+    end
+
+    local payload = delegation:PayloadFromRequest(request)
+    local sent, grantMessageId, grantSentAt = self:SendProtocolControlGrant(payload)
+    if not sent then
+        return false, grantMessageId
+    end
+    local auth = delegation:LocalAuth(grantMessageId, grantSentAt)
+    if not auth then
+        return false, "invalid-local-control-envelope"
+    end
+    local envelope = {
+        Type = "CONTROL_GRANT",
+        Sequence = auth.Sequence,
+    }
+    delegation:CommitLeaderOrder(auth, envelope)
+    local applied, result = delegation:ApplyGrant(self, auth, payload)
+    if not applied then
+        return false, result
+    end
+    for pendingId, pendingRequest in pairs(delegation.Incoming) do
+        if pendingId ~= requestId then
+            self:SendProtocolControlResult(pendingRequest.Controller, pendingId, "busy")
+        end
+    end
+    delegation.Incoming = {}
+    self:SendProtocolControlResult(request.Controller, requestId, "granted", requestId)
+    return true, requestId
+end
+
+--- Declines one exact pending request without changing authority.
+function AngryEra:DeclineDelegatedRaidControl(requestId)
+    if not SafeCanPublish(self, "controlResult") then
+        return false, "unauthorized"
+    end
+    CleanupRecords(delegation.Incoming, Now())
+    local request = delegation.Incoming[requestId]
+    if not request then
+        return false, "stale-control-request"
+    end
+    delegation.Incoming[requestId] = nil
+    local sent, result = self:SendProtocolControlResult(request.Controller, requestId, "declined")
+    return sent, result
+end
+
+--- Re-broadcasts the stable active grant for a late/reloaded follower.
+function AngryEra:BroadcastDelegatedRaidControl()
+    local control = delegation.Control
+    if not control or not SafeCanPublish(self, "controlGrant") then
+        return false, "unauthorized"
+    end
+    local payload = {
+        Controller = control.Controller,
+        ControllerInstallationId = control.ControllerInstallationId,
+        ControllerSessionId = control.ControllerSessionId,
+        RequestId = control.RequestId,
+    }
+    local sent, messageId, sentAt = self:SendProtocolControlGrant(payload)
+    if not sent then
+        return false, messageId
+    end
+    local auth = delegation:LocalAuth(messageId, sentAt)
+    if auth then
+        delegation:CommitLeaderOrder(auth, {
+            Type = "CONTROL_GRANT",
+            Sequence = auth.Sequence,
+        })
+    end
+    return true, control.GrantId
+end
+
+--- Re-broadcasts the latest leader-authored revoke for a stale follower.
+function AngryEra:BroadcastDelegatedControlRevocation()
+    local revoked = delegation.LastRevoke
+    if not revoked or not SafeCanPublish(self, "controlRevoke") or not protocolSession then
+        return false, "unavailable"
+    end
+    if
+        revoked.LeaderInstallationId ~= protocolSession.InstallationId
+        or revoked.LeaderSessionId ~= protocolSession.SessionId
+        or NormalizePlayerKey(revoked.Leader) ~= NormalizePlayerKey(PlayerFullName())
+    then
+        return false, "stale-control-revoke"
+    end
+    local sent, messageId, sentAt = self:SendProtocolControlRevoke(revoked.GrantId)
+    if not sent then
+        return false, messageId
+    end
+    local auth = delegation:LocalAuth(messageId, sentAt)
+    if auth then
+        delegation:CommitLeaderOrder(auth, {
+            Type = "CONTROL_REVOKE",
+            Sequence = auth.Sequence,
+        })
+    end
+    return true, revoked.GrantId
+end
+
+--- Revokes the active controller. The previous shared snapshot stays visible.
+function AngryEra:RevokeDelegatedRaidControl(reason)
+    local control = delegation.Control
+    if not control then
+        return false, "not-delegated"
+    end
+    if not SafeCanPublish(self, "controlRevoke") then
+        return false, "unauthorized"
+    end
+    local sent, revokeMessageId, revokeSentAt = self:SendProtocolControlRevoke(control.GrantId)
+    if not sent then
+        return false, revokeMessageId
+    end
+    local auth = delegation:LocalAuth(revokeMessageId, revokeSentAt)
+    if not auth then
+        return false, "invalid-local-control-envelope"
+    end
+    delegation:CommitLeaderOrder(auth, {
+        Type = "CONTROL_REVOKE",
+        Sequence = auth.Sequence,
+    })
+    local applied, result = delegation:ApplyRevoke(self, auth, control.GrantId, reason or "raid-controller-reclaimed")
+    if not applied then
+        return false, result
+    end
+    return true, control.GrantId
+end
+
+--- Explicit actual-leader reclaim alias used by UI and slash commands.
+function AngryEra:ReclaimDelegatedRaidControl()
+    return self:RevokeDelegatedRaidControl("raid-controller-reclaimed")
+end
+
 --- Whispers an uncorrelated request for the current shared display.
 function AngryEra:SendProtocolDisplayRequest(target)
     local targetKey = NormalizePlayerKey(target)
@@ -3069,10 +4857,19 @@ function AngryEra:SendProtocolDisplayRequest(target)
         return false, messageId
     end
     local now = Now()
+    local peer = peers[targetKey]
+    local control = delegation.Control
+    local peerIsStaleControlLeader = control ~= nil
+        and control.LeaderKey == targetKey
+        and peer ~= nil
+        and peer.SenderInstallationId == control.LeaderInstallationId
+        and peer.SenderSessionId == control.LeaderSessionId
     local remembered, rememberError = RememberInteraction(pendingDisplayRequests, messageId, {
         OwnerKey = targetKey,
         TargetKey = targetKey,
         Target = fullTarget,
+        SenderInstallationId = control and peer and not peerIsStaleControlLeader and peer.SenderInstallationId or nil,
+        SenderSessionId = control and peer and not peerIsStaleControlLeader and peer.SenderSessionId or nil,
     }, now)
     if not remembered then
         return false, rememberError
@@ -3217,7 +5014,7 @@ function AngryEra:SendProtocolPageUpsert(payload, options)
     return self:SendProtocolMessage("PAGE_UPSERT", payload, safeOptions)
 end
 
---- Whispers a detached active-page edit proposal to the current leader.
+--- Whispers a detached active-page edit proposal to the current AngryEra authority.
 -- The proposal is retained briefly so only a correlated result from the same
 -- advertised leader session can complete it.
 function AngryEra:SendProtocolChangeProposal(target, payload)
@@ -3347,9 +5144,114 @@ function AngryEra:SendProtocolDisplay(payload, options)
     return true, messageId
 end
 
+function AngryEra:HandleProtocolControlRequest(auth, _, envelope)
+    if not SafeCanPublish(self, "controlGrant") then
+        return false, "not-raid-leader"
+    end
+    if delegation.Control then
+        self:SendProtocolControlResult(auth.Sender, envelope.MessageId, "busy")
+        return false, "controller-busy"
+    end
+    local remembered, rememberError = RememberInteraction(delegation.Incoming, envelope.MessageId, {
+        OwnerKey = NormalizePlayerKey(auth.Sender),
+        Controller = auth.Sender,
+        ControllerInstallationId = auth.SenderInstallationId,
+        ControllerSessionId = auth.SenderSessionId,
+        MessageId = envelope.MessageId,
+    }, Now())
+    if not remembered then
+        return false, rememberError
+    end
+    delegation.Incoming[envelope.MessageId].ExpiresAt = Now() + delegation.RequestTtl
+
+    -- Concurrent requests share one recent discovery round. Every request still
+    -- requires an exact installation/session responder, while sharing avoids a
+    -- second broadcast that clients would suppress under their global reply
+    -- throttle.
+    local now = Now()
+    local discoveryQueryId, discoveryQuery = FindRecentPendingQuery(now)
+    if not discoveryQuery and type(self.SendProtocolVersionQuery) == "function" then
+        local called, sent, messageId = pcall(self.SendProtocolVersionQuery, self, true)
+        if called and sent then
+            discoveryQueryId = messageId
+            discoveryQuery = pendingQueries[messageId]
+        end
+    end
+    if discoveryQuery then
+        delegation:AssignDiscoveryQuery(delegation.Incoming[envelope.MessageId], discoveryQueryId, discoveryQuery)
+    else
+        delegation.Incoming[envelope.MessageId].CapabilityNotBefore = now + QUERY_THROTTLE_SECONDS
+        delegation.Incoming[envelope.MessageId].DiscoveryQueryId = nil
+    end
+    if type(self.ShowDelegatedControlRequest) == "function" then
+        pcall(self.ShowDelegatedControlRequest, self, envelope.MessageId)
+    elseif type(self.UpdateRaidControllerControls) == "function" then
+        pcall(self.UpdateRaidControllerControls, self)
+    end
+    return true, self:GetPendingDelegatedControlRequest(envelope.MessageId)
+end
+
+function AngryEra:HandleProtocolControlGrant(auth, _, envelope, correlationKind)
+    local applied, result = delegation:ApplyGrant(self, auth, envelope.Payload, {
+        RecoverDisplay = correlationKind == "display-request-control",
+    })
+    if applied and type(self.DelegatedControlStateUpdated) == "function" then
+        pcall(self.DelegatedControlStateUpdated, self, "granted", result)
+    end
+    if not applied and (result == "controller-role-pending" or result == "controller-role-expired") then
+        local pending = self:GetDelegatedRaidControl()
+        return true,
+            pending or {
+                GrantId = envelope.Payload.RequestId,
+                PendingRole = result == "controller-role-pending",
+                PendingRecovery = result == "controller-role-expired",
+            }
+    end
+    return applied, result
+end
+
+function AngryEra:HandleProtocolControlRevoke(auth, _, envelope)
+    local leaderAuth = CopyMap(auth)
+    leaderAuth.Sequence = envelope.Sequence
+    local applied, result =
+        delegation:ApplyRevoke(self, leaderAuth, envelope.Payload.GrantId, "raid-controller-revoked")
+    if applied and type(self.DelegatedControlStateUpdated) == "function" then
+        pcall(self.DelegatedControlStateUpdated, self, "revoked", result)
+    end
+    return applied, result
+end
+
+function AngryEra:HandleProtocolControlResult(auth, _, envelope)
+    local pending = delegation.Outgoing[envelope.ReplyTo]
+    if not pending then
+        return false, "uncorrelated-reply"
+    end
+    if envelope.Payload.Status == "granted" and envelope.Payload.GrantId ~= envelope.ReplyTo then
+        return false, "control-result-grant-mismatch"
+    end
+    delegation.Outgoing[envelope.ReplyTo] = nil
+    local result = {
+        GrantId = envelope.Payload.GrantId,
+        Leader = auth.Sender,
+        RequestId = envelope.ReplyTo,
+        Status = envelope.Payload.Status,
+    }
+    if type(self.DelegatedControlRequestCompleted) == "function" then
+        pcall(self.DelegatedControlRequestCompleted, self, result)
+    elseif type(self.UpdateRaidControllerControls) == "function" then
+        pcall(self.UpdateRaidControllerControls, self)
+    end
+    if result.Status == "granted" and (not delegation.Control or delegation.Control.GrantId ~= result.GrantId) then
+        pcall(delegation.RequestRecovery, delegation, self)
+    end
+    return true, result
+end
+
 function AngryEra:HandleProtocolVersionQuery(auth, _, envelope)
     local now = Now()
-    RefreshDisplayAuthorityFromVersionQuery(self, auth)
+    if not delegation.Control or delegation:ControllerAuthMatches(auth) then
+        RefreshDisplayAuthorityFromVersionQuery(self, auth)
+    end
     if lastVersionReplyGlobalAt and now - lastVersionReplyGlobalAt < REPLY_THROTTLE_SECONDS then
         return false, "throttled"
     end
@@ -3446,6 +5348,57 @@ function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
     -- Do not let a request received during the roster handoff consume the
     -- leader's post-promotion response throttle.
     if not IsLocalDisplayAuthority(self) then
+        local control = delegation.Control
+        if control and SafeCanPublish(self, "controlGrant") then
+            local leader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader() or nil
+            local exactLocalLeader = NormalizePlayerKey(leader) == NormalizePlayerKey(PlayerFullName())
+            local controllerInvalid = type(self.GetGroupRole) ~= "function"
+                or self:GetGroupRole(control.Controller) ~= "assistant"
+                or (
+                    type(self.GetAngryEraAuthority) == "function"
+                    and NormalizePlayerKey(self:GetAngryEraAuthority()) ~= control.ControllerKey
+                )
+            if exactLocalLeader and controllerInvalid and SafeCanPublish(self, "controlRevoke") then
+                return self:RevokeDelegatedRaidControl("raid-controller-invalid")
+            end
+            if
+                NormalizePlayerKey(auth.Sender) == control.ControllerKey
+                and (
+                    auth.SenderInstallationId ~= control.ControllerInstallationId
+                    or auth.SenderSessionId ~= control.ControllerSessionId
+                )
+            then
+                local revoked, result = self:RevokeDelegatedRaidControl("raid-controller-session-changed")
+                return revoked, result
+            end
+            local controlThrottleKey = table.concat({
+                "control",
+                control.GrantId,
+                NormalizePlayerKey(auth.Sender),
+                auth.SenderInstallationId,
+                auth.SenderSessionId,
+            }, "\0")
+            if displayRequestReplies[controlThrottleKey] then
+                return false, "throttled"
+            end
+            local remembered, rememberError = RememberInteraction(displayRequestReplies, controlThrottleKey, {
+                OwnerKey = NormalizePlayerKey(auth.Sender),
+            }, now)
+            if not remembered then
+                return false, rememberError
+            end
+            displayRequestReplies[controlThrottleKey].ExpiresAt = now + REPLY_THROTTLE_SECONDS
+            return self:SendProtocolControlGrant({
+                Controller = control.Controller,
+                ControllerInstallationId = control.ControllerInstallationId,
+                ControllerSessionId = control.ControllerSessionId,
+                RequestId = control.RequestId,
+            }, {
+                Channel = "WHISPER",
+                Target = auth.Sender,
+                ReplyTo = envelope.MessageId,
+            })
+        end
         return false, "not-display-authority"
     end
     local throttleKey = CurrentDisplayThrottleKey(self, auth)
@@ -3462,6 +5415,26 @@ function AngryEra:HandleProtocolDisplayRequest(auth, _, envelope)
     -- than the follower's first watchdog retry so a lost PAGE_UPSERT/DISPLAY
     -- pair can be requested again without waiting for the interaction TTL.
     displayRequestReplies[throttleKey].ExpiresAt = now + REPLY_THROTTLE_SECONDS
+
+    local revoked = delegation.LastRevoke
+    if revoked then
+        local revokeThrottleKey = table.concat({ "revoke", revoked.GrantId }, "\0")
+        if not displayRequestReplies[revokeThrottleKey] then
+            local revokeRemembered, revokeRememberError =
+                RememberInteraction(displayRequestReplies, revokeThrottleKey, {
+                    OwnerKey = "*",
+                }, now)
+            if not revokeRemembered then
+                return false, revokeRememberError
+            end
+            displayRequestReplies[revokeThrottleKey].ExpiresAt = now + REPLY_THROTTLE_SECONDS
+            local revokeSent, revokeError = self:BroadcastDelegatedControlRevocation()
+            if not revokeSent then
+                displayRequestReplies[revokeThrottleKey] = nil
+                return false, revokeError
+            end
+        end
+    end
 
     local plan, planError = self:BuildActiveDisplayRequestResponse(auth, envelope.Payload)
     if not plan then
@@ -3957,7 +5930,7 @@ function AngryEra:HandleProtocolChangePropose(auth, _, envelope)
     return true, result, publicationError or warning
 end
 
---- Completes one locally pending proposal only when the current leader session
+-- Completes one locally pending proposal only when the current authority session
 -- returns a correlated result for the same page.
 function AngryEra:HandleProtocolChangeResult(auth, _, envelope)
     local pending = pendingChangeProposals[envelope.ReplyTo]
@@ -3982,6 +5955,10 @@ function AngryEra:HandleProtocolChangeResult(auth, _, envelope)
 end
 
 HANDLERS = {
+    CONTROL_REQUEST = "HandleProtocolControlRequest",
+    CONTROL_GRANT = "HandleProtocolControlGrant",
+    CONTROL_REVOKE = "HandleProtocolControlRevoke",
+    CONTROL_RESULT = "HandleProtocolControlResult",
     VERSION_QUERY = "HandleProtocolVersionQuery",
     VERSION = "HandleProtocolVersion",
     DISPLAY_REQUEST = "HandleProtocolDisplayRequest",
@@ -4031,14 +6008,18 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     if not roleOk or role == "absent" then
         return false, "unauthorized"
     end
-    if
+    local compactAuthorizationFailed = (
         (prefix == protocol.DISPLAY_PREFIX and not SafeCanReceive(self, sender, "display"))
         or (prefix == protocol.PAGE_PREFIX and not SafeCanReceive(self, sender, "pageUpsert"))
         or (
             prefix == protocol.ACTIVE_PAGE_PREFIX
             and (not SafeCanReceive(self, sender, "pageUpsert") or not SafeCanReceive(self, sender, "display"))
         )
-    then
+    )
+    local deferredLeaderRecoveryAuthorization = delegation.Control ~= nil
+        and role == "leader"
+        and (prefix == protocol.DISPLAY_PREFIX or prefix == protocol.PAGE_PREFIX)
+    if compactAuthorizationFailed and not deferredLeaderRecoveryAuthorization then
         return false, "unauthorized"
     end
 
@@ -4066,7 +6047,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         if not envelope and decodeError == "decompress-failed" and HasControlZlibHeader(data) then
             local controlEnvelope, controlDecodeError = protocol.DecodeEnvelope(data, controlCodec, CONTROL_WIRE_LIMITS)
             if controlEnvelope then
-                if CONTROL_MESSAGE_TYPES[controlEnvelope.Type] then
+                if BOUNDED_CONTROL_MESSAGE_TYPES[controlEnvelope.Type] then
                     envelope = controlEnvelope
                     decodeError = nil
                 else
@@ -4155,6 +6136,33 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
 
     local now = Now()
     local auth = BuildAuth(sender, envelope, now)
+    if
+        (
+            envelope.Type == "CONTROL_REQUEST"
+            or envelope.Type == "CONTROL_GRANT"
+            or envelope.Type == "CONTROL_REVOKE"
+            or envelope.Type == "CONTROL_RESULT"
+        ) and not delegation:TimestampValid(envelope.SentAt)
+    then
+        return false, "stale-control-message"
+    end
+    if envelope.Type == "CONTROL_RESULT" and channel == "WHISPER" and role == "leader" then
+        local pending = envelope.ReplyTo and delegation.Outgoing[envelope.ReplyTo] or nil
+        local currentLeader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader() or nil
+        if
+            pending
+            and pending.TargetKey == NormalizePlayerKey(sender)
+            and pending.SenderInstallationId ~= nil
+            and (pending.SenderInstallationId ~= auth.SenderInstallationId or pending.SenderSessionId ~= auth.SenderSessionId)
+            and NormalizePlayerKey(currentLeader) == NormalizePlayerKey(sender)
+        then
+            local changed = delegation:ReconcileOutgoingLeaderSession(self, auth)
+            if changed then
+                return false, "leader-session-changed"
+            end
+        end
+    end
+
     local channelValid, channelError, correlationKind, correlationRecord =
         ValidateChannelAndCorrelation(auth, channel, envelope, now)
     if not channelValid then
@@ -4162,27 +6170,7 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     end
 
     local action = RequiredAction(envelope.Type)
-    if not action or not SafeCanReceive(self, sender, action) then
-        return false, "unauthorized"
-    end
-    if envelope.Type == "VERSION_QUERY" and role ~= "leader" and role ~= "assistant" then
-        return false, "unauthorized"
-    end
-    -- An assistant may run version discovery, but only a leader-role query is a
-    -- display-authority signal. Assistant queries are pure diagnostics and never
-    -- rebind, retire, or advance tenure state.
-    local versionQueryFromLeader = envelope.Type == "VERSION_QUERY" and role == "leader"
-    if versionQueryFromLeader and not IsLocalDisplayAuthority(self) and IsRetiredDisplayAuthority(auth) then
-        return false, "stale-display-authority"
-    end
-    if
-        not IsLocalDisplayAuthority(self)
-        and (versionQueryFromLeader or LEADER_TENURE_MESSAGE_TYPES[envelope.Type])
-        and IsStaleDisplayAuthoritySignal(auth)
-    then
-        return false, "stale-display-authority"
-    end
-    if prefix == protocol.ACTIVE_PAGE_PREFIX and not SafeCanReceive(self, sender, "display") then
+    if not action then
         return false, "unauthorized"
     end
     if
@@ -4193,6 +6181,63 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     end
     if envelope.Type == "CHANGE_PROPOSE" and not ValidateChangeProposalTimestamp(envelope.SentAt) then
         return false, "stale-change-proposal"
+    end
+
+    local leaderReplacement = delegation:IsActualLeaderReplacement(self, auth, envelope)
+    if leaderReplacement and correlationKind == "display-request" then
+        local recovered, recoveryError =
+            delegation:RecoverFromCorrelatedLeaderReply(self, auth, envelope, correlationKind, correlationRecord)
+        if not recovered then
+            return false, recoveryError
+        end
+    elseif leaderReplacement then
+        delegation:RequestLeaderSessionRecovery(self, auth)
+    end
+
+    if not SafeCanReceive(self, sender, action) then
+        return false, "unauthorized"
+    end
+    if envelope.Type == "VERSION_QUERY" and role ~= "leader" and role ~= "assistant" then
+        return false, "unauthorized"
+    end
+    local versionQueryFromLeader = envelope.Type == "VERSION_QUERY" and role == "leader"
+    if versionQueryFromLeader then
+        local observed, observeError = delegation:ObserveLeaderSession(self, auth)
+        if not observed then
+            return false, observeError
+        end
+        delegation:ReconcileOutgoingLeaderSession(self, auth)
+    end
+    -- Assistant queries are diagnostics. A Blizzard-leader query becomes a
+    -- display-authority signal only when no exact delegated controller remains.
+    local versionQueryFromAuthority = envelope.Type == "VERSION_QUERY"
+        and (
+            delegation.Control and delegation:ControllerAuthMatches(auth)
+            or not delegation.Control and SafeCanReceive(self, sender, "display")
+        )
+    if versionQueryFromAuthority and not IsLocalDisplayAuthority(self) and IsRetiredDisplayAuthority(auth) then
+        return false, "stale-display-authority"
+    end
+    if
+        not IsLocalDisplayAuthority(self)
+        and (versionQueryFromAuthority or LEADER_TENURE_MESSAGE_TYPES[envelope.Type])
+        and IsStaleDisplayAuthoritySignal(auth)
+    then
+        return false, "stale-display-authority"
+    end
+    if prefix == protocol.ACTIVE_PAGE_PREFIX and not SafeCanReceive(self, sender, "display") then
+        return false, "unauthorized"
+    end
+    local correlatedControlRecovery = envelope.Type == "CONTROL_GRANT"
+        and correlationKind == "display-request-control"
+        and delegation.Control == nil
+        and delegation:IsRetiredLeader(auth)
+        and type(self.GetRaidLeader) == "function"
+        and NormalizePlayerKey(self:GetRaidLeader()) == NormalizePlayerKey(auth.Sender)
+    local controlOrderValid, controlOrderError =
+        delegation:ValidateLeaderOrder(auth, envelope, correlatedControlRecovery)
+    if not controlOrderValid then
+        return false, controlOrderError
     end
     local tenureValid, tenureError, bindDisplayAuthority =
         ValidateDisplayAuthorityTenure(self, auth, envelope, correlationKind)
@@ -4211,6 +6256,13 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
                 recoverySent = false
                 recoveryStatus = "display-request-failed"
             end
+        end
+        if
+            envelope.Type == "DISPLAY"
+            and IsCurrentGroupChannel(channel)
+            and (tenureError == "unbound-display-authority" or tenureError == "stale-display-authority")
+        then
+            RememberDisplayAuthorityHint(auth, now)
         end
         if debugEnabled and envelope.Type == "DISPLAY" then
             Trace(
@@ -4261,20 +6313,55 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
         return false, "duplicate"
     end
 
-    if versionQueryFromLeader then
+    if versionQueryFromAuthority then
         ObserveDisplayAuthoritySignal(auth)
     end
     local traceActivePage = debugEnabled and IsActivePageMessage(envelope.Type)
     local dispatchStarted = traceActivePage and PreciseNowMilliseconds() or 0
+    local correlatedRetiredLeaderRecovery = bindDisplayAuthority
+        and (IsRetiredDisplayAuthority(auth) or delegation:IsRetiredLeader(auth))
+        and delegation:CanRecoverRetiredLeader(self, auth, envelope, correlationKind)
     local authorityBootstrap = bindDisplayAuthority
         or (correlationRecord and correlationRecord.AuthorityBootstrap == true)
     local accepted, result, warning =
         self:DispatchProtocolMessage(auth, channel, envelope, correlationKind, authorityBootstrap)
+    if accepted and correlatedControlRecovery then
+        delegation:ReactivateLeader(auth)
+    end
+    if accepted and (envelope.Type == "CONTROL_GRANT" or envelope.Type == "CONTROL_REVOKE") then
+        delegation:CommitLeaderOrder(auth, envelope)
+    end
     if accepted and bindDisplayAuthority then
+        if correlatedRetiredLeaderRecovery then
+            ReactivateDisplayAuthority(auth)
+            delegation:ReactivateLeader(auth)
+            delegation:ObserveLeaderSession(self, auth, {
+                AcceptCurrentSequence = true,
+                AllowCorrelatedReplacement = true,
+                SuppressDisplayRequest = true,
+            })
+        end
         if correlationRecord then
             correlationRecord.AuthorityBootstrap = true
         end
-        BindDisplayAuthority(auth)
+        local bindingAuth = CopyMap(auth)
+        bindingAuth.MinimumSequenceExclusive = envelope.Sequence
+        BindDisplayAuthority(bindingAuth)
+    end
+    if
+        accepted
+        and correlationKind == "display-request"
+        and DisplayAuthorityMatches(auth)
+        and (envelope.Type == "DISPLAY" or envelope.Type == "PAGE_UPSERT")
+        and (
+            type(boundDisplayAuthority.MinimumSequenceExclusive) ~= "number"
+            or envelope.Sequence > boundDisplayAuthority.MinimumSequenceExclusive
+        )
+    then
+        boundDisplayAuthority.MinimumSequenceExclusive = envelope.Sequence
+    end
+    if accepted and role == "leader" then
+        delegation:ReconcileOutgoingLeaderSession(self, auth)
     end
     -- PAGE_UPSERT may establish the correlated identity before DISPLAY arrives,
     -- but its wire timestamp is not an authority freshness signal. Only

@@ -47,6 +47,9 @@ local softRoleSuggestions = true
 local ineligibleTankUnits = {}
 local roleAvailabilityFailures = 0
 local roleAvailabilityReads = 0
+local delegatedControl
+local rawDelegatedControl
+local delegatedControllerGuardOverride
 
 local function MemberByUnit(unit)
     local index = type(unit) == "string" and tonumber(unit:match("^raid(%d+)$")) or nil
@@ -180,6 +183,24 @@ function AngryEra:GetDisplayedNote()
     return currentSnapshot
 end
 
+function AngryEra:GetValidatedDelegatedRaidControl()
+    return delegatedControl
+end
+
+function AngryEra:GetDelegatedRaidControl()
+    return rawDelegatedControl or delegatedControl
+end
+
+function AngryEra:IsDelegatedRaidController(player)
+    if delegatedControllerGuardOverride ~= nil then
+        return delegatedControllerGuardOverride == true
+    end
+    return delegatedControl ~= nil
+        and type(delegatedControl.Controller) == "string"
+        and type(player) == "string"
+        and delegatedControl.Controller:lower() == player:lower()
+end
+
 function AngryEra:ScheduleTimer(method, delay, generation)
     nextTimerId = nextTimerId + 1
     timers[nextTimerId] = {
@@ -266,6 +287,9 @@ local function Reset()
     ineligibleTankUnits = {}
     roleAvailabilityFailures = 0
     roleAvailabilityReads = 0
+    delegatedControl = nil
+    rawDelegatedControl = nil
+    delegatedControllerGuardOverride = nil
 end
 
 local names = assert(raidAssignments.ParseNameList(" Tank , Assist-Home "))
@@ -379,6 +403,124 @@ currentSnapshot = Reference("tank-assistant", 1, { TANKS = "Assist", ASSISTS = "
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
 assert(members[5].Role == "TANK" and members[5].Rank == 1, "the same member may occupy both managed sets")
+
+-- During delegated control, the actual Blizzard leader remains the protected
+-- executor, but the complete exact plan must preserve the controller's
+-- explicit raid-assistant rank.
+Reset()
+members[5].Rank = 1
+delegatedControl = {
+    Controller = "Assist-Home",
+}
+currentSnapshot = Reference("delegated-controller-included", 1, {
+    TANKS = "Newtank",
+    ASSISTS = "Assist",
+})
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(members[5].Rank == 1, "a listed delegated controller must retain raid assistant")
+assert(members[3].Rank == 0, "extra assistants may still be demoted after controller validation")
+assert(members[4].Role == "TANK" and members[2].Role == "NONE", "the leader should execute delegated tanks")
+assert(#finished == 1 and finished[1].Success, "a controller-safe delegated plan should complete")
+
+-- Omitting the active controller fails the complete privileged plan before
+-- either the assistant list or otherwise-valid Tank changes mutate Blizzard.
+Reset()
+members[5].Rank = 1
+delegatedControl = {
+    Controller = "Assist-Home",
+}
+currentSnapshot = Reference("delegated-controller-omitted", 1, {
+    TANKS = "Newtank",
+    ASSISTS = "Healer",
+})
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0, "an omitted controller must block every assistant and Tank mutation")
+assert(members[2].Role == "TANK" and members[4].Role == "DAMAGER", "blocked delegated tanks stay unchanged")
+assert(members[5].Rank == 1, "the omitted controller must never be demoted")
+assert(
+    #finished == 1 and finished[1].Result == "delegated-controller-missing-from-assists",
+    "an omitted controller should report the stable safety error"
+)
+
+-- Everyone Is Assistant is ambiguous during a lease. The leader must not turn
+-- it off or partially apply another protected dimension on the controller's
+-- behalf.
+Reset()
+members[5].Rank = 1
+delegatedControl = {
+    Controller = "Assist-Home",
+}
+everyoneAssistant = true
+currentSnapshot = Reference("delegated-controller-everyone-assistant", 1, {
+    TANKS = "Newtank",
+    ASSISTS = "Assist",
+})
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0, "Everyone Is Assistant must block the complete delegated plan")
+assert(everyoneAssistant == true, "delegated validation must not silently change the global assistant mode")
+assert(members[2].Role == "TANK" and members[4].Role == "DAMAGER", "blocked delegated tanks stay unchanged")
+assert(
+    #finished == 1 and finished[1].Result == "delegated-controller-everyone-assistant",
+    "global assistant ambiguity should report the stable safety error"
+)
+
+-- A recovery barrier is still a raw lease. It must pause even a Tanks-only
+-- plan instead of silently falling back to the Blizzard leader.
+Reset()
+rawDelegatedControl = {
+    GrantId = "controller-grant-recovering",
+    PendingRecovery = true,
+}
+currentSnapshot = Reference("delegated-controller-recovering", 1, {
+    TANKS = "Newtank",
+})
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0, "an unvalidated raw lease must block a Tanks-only plan")
+assert(members[2].Role == "TANK" and members[4].Role == "DAMAGER", "paused recovery must preserve Tank roles")
+assert(
+    #finished == 1 and finished[1].Result == "delegated-controller-state-unvalidated",
+    "a recovering raw lease should report the stable authority-barrier error"
+)
+
+-- The same barrier covers an active-looking raw record that no longer
+-- validates, such as the controller losing explicit raid-assistant rank.
+Reset()
+rawDelegatedControl = {
+    Controller = "Assist-Home",
+    GrantId = "controller-grant-rank-lost",
+}
+currentSnapshot = Reference("delegated-controller-rank-lost", 1, {
+    TANKS = "Newtank",
+    ASSISTS = "Healer",
+})
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0, "an invalid unreconciled lease must block both protected dimensions")
+assert(members[2].Role == "TANK" and members[4].Role == "DAMAGER", "invalid control must preserve Tank roles")
+assert(members[3].Rank == 1 and members[5].Rank == 0, "invalid control must preserve assistant ranks")
+assert(
+    #finished == 1 and finished[1].Result == "delegated-controller-state-unvalidated",
+    "rank-loss state should report the stable authority-barrier error"
+)
+
+-- Retain a final point-of-use guard in case controller state changes after the
+-- plan preflight. Even then, the demotion API itself must never be invoked.
+Reset()
+delegatedControllerGuardOverride = true
+currentSnapshot = Reference("delegated-controller-last-moment", 1, {
+    ASSISTS = "",
+})
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0 and members[3].Rank == 1, "the point-of-use guard must block the controller demotion call")
+assert(
+    #finished == 1 and finished[1].Result == "delegated-controller-demotion-blocked",
+    "the point-of-use guard should report its stable safety error"
+)
 
 -- An empty assistant set still owns the dimension and disables the global
 -- Everyone Is Assistant mode before confirming the empty exact set.

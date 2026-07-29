@@ -316,6 +316,107 @@ local function RetryPendingMarkers()
     return applied
 end
 
+-- Freezes marker ownership when this client loses AngryEra authority. The
+-- currently displayed page remains canonical across a controller handoff, so
+-- its matching markers should remain visible. A later note change compares the
+-- new plan and clears only locally owned markers that are no longer requested.
+-- This avoids a cross-client race where the former authority could erase a
+-- marker just applied by the new authority.
+local function ReleaseOwnedMarkerPlans()
+    for markerIndex = 1, 8 do
+        local state = autoMarkerStates[markerIndex]
+        if state then
+            if state.OwnedIdentity == nil then
+                autoMarkerStates[markerIndex] = nil
+            else
+                state.CleanupOnly = true
+                state.NeedsOwnedCleanup = nil
+                state.Pending = false
+            end
+        end
+    end
+end
+
+-- Followers never apply marker plans. They retain unchanged ownership for the
+-- still-displayed page, but reconcile it away when a later canonical note no
+-- longer requests the same resolved plan.
+local function ReconcileFollowerOwnedMarkers(meta, vars, displayIdentity)
+    local plans = BuildMarkerPlans(meta, vars)
+    local canAssign = CanAssignRaidMarkers()
+    for markerIndex = 1, 8 do
+        local state = autoMarkerStates[markerIndex]
+        if state then
+            local plan = plans[markerIndex]
+            if state.OwnedIdentity == nil then
+                autoMarkerStates[markerIndex] = nil
+            elseif state.Plan and plan and MarkerPlansEqual(state.Plan, plan) then
+                state.Plan = plan
+                state.DisplayIdentity = displayIdentity
+                state.NeedsOwnedCleanup = nil
+                state.Pending = false
+            else
+                state.Plan = nil
+                state.ResolvedIdentity = nil
+                state.DisplayIdentity = displayIdentity
+                state.NeedsOwnedCleanup = true
+                state.Pending = true
+            end
+
+            if state.Pending and canAssign then
+                local _, remove = ReconcileMarkerState(markerIndex, state)
+                if remove then
+                    autoMarkerStates[markerIndex] = nil
+                end
+            end
+        end
+    end
+end
+
+-- Takes over an already-correct marker plan when this client becomes the new
+-- AngryEra authority. The marker itself is not rewritten. Explicit adoption is
+-- limited to authority handoffs: ordinary page application still refuses to
+-- claim a coincidentally matching manual marker. This lets the new controller
+-- clean the retained page's automatic markers later even if the former
+-- authority disconnects.
+local function AdoptMatchingMarkerPlans(meta, vars, displayIdentity)
+    local plans = BuildMarkerPlans(meta, vars)
+    for markerIndex = 1, 8 do
+        local plan = plans[markerIndex]
+        if plan then
+            local resolved = false
+            for _, choice in ipairs(plan) do
+                local unitToken, identity = FindRosterUnit(choice.Candidate)
+                if unitToken then
+                    resolved = true
+                    if (GetRaidTargetIndex(unitToken) or 0) == markerIndex then
+                        autoMarkerStates[markerIndex] = {
+                            CleanupOnly = nil,
+                            DisplayIdentity = displayIdentity,
+                            OwnedIdentity = identity,
+                            Pending = false,
+                            Plan = plan,
+                            ResolvedIdentity = identity,
+                        }
+                    end
+                    break
+                end
+            end
+            if not resolved then
+                -- The retained page may name someone who is not in the roster
+                -- yet. Keep only the retryable plan: there is no marker to
+                -- adopt and therefore no ownership to claim at handoff. If the
+                -- player later arrives already carrying this marker,
+                -- TryMarkerPlan treats it as an unowned manual no-op.
+                autoMarkerStates[markerIndex] = {
+                    DisplayIdentity = displayIdentity,
+                    Pending = true,
+                    Plan = plan,
+                }
+            end
+        end
+    end
+end
+
 --- Applies raid target markers named by displayed-note metadata.
 -- Marker keys are matched case-insensitively ($STAR through $SKULL, with $X
 -- and $CROSS both mapping to cross). A value resolves in order: `$name` reads
@@ -394,9 +495,40 @@ if AngryEra then
     -- Registered against ANGRYERA_NOTE_UPDATE so markers follow the display.
     -- @treturn number applied
     function AngryEra:ApplyDisplayedNoteMarkers()
+        if
+            (IsInRaid() or IsInGroup())
+            and type(self.IsLocalAngryEraAuthority) == "function"
+            and not self:IsLocalAngryEraAuthority()
+        then
+            local meta = type(self.GetDisplayedMeta) == "function" and self:GetDisplayedMeta() or nil
+            local vars = type(self.GetDisplayedVars) == "function" and self:GetDisplayedVars() or nil
+            ReconcileFollowerOwnedMarkers(meta, vars, DisplayedPageIdentity(self))
+            return 0
+        end
         local meta = type(self.GetDisplayedMeta) == "function" and self:GetDisplayedMeta() or nil
         local vars = type(self.GetDisplayedVars) == "function" and self:GetDisplayedVars() or nil
         return AngryEra_ApplyAutoMarkers(meta, vars, DisplayedPageIdentity(self))
+    end
+
+    --- Releases this client's automatic marker ownership after authority moves.
+    -- Matching markers remain visible for the retained display; a later note
+    -- change cleans only stale markers that this client originally assigned.
+    function AngryEra:ReleaseOwnedDisplayedNoteMarkers()
+        if
+            (IsInRaid() or IsInGroup())
+            and type(self.IsLocalAngryEraAuthority) == "function"
+            and self:IsLocalAngryEraAuthority()
+        then
+            for _, state in pairs(autoMarkerStates) do
+                state.CleanupOnly = nil
+            end
+            local meta = type(self.GetDisplayedMeta) == "function" and self:GetDisplayedMeta() or nil
+            local vars = type(self.GetDisplayedVars) == "function" and self:GetDisplayedVars() or nil
+            AdoptMatchingMarkerPlans(meta, vars, DisplayedPageIdentity(self))
+            return true
+        end
+        ReleaseOwnedMarkerPlans()
+        return true
     end
 
     --- Retries only displayed-note marker targets that have never resolved.
@@ -404,6 +536,13 @@ if AngryEra then
     -- reasserting markers that a player changed manually.
     -- @treturn number applied Count of markers newly assigned.
     function AngryEra:RetryDisplayedNoteMarkers()
+        if
+            (IsInRaid() or IsInGroup())
+            and type(self.IsLocalAngryEraAuthority) == "function"
+            and not self:IsLocalAngryEraAuthority()
+        then
+            return 0
+        end
         return RetryPendingMarkers()
     end
 end

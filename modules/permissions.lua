@@ -252,6 +252,8 @@ function AngryEra:GetValidatedDelegatedRaidControl()
         type(control) ~= "table"
         or type(control.Controller) ~= "string"
         or type(control.Leader) ~= "string"
+        or type(control.ControllerInstallationId) ~= "string"
+        or type(control.ControllerSessionId) ~= "string"
         or self:GetGroupRole(control.Controller) ~= "assistant"
     then
         return nil
@@ -295,7 +297,21 @@ function AngryEra:IsLocalAngryEraAuthority()
     if not IsGrouped() then
         return true
     end
-    return SamePlayer(self:GetAngryEraAuthority(), PlayerFullName())
+    local authority = self:GetAngryEraAuthority()
+    if not SamePlayer(authority, PlayerFullName()) then
+        return false
+    end
+    local control = self:GetValidatedDelegatedRaidControl()
+    if not control then
+        return true
+    end
+    if type(self.GetProtocolSession) ~= "function" then
+        return false
+    end
+    local session = self:GetProtocolSession()
+    return type(session) == "table"
+        and session.InstallationId == control.ControllerInstallationId
+        and session.SessionId == control.ControllerSessionId
 end
 
 --- Returns whether this receiver accepts an action from the authenticated sender.
@@ -333,7 +349,13 @@ function AngryEra:CanReceiveFrom(sender, action)
     if receiveMode == "leaderOnly" or LEADER_ONLY_ACTIONS[action] then
         return delegatedController or (not hasDelegatedControl and role == "leader")
     end
-    if delegatedController or role == "leader" then
+    if delegatedController then
+        return true
+    end
+    if hasDelegatedControl and role == "leader" then
+        return false
+    end
+    if role == "leader" then
         return true
     end
     return role == "assistant" and self:IsQualifiedAssistant(sender)
@@ -354,13 +376,19 @@ function AngryEra:CanLocalPlayerPublish(action)
     local player = PlayerFullName()
     local role = self:GetGroupRole(player)
     if action == "controlRequest" then
-        return role == "assistant" and self:IsQualifiedAssistant(player)
+        -- A requester cannot know the leader installation's trust policy.
+        -- Any raid assistant may attempt; the leader's CanReceiveFrom check is
+        -- the authoritative qualification gate.
+        return role == "assistant"
     end
     if action == "controlGrant" or action == "controlRevoke" or action == "controlResult" then
         return role == "leader"
     end
     if LEADER_ONLY_ACTIONS[action] then
         return self:IsLocalAngryEraAuthority()
+    end
+    if RawDelegatedRaidControl(self) ~= nil and role == "leader" then
+        return false
     end
     if role == "leader" then
         return true
@@ -401,9 +429,14 @@ function AngryEra:CanLocalPlayerApplyRaidLayout()
 
     local player = PlayerFullName()
     local role = self:GetGroupRole(player)
-    local delegatedControl = self:GetValidatedDelegatedRaidControl()
-    if delegatedControl then
-        return self:IsDelegatedRaidController(player)
+    local rawDelegatedControl = RawDelegatedRaidControl(self)
+    if rawDelegatedControl then
+        local delegatedControl = self:GetValidatedDelegatedRaidControl()
+        -- A pending or invalid lease is an authority barrier, not permission to
+        -- fall back to the Blizzard leader. This matches canonical publication:
+        -- layout mutations remain paused until the lease validates or is
+        -- explicitly cleared/reclaimed.
+        return delegatedControl ~= nil and self:IsDelegatedRaidController(player)
     end
     if role == "leader" then
         return true
@@ -422,13 +455,13 @@ function AngryEra:CanLocalPlayerApplyRaidLayout()
     return leader ~= nil and self:IsGuildMember(leader) and self:IsGuildOfficer(player)
 end
 
---- Returns whether an entity may be edited locally or proposed to the leader.
+--- Returns whether an entity may be edited locally or proposed to the authority.
 -- Unsynchronized and locally owned entities remain locally editable. A
 -- remote-owned page is editable only while its exact canonical tuple is the
 -- active shared display; cached background pages fail closed. Remote category
 -- name/variable editing waits for the future hierarchy-proposal protocol, while
 -- receiver-private CategoryId/Index placement remains a separate local action.
--- Only the leader publishes the resulting canonical page revision.
+-- Only the current AngryEra authority publishes the canonical page revision.
 function AngryEra:CanEditEntityLocally(entity)
     if not entity then
         return false
@@ -452,7 +485,7 @@ function AngryEra:CanEditEntityLocally(entity)
         return false
     end
 
-    -- The current leader may canonically edit a cached background page using
+    -- The current authority may canonically edit a cached background page using
     -- its retained authoritative wire hierarchy. Non-canonical publishers are
     -- limited to proposals for the exact active tuple.
     local commitChecked, canCommitPage = pcall(self.CanLocalPlayerPublish, self, "pageUpsert")
@@ -486,7 +519,7 @@ function AngryEra:IsPlayerRaidLeader()
     return self:GetGroupRole(PlayerFullName()) == "leader"
 end
 
---- Returns whether this receiver accepts shared display/page state from its leader.
+--- Returns whether this receiver accepts shared display/page state from its authority.
 function AngryEra:IsValidRaid()
     if not IsGrouped() then
         return true
@@ -521,6 +554,9 @@ end
 -- Protocol discovery and display recovery belong to explicit group lifecycle
 -- boundaries; routine roster and guild events must not generate sync traffic.
 function AngryEra:PermissionsUpdated()
+    if AngryEra._protocolStarted and type(self.ReconcileDelegatedRaidControl) == "function" then
+        pcall(self.ReconcileDelegatedRaidControl, self, "permission-policy-updated")
+    end
     self:UpdateSelected()
 end
 
@@ -530,12 +566,43 @@ end
 -- @treturn boolean requestedOrNotNeeded
 -- @treturn string|nil messageIdOrStatus
 function AngryEra:ReceiveModeUpdated(previousMode)
+    local receiveMode = self:GetConfig("receiveMode")
+    local control = RawDelegatedRaidControl(self)
+    local localPlayer = PlayerFullName()
+    local localController = receiveMode == "ignoreShared"
+        and control ~= nil
+        and SamePlayer(control.Controller, localPlayer)
+        and type(self.IsLocalAngryEraAuthority) == "function"
+        and self:IsLocalAngryEraAuthority()
+    if localController then
+        -- The active controller cannot opt out of the state it canonically
+        -- publishes. Revert the already-written setting instead of stranding
+        -- every follower behind an authority that ignores its own stream.
+        self:SetConfig("receiveMode", previousMode)
+        self:PermissionsUpdated()
+        if type(self.Print) == "function" then
+            self:Print(
+                "The active Raid Controller must accept shared changes. Ask the raid leader to reclaim Raid Control first."
+            )
+        end
+        return false, "raid-controller-sharing-required"
+    end
+
+    local localLeader = receiveMode == "ignoreShared"
+        and control ~= nil
+        and SamePlayer(control.Leader, localPlayer)
+        and self:GetGroupRole(localPlayer) == "leader"
+    if localLeader and AngryEra._protocolStarted and type(self.ReconcileDelegatedRaidControl) == "function" then
+        local called, reconciled = pcall(self.ReconcileDelegatedRaidControl, self, "raid-leader-ignore-shared")
+        self:UpdateSelected()
+        if called and reconciled == true and RawDelegatedRaidControl(self) == nil then
+            return true, "raid-controller-revoked"
+        end
+        return false, "raid-controller-revoke-pending"
+    end
+
     self:PermissionsUpdated()
-    if
-        AngryEra._protocolStarted
-        and previousMode == "ignoreShared"
-        and self:GetConfig("receiveMode") ~= "ignoreShared"
-    then
+    if AngryEra._protocolStarted and previousMode == "ignoreShared" and receiveMode ~= "ignoreShared" then
         return self:SendRequestDisplay()
     end
     return false, "not-needed"
