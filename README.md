@@ -10,20 +10,21 @@ Supported game clients:
 > [!IMPORTANT]
 > **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.2.2 features—including priority assignments, group layouts, variable families, imported raid-role variables, automatic raid-tank and raid-assistant assignments, and the Key=Value `$true`/`$false` boolean literals—require v3.2.2 or newer on every client that must interpret them. Pages using only features common to v3.1 remain compatible with v3.1.x clients. Existing local pages and settings are migrated automatically for the v3.1 data model, but Key=Value automation flags are not rewritten: replace legacy `=true` and `=false` flag values with `=$true` and `=$false`, respectively. Downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
 
-Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. For a production raid that uses any v3.2 feature, update every participating client to AngryEra v3.2.2 or newer.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. For a production raid that uses any v3.2 feature, update every participating client to AngryEra v3.2.2 or newer. Delegated Raid Control requires v3.3.0-BETA or newer: a known participating AngryEra client that accepts shared changes but lacks delegated-control support blocks a grant rather than allowing two clients to act as authority.
 
 ## What is new
 
 - **Fast, ordered shared displays:** page changes arrive quickly, rapid navigation publishes the final selection, and older delayed changes cannot replace the newest page.
-- **Automatic recovery:** late joiners and reloaded clients retrieve the leader's current page, and display control follows a raid-leader change.
-- **Safer shared editing:** only the current leader commits shared changes. Qualified raid assistants can submit edits to the exact active page without directly overwriting it.
+- **Automatic recovery:** late joiners and reloaded followers retrieve the current Raid Controller's page, while leadership and controller-session changes safely re-establish one authority.
+- **Delegated Raid Control:** each raid can manually grant one qualified assistant complete AngryEra control, using that controller's own library and page order while the Blizzard leader keeps protected leader-only duties.
+- **Safer shared editing:** the current AngryEra authority commits shared changes. Other qualified raid assistants can submit edits to the exact active page without directly overwriting it.
 - **Inherited variables:** variables flow through nested categories to their pages, with the closest category or page value winning.
 - **Composable variable families:** combine numbered class, role, or assignment lists into reusable outputs such as `HEALER1...N` and `MELEE1...N`.
 - **Assigned-role import:** take an on-demand snapshot of Blizzard's Tank, Healer, and Damage assignments as numbered `RAID_TANK1...N`, `RAID_HEALER1...N`, and `RAID_DPS1...N` variables.
-- **Automatic raid roles and permissions:** inherited `$TANKS` and `$ASSISTS` lists let the leader keep Blizzard's assigned Tanks and actual raid assistants synchronized with the displayed page.
+- **Automatic raid roles and permissions:** inherited `$TANKS` and `$ASSISTS` lists let the actual Blizzard leader keep assigned Tanks and raid assistants synchronized with the controller's displayed page.
 - **Page metadata:** `$` variables can drive automatic raid markers, encounter advancement, WeakAuras, and other addons.
 - **Automatic raid markers:** display a page and AngryEra can mark the assigned players.
-- **Boss-kill auto-advance:** after a successful encounter, the leader can automatically display the next page in the category.
+- **Boss-kill auto-advance:** after a successful encounter, the current Raid Controller can automatically display the next page in the category.
 - **Displayed-note API:** WeakAuras and other addons can read the active note, resolved variables, metadata, and hierarchy.
 - **Safer restore workflow:** choosing an older page version loads it as a draft; nothing changes until you click **Save**.
 - **Safer imports and migration:** imported data is bounded and validated, and existing pages and settings are migrated automatically.
@@ -33,7 +34,7 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Optional received-page cleanup:** remove pages received from other leaders at login or on demand while retaining protected local data.
 - **Optional hover auto-hide:** fade the assignment away when idle and reveal it on hover or whenever displayed content changes.
 - **Optional combat fade:** keep a visible assignment at 10% opacity in combat without changing its manual visibility or interrupting the current auto-hide and page-reveal state.
-- **Raid group layouts:** build inherited, roster-aware subgroup plans, render them inside notes, and apply or safely queue validated layouts—including leader-only display-transition application through `$AUTOAPPLYLAYOUT`.
+- **Raid group layouts:** build inherited, roster-aware subgroup plans, render them inside notes, and apply or safely queue validated layouts—including controller-only display-transition application through `$AUTOAPPLYLAYOUT`.
 
 ## Quick start
 
@@ -45,7 +46,7 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 4. Use `/ae lock` or the **Toggle Lock** keybinding to show the display mover.
 5. Drag the display into position, resize it from the red strip, choose whether it grows upward or downward, and lock it again.
 
-When the group leader displays an assignment, it appears automatically. Reloading, reconnecting, or joining late retrieves the current page again.
+When the current AngryEra authority displays an assignment, it appears automatically. Reloading, reconnecting, or joining late retrieves the current page again.
 
 ### For raid and party leaders
 
@@ -54,12 +55,30 @@ When the group leader displays an assignment, it appears automatically. Reloadin
 3. Select a page and click **Send**. Double-clicking a page in the tree does the same thing.
 4. Use the **Previous Page**, **Next Page**, and **First Page** keybindings to navigate the category containing the actively displayed page.
 5. Use **Menu > Clear Page** or `/ae clear` to clear the shared display.
+6. In a raid, review qualified-assistant Raid Control requests from **Menu** and choose **Grant Control** or **Decline**. Use **Reclaim Raid Control** when leadership should return to your AngryEra client.
 
-Only the current party or raid leader selects and clears the shared display. Leadership transfers automatically when the group leader changes.
+The party leader controls party sharing. In a raid, the Blizzard leader controls AngryEra until explicitly granting one Raid Controller; the leader remains able to reclaim it.
 
 ### For raid assistants
 
-Raid assistants can output assignments to chat. Qualified assistants can also edit the exact active shared page when the leader's permission settings accept them and manually apply a validated raid layout. Raid assist alone does not enable either action by default. See [Shared pages and permissions](#shared-pages-and-permissions).
+Raid assistants can output assignments to chat and submit a Raid Control request. The Blizzard leader's local permission policy determines whether that request qualifies for a grant. Qualified assistants can also edit the exact active shared page when the current AngryEra authority's permission settings accept them and manually apply a validated raid layout. Raid assist alone does not enable those editing or layout actions, and it does not guarantee that Raid Control can be granted. See [Shared pages and permissions](#shared-pages-and-permissions).
+
+### Delegating a Raid Controller
+
+Raid Control is useful when the Blizzard raid leader exists only for instance ownership or lockout handling and another player runs assignments. It is deliberately manual and session-bound:
+
+1. Give the intended controller raid assistant.
+2. The assistant chooses **Menu > Request Raid Control** or runs `/ae control request`.
+3. The Blizzard raid leader reviews **Menu > Review Request: Name** and explicitly chooses **Grant Control** or **Decline**.
+4. The leader later uses **Menu > Reclaim Raid Control** or `/ae control reclaim`. Anyone can run `/ae control` to see the current authority.
+
+Only one controller may be active, and the grant applies only to the current raid. The controller's own categories, pages, and saved page order become canonical; the Blizzard leader does not need to import or maintain a matching library. The controller receives complete AngryEra operational control, including Send, Clear, Previous/Next/First navigation, active-page editing, encounter auto-advance, layouts, automatic markers, and page-driven automation.
+
+Granting control does not automatically display the controller's selected page or clear the existing assignment. The current display stays visible until the controller deliberately changes it. Reclaiming likewise does not import the controller's library or select a page for the leader; the display remains until the leader changes or clears it.
+
+The Blizzard leader still performs protected leader-only game operations. When the controller displays a page containing `$TANKS` or `$ASSISTS`, the actual leader's AngryEra client executes the required Blizzard API calls. While control is delegated, a managed `$ASSISTS` list must explicitly include the controller and **Everyone Is Assistant** must already be off. AngryEra fails closed rather than demoting its controller or applying an ambiguous assistant list.
+
+While a grant remains valid, there is no implicit takeover or reclaim: only the Blizzard leader's explicit **Reclaim Raid Control** action returns normal control. Safety invalidation resets Raid Control when the Blizzard leader changes, the relevant AngryEra leader/controller session changes, the group changes, the controller loses raid assistant, or the actual leader switches to **Ignore Shared Changes**. The assistant must request control and the current leader must grant it again; AngryEra never grants or regrants it automatically. A controller who is temporarily offline remains controller, with shared changes paused until they return or the leader explicitly reclaims control. Known participating AngryEra clients older than v3.3.0-BETA block the grant; update every addon user who should participate in delegated control before the raid.
 
 ## Shared pages and permissions
 
@@ -69,7 +88,7 @@ AngryEra shares the active assignment page and the category-variable context nee
 
 Your local pages, categories, placement, imports, exports, and private organization remain yours. To give someone a complete page or category for their own library, use **Export > Encoded AA** and have them import it.
 
-If a displayed page is new to your installation, it appears unfiled. You may organize or delete that received page locally; later shared revisions preserve your local placement. If the leader displays a page you deleted, AngryEra can receive it again.
+If a displayed page is new to your installation, it appears unfiled. You may organize or delete that received page locally; later shared revisions preserve your local placement. If the current Raid Controller displays a page you deleted, AngryEra can receive it again.
 
 To keep a received page during cleanup, right-click it and choose **Pin**. You can also pin a category, which protects received pages anywhere in that category's subtree. Pinning is local to your installation and does not change shared data; right-click the item again and choose **Unpin** to remove that protection.
 
@@ -77,35 +96,35 @@ On the first upgrade to v3.2, AngryEra automatically pins your topmost locally o
 
 Every pinned item carries a gold favorite-star icon. At each level of the tree, pinned categories appear first, followed by pinned pages, then a divider and the remaining unpinned items in their existing manual order. Nested pages remain inside their categories. The gray `‡` suffix means that an item has variables or metadata; it is not the pin indicator. Pin or unpin an item before dragging it across these fixed sections; dropping into a category remains available. Pin sorting changes only the library view—Previous, Next, and First continue to follow the saved manual page order.
 
-Shared page changes are fast and ordered. If the leader rapidly presses Previous and Next, followers move to the final selection instead of replaying obsolete intermediate pages.
+Shared page changes are fast and ordered. If the current Raid Controller rapidly presses Previous and Next, followers move to the final selection instead of replaying obsolete intermediate pages.
 
 ### Who may change a shared page
 
-The current leader is always the final authority. A raid assistant may submit a non-destructive edit only to the exact page currently displayed. Under the default policy, that assistant must also be one of the following:
+The Blizzard leader owns the decision to grant or reclaim Raid Control. The leader is AngryEra's canonical publisher when no controller is delegated; while a grant is active, that one controller is the canonical publisher. Any other raid assistant may submit a non-destructive edit only to the exact page currently displayed. Under the default policy, that assistant must also be one of the following:
 
-- a guild officer or higher in the leader's guild;
-- listed in the leader's **Trusted Assistants** setting; or
-- covered by the leader's **Allow All Raid Assistants** option.
+- a guild officer or higher in the current authority's guild;
+- listed in the current authority's **Trusted Assistants** setting; or
+- covered by the current authority's **Allow All Raid Assistants** option.
 
 Officer status without raid assist is not enough. Raid assist alone is not enough by default, and a name in **Trusted Assistants** still needs raid assist.
 
-The leader processes simultaneous edits in order and shares each accepted result. If the active page changes, the leader changes, or another edit wins, AngryEra keeps the assistant's text visible as a recoverable draft instead of silently discarding it.
+The current Raid Controller processes simultaneous edits in order and shares each accepted result. If the active page or authority changes, or another edit wins, AngryEra keeps the assistant's text visible as a recoverable draft instead of silently discarding it.
 
-Assistant edits are limited to the active page's name, variables, and contents. They do not grant permission to select or clear the display, edit categories or background received pages, reorder shared data, or perform shared deletions. Party sharing is leader-only because parties do not have a raid-assistant role.
+Ordinary assistant edits are limited to the active page's name, variables, and contents. They do not grant permission to select or clear the display, edit categories or background received pages, reorder shared data, or perform shared deletions. A manually granted Raid Controller is the explicit exception and has full AngryEra control for that raid. Party sharing remains leader-only because parties do not have a raid-assistant role.
 
-`$TANKS` and `$ASSISTS` are privileged metadata because they can change Blizzard raid roles and raid authority. A qualified assistant's proposal cannot change either effective value, including through an ordinary variable referenced by one of them. The current raid leader must make those changes directly.
+`$TANKS` and `$ASSISTS` are privileged metadata because they can change Blizzard raid roles and raid authority. An ordinary qualified-assistant proposal cannot change either effective value, including through an ordinary variable referenced by one of them. A granted controller may define the canonical values, but only the actual Blizzard leader's client executes the protected game changes.
 
 ### Permission settings
 
 Open `/ae` and find **Permissions**:
 
 - **Leader + Qualified Assistants** is the default. It accepts the leader plus assistants who meet the rules above.
-- **Leader Only** rejects assistant edits. The leader still controls the shared page normally.
+- **Leader Only** rejects ordinary assistant edits. The current Raid Controller still controls the shared page normally.
 - **Ignore Shared Changes** keeps this installation private and ignores group-shared page changes and displays.
 - **Allow All Raid Assistants** trusts every raid assistant for non-destructive active-page edits. It is off by default and should be used carefully when assist is handed out broadly.
 - **Trusted Assistants** accepts `Name-Realm` entries separated by spaces or commas. Prefer full names when players may be from different realms.
 
-These settings never let an assistant select or clear the shared display.
+These settings alone never let an assistant select or clear the shared display. Raid Control is a separate, explicit, per-raid grant from the Blizzard leader; **Ignore Shared Changes** remains incompatible with serving as controller. AngryEra rejects that mode while you are the active controller. If the actual leader selects it during a grant, the grant is revoked so the raid cannot retain an authority that its leader refuses to follow.
 
 ## Editor guide
 
@@ -122,6 +141,7 @@ The **Menu** button provides:
 - **Manage Pages**
 - **Wipe Unpinned**, which permanently removes every unpinned page and category after confirmation
 - **Clear Page**, which clears the current display
+- **Raid Controller: Name**, followed by the action available to your role: **Request Raid Control**, **Review Request: Name**, or **Reclaim Raid Control**
 
 **Wipe Unpinned** applies to the complete local library, including pages you created or imported—not only pages received from other players. A pinned page is kept. A pinned category keeps its complete nested category/page subtree, even when descendants are not pinned individually. If a kept pin sits beneath an unpinned category that is removed, AngryEra moves that kept item to the nearest surviving category or the library root.
 
@@ -131,20 +151,20 @@ Right-click a page or category to rename it, delete it, edit variables, export i
 
 | Control | What it does |
 | --- | --- |
-| **Save** | Saves the editor draft. Local pages save locally; on the active shared page, the leader commits the change and a qualified assistant submits it to the leader. |
+| **Save** | Saves the editor draft. Local pages save locally; on the active shared page, the current Raid Controller commits the change and another qualified assistant submits it to that controller. |
 | **Revert** | Discards the visible draft and reloads the current stored page. |
 | **Restore** | Opens up to ten prior content versions. Selecting one loads only its contents as an unsaved draft; click **Save** to keep it. |
 | **Output** | Sends the page selected in the editor to group chat without changing the shared display. |
 | **Highlight** | Inserts class-color codes around recognized raid and guild names and saves the updated page immediately. |
-| **Send** | Displays the page selected in the editor. While grouped, only the current leader can use it. |
+| **Send** | Displays the page selected in the editor. While grouped, only the current Raid Controller can use it. |
 
 If another update arrives while you are editing, AngryEra warns you and leaves your draft visible. Click **Revert** to load the received version, or keep working and **Save** again.
 
 ### Local and shared editing
 
 - Your locally owned pages remain editable while solo or grouped.
-- A leader can edit and republish shared pages.
-- An assistant can edit only the exact active shared page and only when the leader accepts that assistant.
+- The current Raid Controller can edit and republish shared pages.
+- An ordinary assistant can edit only the exact active shared page and only when the controller's permission policy accepts that assistant.
 - Received background pages and received categories remain read-only.
 - Private category placement and organization remain local.
 
@@ -164,7 +184,7 @@ Keybindings under **Angry Era**:
 
 Previous, Next, and First Page start from the actively displayed page and stay within its category. **First Page** jumps to the first page in that category; pressing it again returns to the page it left when possible.
 
-While grouped, only the leader's navigation changes the shared display. Rapid navigation is coalesced so the group settles on the leader's latest choice.
+While grouped, only the current Raid Controller's navigation changes the shared display. Rapid navigation is coalesced so the group settles on that controller's latest choice.
 
 The output source depends on how you invoke it:
 
@@ -404,14 +424,14 @@ Metadata can also appear in page text. It is excluded from automatic word highli
 | `$AUTOADVANCE` | Enable or disable boss-kill advancement for the effective page. |
 | `$ENCOUNTER` / `$ENCOUNTERID` | Bind an auto-advance page to an encounter name or numeric ID. |
 | `$LAYOUT` | Define the effective named raid subgroup layout. |
-| `$AUTOAPPLYLAYOUT` | After the initial display state is recorded, let the raid leader apply a different destination page's effective layout. |
+| `$AUTOAPPLYLAYOUT` | After the initial display state is recorded, let the Raid Controller apply a different destination page's effective layout. |
 | `$TANKS` | Keep Blizzard's assigned Tank role equal to an inherited comma-separated list. |
 | `$ASSISTS` | Keep actual raid-assistant rank equal to an inherited comma-separated list. |
 | Other custom `$KEY` values | Expose inherited metadata to WeakAuras or another addon. Importer-managed `$AE_RAID_ROSTER` remains private. |
 
 ### Automatic raid tanks and assistants
 
-`$TANKS` and `$ASSISTS` let the raid leader apply the roles and authority required by the exact displayed page:
+`$TANKS` and `$ASSISTS` let the actual Blizzard raid leader apply the roles and authority required by the exact displayed page, including a page selected by a delegated controller:
 
 ```text
 MT=Zessy
@@ -430,11 +450,11 @@ Both values inherit like other metadata. Put the normal roster on a category and
 - An explicit empty `$TANKS=` clears every assigned Tank by setting only those players to None; existing Healer and Damage roles are left unchanged.
 - An explicit empty `$ASSISTS=` clears every raid assistant.
 
-When `$TANKS` is present, AngryEra assigns Tank to the listed players and removes Tank from unlisted players. It never replaces an unlisted player's existing Healer or Damage role. When `$ASSISTS` is present, AngryEra first turns off Blizzard's **Everyone Is Assistant** option, then promotes listed players before demoting unlisted assistants until the list matches exactly.
+When `$TANKS` is present, AngryEra assigns Tank to the listed players and removes Tank from unlisted players. It never replaces an unlisted player's existing Healer or Damage role. When `$ASSISTS` is present without delegated control, AngryEra first turns off Blizzard's **Everyone Is Assistant** option, then promotes listed players before demoting unlisted assistants until the list matches exactly.
 
 Names may be literal or come from resolved variables. A short name is accepted only when it identifies exactly one current raid member; use `Name-Realm` for a rare duplicate. If any requested name is missing or ambiguous, AngryEra does not guess. If any ancestor or page variable source cannot be resolved completely, both privileged actions fail closed instead of using a page-only fallback. Do not include the current raid leader in `$ASSISTS`; the leader already has raid authority and cannot also hold assistant rank.
 
-Only the current raid leader performs this automation. An already-correct roster stays silent. If the display changes repeatedly, unissued work is superseded by the latest exact page and inherited context. A Blizzard change that was already issued may settle, but AngryEra rechecks and compensates against the newest exact display before continuing. Changes that cannot run during combat wait until combat ends, then apply only if that same page and context are still current; another page replaces or cancels the older unissued request.
+Only the current Blizzard raid leader performs these protected API calls. A delegated controller owns the page, variables, and desired values, but the actual leader's client validates and executes them. While control is delegated, `$ASSISTS` must explicitly include the controller and **Everyone Is Assistant** must already be off; otherwise the complete privileged plan fails closed before changing anyone. An already-correct roster stays silent. If the display changes repeatedly, unissued work is superseded by the latest exact page and inherited context. A Blizzard change that was already issued may settle, but AngryEra rechecks and compensates against the newest exact display before continuing. Changes that cannot run during combat wait until combat ends, then apply only if that same page and context are still current; another page replaces or cancels the older unissued request.
 
 `RAID_TANK1...N` variables created by **Import Assigned Raid Roles** are still a manual snapshot. Changing live Tanks through `$TANKS` does not rewrite them; import again and save when you want a fresh snapshot.
 
@@ -468,8 +488,7 @@ When the page is displayed, AngryEra resolves the assignments and applies the re
 - An exact `Name-Realm` match wins.
 - A short name is used only when it uniquely identifies one group member.
 - Ambiguous short names are skipped instead of guessed.
-- Only the leader or a raid assistant applies automatic markers in a raid.
-- Any party member may apply them in a party.
+- Only the current Raid Controller applies automatic markers while grouped.
 - Missing roster members are retried when roster information changes.
 
 When the display changes or clears, AngryEra removes only stale markers that it assigned. It does not remove a matching marker that already existed, and it does not fight a marker someone changes manually.
@@ -503,7 +522,7 @@ To advance assignments after boss kills:
    $AUTOADVANCE=$false
    ```
 
-Only the current group leader advances the shared display. Successful kills advance; wipes do not. Auto-advance uses locally owned sibling pages inside one category; it does not infer a sequence from root-level, unfiled, or received remote-owned pages. Advancement stops when there is no next page. Duplicate encounter names or IDs are treated as ambiguous and do not advance.
+Only the current Raid Controller advances the shared display. Successful kills advance; wipes do not. Auto-advance uses that controller's locally owned sibling pages inside one category; it does not infer a sequence from root-level, unfiled, or received remote-owned pages. Advancement stops when there is no next page. Duplicate encounter names or IDs are treated as ambiguous and do not advance.
 
 ### Group layouts
 
@@ -541,7 +560,7 @@ Edit it from the page's or the category's right-click menu → **Edit Group Layo
 
 Escape and the close button dismiss only the Group Layout editor, leaving the main AngryEra window open. If its layout or inheritance choice has unsaved changes, AngryEra asks before discarding them; canceling keeps the draft intact. As in Edit Variables, the primary button reads **Close** for a clean draft, changes to **Save** after any layout edit, and returns to **Close** without closing the window after a successful save.
 
-The Variables column shows the unused effective string variables inherited by the page or category being edited. For an actively displayed received page, AngryEra uses the leader's authoritative shared inheritance context rather than that page's placement in your local tree. Dragging one into a subgroup stores its exact token, such as `{{MT}}`, rather than the player name it currently resolves to, so the layout stays dynamic when that variable changes. Once a token is used, it disappears from the column; other variables that currently resolve to the same assigned player disappear too. Moving the slot keeps those entries unavailable, while removing it makes eligible variables available again. Manually typed and text-mode layouts are validated against the same no-duplicate rule when saved. Numeric variables are not offered as whole-slot entries, but remain available inside expressions you type manually, such as `*MAGE x{{Count}}`.
+The Variables column shows the unused effective string variables inherited by the page or category being edited. For an actively displayed received page, AngryEra uses the current Raid Controller's authoritative shared inheritance context rather than that page's placement in your local tree. Dragging one into a subgroup stores its exact token, such as `{{MT}}`, rather than the player name it currently resolves to, so the layout stays dynamic when that variable changes. Once a token is used, it disappears from the column; other variables that currently resolve to the same assigned player disappear too. Moving the slot keeps those entries unavailable, while removing it makes eligible variables available again. Manually typed and text-mode layouts are validated against the same no-duplicate rule when saved. Numeric variables are not offered as whole-slot entries, but remain available inside expressions you type manually, such as `*MAGE x{{Count}}`.
 
 Drag an unrostered name into a box to place it, drag between boxes to move or swap a slot, and drag onto another member to insert ahead of them — or to swap, if the destination subgroup is already full. Drag a member back onto the Unrostered list, drop them outside the window, or right-click them to take them out; releasing on empty space inside the window cancels instead, so a misaimed drag never quietly removes anyone.
 
@@ -557,7 +576,7 @@ Tick **Inherit layout** to preview and use the nearest ancestor category layout.
 
 In a full 40-player raid, AngryEra rearranges full subgroups with swaps instead of attempting to add a sixth member. It prioritizes reciprocal exchanges that place both players at once, then the shortest remaining subgroup cycles, before using an unbound roster member as a filler. This reduces protected raid calls while keeping every intermediate subgroup valid.
 
-The raid leader may always apply it. A raid assistant must also be an officer in the current raid leader's guild, be listed in **Trusted Assistants** on that installation, or have **Allow All Raid Assistants** enabled there. This local check means routinely granting assist to an entire raid does not enable the action for everyone by default.
+Without delegated control, the raid leader may always apply it. A raid assistant must also be an officer in the current raid leader's guild, be listed in **Trusted Assistants** on that installation, or have **Allow All Raid Assistants** enabled there. This local check means routinely granting assist to an entire raid does not enable the action for everyone by default. While Raid Control is delegated, only that controller may start a manual or automatic layout apply.
 
 The editor button saves and applies only the exact page currently displayed. After editing a category layout, display a descendant page that inherits it and use `/ae applylayout`, or open that displayed page's layout editor. `/ae applylayout` always applies the layout resolved by the actively displayed page.
 
@@ -569,9 +588,9 @@ To apply layouts automatically as pages change, right-click a page or category, 
 $AUTOAPPLYLAYOUT=$true
 ```
 
-`$AUTOAPPLYLAYOUT` inherits like `$LAYOUT` and is off when absent or `$false`. Put it on a category to enable automatic layouts for its descendants, or set `$AUTOAPPLYLAYOUT=$false` on a page or nearer category to disable it there. When a different page with an effective `$true` value becomes the shared display, the raid leader automatically requests that destination page's effective layout using the same combat queue and validation.
+`$AUTOAPPLYLAYOUT` inherits like `$LAYOUT` and is off when absent or `$false`. Put it on a category to enable automatic layouts for its descendants, or set `$AUTOAPPLYLAYOUT=$false` on a page or nearer category to disable it there. When a different page with an effective `$true` value becomes the shared display, the current Raid Controller automatically requests that destination page's effective layout using the same combat queue and validation.
 
-AngryEra first records an initial display state. After that, transitioning from no displayed page or another page to a page with a different identity can apply the destination layout. The initial state itself does not rearrange the raid, and saving, rerendering, or receiving a new revision of that same page does not trigger automatic application. After editing the current layout, use **Apply** if it should move the raid immediately. A destination page without an effective `$LAYOUT` is a quiet no-op. Qualified raid assistants remain manual-only and must use **Apply** or `/ae applylayout`.
+AngryEra first records an initial display state. After that, transitioning from no displayed page or another page to a page with a different identity can apply the destination layout. The initial state itself does not rearrange the raid, and saving, rerendering, or receiving a new revision of that same page does not trigger automatic application. After editing the current layout, use **Apply** if it should move the raid immediately. A destination page without an effective `$LAYOUT` is a quiet no-op. Ordinary qualified raid assistants remain manual-only when control is not delegated; the controller owns automatic application during a grant.
 
 During combat, only the exact current page, revision, and inherited context remain queued. Selecting another enabled page discards the older queued layout and queues the newer one; selecting a page where `$AUTOAPPLYLAYOUT` is false cancels the older request without replacing it.
 
@@ -700,11 +719,14 @@ Adding `Group` to **Highlight** emphasizes your current group token, such as `G2
 | `/ae window` | Toggle the editor window. |
 | `/ae toggle` | Toggle the assignment display. |
 | `/ae lock` | Show or hide the display mover. |
-| `/ae send <exact page name>` | Display a page by its exact name. |
-| `/ae clear` | Clear the shared display as leader, or the local display otherwise. |
+| `/ae send <exact page name>` | Display a page by its exact name when you are the current Raid Controller. |
+| `/ae clear` | Clear the shared display when you are the current Raid Controller. |
 | `/ae first` | Toggle to or from the first page in the active category. |
 | `/ae output` | Output the actively displayed page to group chat. |
 | `/ae applylayout` | Apply the exact displayed page's validated group layout. In combat, queue it until combat ends and cancel it if that page, revision, or inherited context changes. |
+| `/ae control` | Show the current Raid Controller and grant state. |
+| `/ae control request` | Request Raid Control as a raid assistant; the leader evaluates qualification. |
+| `/ae control reclaim` | Return Raid Control to your client as the actual Blizzard raid leader. |
 | `/ae migratepins` | Safely re-run the additive locally owned category pin migration. Existing pins are never removed. |
 | `/ae version` | Check AngryEra versions in the current party or raid. Available to the leader and raid assistants. |
 | `/ae resetposition` | Reset the assignment display position and size. |
@@ -718,22 +740,31 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 
 ### A raider does not receive the displayed page
 
-1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). If the page uses any v3.2 feature, confirm every client that must interpret it is running AngryEra v3.2.2 or newer.
-2. Confirm the sender is the current party or raid leader.
+1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). If the page uses any v3.2 feature, confirm every client that must interpret it is running AngryEra v3.2.2 or newer. Delegated raids should use v3.3.0-BETA or newer throughout.
+2. Run `/ae control` and confirm the sender is the reported Raid Controller.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
 4. Have the leader or a raid assistant run `/ae version` in the group.
 5. Reload the affected client. It should request the active page automatically.
 6. If needed, enable `/ae debug on`, reproduce one page change, then disable it with `/ae debug off`.
+
+### Raid Control cannot be granted or unexpectedly resets
+
+- The requester must currently have raid assistant and qualify through guild officer rank, **Trusted Assistants**, or **Allow All Raid Assistants**.
+- Confirm the requester is not using **Ignore Shared Changes**.
+- Have every participating AngryEra user who accepts shared changes update to v3.3.0-BETA or newer. A known older participating client blocks the grant rather than accepting a split authority; clients intentionally using **Ignore Shared Changes** do not participate in this check.
+- If the controller is temporarily offline, shared changes pause instead of silently returning to the raid leader. Wait for the controller to reconnect, or have the actual leader explicitly reclaim control.
+- A leader change, relevant AngryEra session/reload change, group change, or loss of the controller's assistant rank ends the grant. Run `/ae control request` and have the current leader grant it again.
+- AngryEra never grants or regrants control automatically, and only one controller may be active.
 
 ### An assistant's edit is rejected
 
 Confirm that the player:
 
 - currently has raid assist;
-- is a guild officer or higher, is listed in the leader's **Trusted Assistants**, or is covered by **Allow All Raid Assistants**; and
+- is a guild officer or higher, is listed in the current Raid Controller's **Trusted Assistants**, or is covered by that authority's **Allow All Raid Assistants**; and
 - is editing the exact active shared page.
 
-Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader Only**.
+Also confirm the current Raid Controller is using **Leader + Qualified Assistants**, not **Leader Only**.
 
 ### A variable family is empty or rejected
 
@@ -748,7 +779,7 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 
 - Confirm you are in a raid and the page whose effective layout you want is the exact shared display.
 - **Save** stores the layout but does not move anyone. Use **Apply** or `/ae applylayout`.
-- Confirm the caller is the raid leader or a qualified raid assistant.
+- Without delegation, confirm the caller is the raid leader or a qualified raid assistant. With delegation, only the active Raid Controller may apply it.
 - Ensure every explicit or priority-selected name resolves uniquely in the current raid. Use `Name-Realm` when a short name is ambiguous.
 - Ensure the same player is not produced twice and every subgroup remains at or below five players after variables, class fills, and `group:N` slots resolve.
 - A layout whose numbered variables are all missing resolves to no members and has nothing to apply.
@@ -758,26 +789,27 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 
 - Add `$AUTOAPPLYLAYOUT=$true` to the destination page or one of its ancestor categories; this is metadata, not an account setting.
 - Confirm the destination page also has an effective `$LAYOUT`.
-- Only the raid leader applies layouts automatically. Qualified assistants remain manual-only.
+- Only the current Raid Controller applies layouts automatically.
 - After AngryEra records its initial display state, transition from no page or another page to a page with a different identity. Saving, rerendering, and receiving a newer revision of the same page do not auto-apply.
 - If the page is displayed during combat, keep that exact page active until combat ends. A later page replaces or cancels the queued request.
 
 ### Automatic markers do not appear
 
-- Confirm the local client may place markers: leader or assistant in a raid.
+- Confirm the current Raid Controller's client is online and may place raid markers.
 - Prefer `Name-Realm`, or verify that the short name is unique in the group.
 - Confirm the metadata key begins with `$`.
 - Confirm the displayed page inherited the expected variable value.
 
 ### Automatic raid tanks or assistants do not apply
 
-- Confirm the client displaying the page is the current raid leader; qualified assistants never apply these privileged changes.
+- Confirm the page came from the current Raid Controller and the actual Blizzard leader is online with AngryEra. The controller chooses the desired state, but only the actual leader executes these protected changes.
 - Confirm `$TANKS` or `$ASSISTS` is present on the page or an ancestor category. An absent key intentionally leaves that dimension unmanaged.
 - Use comma-separated names. Verify each short name is unique in the current raid, or use `Name-Realm`.
 - `$TANKS` assigns the ordinary Tank role; it cannot populate Blizzard's protected Main Tank raid-frame row. Seeing **Promote to Main Tank** in the context menu does not mean the ordinary Tank role failed.
 - If Classic enforces hard class-role limits, every listed Tank must be eligible according to Blizzard's role API.
 - Remove the current raid leader from `$ASSISTS`; the leader cannot also hold assistant rank.
-- If **Everyone Is Assistant** was enabled, `$ASSISTS` disables it before reconciling the exact list.
+- While Raid Control is delegated, include the controller explicitly in `$ASSISTS` and turn off **Everyone Is Assistant** before displaying the page. AngryEra fails closed rather than demoting the controller.
+- Without delegated control, `$ASSISTS` disables **Everyone Is Assistant** before reconciling the exact list.
 - During combat, keep the same exact page active until combat ends. A newer page or inherited context replaces or cancels the queued request.
 - Re-import **Assigned Raid Roles** if `RAID_TANK1...N` should reflect changes made by `$TANKS`; imported variables do not refresh automatically.
 - Run `/ae debug on`, redisplay the page, and look for `raid-assignment-plan` and `raid-assignment-role-call`. A zero-operation plan means the ordinary roles already match; a role call reports the selected API, raid unit, requested role, call status, and returned value without printing the assignment contents.
@@ -785,7 +817,7 @@ Also confirm the leader is using **Leader + Qualified Assistants**, not **Leader
 ### Auto-advance does not run
 
 - Confirm the encounter ended successfully; wipes never advance.
-- Confirm the current client is the group leader.
+- Confirm the current client is the Raid Controller reported by `/ae control`.
 - Confirm the page is inside a category with a next sibling page.
 - Confirm the displayed page inherits `$AUTOADVANCE=$true`.
 - Match the page name to the encounter or add `$ENCOUNTER` or `$ENCOUNTERID`.
