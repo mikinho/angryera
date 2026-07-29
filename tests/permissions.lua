@@ -9,6 +9,7 @@ local selectedUpdateCalls = 0
 local displayRequestCalls = 0
 local versionQueryCalls = 0
 local activeDisplayReference
+local delegatedControl
 
 local function EnsureUnitFullName(name)
     if name and not name:find("-", 1, true) then
@@ -63,6 +64,17 @@ function AngryEra:GetRaidLeader()
             return EnsureUnitFullName(member.name)
         end
     end
+end
+
+function AngryEra:GetDelegatedRaidControl()
+    if type(delegatedControl) ~= "table" then
+        return nil
+    end
+    local copy = {}
+    for key, value in pairs(delegatedControl) do
+        copy[key] = value
+    end
+    return copy
 end
 
 function AngryEra:IsLocallyOwned(entity)
@@ -375,6 +387,59 @@ assert(not AngryEra:CanLocalPlayerPublish("changeResult"), "A local assistant mu
 assert(not AngryEra:CanLocalPlayerPublish("display"), "A local assistant must not publish display changes")
 assert(AngryEra:CanLocalPlayerOutput(), "A local raid assistant should retain group-chat output authority")
 assert(not AngryEra:CanLocalPlayerPublish("delete"), "A local assistant should not publish destructive changes")
+
+delegatedControl = {
+    Controller = "Officer-Realm",
+    Leader = "PugLeader-Realm",
+    ControllerInstallationId = "ae3i:1:2:3:4",
+    ControllerSessionId = "controller-session",
+    GrantId = "ae3i:5:6:7:8:leader-session:1",
+}
+assert(AngryEra:IsDelegatedRaidController("Officer"), "the granted assistant should be the delegated controller")
+assert(
+    AngryEra:GetAngryEraAuthority() == "Officer-Realm",
+    "the delegated controller should replace the Blizzard leader as AngryEra authority"
+)
+assert(AngryEra:CanReceiveFrom("Officer-Realm", "display"), "followers should accept controller displays")
+assert(AngryEra:CanReceiveFrom("Officer-Realm", "pageUpsert"), "followers should accept controller pages")
+assert(AngryEra:CanReceiveFrom("Officer-Realm", "changeResult"), "followers should accept controller results")
+assert(
+    not AngryEra:CanReceiveFrom("PugLeader-Realm", "display"),
+    "the Blizzard leader must not compete with an active controller"
+)
+assert(AngryEra:CanLocalPlayerPublish("display"), "the local controller should publish displays")
+assert(AngryEra:CanLocalPlayerPublish("pageUpsert"), "the local controller should publish pages")
+assert(AngryEra:CanLocalPlayerPublish("changeResult"), "the local controller should return proposal results")
+assert(AngryEra:CanLocalPlayerApplyRaidLayout(), "the local controller should apply raid layouts")
+assert(AngryEra:CanLocalPlayerPublish("controlRequest"), "a qualified assistant should request control")
+assert(not AngryEra:CanLocalPlayerPublish("controlGrant"), "a controller cannot grant another controller")
+
+config.receiveMode = "leaderOnly"
+assert(
+    AngryEra:CanReceiveFrom("Officer-Realm", "display"),
+    "Leader Only receive mode should treat the leader-granted controller as authority"
+)
+config.receiveMode = "standard"
+currentPlayer = "PugLeader-Realm"
+assert(not AngryEra:CanLocalPlayerPublish("display"), "the Blizzard leader should not publish while delegated")
+assert(not AngryEra:CanLocalPlayerApplyRaidLayout(), "the Blizzard leader should not race controller layouts")
+assert(AngryEra:CanLocalPlayerPublish("controlGrant"), "only the Blizzard leader should grant control")
+assert(AngryEra:CanLocalPlayerPublish("controlRevoke"), "only the Blizzard leader should revoke control")
+assert(AngryEra:CanLocalPlayerPublish("controlResult"), "only the Blizzard leader should answer requests")
+
+groupRoster[2].rank = 0
+assert(AngryEra:GetAngryEraAuthority() == nil, "a controller that loses assist should fail closed")
+assert(
+    not AngryEra:CanReceiveFrom("PugLeader-Realm", "display"),
+    "an invalid but unreconciled lease must not silently reactivate the leader"
+)
+assert(not AngryEra:CanLocalPlayerPublish("display"), "an invalid lease should leave no local publisher")
+groupRoster[2].rank = 1
+delegatedControl = nil
+assert(AngryEra:GetAngryEraAuthority() == "PugLeader-Realm", "reclaim should restore the Blizzard leader")
+assert(AngryEra:CanLocalPlayerPublish("display"), "the reclaimed Blizzard leader should publish again")
+currentPlayer = "Officer-Realm"
+
 local activeRemotePage = {
     Id = 70,
     SyncId = "remote-page",

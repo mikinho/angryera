@@ -371,6 +371,8 @@ AssertEqual(protocol.PAGE_PREFIX, "AngryEra3C", "compact-page protocol prefix")
 AssertEqual(protocol.ACTIVE_PAGE_PREFIX, "AngryEra3P", "active-page protocol prefix")
 AssertEqual(protocol.ACTIVE_PAGE_CHANGES_CAPABILITY, "activePageChanges", "active-page change capability name")
 AssertEqual(protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION, 1, "active-page change capability version")
+AssertEqual(protocol.DELEGATED_CONTROL_CAPABILITY, "delegatedControl", "delegated-control capability name")
+AssertEqual(protocol.DELEGATED_CONTROL_CAPABILITY_VERSION, 1, "delegated-control capability version")
 AssertEqual(protocol.WIRE_LIMITS.EncodedBytes, 256 * 1024, "encoded byte limit")
 AssertEqual(protocol.WIRE_LIMITS.CompressedBytes, 256 * 1024, "compressed byte limit")
 AssertEqual(protocol.WIRE_LIMITS.SerializedBytes, 1024 * 1024, "serialized byte limit")
@@ -578,6 +580,85 @@ Assert(protocol.MESSAGE_TYPES.PAGE_REQUEST, "page request message type is regist
 Assert(protocol.MESSAGE_TYPES.PAGE_UPSERT, "page upsert message type is registered")
 Assert(protocol.MESSAGE_TYPES.CHANGE_PROPOSE, "change proposal message type is registered")
 Assert(protocol.MESSAGE_TYPES.CHANGE_RESULT, "change result message type is registered")
+Assert(protocol.MESSAGE_TYPES.CONTROL_REQUEST, "control request message type is registered")
+Assert(protocol.MESSAGE_TYPES.CONTROL_GRANT, "control grant message type is registered")
+Assert(protocol.MESSAGE_TYPES.CONTROL_REVOKE, "control revoke message type is registered")
+Assert(protocol.MESSAGE_TYPES.CONTROL_RESULT, "control result message type is registered")
+
+local controllerSessionId = "controller-session"
+local controllerRequestId = activeInstallationId .. ":" .. controllerSessionId .. ":7"
+local controlGrantId = installationId .. ":session_B-2:9"
+local controlGrantPayload = {
+    Controller = "Zessy-Realm",
+    ControllerInstallationId = activeInstallationId,
+    ControllerSessionId = controllerSessionId,
+    RequestId = controllerRequestId,
+}
+
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_REQUEST", {})
+Assert(payloadValid and payloadError == nil, "empty control request payload")
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_REQUEST", { Controller = "Zessy-Realm" })
+AssertError(payloadValid, payloadError, "control-request-payload-not-empty", "non-empty control request payload")
+
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_GRANT", controlGrantPayload)
+Assert(payloadValid and payloadError == nil, "valid control grant payload")
+local malformedControlGrant = ShallowCopy(controlGrantPayload)
+malformedControlGrant.RequestId = activeInstallationId .. ":other-session:7"
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_GRANT", malformedControlGrant)
+AssertError(payloadValid, payloadError, "control-request-identity-mismatch", "control grant request session mismatch")
+malformedControlGrant = ShallowCopy(controlGrantPayload)
+malformedControlGrant.ControllerInstallationId = "ae3i:9:8:7:6"
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_GRANT", malformedControlGrant)
+AssertError(
+    payloadValid,
+    payloadError,
+    "control-request-identity-mismatch",
+    "control grant request installation mismatch"
+)
+malformedControlGrant = ShallowCopy(controlGrantPayload)
+malformedControlGrant.Controller = "Zessy\nRealm"
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_GRANT", malformedControlGrant)
+AssertError(payloadValid, payloadError, "invalid-control-controller", "control grant controller control byte")
+malformedControlGrant = ShallowCopy(controlGrantPayload)
+malformedControlGrant.Contents = "must never be carried"
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_GRANT", malformedControlGrant)
+AssertError(payloadValid, payloadError, "control-grant-unknown-field", "control grant page data")
+
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_REVOKE", {
+    GrantId = controlGrantId,
+})
+Assert(payloadValid and payloadError == nil, "valid control revoke payload")
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_REVOKE", {
+    GrantId = "invalid",
+})
+AssertError(payloadValid, payloadError, "invalid-control-grant-id", "invalid control revoke grant identity")
+
+for _, status in ipairs({ "declined", "busy", "incompatible", "unauthorized", "stale" }) do
+    payloadValid, payloadError = protocol.ValidatePayload("CONTROL_RESULT", {
+        Status = status,
+    })
+    Assert(payloadValid and payloadError == nil, "valid " .. status .. " control result")
+    Assert(protocol.CONTROL_RESULT_STATUSES[status], "control result status should be exported")
+end
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_RESULT", {
+    Status = "granted",
+    GrantId = controlGrantId,
+})
+Assert(payloadValid and payloadError == nil, "valid granted control result")
+Assert(protocol.CONTROL_RESULT_STATUSES.granted, "granted control result status should be exported")
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_RESULT", {
+    Status = "granted",
+})
+AssertError(payloadValid, payloadError, "control-result-missing-grant-id", "granted result without grant identity")
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_RESULT", {
+    Status = "declined",
+    GrantId = controlGrantId,
+})
+AssertError(payloadValid, payloadError, "control-result-unexpected-grant-id", "declined result with grant identity")
+payloadValid, payloadError = protocol.ValidatePayload("CONTROL_RESULT", {
+    Status = "unknown",
+})
+AssertError(payloadValid, payloadError, "invalid-control-result-status", "unknown control result status")
 
 payloadValid, payloadError = protocol.ValidatePayload("DISPLAY_REQUEST", {})
 Assert(payloadValid and payloadError == nil, "empty display request payload")

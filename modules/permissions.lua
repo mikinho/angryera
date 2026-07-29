@@ -19,6 +19,7 @@ local NORMAL_ACTIONS = {
     categoryUpsert = true,
     reorder = true,
     changeProposal = true,
+    controlRequest = true,
 }
 
 local LEADER_ONLY_ACTIONS = {
@@ -30,6 +31,9 @@ local LEADER_ONLY_ACTIONS = {
     tombstone = true,
     cleanup = true,
     scopeMove = true,
+    controlGrant = true,
+    controlRevoke = true,
+    controlResult = true,
 }
 
 local NON_MUTATING_ACTIONS = {
@@ -58,6 +62,35 @@ end
 
 local function IsKnownAction(action)
     return NORMAL_ACTIONS[action] or LEADER_ONLY_ACTIONS[action] or NON_MUTATING_ACTIONS[action]
+end
+
+local function SamePlayer(left, right)
+    local leftName = NormalizePlayerName(left)
+    return leftName ~= nil and leftName == NormalizePlayerName(right)
+end
+
+local function IsPlayerOnline(player)
+    local normalizedName = NormalizePlayerName(player)
+    if not normalizedName then
+        return false
+    end
+    local online = false
+    IterateGroupMembers(function(_, fullName, _, _, _, memberOnline)
+        if NormalizePlayerName(fullName) == normalizedName then
+            online = memberOnline ~= false
+            return true
+        end
+        return false
+    end)
+    return online
+end
+
+local function RawDelegatedRaidControl(self)
+    if type(self.GetDelegatedRaidControl) ~= "function" then
+        return nil
+    end
+    local called, control = pcall(self.GetDelegatedRaidControl, self)
+    return called and type(control) == "table" and control or nil
 end
 
 --- Rebuilds the receiver-local set of guild officers and higher roles.
@@ -209,6 +242,62 @@ function AngryEra:IsQualifiedAssistant(player)
         )
 end
 
+--- Returns the current session-only delegated Raid Controller lease, if any.
+-- Protocol runtime owns the record; this helper deliberately validates only
+-- live roster identities so permission checks cannot revive a stale lease.
+-- @treturn table|nil control
+function AngryEra:GetValidatedDelegatedRaidControl()
+    local control = RawDelegatedRaidControl(self)
+    if
+        type(control) ~= "table"
+        or type(control.Controller) ~= "string"
+        or type(control.Leader) ~= "string"
+        or self:GetGroupRole(control.Controller) ~= "assistant"
+    then
+        return nil
+    end
+    local leader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader() or nil
+    if not SamePlayer(leader, control.Leader) then
+        return nil
+    end
+    return control
+end
+
+--- Returns whether a player is the leader-granted AngryEra Raid Controller.
+-- Installation/session binding is additionally enforced by protocol runtime.
+function AngryEra:IsDelegatedRaidController(player)
+    local control = self:GetValidatedDelegatedRaidControl()
+    return control ~= nil and SamePlayer(control.Controller, player)
+end
+
+--- Returns the single player allowed to publish canonical AngryEra state.
+-- While a lease exists, an invalid/offline controller fails closed instead of
+-- silently falling back to the Blizzard leader and creating two authorities.
+-- @tparam[opt=false] boolean onlineOnly Require the authority to be online.
+-- @treturn string|nil player
+function AngryEra:GetAngryEraAuthority(onlineOnly)
+    local rawControl = RawDelegatedRaidControl(self)
+    if rawControl then
+        local control = self:GetValidatedDelegatedRaidControl()
+        if not control or onlineOnly and not IsPlayerOnline(control.Controller) then
+            return nil
+        end
+        return EnsureUnitFullName(control.Controller)
+    end
+    if type(self.GetRaidLeader) ~= "function" then
+        return nil
+    end
+    return self:GetRaidLeader(onlineOnly)
+end
+
+--- Returns whether this client is the one canonical AngryEra publisher.
+function AngryEra:IsLocalAngryEraAuthority()
+    if not IsGrouped() then
+        return true
+    end
+    return SamePlayer(self:GetAngryEraAuthority(), PlayerFullName())
+end
+
 --- Returns whether this receiver accepts an action from the authenticated sender.
 -- @tparam string sender AceComm sender name.
 -- @tparam string action Permission action.
@@ -222,6 +311,12 @@ function AngryEra:CanReceiveFrom(sender, action)
     if role == "absent" then
         return false
     end
+    if action == "controlRequest" then
+        return role == "assistant" and self:IsQualifiedAssistant(sender)
+    end
+    if action == "controlGrant" or action == "controlRevoke" or action == "controlResult" then
+        return role == "leader"
+    end
     if NON_MUTATING_ACTIONS[action] then
         return true
     end
@@ -230,13 +325,15 @@ function AngryEra:CanReceiveFrom(sender, action)
     if receiveMode == "ignoreShared" then
         return false
     end
+    local delegatedController = self:IsDelegatedRaidController(sender)
+    local hasDelegatedControl = RawDelegatedRaidControl(self) ~= nil
     if receiveMode ~= "standard" and receiveMode ~= "leaderOnly" then
-        return role == "leader"
+        return delegatedController or (not hasDelegatedControl and role == "leader")
     end
     if receiveMode == "leaderOnly" or LEADER_ONLY_ACTIONS[action] then
-        return role == "leader"
+        return delegatedController or (not hasDelegatedControl and role == "leader")
     end
-    if role == "leader" then
+    if delegatedController or role == "leader" then
         return true
     end
     return role == "assistant" and self:IsQualifiedAssistant(sender)
@@ -256,8 +353,14 @@ function AngryEra:CanLocalPlayerPublish(action)
 
     local player = PlayerFullName()
     local role = self:GetGroupRole(player)
-    if LEADER_ONLY_ACTIONS[action] then
+    if action == "controlRequest" then
+        return role == "assistant" and self:IsQualifiedAssistant(player)
+    end
+    if action == "controlGrant" or action == "controlRevoke" or action == "controlResult" then
         return role == "leader"
+    end
+    if LEADER_ONLY_ACTIONS[action] then
+        return self:IsLocalAngryEraAuthority()
     end
     if role == "leader" then
         return true
@@ -298,6 +401,10 @@ function AngryEra:CanLocalPlayerApplyRaidLayout()
 
     local player = PlayerFullName()
     local role = self:GetGroupRole(player)
+    local delegatedControl = self:GetValidatedDelegatedRaidControl()
+    if delegatedControl then
+        return self:IsDelegatedRaidController(player)
+    end
     if role == "leader" then
         return true
     end
@@ -384,8 +491,8 @@ function AngryEra:IsValidRaid()
     if not IsGrouped() then
         return true
     end
-    local leader = self:GetRaidLeader()
-    return leader and self:CanReceiveFrom(leader, "display") or false
+    local authority = self:GetAngryEraAuthority()
+    return authority and self:CanReceiveFrom(authority, "display") or false
 end
 
 --- Migrates legacy permission settings to sender-specific policy.

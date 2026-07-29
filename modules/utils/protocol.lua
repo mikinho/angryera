@@ -80,6 +80,10 @@ protocol.LIMITS = {
 local MESSAGE_TYPES = {
     VERSION_QUERY = true,
     VERSION = true,
+    CONTROL_REQUEST = true,
+    CONTROL_GRANT = true,
+    CONTROL_REVOKE = true,
+    CONTROL_RESULT = true,
     DISPLAY_REQUEST = true,
     DISPLAY = true,
     PAGE_REQUEST = true,
@@ -91,6 +95,18 @@ protocol.MESSAGE_TYPES = MESSAGE_TYPES
 
 protocol.ACTIVE_PAGE_CHANGES_CAPABILITY = "activePageChanges"
 protocol.ACTIVE_PAGE_CHANGES_CAPABILITY_VERSION = 1
+protocol.DELEGATED_CONTROL_CAPABILITY = "delegatedControl"
+protocol.DELEGATED_CONTROL_CAPABILITY_VERSION = 1
+
+local CONTROL_RESULT_STATUSES = {
+    granted = true,
+    declined = true,
+    busy = true,
+    incompatible = true,
+    unauthorized = true,
+    stale = true,
+}
+protocol.CONTROL_RESULT_STATUSES = CONTROL_RESULT_STATUSES
 
 local CHANGE_RESULT_STATUSES = {
     applied = true,
@@ -211,17 +227,28 @@ local function DenseArrayLength(value, maximum)
     return count
 end
 
-local function ValidateMessageId(value)
+local function ParseMessageId(value)
     if not IsBoundedString(value, protocol.LIMITS.MessageIdBytes, false) then
-        return false
+        return nil
     end
 
     local installationId, sessionId, sequenceText = value:match("^(.*):([^:]+):([0-9]+)$")
     local sequence = tonumber(sequenceText)
-    return IsInstallationId(installationId)
-        and IsIdentifier(sessionId, protocol.LIMITS.SessionIdBytes)
-        and IsInteger(sequence, 1, protocol.LIMITS.Sequence)
-        and sequenceText == tostring(sequence)
+    if
+        not (
+            IsInstallationId(installationId)
+            and IsIdentifier(sessionId, protocol.LIMITS.SessionIdBytes)
+            and IsInteger(sequence, 1, protocol.LIMITS.Sequence)
+            and sequenceText == tostring(sequence)
+        )
+    then
+        return nil
+    end
+    return installationId, sessionId, sequence
+end
+
+local function ValidateMessageId(value)
+    return ParseMessageId(value) ~= nil
 end
 
 local function ValidateWireLimits(limits)
@@ -369,6 +396,37 @@ local CHANGE_RESULT_REQUIRED_FIELDS = {
     "SyncId",
 }
 
+local CONTROL_GRANT_FIELDS = {
+    Controller = true,
+    ControllerInstallationId = true,
+    ControllerSessionId = true,
+    RequestId = true,
+}
+
+local CONTROL_GRANT_REQUIRED_FIELDS = {
+    "Controller",
+    "ControllerInstallationId",
+    "ControllerSessionId",
+    "RequestId",
+}
+
+local CONTROL_REVOKE_FIELDS = {
+    GrantId = true,
+}
+
+local CONTROL_REVOKE_REQUIRED_FIELDS = {
+    "GrantId",
+}
+
+local CONTROL_RESULT_FIELDS = {
+    Status = true,
+    GrantId = true,
+}
+
+local CONTROL_RESULT_REQUIRED_FIELDS = {
+    "Status",
+}
+
 local PAGE_FIELDS = {
     Kind = true,
     SyncId = true,
@@ -411,6 +469,62 @@ local ANCESTOR_LAYER_REQUIRED_FIELDS = {
 local function ValidateEmptyPayload(payload, prefix)
     if next(payload) ~= nil then
         return false, prefix .. "-payload-not-empty"
+    end
+    return true
+end
+
+local function ValidateControlGrantPayload(payload)
+    local known, knownError =
+        ValidateKnownFields(payload, CONTROL_GRANT_FIELDS, CONTROL_GRANT_REQUIRED_FIELDS, "control-grant")
+    if not known then
+        return false, knownError
+    end
+    if
+        not IsBoundedString(payload.Controller, protocol.LIMITS.SenderBytes, false)
+        or ContainsControlByte(payload.Controller)
+    then
+        return false, "invalid-control-controller"
+    end
+    if not IsInstallationId(payload.ControllerInstallationId) then
+        return false, "invalid-control-controller-installation-id"
+    end
+    if not IsIdentifier(payload.ControllerSessionId, protocol.LIMITS.SessionIdBytes) then
+        return false, "invalid-control-controller-session-id"
+    end
+    local requestInstallationId, requestSessionId = ParseMessageId(payload.RequestId)
+    if requestInstallationId ~= payload.ControllerInstallationId or requestSessionId ~= payload.ControllerSessionId then
+        return false, "control-request-identity-mismatch"
+    end
+    return true
+end
+
+local function ValidateControlRevokePayload(payload)
+    local known, knownError =
+        ValidateKnownFields(payload, CONTROL_REVOKE_FIELDS, CONTROL_REVOKE_REQUIRED_FIELDS, "control-revoke")
+    if not known then
+        return false, knownError
+    end
+    if not ValidateMessageId(payload.GrantId) then
+        return false, "invalid-control-grant-id"
+    end
+    return true
+end
+
+local function ValidateControlResultPayload(payload)
+    local known, knownError =
+        ValidateKnownFields(payload, CONTROL_RESULT_FIELDS, CONTROL_RESULT_REQUIRED_FIELDS, "control-result")
+    if not known then
+        return false, knownError
+    end
+    if not CONTROL_RESULT_STATUSES[payload.Status] then
+        return false, "invalid-control-result-status"
+    end
+    if payload.Status == "granted" then
+        if not ValidateMessageId(payload.GrantId) then
+            return false, "control-result-missing-grant-id"
+        end
+    elseif payload.GrantId ~= nil then
+        return false, "control-result-unexpected-grant-id"
     end
     return true
 end
@@ -704,6 +818,14 @@ function protocol.ValidatePayload(messageType, payload)
 
     if messageType == "VERSION_QUERY" then
         return ValidateEmptyPayload(payload, "version-query")
+    elseif messageType == "CONTROL_REQUEST" then
+        return ValidateEmptyPayload(payload, "control-request")
+    elseif messageType == "CONTROL_GRANT" then
+        return ValidateControlGrantPayload(payload)
+    elseif messageType == "CONTROL_REVOKE" then
+        return ValidateControlRevokePayload(payload)
+    elseif messageType == "CONTROL_RESULT" then
+        return ValidateControlResultPayload(payload)
     elseif messageType == "DISPLAY_REQUEST" then
         return ValidateEmptyPayload(payload, "display-request")
     elseif messageType == "DISPLAY" then
