@@ -242,7 +242,11 @@ local function SubmitSharedPageMutation(self, id, page, changedField, changedVal
     if not authorityChecked then
         return false, "page-commit-authority-check-failed", true
     end
-    if canCommitPage == true and IsGrouped() then
+    -- A locally owned synchronized page remains an ordinary direct edit while
+    -- solo, even if it is still visible and retains an exact display reference
+    -- from testing or a previous group. Grouped assistants still lack pageUpsert
+    -- authority and continue through the proposal path below.
+    if canCommitPage == true and (IsGrouped() or IsLocallyOwnedPage(self, page)) then
         local desired = RetainedDesiredForDirectMutation(self, id, page)
         if desired then
             desired[changedField] = changedValue or ""

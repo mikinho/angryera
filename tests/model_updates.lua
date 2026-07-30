@@ -223,6 +223,101 @@ assert(
     "assistant Save must not announce an unchanged leader display"
 )
 
+-- A synchronized page owned by this installation remains directly editable
+-- while solo, even when it is still the visible page with an exact display
+-- reference. This is a local testing/debug state, not a shared proposal.
+local soloPage = {
+    Id = 59,
+    SyncId = "ae3i:5:6:7:8:page:59",
+    OwnerId = "ae3i:5:6:7:8",
+    LocallyOwned = true,
+    Revision = 3,
+    RevisionId = "fcs32:59595959",
+    Name = "Solo assignments",
+    Vars = "$MT=Player",
+    Contents = "Tank: Player",
+    Backup = "Tank: Player",
+    Updated = 100,
+    UpdateId = "solo-update-id",
+}
+AngryAssign_Pages[59] = soloPage
+AngryAssign_State.displayed = 59
+activeDisplayReference = {
+    SyncId = soloPage.SyncId,
+    Revision = soloPage.Revision,
+    RevisionId = soloPage.RevisionId,
+    ContextRevisionId = "fcs32:59595950",
+}
+grouped = false
+canPublishDisplay = true
+canPublishPageUpsert = true
+local proposalsBeforeSoloSave = #submittedSharedPageProposals
+local displaysBeforeSoloSave = #sentDisplays
+local showsBeforeSoloSave = showDisplayCalls
+local notificationsBeforeSoloSave = displayNotificationCalls
+sentPageId = nil
+local soloSaved, soloSaveResult, soloProposed = AngryEra:UpdateContents(59, "  Tank: Updated  ")
+assert(soloSaved and soloSaveResult == nil and not soloProposed, "solo displayed-page Save should remain a local edit")
+assert(soloPage.Contents == "Tank: Updated", "solo displayed-page Save should update local storage")
+assert(
+    soloPage.Backup == "Tank: Updated"
+        and soloPage.History
+        and soloPage.History[1]
+        and soloPage.History[1].content == "Tank: Player",
+    "solo displayed-page Save should retain normal backup and history behavior"
+)
+assert(
+    #submittedSharedPageProposals == proposalsBeforeSoloSave,
+    "solo displayed-page Save must not enter shared proposal routing"
+)
+assert(
+    #sentDisplays == displaysBeforeSoloSave + 1 and sentDisplays[#sentDisplays].Id == 59 and sentPageId == nil,
+    "solo displayed-page Save should refresh the exact local display without a page-only publication"
+)
+
+local soloRenamed, soloRenameError, soloRenameProposed = AngryEra:RenamePage(59, "Solo assignments revised")
+assert(
+    soloRenamed and soloRenameError == nil and not soloRenameProposed and soloPage.Name == "Solo assignments revised",
+    "solo displayed-page rename should remain a direct local edit"
+)
+local soloVarsSaved, soloVarsError, soloVarsProposed = AngryEra:UpdatePageVars(59, "$MT=Updated")
+assert(
+    soloVarsSaved and soloVarsError == nil and not soloVarsProposed and soloPage.Vars == "$MT=Updated",
+    "solo displayed-page variable Save should remain a direct local edit"
+)
+assert(
+    #submittedSharedPageProposals == proposalsBeforeSoloSave and #sentDisplays == displaysBeforeSoloSave + 3,
+    "every solo displayed-page field edit should bypass proposal routing and refresh locally"
+)
+
+soloPage.LocallyOwned = false
+local remoteContentsBeforeSoloEdit = soloPage.Contents
+local proposalsBeforeSoloRemoteEdit = #submittedSharedPageProposals
+sharedProposalSubmitOk = false
+sharedProposalSubmitResult = "unauthorized"
+soloSaved, soloSaveResult, soloProposed = AngryEra:UpdateContents(59, "Remote cached edit")
+assert(
+    not soloSaved and soloSaveResult == "unauthorized" and soloProposed,
+    "solo authority fallback must not grant direct editing of a displayed remote-owned page"
+)
+assert(
+    soloPage.Contents == remoteContentsBeforeSoloEdit
+        and #submittedSharedPageProposals == proposalsBeforeSoloRemoteEdit + 1
+        and #sentDisplays == displaysBeforeSoloSave + 3,
+    "a rejected solo remote-page edit must preserve storage and publication state"
+)
+sharedProposalSubmitOk = true
+sharedProposalSubmitResult = "change-proposal-message"
+table.remove(submittedSharedPageProposals)
+AngryAssign_Pages[59] = nil
+AngryAssign_State.displayed = 42
+activeDisplayReference = nil
+grouped = true
+canPublishDisplay = false
+canPublishPageUpsert = false
+showDisplayCalls = showsBeforeSoloSave
+displayNotificationCalls = notificationsBeforeSoloSave
+
 sentPageId = nil
 local showsBeforeAssistantRename = showDisplayCalls
 local renamed, renameError = AngryEra:RenamePage(42, "Assistant rename")

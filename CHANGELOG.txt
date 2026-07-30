@@ -9,6 +9,7 @@
 * Compatibility: Known participating AngryEra clients that accept shared changes but do not support delegated control block the grant instead of splitting the raid between authorities. Clients intentionally using Ignore Shared Changes do not participate in the grant check. Update every AngryEra user who should participate in a delegated raid to v3.3.0-BETA or newer.
 * Clarification: The Blizzard raid leader remains responsible for protected leader-only operations. The controller selects the canonical page and desired `$TANKS`/`$ASSISTS` state, while the actual leader's client executes those Blizzard API changes.
 * Safety: While Raid Control is delegated, a managed `$ASSISTS` list must explicitly include the controller and Blizzard's **Everyone Is Assistant** option must be off. AngryEra fails closed instead of demoting its active controller or applying an ambiguous assistant list.
+* Fix: A synchronized page owned by this installation can now be edited and saved normally while it is displayed for solo testing. AngryEra no longer misroutes that local Save through grouped assistant authorization.
 
 ## v3.2.3
 
