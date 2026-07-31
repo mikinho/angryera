@@ -67,7 +67,6 @@ local raidAssignmentErrors = {
     ["invalid-assignment-name"] = "$TANKS or $ASSISTS contains an invalid or empty name.",
     ["invalid-assignment-context"] = "Could not resolve the inherited variables for $TANKS or $ASSISTS.",
     ["invalid-roster"] = "Classic returned an invalid raid roster; assignments will retry after the roster changes.",
-    ["leader-cannot-be-assistant"] = "The raid leader must not be listed in $ASSISTS.",
     ["role-api-failed"] = "Classic's assigned-role state is temporarily unavailable.",
     ["role-api-unavailable"] = "This client does not expose Blizzard's assigned-role API.",
     ["roster-unavailable"] = "Classic's raid roster is temporarily unavailable; assignments will retry.",

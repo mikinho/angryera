@@ -50,6 +50,7 @@ local roleAvailabilityReads = 0
 local delegatedControl
 local rawDelegatedControl
 local delegatedControllerGuardOverride
+local forceUnitLeaderFalse = false
 
 local function MemberByUnit(unit)
     local index = type(unit) == "string" and tonumber(unit:match("^raid(%d+)$")) or nil
@@ -89,6 +90,9 @@ function _G.UnitGroupRolesAssigned(unit)
 end
 
 function _G.UnitIsGroupLeader(unit)
+    if forceUnitLeaderFalse then
+        return false
+    end
     local member = MemberByUnit(unit)
     return member and member.Rank == 2 or false
 end
@@ -290,6 +294,7 @@ local function Reset()
     delegatedControl = nil
     rawDelegatedControl = nil
     delegatedControllerGuardOverride = nil
+    forceUnitLeaderFalse = false
 end
 
 local names = assert(raidAssignments.ParseNameList(" Tank , Assist-Home "))
@@ -414,14 +419,20 @@ delegatedControl = {
 }
 currentSnapshot = Reference("delegated-controller-included", 1, {
     TANKS = "Newtank",
-    ASSISTS = "Assist",
+    ASSISTS = "Leader, Assist",
 })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
 assert(members[5].Rank == 1, "a listed delegated controller must retain raid assistant")
 assert(members[3].Rank == 0, "extra assistants may still be demoted after controller validation")
+for _, call in ipairs(calls) do
+    assert(call.Name ~= "Leader-Home", "the actual leader must never receive a proxied assistant mutation")
+end
 assert(members[4].Role == "TANK" and members[2].Role == "NONE", "the leader should execute delegated tanks")
-assert(#finished == 1 and finished[1].Success, "a controller-safe delegated plan should complete")
+assert(
+    #calls == 3 and #finished == 1 and finished[1].Success and finished[1].Result == 3,
+    "a controller-safe delegated plan should ignore the leader and complete every other exact-set change"
+)
 
 -- Omitting the active controller fails the complete privileged plan before
 -- either the assistant list or otherwise-valid Tank changes mutate Blizzard.
@@ -432,13 +443,16 @@ delegatedControl = {
 }
 currentSnapshot = Reference("delegated-controller-omitted", 1, {
     TANKS = "Newtank",
-    ASSISTS = "Healer",
+    ASSISTS = "Leader",
 })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
 assert(#calls == 0, "an omitted controller must block every assistant and Tank mutation")
 assert(members[2].Role == "TANK" and members[4].Role == "DAMAGER", "blocked delegated tanks stay unchanged")
-assert(members[5].Rank == 1, "the omitted controller must never be demoted")
+assert(
+    members[3].Rank == 1 and members[5].Rank == 1,
+    "a leader-only list must not satisfy controller inclusion or partially change assistant ranks"
+)
 assert(
     #finished == 1 and finished[1].Result == "delegated-controller-missing-from-assists",
     "an omitted controller should report the stable safety error"
@@ -579,14 +593,68 @@ assert(
     "duplicate resolved identities should report a stable error"
 )
 
+-- The current raid leader already has higher authority and is outside the
+-- managed assistant set. A leader-only list therefore owns an exact empty set.
 Reset()
-currentSnapshot = Reference("leader-as-assistant", 1, { ASSISTS = "Leader" })
+currentSnapshot = Reference("leader-only-assists", 1, { ASSISTS = "Leader" })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
-assert(#calls == 0, "the raid leader must never be promoted to assistant")
 assert(
-    #finished == 1 and finished[1].Result == "leader-cannot-be-assistant",
-    "listing the leader as an assistant should report a stable error"
+    #calls == 1 and calls[1].Kind == "demote" and calls[1].Name == "Healer-Home",
+    "a leader-only assistant list should clear the actual assistant set without targeting the leader"
+)
+assert(members[1].Rank == 2 and members[3].Rank == 0, "leader filtering must preserve leadership and exact-set cleanup")
+assert(
+    #finished == 1 and finished[1].Success and finished[1].Result == 1,
+    "leader-only assistant reconciliation should complete as one real change"
+)
+
+-- Literal short and full leader names are filtered after exact roster
+-- resolution while every non-leader assistant still reconciles normally.
+Reset()
+currentSnapshot = Reference("leader-and-assist", 1, { ASSISTS = "Leader-Home, Assist" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(
+    #calls == 2
+        and calls[1].Kind == "promote"
+        and calls[1].Name == "Assist-Home"
+        and calls[2].Kind == "demote"
+        and calls[2].Name == "Healer-Home",
+    "a mixed leader list should reconcile only the requested non-leader assistant"
+)
+assert(
+    members[1].Rank == 2 and members[3].Rank == 0 and members[5].Rank == 1,
+    "mixed assistant reconciliation must preserve the leader and match the remaining exact set"
+)
+assert(
+    #finished == 1 and finished[1].Success and finished[1].Result == 2,
+    "leader filtering must not count the ignored entry as a Blizzard change"
+)
+
+-- GetRaidRosterInfo's rank remains authoritative when UnitIsGroupLeader
+-- transiently returns false during roster settlement.
+Reset()
+forceUnitLeaderFalse = true
+currentSnapshot = Reference("leader-rank-fallback", 1, { ASSISTS = "Leader" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(
+    #calls == 1 and calls[1].Kind == "demote" and calls[1].Name == "Healer-Home",
+    "a false UnitIsGroupLeader signal must not expose the rank-two leader to assistant promotion"
+)
+assert(members[1].Rank == 2, "rank fallback must preserve the actual raid leader")
+
+-- Filtering happens after ordinary identity validation; duplicate aliases for
+-- the leader remain malformed input rather than becoming silently acceptable.
+Reset()
+currentSnapshot = Reference("duplicate-leader-assists", 1, { ASSISTS = "Leader,Leader-Home" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0, "duplicate leader aliases must fail before any assistant mutation")
+assert(
+    #finished == 1 and not finished[1].Success and finished[1].Result == "duplicate-assignment-member",
+    "duplicate leader aliases should preserve the stable duplicate-member failure"
 )
 
 -- Roster and role reads can briefly settle after the event that triggered the

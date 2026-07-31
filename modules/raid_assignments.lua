@@ -35,7 +35,6 @@ local TRANSIENT_READ_ERRORS = {
     ["role-api-failed"] = true,
     ["roster-unavailable"] = true,
     ["unknown-assignment-member"] = true,
-    ["leader-cannot-be-assistant"] = true,
 }
 
 local function Trim(value)
@@ -275,8 +274,8 @@ local function BuildRosterState()
         local leader = rank == 2
         if type(UnitIsGroupLeader) == "function" then
             local called, result = pcall(UnitIsGroupLeader, unitToken)
-            if called then
-                leader = result == true
+            if called and result == true then
+                leader = true
             end
         end
         local assistant = rank == 1
@@ -389,9 +388,12 @@ local function BuildDesiredState(meta, rosterState)
         if not desired.Assists then
             return nil, parseError
         end
-        for identity in pairs(desired.Assists) do
-            if rosterState.ByIdentity[identity].IsLeader then
-                return nil, "leader-cannot-be-assistant"
+        -- The raid leader already has higher authority and cannot hold
+        -- assistant rank. Treat a resolved leader entry as harmless input
+        -- while preserving normal missing, ambiguous, and duplicate checks.
+        for _, member in ipairs(rosterState.Members) do
+            if member.IsLeader then
+                desired.Assists[member.Identity] = nil
             end
         end
     end
