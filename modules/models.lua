@@ -10,6 +10,7 @@ local helpers = AngryEra.utils.helpers
 local selectedLastValue = helpers.selectedLastValue
 local IsCategoryDescendant = helpers.IsCategoryDescendant
 local ExtractAndValidateName = helpers.ExtractAndValidateName
+local CompareIndexedEntries = helpers.CompareIndexedEntries
 local unpackValues = unpack or rawget(table, "unpack")
 
 local libC = app.libs.libC
@@ -21,6 +22,20 @@ local editableLimits = syncSchema and syncSchema.LIMITS
         ContentsBytes = 20000,
         VarsBytes = 5000,
     }
+
+-- Page navigation must resolve equal Index/Name records identically to
+-- encounter auto-advance. Local numeric ids are the deterministic final key.
+local function CompareNavigationPages(left, right)
+    if CompareIndexedEntries(left, right) then
+        return true
+    end
+    if CompareIndexedEntries(right, left) then
+        return false
+    end
+    local leftId = type(left.Id) == "number" and left.Id or math.huge
+    local rightId = type(right.Id) == "number" and right.Id or math.huge
+    return leftId < rightId
+end
 
 local EDITABLE_ENTITY_ERRORS = {
     ["invalid-entity"] = "The page or category data is invalid.",
@@ -1022,22 +1037,7 @@ function AngryEra:NextPage(reverse)
 
     -- Navigation follows saved manual order; local pin sections affect only the
     -- editor tree and must not change encounter progression.
-    table.sort(siblings, function(a, b)
-        local ia = a.Index
-        local ib = b.Index
-        if ia and ib then
-            if ia == ib then
-                return a.Name < b.Name
-            end
-            return ia < ib
-        elseif ia then
-            return true
-        elseif ib then
-            return false
-        else
-            return a.Name < b.Name
-        end
-    end)
+    table.sort(siblings, CompareNavigationPages)
 
     for i, p in ipairs(siblings) do
         if p.Id == page.Id then
@@ -1076,38 +1076,32 @@ function AngryEra:FirstPage()
     end
 
     -- First means the first saved manual page, independent of local pin state.
-    table.sort(siblings, function(a, b)
-        local ia = a.Index
-        local ib = b.Index
-        if ia and ib then
-            if ia == ib then
-                return a.Name < b.Name
-            end
-            return ia < ib
-        elseif ia then
-            return true
-        elseif ib then
-            return false
-        else
-            return a.Name < b.Name
-        end
-    end)
+    table.sort(siblings, CompareNavigationPages)
 
     local firstSib = siblings[1]
 
     if page.Id == firstSib.Id then
         -- We are already on the first page. Snap back to the last selected page?
-        local lastPage = self.lastNonFirstPageId and AngryAssign_Pages[self.lastNonFirstPageId]
+        local targetPageId = self.lastNonFirstPageId
+        local lastPage = targetPageId and AngryAssign_Pages[targetPageId]
         if lastPage and lastPage.CategoryId == page.CategoryId then
-            local displayed, displayError, published, publicationResult = self:DisplayPage(self.lastNonFirstPageId)
-            self.lastNonFirstPageId = nil
+            local displayed, displayError, published, publicationResult = self:DisplayPage(targetPageId)
+            if displayed == true and self.lastNonFirstPageId == targetPageId then
+                self.lastNonFirstPageId = nil
+            end
             return displayed, displayError, published, publicationResult
         else
+            self.lastNonFirstPageId = nil
             self:Print("Already on the first page.")
         end
     else
+        local previousTogglePageId = self.lastNonFirstPageId
         self.lastNonFirstPageId = page.Id
-        return self:DisplayPage(firstSib.Id)
+        local displayed, displayError, published, publicationResult = self:DisplayPage(firstSib.Id)
+        if displayed ~= true and self.lastNonFirstPageId == page.Id then
+            self.lastNonFirstPageId = previousTogglePageId
+        end
+        return displayed, displayError, published, publicationResult
     end
 end
 

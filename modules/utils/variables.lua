@@ -598,6 +598,7 @@ local RESERVED_METADATA_IDENTITIES = {
     AE_RAID_ROSTER = true,
     ASSISTS = true,
     AUTOADVANCE = true,
+    AUTOADVANCEFIRST = true,
     AUTOAPPLYLAYOUT = true,
     CIRCLE = true,
     DIAMOND = true,

@@ -10,6 +10,23 @@ local AngryEra = {
             ExtractAndValidateName = function(value)
                 return value
             end,
+            CompareIndexedEntries = function(left, right)
+                local leftIndex = left.Index or left.index
+                local rightIndex = right.Index or right.index
+                local leftName = left.Name or left.text or ""
+                local rightName = right.Name or right.text or ""
+                if leftIndex and rightIndex then
+                    if leftIndex == rightIndex then
+                        return leftName < rightName
+                    end
+                    return leftIndex < rightIndex
+                elseif leftIndex then
+                    return true
+                elseif rightIndex then
+                    return false
+                end
+                return leftName < rightName
+            end,
         },
     },
 }
@@ -819,6 +836,13 @@ AngryAssign_Pages[51] = {
     Name = "Navigation B",
     Contents = "",
 }
+AngryAssign_Pages[52] = {
+    Id = 52,
+    CategoryId = 9,
+    Index = 3,
+    Name = "Navigation C",
+    Contents = "",
+}
 function AngryEra:IsPinned(candidate)
     return candidate.Id == 51
 end
@@ -845,8 +869,70 @@ assert(
         and sentDisplays[#sentDisplays].Force == false,
     "PrevPage should use non-forced publication"
 )
+
+-- Encounter first-page staging preloads the ordinary next page into the same
+-- toggle memory used by manual First Page navigation.
+AngryAssign_State.displayed = 50
+AngryEra.lastNonFirstPageId = 52
+local sendsBeforeStagedReturn = #sentDisplays
+local returned, returnError, returnPublished = AngryEra:FirstPage()
+assert(returned == true and returnError == nil and returnPublished == true, "FirstPage should consume a staged target")
+assert(AngryAssign_State.displayed == 52, "FirstPage should return from the first page to the staged next boss")
+assert(AngryEra.lastNonFirstPageId == nil, "a successful staged return should consume toggle memory")
+assert(
+    #sentDisplays == sendsBeforeStagedReturn + 1
+        and sentDisplays[#sentDisplays].Id == 52
+        and sentDisplays[#sentDisplays].Force == false,
+    "a manual staged return should use ordinary non-forced publication"
+)
+
 AngryAssign_Pages[50] = nil
 AngryAssign_Pages[51] = nil
+AngryAssign_Pages[52] = nil
+
+-- Navigation uses local id as a stable final ordering key when saved index and
+-- name are equal. This keeps FirstPage aligned with encounter sequencing.
+AngryAssign_Pages[70] = {
+    Id = 70,
+    CategoryId = 10,
+    Index = 1,
+    Name = "Equal",
+    Contents = "",
+}
+AngryAssign_Pages[71] = {
+    Id = 71,
+    CategoryId = 10,
+    Index = 1,
+    Name = "Equal",
+    Contents = "",
+}
+AngryAssign_Pages[72] = {
+    Id = 72,
+    CategoryId = 10,
+    Index = 2,
+    Name = "Later",
+    Contents = "",
+}
+AngryAssign_State.displayed = 72
+AngryEra.lastNonFirstPageId = nil
+AngryEra:FirstPage()
+assert(AngryAssign_State.displayed == 70, "FirstPage should choose the lowest id among equal-order pages")
+assert(AngryEra.lastNonFirstPageId == 72, "FirstPage should remember the page it left after stable selection")
+
+AngryEra.lastNonFirstPageId = nil
+local sendsBeforeEqualNext = #sentDisplays
+AngryEra:NextPage()
+assert(AngryAssign_State.displayed == 71, "NextPage should use local id to order equal-index equal-name siblings")
+assert(
+    #sentDisplays == sendsBeforeEqualNext + 1
+        and sentDisplays[#sentDisplays].Id == 71
+        and sentDisplays[#sentDisplays].Force == false,
+    "equal-order navigation should publish only its stable next page"
+)
+AngryAssign_Pages[70] = nil
+AngryAssign_Pages[71] = nil
+AngryAssign_Pages[72] = nil
+AngryEra.lastNonFirstPageId = nil
 
 local sendsBeforeLocalClear = #sentDisplays
 AngryAssign_State.displayed = 42

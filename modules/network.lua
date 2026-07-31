@@ -1214,6 +1214,12 @@ function AngryEra:ResetDisplayAuthorityPublicationState(reason)
     self:CancelPendingDisplayRecovery()
     CancelPendingDisplayPage(self, reason or "authority-reset", "superseded")
     CancelPendingDisplayControl(self, reason or "authority-reset")
+    if type(self.CancelAutoAdvancePublishRetry) == "function" then
+        self:CancelAutoAdvancePublishRetry()
+    end
+    if type(self.ResetDisplayNavigationState) == "function" then
+        self:ResetDisplayNavigationState()
+    end
     for _, timerId in pairs(pageTimerId) do
         CancelTimer(self, timerId)
     end

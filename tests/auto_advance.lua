@@ -57,12 +57,14 @@ end
 
 local displayedCalls = {}
 local displayOptions = {}
+local displayToggleTargets = {}
 local displayLocalSuccess = true
 local displayPublished = true
 local displayPublicationResult = "display-message-id"
 function AngryEra:DisplayPage(id, options)
     displayedCalls[#displayedCalls + 1] = id
     displayOptions[#displayOptions + 1] = options
+    displayToggleTargets[#displayToggleTargets + 1] = self.lastNonFirstPageId
     if displayLocalSuccess == true then
         AngryAssign_State.displayed = id
         return true, nil, displayPublished, displayPublicationResult
@@ -139,6 +141,13 @@ _G.AngryAssign_Categories = {
         OwnerId = localInstallationId,
         Vars = "$AUTOADVANCE=$true",
     },
+    [4] = {
+        Id = 4,
+        Name = "Naxxramas",
+        SyncId = CategorySyncId(4),
+        OwnerId = localInstallationId,
+        Vars = "$AUTOADVANCE=$true",
+    },
 }
 
 local function LocalPage(id, name, categoryId, index, vars)
@@ -165,6 +174,10 @@ _G.AngryAssign_Pages = {
     [30] = LocalPage(30, "Onyxia", 3, 1),
     [31] = LocalPage(31, "Broodlings", 3, 2),
     [40] = LocalPage(40, "Rootless", nil, 1),
+    [50] = LocalPage(50, "Trash", 4, 1),
+    [51] = LocalPage(51, "Anub", 4, 2, "$AUTOADVANCEFIRST=$true"),
+    [52] = LocalPage(52, "Grand Widow", 4, 3),
+    [53] = LocalPage(53, "Maexxna", 4, 4, "$AUTOADVANCEFIRST=$true"),
 }
 _G.AngryAssign_State = { displayed = 10 }
 
@@ -184,6 +197,7 @@ local function Reset(displayedId, meta, categorySyncId)
     AngryEra:CancelAutoAdvancePublishRetry()
     displayedCalls = {}
     displayOptions = {}
+    displayToggleTargets = {}
     displayLocalSuccess = true
     displayPublished = true
     displayPublicationResult = "display-message-id"
@@ -193,6 +207,7 @@ local function Reset(displayedId, meta, categorySyncId)
     SetDisplayedNote(displayedId, meta, categorySyncId)
     activeReference = nil
     activeRenderContext = nil
+    AngryEra.lastNonFirstPageId = nil
 end
 
 local function SetExactActiveContext(ancestorLayers)
@@ -235,6 +250,58 @@ for _, legacyValue in ipairs({ "true", "TRUE", 1 }) do
     )
 end
 
+-- A page-level first-page flag stages the normal next boss for the First Page
+-- toggle, but publishes only the category's first page.
+Reset(51, { AUTOADVANCE = true, AUTOADVANCEFIRST = true })
+advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 9001, "Anub", 9, 40, 1)
+assert(advanced == true and result == 52, "first-page staging should retain the normal next-page result")
+assert(
+    #displayedCalls == 1 and displayedCalls[1] == 50,
+    "first-page staging should publish Trash directly without publishing the next boss"
+)
+assert(AngryAssign_State.displayed == 50, "first-page staging should leave the first page displayed")
+assert(AngryEra.lastNonFirstPageId == 52, "the First Page toggle should return to the staged next boss")
+assert(displayToggleTargets[1] == 52, "the next boss should be armed before the direct first-page display is observed")
+assert(
+    displayOptions[1] and displayOptions[1].ForcePublication == true,
+    "the direct first-page display should force immediate publication"
+)
+
+-- Repeated encounter delivery while Trash is already active may refresh the
+-- staged return target, but must never redisplay or toggle either page.
+Reset(50, { AUTOADVANCE = true })
+for _ = 1, 3 do
+    advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 9001, "Anub", 9, 40, 1)
+    assert(advanced == true and result == 52, "repeated encounter delivery should remain idempotent")
+end
+assert(#displayedCalls == 0, "an already active first page must never be redisplayed or toggled")
+assert(AngryAssign_State.displayed == 50, "repeated encounter delivery should leave Trash displayed")
+assert(AngryEra.lastNonFirstPageId == 52, "repeated encounter delivery should retain Grand Widow")
+
+-- Like every automation flag, $AUTOADVANCEFIRST requires a typed boolean.
+-- Legacy strings, numbers, and an explicit false retain ordinary next-page
+-- auto-advance without arming First Page toggle memory.
+for _, disabledValue in ipairs({ "true", "TRUE", 1, false }) do
+    Reset(51, { AUTOADVANCE = true, AUTOADVANCEFIRST = disabledValue })
+    advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 9001, "Anub", 9, 40, 1)
+    assert(advanced == true and result == 52, "an untyped or false first-page flag should still auto-advance")
+    assert(
+        #displayedCalls == 1 and displayedCalls[1] == 52,
+        "an untyped or false first-page flag should display the ordinary next boss"
+    )
+    assert(AngryEra.lastNonFirstPageId == nil, "disabled first-page staging must not arm toggle memory")
+end
+
+-- The first-page option does not wrap a completed sequence. There must be a
+-- real next sibling to stage before the display or toggle memory changes.
+Reset(53, { AUTOADVANCE = true, AUTOADVANCEFIRST = true })
+AngryEra.lastNonFirstPageId = 999
+advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 9002, "Maexxna", 9, 40, 1)
+assert(advanced == false and result == "no-next-page", "the final boss should stop instead of wrapping")
+assert(#displayedCalls == 0, "a final boss must not publish the first page")
+assert(AngryAssign_State.displayed == 53, "a final boss should remain displayed")
+assert(AngryEra.lastNonFirstPageId == 999, "a no-next result must preserve existing toggle memory")
+
 -- Wipes never advance.
 Reset(10, { AUTOADVANCE = true })
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 0)
@@ -252,6 +319,16 @@ Reset(11, { AUTOADVANCE = true })
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
 assert(advanced == false and result == "already-displayed", "no re-display when already ahead")
 assert(#displayedCalls == 0, "no display call when already ahead")
+
+-- A delayed duplicate after the user toggles from Trash to the staged boss
+-- must not pull the raid back to Trash.
+Reset(52, { AUTOADVANCE = true })
+AngryEra.lastNonFirstPageId = 999
+advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 9001, "Anub", 9, 40, 1)
+assert(advanced == false and result == "already-displayed", "an already staged boss should remain displayed")
+assert(#displayedCalls == 0, "a delayed staged duplicate must not republish Trash")
+assert(AngryAssign_State.displayed == 52, "a delayed staged duplicate must leave the staged boss active")
+assert(AngryEra.lastNonFirstPageId == 999, "an already-ahead duplicate must preserve navigation memory")
 
 -- $ENCOUNTERID binds pages whose names differ from the encounter.
 Reset(11, { AUTOADVANCE = true })
@@ -490,6 +567,49 @@ assert(
 )
 assert(displayOptions[2].AutoAdvanceRetry ~= nil, "an auto-advance publication retry should retain its retry identity")
 
+-- A direct first-page publication retries only that first page. A duplicate
+-- encounter after local activation is idempotent and must not replace the
+-- original retry or its staged next-boss toggle target.
+Reset(51, { AUTOADVANCE = true, AUTOADVANCEFIRST = true })
+displayPublished = false
+displayPublicationResult = "transport-failed"
+advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 9001, "Anub", 9, 40, 1)
+assert(advanced == false and result == "display-publish-retrying", "first-page transport failure should retry")
+assert(AngryAssign_State.displayed == 50, "transport failure should retain the local first-page activation")
+assert(AngryEra.lastNonFirstPageId == 52, "transport failure should retain the staged next boss")
+assert(#displayedCalls == 1 and displayedCalls[1] == 50, "the initial publication should target only Trash")
+local stagedRetry = AngryEra._autoAdvancePublishRetry
+local stagedTimerCount = #timers
+assert(stagedRetry and stagedRetry.PageId == 50, "the publication retry should target the first page")
+
+SetDisplayedNote(50, { AUTOADVANCE = true })
+local duplicateStaged, duplicateStagedResult = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 9001, "Anub", 9, 40, 1)
+assert(
+    duplicateStaged == true and duplicateStagedResult == 52,
+    "a duplicate staged encounter should be an idempotent success"
+)
+assert(#displayedCalls == 1, "a duplicate staged encounter must not republish the already displayed first page")
+assert(
+    AngryEra._autoAdvancePublishRetry == stagedRetry and #timers == stagedTimerCount,
+    "a duplicate staged encounter must preserve the pending first-page retry"
+)
+assert(AngryEra.lastNonFirstPageId == 52, "a duplicate staged encounter should preserve its toggle target")
+
+displayPublished = true
+retrySucceeded, retryResult = RunNextTimer()
+assert(retrySucceeded == true and retryResult == 50, "a successful retry should publish the first page")
+assert(
+    #displayedCalls == 2 and displayedCalls[1] == 50 and displayedCalls[2] == 50,
+    "the initial attempt and retry must never publish the staged next boss"
+)
+assert(
+    displayOptions[2]
+        and displayOptions[2].ForcePublication == true
+        and displayOptions[2].AutoAdvanceRetry == stagedRetry,
+    "the first-page retry should force publication with its original identity"
+)
+assert(AngryEra.lastNonFirstPageId == 52, "a successful retry should retain the First Page return target")
+
 -- Replacing the display cancels the pending retry without republishing stale state.
 Reset(10, { AUTOADVANCE = true })
 displayPublished = false
@@ -518,6 +638,19 @@ displayLocalSuccess = false
 advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 663, "Lucifron", 9, 40, 1)
 assert(advanced == false and result == "display-failed", "local display failures should be reported")
 assert(#timers == 0, "local activation failure must not schedule publication retries")
+
+-- Arming happens before a synchronous display observer, but a local activation
+-- failure must roll it back so an unrelated First Page target is not lost.
+Reset(51, { AUTOADVANCE = true, AUTOADVANCEFIRST = true })
+AngryEra.lastNonFirstPageId = 999
+displayLocalSuccess = false
+advanced, result = AngryEra:ENCOUNTER_END("ENCOUNTER_END", 9001, "Anub", 9, 40, 1)
+assert(advanced == false and result == "display-failed", "a failed direct first-page activation should surface")
+assert(#displayedCalls == 1 and displayedCalls[1] == 50, "the failed activation should attempt only Trash")
+assert(displayToggleTargets[1] == 52, "the staged next boss should be visible during the display attempt")
+assert(AngryAssign_State.displayed == 51, "a failed first-page activation must retain the source boss")
+assert(AngryEra.lastNonFirstPageId == 999, "a failed first-page activation must restore prior toggle memory")
+assert(#timers == 0, "a failed first-page activation must not schedule a publication retry")
 
 -- Auto-advance decisions are visible through sync debug tracing.
 Reset(10, { AUTOADVANCE = true })

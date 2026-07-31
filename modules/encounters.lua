@@ -445,10 +445,12 @@ function AngryEra:RetryAutoAdvanceDisplay(retry)
     return false, "display-publish-retrying"
 end
 
---- Advances the display to the page after the defeated encounter's page.
+--- Advances the display after the defeated encounter's page.
 -- The exact displayed-note snapshot is authoritative for the displayed page's
 -- metadata. Encounter fallback search is restricted to a bounded, locally
 -- owned sibling sequence; remote-owned private placement is never inferred.
+-- `$AUTOADVANCEFIRST` stages the ordinary next sibling as the First Page
+-- toggle destination while displaying only the category's first page.
 -- @tparam number|nil encounterId Defeated encounter id.
 -- @tparam string|nil encounterName Defeated encounter name.
 -- @treturn boolean advanced
@@ -486,15 +488,45 @@ function AngryEra:AdvanceDisplayedPageAfterEncounter(encounterId, encounterName)
         return false, "already-displayed"
     end
 
-    local displayed, _, published, publicationResult = self:DisplayPage(nextPage.Id, { ForcePublication = true })
+    local displayPage = nextPage
+    local previousTogglePageId
+    local stagedTogglePageId
+    if IsEnabledFlag(GetMetaValue(meta, "AUTOADVANCEFIRST")) then
+        displayPage = siblings[1]
+        if not displayPage then
+            return false, "no-first-page"
+        end
+
+        stagedTogglePageId = nextPage.Id
+        if AngryAssign_State.displayed == displayPage.Id then
+            -- ENCOUNTER_END may be delivered more than once. When the first
+            -- page is already active, refresh only the toggle destination and
+            -- never redisplay or invoke FirstPage; page updates therefore
+            -- cannot turn this encounter action into a navigation loop.
+            self.lastNonFirstPageId = stagedTogglePageId
+            return true, nextPage.Id
+        end
+
+        -- Arm the toggle before DisplayPage dispatches its synchronous note
+        -- update. A listener reacting to that update must already see the
+        -- correct destination. Restore the old value only when local
+        -- activation fails and no re-entrant listener changed it.
+        previousTogglePageId = self.lastNonFirstPageId
+        self.lastNonFirstPageId = stagedTogglePageId
+    end
+
+    local displayed, _, published, publicationResult = self:DisplayPage(displayPage.Id, { ForcePublication = true })
     if displayed ~= true then
+        if stagedTogglePageId ~= nil and self.lastNonFirstPageId == stagedTogglePageId then
+            self.lastNonFirstPageId = previousTogglePageId
+        end
         return false, "display-failed"
     end
     if published ~= true then
         if not IsInRaid() and not IsInGroup() then
             return true, nextPage.Id
         end
-        if BeginAutoAdvanceRetry(self, nextPage.Id, publicationResult) then
+        if BeginAutoAdvanceRetry(self, displayPage.Id, publicationResult) then
             return false, "display-publish-retrying"
         end
         return false, "display-publish-failed"

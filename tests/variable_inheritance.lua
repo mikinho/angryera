@@ -75,6 +75,7 @@ local reservedCaseKeys = {
     "SQUARE",
     "SKULL",
     "AUTOADVANCE",
+    "AUTOADVANCEFIRST",
     "AUTOAPPLYLAYOUT",
     "ASSISTS",
     "ENCOUNTER",
@@ -121,13 +122,33 @@ merged, mergeError = variables.MergeVariableLayers({
 assert(merged and not mergeError, "a page should enable automatic layouts above an inherited false")
 assert(merged["$autoapplylayout"] == true, "the nearest automatic layout metadata should win")
 
+merged, mergeError = variables.MergeVariableLayers({
+    { Vars = "$AUTOADVANCEFIRST=$true" },
+}, "")
+assert(merged and not mergeError, "inherited first-page staging metadata should merge")
+assert(merged["$AUTOADVANCEFIRST"] == true, "first-page staging should inherit from a category")
+
+merged, mergeError = variables.MergeVariableLayers({
+    { Vars = "$AUTOADVANCEFIRST=$true" },
+}, "$autoadvancefirst=$false")
+assert(merged and not mergeError, "a page should override inherited first-page staging metadata")
+assert(merged["$AUTOADVANCEFIRST"] == nil, "the inherited first-page staging spelling should be removed")
+assert(merged["$autoadvancefirst"] == false, "a page should be able to disable inherited first-page staging")
+
+merged, mergeError = variables.MergeVariableLayers({
+    { Vars = "$AUTOADVANCEFIRST=$false" },
+}, "$autoadvancefirst=$true")
+assert(merged and not mergeError, "a page should enable first-page staging above an inherited false")
+assert(merged["$autoadvancefirst"] == true, "the nearest first-page staging metadata should win")
+
 merged, mergeError = variables.MergeVariableLayers(
     {},
-    "AUTOMATION_ENABLED=$true\n$AUTOADVANCE={{AUTOMATION_ENABLED}}\n$AUTOAPPLYLAYOUT={{AUTOMATION_ENABLED}}"
+    "AUTOMATION_ENABLED=$true\n$AUTOADVANCE={{AUTOMATION_ENABLED}}\n"
+        .. "$AUTOADVANCEFIRST={{AUTOMATION_ENABLED}}\n$AUTOAPPLYLAYOUT={{AUTOMATION_ENABLED}}"
 )
 assert(merged and not mergeError, "referenced typed automation metadata should merge")
 assert(
-    merged["$AUTOADVANCE"] == true and merged["$AUTOAPPLYLAYOUT"] == true,
+    merged["$AUTOADVANCE"] == true and merged["$AUTOADVANCEFIRST"] == true and merged["$AUTOAPPLYLAYOUT"] == true,
     "an exact reference should preserve the boolean type required by automation"
 )
 
@@ -151,6 +172,8 @@ AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer mar
 
 merged, mergeError = variables.MergeVariableLayers({}, "$AUTOADVANCE=$true\n$autoadvance=$false")
 AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer reserved case conflict")
+merged, mergeError = variables.MergeVariableLayers({}, "$AUTOADVANCEFIRST=$true\n$autoadvancefirst=$false")
+AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer first-page staging case conflict")
 merged, mergeError = variables.MergeVariableLayers({}, "$AUTOAPPLYLAYOUT=$true\n$autoapplylayout=$false")
 AssertError(merged, mergeError, "conflicting-reserved-metadata", "same-layer automatic layout case conflict")
 merged, mergeError = variables.MergeVariableLayers({}, "$TANKS=Alpha\n$tanks=Bravo")

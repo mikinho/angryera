@@ -90,6 +90,8 @@ local clearedSharedPageDrafts = 0
 local clearedSyncDraftConflicts = 0
 local rebasedSharedPageDrafts = {}
 local canceledProtocolChangeProposals = {}
+local navigationResetCount = 0
+local autoAdvanceRetryResetCount = 0
 
 function AngryEra:CanLocalPlayerPublish(action)
     if action == "display" then
@@ -110,6 +112,14 @@ end
 
 function AngryEra:GetDelegatedRaidControl()
     return nil
+end
+
+function AngryEra:ResetDisplayNavigationState()
+    navigationResetCount = navigationResetCount + 1
+end
+
+function AngryEra:CancelAutoAdvancePublishRetry()
+    autoAdvanceRetryResetCount = autoAdvanceRetryResetCount + 1
 end
 
 local function Upsert(id)
@@ -1174,12 +1184,22 @@ sent, result = AngryEra:SendRequestDisplay()
 assert(sent and result == "request-message", "reset should have an unanswered display request")
 local resetDisplayRequestWatchdog = timers[#timers]
 
+local navigationResetsBeforePublicationReset = navigationResetCount
+local autoAdvanceResetsBeforePublicationReset = autoAdvanceRetryResetCount
 AngryEra:ResetDisplayPublicationState()
 assert(canceled[resetRecoveryTimer], "publication reset should cancel pending recovery")
 assert(canceled[resetDisplayPageTimer], "publication reset should cancel the debounced display page")
 assert(canceled[resetPageTimer], "publication reset should cancel page throttling")
 assert(canceled[resetDisplayTimer], "publication reset should cancel display throttling")
 assert(canceled[resetDisplayRequestWatchdog], "publication reset should cancel display discovery retries")
+assert(
+    navigationResetCount == navigationResetsBeforePublicationReset + 1,
+    "publication reset should clear controller-local First Page toggle memory"
+)
+assert(
+    autoAdvanceRetryResetCount == autoAdvanceResetsBeforePublicationReset + 1,
+    "publication reset should cancel auto-advance work from the previous authority session"
+)
 local callsBeforeStaleResetDisplay = #calls
 sent, result = AngryEra:SendPendingDisplayControl(resetDisplayTimer.Argument)
 assert(sent and result == "superseded", "a reset display callback should be harmless")

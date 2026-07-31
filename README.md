@@ -422,6 +422,7 @@ Metadata can also appear in page text. It is excluded from automatic word highli
 | --- | --- |
 | `$STAR` through `$SKULL` | Assign raid target markers when the page is displayed. `$X` and `$CROSS` are aliases. |
 | `$AUTOADVANCE` | Enable or disable boss-kill advancement for the effective page. |
+| `$AUTOADVANCEFIRST` | From the defeated encounter's source page, stage the normal next sibling for the **First Page** toggle and show the category's first page. |
 | `$ENCOUNTER` / `$ENCOUNTERID` | Bind an auto-advance page to an encounter name or numeric ID. |
 | `$LAYOUT` | Define the effective named raid subgroup layout. |
 | `$AUTOAPPLYLAYOUT` | After the initial display state is recorded, let the Raid Controller apply a different destination page's effective layout. |
@@ -524,6 +525,20 @@ To advance assignments after boss kills:
    ```text
    $AUTOADVANCE=$false
    ```
+
+5. When a particular encounter should stage the next boss but return the display to the category's first page, add this to that encounter's source page:
+
+   ```text
+   $AUTOADVANCEFIRST=$true
+   ```
+
+`$AUTOADVANCEFIRST` is read from the source page matched to the defeated encounter—the encounter-bound anchor page—not from the normal next page or the category's first page. AngryEra resolves the same normal next sibling it otherwise would, remembers that sibling as the **First Page** return target, and shows the category's first page. For example: **Anub'Rekhan → Grand Widow Faerlina (staged) → Trash (displayed) → Grand Widow Faerlina (after pressing First Page)**. The initially resolved Grand Widow Faerlina page is staged locally, not briefly displayed or transmitted.
+
+The raid sees only the final first-page display; AngryEra does not briefly publish the staged next boss before returning to the first page. If the first page is already displayed, it only stages the next boss and sends no redundant display. This is not wrapping: `$AUTOADVANCEFIRST` still requires a normal next sibling, does not change Previous or Next, and does nothing at the end of the category.
+
+First-page staging is evaluated only while AngryEra handles a successful `ENCOUNTER_END`. Displaying, editing, receiving, or refreshing the first page does not run it. Repeated delivery of the same encounter result while the first page is already active only refreshes the same staged return target; it never toggles or republishes either page.
+
+Like other automation flags, only a typed boolean enables it. In Key=Value storage use `$AUTOADVANCEFIRST=$true`; in JSON use `"$AUTOADVANCEFIRST": true`. The value inherits normally, so a category-level `$true` affects every descendant unless a nearer page sets `$AUTOADVANCEFIRST=$false`. Put it on the individual source pages when back-to-back bosses should continue displaying normally.
 
 Only the current Raid Controller advances the shared display. Successful kills advance; wipes do not. Auto-advance uses that controller's locally owned sibling pages inside one category; it does not infer a sequence from root-level, unfiled, or received remote-owned pages. Advancement stops when there is no next page. Duplicate encounter names or IDs are treated as ambiguous and do not advance.
 
@@ -825,6 +840,9 @@ Also confirm the current Raid Controller is using **Leader + Qualified Assistant
 - Confirm the displayed page inherits `$AUTOADVANCE=$true`.
 - Match the page name to the encounter or add `$ENCOUNTER` or `$ENCOUNTERID`.
 - Remove duplicate encounter bindings.
+- For first-page staging, put `$AUTOADVANCEFIRST=$true` on the page matched to the defeated encounter, not on the staged next page or the category's first page.
+- Use the typed `$true` literal in Key=Value storage or native `true` in JSON. Plain `true`, `True`, and `TRUE` are strings and do not enable automation.
+- `$AUTOADVANCEFIRST` never wraps. The matched encounter must still have a normal next sibling, and **First Page** returns to that staged sibling only after the category's first page is active.
 
 ## WeakAuras and addon integration
 
