@@ -55,13 +55,8 @@ local raidAssignmentErrors = {
     ["assignment-api-timeout"] = "Classic did not confirm a raid role or assistant change in time.",
     ["assignment-api-unavailable"] = "This client cannot change every raid role or assistant required by the page.",
     ["assignment-list-too-large"] = "$TANKS and $ASSISTS may contain at most 40 names.",
-    ["assistant-state-failed"] = "Classic's raid-assistant state is temporarily unavailable.",
-    ["assistant-state-unavailable"] = "This client does not expose Blizzard's raid-assistant state.",
     ["duplicate-assignment-member"] = "$TANKS or $ASSISTS resolves the same raid member more than once.",
     ["duplicate-assignment-name"] = "$TANKS or $ASSISTS contains the same name more than once.",
-    ["delegated-controller-demotion-blocked"] = "The active Raid Controller cannot be demoted from raid assistant.",
-    ["delegated-controller-everyone-assistant"] = "Turn off Blizzard's Everyone Is Assistant option before applying managed $ASSISTS while Raid Control is delegated.",
-    ["delegated-controller-missing-from-assists"] = "Managed $ASSISTS must include the active Raid Controller. Reclaim Raid Control first if the controller should be demoted.",
     ["delegated-controller-state-unvalidated"] = "Raid Control is not currently validated; $TANKS and $ASSISTS are paused until control recovers or is reclaimed.",
     ["invalid-assignment-list"] = "$TANKS and $ASSISTS must be comma-separated name lists.",
     ["invalid-assignment-name"] = "$TANKS or $ASSISTS contains an invalid or empty name.",
@@ -77,9 +72,6 @@ local raidAssignmentErrors = {
 
 local oncePerRaidAutomationWarnings = {
     assignments = {
-        ["delegated-controller-demotion-blocked"] = true,
-        ["delegated-controller-everyone-assistant"] = true,
-        ["delegated-controller-missing-from-assists"] = true,
         ["delegated-controller-state-unvalidated"] = true,
         ["unknown-assignment-member"] = true,
     },

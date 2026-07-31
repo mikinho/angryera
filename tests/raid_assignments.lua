@@ -41,7 +41,6 @@ local ignoreRoleCalls = false
 local ignoreAssistantCalls = false
 local roleReadFailures = 0
 local invalidRoleRead = false
-local everyoneStateFailures = 0
 local synchronousRoleEvents = false
 local softRoleSuggestions = true
 local ineligibleTankUnits = {}
@@ -49,7 +48,6 @@ local roleAvailabilityFailures = 0
 local roleAvailabilityReads = 0
 local delegatedControl
 local rawDelegatedControl
-local delegatedControllerGuardOverride
 local forceUnitLeaderFalse = false
 
 local function MemberByUnit(unit)
@@ -102,14 +100,6 @@ function _G.UnitIsGroupAssistant(unit)
     return member and (everyoneAssistant or member.Rank == 1) or false
 end
 
-function _G.IsEveryoneAssistant()
-    if everyoneStateFailures > 0 then
-        everyoneStateFailures = everyoneStateFailures - 1
-        error("settling assistant state")
-    end
-    return everyoneAssistant
-end
-
 function _G.UnitSetRole(unit, role)
     calls[#calls + 1] = {
         Kind = "role",
@@ -158,24 +148,6 @@ local partyInfo = {
             end
         end
     end,
-    DemoteAssistant = function(name, exact)
-        assert(exact == true)
-        calls[#calls + 1] = { Kind = "demote", Name = name, At = now }
-        if ignoreAssistantCalls then
-            return
-        end
-        for _, member in ipairs(members) do
-            if member.Name == name then
-                member.Rank = 0
-                return
-            end
-        end
-    end,
-    SetEveryoneIsAssistant = function(enabled)
-        calls[#calls + 1] = { Kind = "everyone", Enabled = enabled, At = now }
-        everyoneAssistant = enabled
-        return true
-    end,
 }
 _G.C_PartyInfo = partyInfo
 
@@ -193,16 +165,6 @@ end
 
 function AngryEra:GetDelegatedRaidControl()
     return rawDelegatedControl or delegatedControl
-end
-
-function AngryEra:IsDelegatedRaidController(player)
-    if delegatedControllerGuardOverride ~= nil then
-        return delegatedControllerGuardOverride == true
-    end
-    return delegatedControl ~= nil
-        and type(delegatedControl.Controller) == "string"
-        and type(player) == "string"
-        and delegatedControl.Controller:lower() == player:lower()
 end
 
 function AngryEra:ScheduleTimer(method, delay, generation)
@@ -285,7 +247,6 @@ local function Reset()
     ignoreAssistantCalls = false
     roleReadFailures = 0
     invalidRoleRead = false
-    everyoneStateFailures = 0
     synchronousRoleEvents = false
     softRoleSuggestions = true
     ineligibleTankUnits = {}
@@ -293,7 +254,6 @@ local function Reset()
     roleAvailabilityReads = 0
     delegatedControl = nil
     rawDelegatedControl = nil
-    delegatedControllerGuardOverride = nil
     forceUnitLeaderFalse = false
 end
 
@@ -305,8 +265,8 @@ assert(not invalid and invalidError == "invalid-assignment-name", "empty list me
 local duplicate, duplicateError = raidAssignments.ParseNameList("Tank,tank")
 assert(not duplicate and duplicateError == "duplicate-assignment-name", "case-insensitive duplicates should fail")
 
--- Present directives own exact sets. Extra assistants are demoted, missing
--- assistants promoted, new tanks set, and existing healer/damage roles remain.
+-- $TANKS owns an exact set while $ASSISTS only adds missing authority.
+-- Existing assistants and unmanaged healer/damage roles remain unchanged.
 Reset()
 currentSnapshot = Reference("page-a", 1, {
     TANKS = "Tank, Newtank",
@@ -315,14 +275,15 @@ currentSnapshot = Reference("page-a", 1, {
 local requested, status = AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 assert(requested and status == "scheduled", "managed metadata should schedule")
 DrainTimers()
-assert(#calls == 3, "the exact desired sets should require three changes")
+assert(#calls == 2, "the combined directives should promote one assistant and add one tank")
 assert(calls[1].Kind == "promote" and calls[1].Name == "Assist-Home", "missing assist is promoted first")
-assert(calls[2].Kind == "demote" and calls[2].Name == "Healer-Home", "extra authority clears after replacement")
-assert(calls[3].Kind == "role" and calls[3].Name == "Newtank-Home", "missing tank role is assigned")
+assert(calls[2].Kind == "role" and calls[2].Name == "Newtank-Home", "missing tank role is assigned")
+assert(members[3].Rank == 1 and members[5].Rank == 1, "existing and requested assistants both retain authority")
 assert(members[2].Role == "TANK" and members[3].Role == "HEALER", "unmanaged healer/damage roles remain")
-assert(#finished == 1 and finished[1].Success and finished[1].Result == 3, "actual changes report once")
+assert(#finished == 1 and finished[1].Success and finished[1].Result == 2, "actual changes report once")
 
--- Empty values override inheritance and clear every managed assignment.
+-- Empty values override inheritance. $TANKS still clears its exact set, while
+-- an explicit empty $ASSISTS adds nobody and never revokes existing authority.
 currentSnapshot = Reference("page-b", 2, {
     TANKS = "",
     ASSISTS = "",
@@ -330,14 +291,40 @@ currentSnapshot = Reference("page-b", 2, {
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
 assert(members[2].Role == "NONE" and members[4].Role == "NONE", "empty $TANKS clears live tanks to NONE")
-assert(members[5].Rank == 0, "empty $ASSISTS demotes current assistants")
+assert(members[3].Rank == 1 and members[5].Rank == 1, "empty $ASSISTS preserves current assistants")
 assert(members[3].Role == "HEALER", "clearing tanks must preserve healer roles")
+assert(
+    #calls == 4 and #finished == 2 and finished[2].Success and finished[2].Result == 2,
+    "only the two exact Tank removals should be added by the empty directives"
+)
 
 -- A page without either key leaves current Blizzard state unmanaged.
 local callCount = #calls
 currentSnapshot = Reference("page-c", 3, {})
 requested, status = AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 assert(not requested and status == "unmanaged" and #calls == callCount, "absent directives do nothing")
+
+-- Assistant requests accumulate across page changes because later pages never
+-- demote authority granted by earlier pages or by the Blizzard raid leader.
+Reset()
+currentSnapshot = Reference("assist-page-a", 1, { ASSISTS = "Assist" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+currentSnapshot = Reference("assist-page-b", 2, { ASSISTS = "Newtank" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(
+    members[3].Rank == 1 and members[4].Rank == 1 and members[5].Rank == 1,
+    "page transitions should accumulate requested and pre-existing assistants"
+)
+assert(
+    #calls == 2
+        and calls[1].Kind == "promote"
+        and calls[1].Name == "Assist-Home"
+        and calls[2].Kind == "promote"
+        and calls[2].Name == "Newtank-Home",
+    "each page should issue only its missing promotion"
+)
 
 -- A fallback render with an invalid ancestor hierarchy must never apply its
 -- incomplete page-only metadata, and repeated renders report only once.
@@ -374,16 +361,22 @@ AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
 assert(members[6].Role == "TANK", "Name-Realm should select the exact duplicate")
 
--- Selective assistant metadata disables Everyone Is Assistant before applying
--- the exact list.
+-- Everyone Is Assistant is Blizzard-owned state. Additive $ASSISTS preserves
+-- it, while an accompanying $TANKS directive still reconciles exactly.
 Reset()
 everyoneAssistant = true
-currentSnapshot = Reference("selective-assist", 1, { ASSISTS = "Assist" })
+currentSnapshot = Reference("everyone-assist", 1, {
+    TANKS = "Newtank",
+    ASSISTS = "Assist",
+})
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
-assert(calls[1].Kind == "everyone" and calls[1].Enabled == false, "global assist mode disables first")
-assert(members[3].Rank == 0 and members[5].Rank == 1, "individual assists then match the declared set")
-assert(members[2].Role == "TANK", "managing only $ASSISTS must preserve assigned tank roles")
+assert(everyoneAssistant == true, "$ASSISTS must never change Everyone Is Assistant")
+assert(
+    #calls == 2 and calls[1].Kind == "role" and calls[2].Kind == "role",
+    "effective global assists should need no rank calls while Tanks still reconcile"
+)
+assert(members[4].Role == "TANK" and members[2].Role == "NONE", "$TANKS remains exact in global assist mode")
 
 -- Managing only tanks never changes current assistant rank.
 Reset()
@@ -410,32 +403,8 @@ DrainTimers()
 assert(members[5].Role == "TANK" and members[5].Rank == 1, "the same member may occupy both managed sets")
 
 -- During delegated control, the actual Blizzard leader remains the protected
--- executor, but the complete exact plan must preserve the controller's
--- explicit raid-assistant rank.
-Reset()
-members[5].Rank = 1
-delegatedControl = {
-    Controller = "Assist-Home",
-}
-currentSnapshot = Reference("delegated-controller-included", 1, {
-    TANKS = "Newtank",
-    ASSISTS = "Leader, Assist",
-})
-AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
-DrainTimers()
-assert(members[5].Rank == 1, "a listed delegated controller must retain raid assistant")
-assert(members[3].Rank == 0, "extra assistants may still be demoted after controller validation")
-for _, call in ipairs(calls) do
-    assert(call.Name ~= "Leader-Home", "the actual leader must never receive a proxied assistant mutation")
-end
-assert(members[4].Role == "TANK" and members[2].Role == "NONE", "the leader should execute delegated tanks")
-assert(
-    #calls == 3 and #finished == 1 and finished[1].Success and finished[1].Result == 3,
-    "a controller-safe delegated plan should ignore the leader and complete every other exact-set change"
-)
-
--- Omitting the active controller fails the complete privileged plan before
--- either the assistant list or otherwise-valid Tank changes mutate Blizzard.
+-- executor. An additive assistant request may omit the controller and promote
+-- another member without risking the controller's explicit assistant rank.
 Reset()
 members[5].Rank = 1
 delegatedControl = {
@@ -443,42 +412,47 @@ delegatedControl = {
 }
 currentSnapshot = Reference("delegated-controller-omitted", 1, {
     TANKS = "Newtank",
-    ASSISTS = "Leader",
+    ASSISTS = "Newtank",
 })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
-assert(#calls == 0, "an omitted controller must block every assistant and Tank mutation")
-assert(members[2].Role == "TANK" and members[4].Role == "DAMAGER", "blocked delegated tanks stay unchanged")
+assert(members[5].Rank == 1, "an omitted delegated controller must retain raid assistant")
+assert(members[3].Rank == 1 and members[4].Rank == 1, "existing authority remains while the new assist is promoted")
+for _, call in ipairs(calls) do
+    assert(
+        call.Name ~= "Leader-Home" and call.Name ~= "Assist-Home",
+        "the proxy must never mutate the actual leader or delegated controller"
+    )
+end
+assert(members[4].Role == "TANK" and members[2].Role == "NONE", "the leader should execute delegated tanks")
 assert(
-    members[3].Rank == 1 and members[5].Rank == 1,
-    "a leader-only list must not satisfy controller inclusion or partially change assistant ranks"
-)
-assert(
-    #finished == 1 and finished[1].Result == "delegated-controller-missing-from-assists",
-    "an omitted controller should report the stable safety error"
+    #calls == 3 and #finished == 1 and finished[1].Success and finished[1].Result == 3,
+    "the leader proxy should add the requested assist and complete both exact Tank changes"
 )
 
--- Everyone Is Assistant is ambiguous during a lease. The leader must not turn
--- it off or partially apply another protected dimension on the controller's
--- behalf.
+-- Everyone Is Assistant also remains Blizzard-owned during delegated control
+-- and does not block exact Tank reconciliation.
 Reset()
 members[5].Rank = 1
 delegatedControl = {
     Controller = "Assist-Home",
 }
 everyoneAssistant = true
-currentSnapshot = Reference("delegated-controller-everyone-assistant", 1, {
+currentSnapshot = Reference("delegated-controller-everyone", 1, {
     TANKS = "Newtank",
     ASSISTS = "Assist",
 })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
-assert(#calls == 0, "Everyone Is Assistant must block the complete delegated plan")
-assert(everyoneAssistant == true, "delegated validation must not silently change the global assistant mode")
-assert(members[2].Role == "TANK" and members[4].Role == "DAMAGER", "blocked delegated tanks stay unchanged")
+assert(everyoneAssistant == true, "delegated reconciliation must preserve global assistant mode")
+assert(members[5].Rank == 1, "the delegated controller must retain explicit raid-assistant rank")
 assert(
-    #finished == 1 and finished[1].Result == "delegated-controller-everyone-assistant",
-    "global assistant ambiguity should report the stable safety error"
+    #calls == 2
+        and calls[1].Kind == "role"
+        and calls[2].Kind == "role"
+        and members[4].Role == "TANK"
+        and members[2].Role == "NONE",
+    "global assist mode should not block the proxy from reconciling exact Tanks"
 )
 
 -- A recovery barrier is still a raw lease. It must pause even a Tanks-only
@@ -521,66 +495,94 @@ assert(
     "rank-loss state should report the stable authority-barrier error"
 )
 
--- Retain a final point-of-use guard in case controller state changes after the
--- plan preflight. Even then, the demotion API itself must never be invoked.
-Reset()
-delegatedControllerGuardOverride = true
-currentSnapshot = Reference("delegated-controller-last-moment", 1, {
-    ASSISTS = "",
+-- The planner itself must never manufacture destructive assistant operations.
+local additiveOperations = raidAssignments.PlanOperations({
+    Members = {
+        {
+            Identity = "healer-home",
+            FullName = "Healer-Home",
+            IsLeader = false,
+            IsAssistant = true,
+            Role = "HEALER",
+        },
+        {
+            Identity = "assist-home",
+            FullName = "Assist-Home",
+            IsLeader = false,
+            IsAssistant = false,
+            Role = "DAMAGER",
+        },
+    },
+}, {
+    AssistsPresent = true,
+    Assists = { ["assist-home"] = true },
+    TanksPresent = false,
+    Tanks = {},
 })
-AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
-DrainTimers()
-assert(#calls == 0 and members[3].Rank == 1, "the point-of-use guard must block the controller demotion call")
 assert(
-    #finished == 1 and finished[1].Result == "delegated-controller-demotion-blocked",
-    "the point-of-use guard should report its stable safety error"
+    #additiveOperations == 1 and additiveOperations[1].Kind == "promote-assistant",
+    "an additive assistant plan should contain only the missing promotion"
 )
+for _, operation in ipairs(additiveOperations) do
+    assert(
+        operation.Kind ~= "demote-assistant" and operation.Kind ~= "disable-everyone-assistant",
+        "assistant plans must never demote or toggle global assistant mode"
+    )
+end
 
--- An empty assistant set still owns the dimension and disables the global
--- Everyone Is Assistant mode before confirming the empty exact set.
+-- An explicit empty assistant list adds nobody, preserves individual ranks,
+-- and leaves Everyone Is Assistant untouched.
 Reset()
 everyoneAssistant = true
-currentSnapshot = Reference("empty-selective-assist", 1, { ASSISTS = "" })
+currentSnapshot = Reference("empty-additive-assist", 1, { ASSISTS = "" })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
-assert(calls[1].Kind == "everyone" and everyoneAssistant == false, "empty $ASSISTS disables global assist mode")
-assert(members[3].Rank == 0, "empty $ASSISTS demotes remaining individual assistants")
+assert(#calls == 0 and #finished == 0, "empty $ASSISTS should settle without any Blizzard mutation")
+assert(everyoneAssistant == true and members[3].Rank == 1, "empty $ASSISTS must preserve all assistant state")
 
--- Assistant-state reads are fail-closed but retry bounded transient failures.
+-- Additive promotion needs neither the global-assistant query nor destructive
+-- assistant APIs.
 Reset()
-everyoneStateFailures = 2
-currentSnapshot = Reference("settling-assistant-state", 1, { ASSISTS = "Assist" })
-AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
-DrainTimers()
-assert(members[5].Rank == 1, "transient Everyone Is Assistant reads should recover")
-
-Reset()
-local savedIsEveryoneAssistant = _G.IsEveryoneAssistant
-_G.IsEveryoneAssistant = nil
-currentSnapshot = Reference("missing-assistant-state", 1, { ASSISTS = "Assist" })
-AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
-DrainTimers()
-_G.IsEveryoneAssistant = savedIsEveryoneAssistant
-assert(#calls == 0, "missing global assistant state must fail before rank mutations")
 assert(
-    #finished == 1 and finished[1].Result == "assistant-state-unavailable",
-    "missing global assistant state should report a stable capability error"
+    type(_G.IsEveryoneAssistant) ~= "function"
+        and type(partyInfo.DemoteAssistant) ~= "function"
+        and type(partyInfo.SetEveryoneIsAssistant) ~= "function",
+    "the fixture should expose only the additive assistant API"
+)
+currentSnapshot = Reference("additive-api-surface", 1, { ASSISTS = "Assist" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(
+    #calls == 1 and calls[1].Kind == "promote" and members[5].Rank == 1,
+    "missing destructive and global-assistant APIs must not block promotion"
 )
 
--- Validate all required APIs before changing any rank in a multi-step exact
--- set, even when the first planned operation would use an available function.
+-- PromoteToAssistant is required only when a missing promotion is actually
+-- planned. Empty or already-satisfied requests remain harmless no-ops.
 Reset()
 local savedPromoteToAssistant = partyInfo.PromoteToAssistant
 partyInfo.PromoteToAssistant = nil
-currentSnapshot = Reference("missing-assistant-api", 1, { ASSISTS = "" })
+currentSnapshot = Reference("missing-promote-api", 1, { ASSISTS = "Assist" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0 and members[3].Rank == 1, "missing promotion API must fail before changing authority")
+assert(
+    #finished == 1 and finished[1].Result == "assignment-api-unavailable",
+    "a planned promotion should report the missing capability"
+)
+
+Reset()
+currentSnapshot = Reference("missing-promote-empty", 1, { ASSISTS = "" })
+AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
+DrainTimers()
+assert(#calls == 0 and #finished == 0 and members[3].Rank == 1, "empty $ASSISTS needs no promotion API")
+
+Reset()
+currentSnapshot = Reference("missing-promote-satisfied", 1, { ASSISTS = "Healer" })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
 partyInfo.PromoteToAssistant = savedPromoteToAssistant
-assert(members[3].Rank == 1 and #calls == 0, "missing later APIs must prevent earlier demotions")
-assert(
-    #finished == 1 and finished[1].Result == "assignment-api-unavailable",
-    "capability preflight should report an unavailable API"
-)
+assert(#calls == 0 and #finished == 0 and members[3].Rank == 1, "a satisfied $ASSISTS request needs no API")
 
 -- Distinct spellings that resolve to the same player fail before any mutation.
 Reset()
@@ -593,42 +595,31 @@ assert(
     "duplicate resolved identities should report a stable error"
 )
 
--- The current raid leader already has higher authority and is outside the
--- managed assistant set. A leader-only list therefore owns an exact empty set.
+-- The current raid leader already has higher authority and is ignored by
+-- additive assistant planning. A leader-only request is therefore a no-op.
 Reset()
 currentSnapshot = Reference("leader-only-assists", 1, { ASSISTS = "Leader" })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
-assert(
-    #calls == 1 and calls[1].Kind == "demote" and calls[1].Name == "Healer-Home",
-    "a leader-only assistant list should clear the actual assistant set without targeting the leader"
-)
-assert(members[1].Rank == 2 and members[3].Rank == 0, "leader filtering must preserve leadership and exact-set cleanup")
-assert(
-    #finished == 1 and finished[1].Success and finished[1].Result == 1,
-    "leader-only assistant reconciliation should complete as one real change"
-)
+assert(#calls == 0 and #finished == 0, "a leader-only assistant request should make no Blizzard change")
+assert(members[1].Rank == 2 and members[3].Rank == 1, "leader filtering must preserve all existing authority")
 
 -- Literal short and full leader names are filtered after exact roster
--- resolution while every non-leader assistant still reconciles normally.
+-- resolution while a requested non-leader is still promoted additively.
 Reset()
 currentSnapshot = Reference("leader-and-assist", 1, { ASSISTS = "Leader-Home, Assist" })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
 assert(
-    #calls == 2
-        and calls[1].Kind == "promote"
-        and calls[1].Name == "Assist-Home"
-        and calls[2].Kind == "demote"
-        and calls[2].Name == "Healer-Home",
-    "a mixed leader list should reconcile only the requested non-leader assistant"
+    #calls == 1 and calls[1].Kind == "promote" and calls[1].Name == "Assist-Home",
+    "a mixed leader list should promote only the requested non-leader assistant"
 )
 assert(
-    members[1].Rank == 2 and members[3].Rank == 0 and members[5].Rank == 1,
-    "mixed assistant reconciliation must preserve the leader and match the remaining exact set"
+    members[1].Rank == 2 and members[3].Rank == 1 and members[5].Rank == 1,
+    "mixed assistant reconciliation must preserve both the leader and existing assistants"
 )
 assert(
-    #finished == 1 and finished[1].Success and finished[1].Result == 2,
+    #finished == 1 and finished[1].Success and finished[1].Result == 1,
     "leader filtering must not count the ignored entry as a Blizzard change"
 )
 
@@ -639,11 +630,8 @@ forceUnitLeaderFalse = true
 currentSnapshot = Reference("leader-rank-fallback", 1, { ASSISTS = "Leader" })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
-assert(
-    #calls == 1 and calls[1].Kind == "demote" and calls[1].Name == "Healer-Home",
-    "a false UnitIsGroupLeader signal must not expose the rank-two leader to assistant promotion"
-)
-assert(members[1].Rank == 2, "rank fallback must preserve the actual raid leader")
+assert(#calls == 0, "a false UnitIsGroupLeader signal must not expose the rank-two leader to assistant promotion")
+assert(members[1].Rank == 2 and members[3].Rank == 1, "rank fallback must preserve all existing authority")
 
 -- Filtering happens after ordinary identity validation; duplicate aliases for
 -- the leader remain malformed input rather than becoming silently acceptable.
@@ -1015,17 +1003,17 @@ assert(
     "API failures should report once"
 )
 
--- Assistant replacements are added before old authority is removed. If the
--- promotion never acknowledges, the existing assistant remains in place.
+-- If an additive promotion never acknowledges, it times out without changing
+-- any existing assistant authority.
 Reset()
 ignoreAssistantCalls = true
 currentSnapshot = Reference("assistant-timeout", 1, { ASSISTS = "Assist" })
 AngryEra:ObserveDisplayedRaidAssignments(currentSnapshot)
 DrainTimers()
-assert(members[3].Rank == 1 and members[5].Rank == 0, "a failed replacement must preserve existing authority")
+assert(members[3].Rank == 1 and members[5].Rank == 0, "a failed promotion must preserve existing authority")
 assert(
     #calls == 1 and calls[1].Kind == "promote" and finished[1].Result == "assignment-api-timeout",
-    "an unacknowledged promotion should stop before demoting the existing assistant"
+    "an unacknowledged assistant promotion should report one timeout"
 )
 
 -- A call that is accepted but never reflected by Blizzard times out once and

@@ -1,10 +1,11 @@
 -- -------------------------------------------------------------------------------
 -- Angry Era: modules/raid_assignments.lua
 --
--- Reconciles inherited `$TANKS` metadata with Blizzard's assigned TANK role and
--- `$ASSISTS` with the actual raid-assistant rank. Only the current raid leader
--- acts. Every mutation is planned from a fresh roster, paced one at a time, and
--- bound to the exact displayed page/context so a newer display always wins.
+-- Reconciles inherited `$TANKS` metadata as an exact assigned-TANK set and
+-- `$ASSISTS` as an additive minimum set of raid assistants. Only the current
+-- raid leader acts. Every mutation is planned from a fresh roster, paced one at
+-- a time, and bound to the exact displayed page/context so a newer display
+-- always wins.
 -- -------------------------------------------------------------------------------
 
 local _, app = ...
@@ -30,7 +31,6 @@ local lastReportedFailure
 local lastOperationSentAt
 
 local TRANSIENT_READ_ERRORS = {
-    ["assistant-state-failed"] = true,
     ["invalid-roster"] = true,
     ["role-api-failed"] = true,
     ["roster-unavailable"] = true,
@@ -281,8 +281,8 @@ local function BuildRosterState()
         local assistant = rank == 1
         if type(UnitIsGroupAssistant) == "function" then
             local called, result = pcall(UnitIsGroupAssistant, unitToken)
-            if called then
-                assistant = result == true
+            if called and result == true then
+                assistant = true
             end
         end
 
@@ -436,44 +436,18 @@ local function ValidateTankEligibility(self, desired, rosterState)
     return true
 end
 
-local function EveryoneIsAssistant()
-    if type(IsEveryoneAssistant) ~= "function" then
-        return nil, "assistant-state-unavailable"
-    end
-    local called, enabled = pcall(IsEveryoneAssistant)
-    if not called or type(enabled) ~= "boolean" then
-        return nil, "assistant-state-failed"
-    end
-    return enabled
-end
-
---- Plans a deterministic exact-set reconciliation.
+--- Plans deterministic exact Tanks and additive Assists reconciliation.
 -- Non-tank HEALER/DAMAGER roles are never changed.
 -- @tparam table rosterState Internal or test roster state.
 -- @tparam table desired Desired sets from `BuildDesiredState`.
--- @tparam boolean everyoneAssistant Current global assist mode.
 -- @treturn table operations
-function raidAssignments.PlanOperations(rosterState, desired, everyoneAssistant)
+function raidAssignments.PlanOperations(rosterState, desired)
     local operations = {}
-    if desired.AssistsPresent and everyoneAssistant then
-        operations[#operations + 1] = { Kind = "disable-everyone-assistant" }
-        return operations
-    end
-
     if desired.AssistsPresent then
         for _, member in ipairs(rosterState.Members) do
             if not member.IsLeader and desired.Assists[member.Identity] and not member.IsAssistant then
                 operations[#operations + 1] = {
                     Kind = "promote-assistant",
-                    Identity = member.Identity,
-                    FullName = member.FullName,
-                }
-            end
-        end
-        for _, member in ipairs(rosterState.Members) do
-            if member.IsAssistant and not desired.Assists[member.Identity] then
-                operations[#operations + 1] = {
-                    Kind = "demote-assistant",
                     Identity = member.Identity,
                     FullName = member.FullName,
                 }
@@ -504,9 +478,9 @@ function raidAssignments.PlanOperations(rosterState, desired, everyoneAssistant)
     return operations
 end
 
---- Prevents managed assistant automation from removing the active controller's
--- Blizzard assist rank before the leader-authored lease can be revoked.
-function raidAssignments.ValidateDelegatedController(self, desired, everyoneAssistant)
+--- Prevents protected mutations while a delegated-control lease exists but
+-- cannot currently be validated.
+function raidAssignments.ValidateDelegatedController(self)
     local rawControl
     if type(self.GetDelegatedRaidControl) == "function" then
         local called, result = pcall(self.GetDelegatedRaidControl, self)
@@ -530,16 +504,6 @@ function raidAssignments.ValidateDelegatedController(self, desired, everyoneAssi
         -- must not fall back to page-driven mutations until protocol state
         -- validates the controller or clears/reclaims the lease.
         return false, "delegated-controller-state-unvalidated"
-    end
-    if not control or not desired.AssistsPresent then
-        return true
-    end
-    if everyoneAssistant then
-        return false, "delegated-controller-everyone-assistant"
-    end
-    local controllerIdentity = type(control.Controller) == "string" and control.Controller:lower() or nil
-    if not controllerIdentity or not desired.Assists[controllerIdentity] then
-        return false, "delegated-controller-missing-from-assists"
     end
     return true
 end
@@ -596,8 +560,6 @@ local function RetryTransientRead(self, errorCode, bucket)
         attemptsKey = "TransientDesiredAttempts"
     elseif bucket == "eligibility" then
         attemptsKey = "TransientEligibilityAttempts"
-    elseif bucket == "assistant" then
-        attemptsKey = "TransientAssistantAttempts"
     else
         attemptsKey = "TransientReadAttempts"
     end
@@ -623,19 +585,9 @@ local function CurrentSnapshot(self)
 end
 
 local function OperationAcknowledged(operation, rosterState)
-    if operation.Kind == "disable-everyone-assistant" then
-        local enabled, errorCode = EveryoneIsAssistant()
-        if errorCode then
-            return nil, errorCode
-        end
-        return not enabled
-    end
     local member = rosterState.ByIdentity[operation.Identity]
     if not member then
         return nil, "operation-member-missing"
-    end
-    if operation.Kind == "demote-assistant" then
-        return not member.IsAssistant
     end
     if operation.Kind == "promote-assistant" then
         return member.IsAssistant
@@ -687,24 +639,12 @@ local function SetTankRole(self, member, enabled)
 end
 
 local function IssueOperation(self, operation, rosterState)
-    if operation.Kind == "disable-everyone-assistant" then
-        if type(C_PartyInfo) ~= "table" or type(C_PartyInfo.SetEveryoneIsAssistant) ~= "function" then
-            return false
-        end
-        local called, updated = pcall(C_PartyInfo.SetEveryoneIsAssistant, false)
-        return called and updated ~= false
-    end
-
     local member = rosterState.ByIdentity[operation.Identity]
     if not member then
         return false
     end
-    if operation.Kind == "demote-assistant" or operation.Kind == "promote-assistant" then
-        if type(C_PartyInfo) ~= "table" then
-            return false
-        end
-        local callback = operation.Kind == "promote-assistant" and C_PartyInfo.PromoteToAssistant
-            or C_PartyInfo.DemoteAssistant
+    if operation.Kind == "promote-assistant" then
+        local callback = type(C_PartyInfo) == "table" and C_PartyInfo.PromoteToAssistant or nil
         return type(callback) == "function" and pcall(callback, member.FullName, true)
     end
     if operation.Kind == "set-tank" then
@@ -716,18 +656,23 @@ local function IssueOperation(self, operation, rosterState)
     return false
 end
 
-local function MutationApisAvailable(desired, everyoneAssistant)
-    if desired.AssistsPresent then
-        if
-            type(C_PartyInfo) ~= "table"
-            or type(C_PartyInfo.PromoteToAssistant) ~= "function"
-            or type(C_PartyInfo.DemoteAssistant) ~= "function"
-            or everyoneAssistant and type(C_PartyInfo.SetEveryoneIsAssistant) ~= "function"
-        then
-            return false
+local function MutationApisAvailable(operations)
+    local needsAssistantPromotion = false
+    local needsTankRole = false
+    for _, operation in ipairs(operations) do
+        if operation.Kind == "promote-assistant" then
+            needsAssistantPromotion = true
+        elseif operation.Kind == "set-tank" or operation.Kind == "clear-tank" then
+            needsTankRole = true
         end
     end
-    if desired.TanksPresent then
+    if
+        needsAssistantPromotion
+        and (type(C_PartyInfo) ~= "table" or type(C_PartyInfo.PromoteToAssistant) ~= "function")
+    then
+        return false
+    end
+    if needsTankRole then
         local enumRoles = type(Enum) == "table" and Enum.LFGRole or nil
         local tankRole = type(enumRoles) == "table" and (enumRoles.Tank or enumRoles.TANK) or nil
         if not (type(UnitSetRoleEnum) == "function" and tankRole ~= nil) and type(UnitSetRole) ~= "function" then
@@ -847,35 +792,7 @@ function AngryEra:PollDisplayedRaidAssignments(generation)
     end
     currentIntent.TransientEligibilityAttempts = 0
 
-    local everyoneAssistant = false
-    if desired.AssistsPresent then
-        local assistantStateError
-        everyoneAssistant, assistantStateError = EveryoneIsAssistant()
-        if assistantStateError then
-            local retrying, retryStatus = RetryTransientRead(self, assistantStateError, "assistant")
-            if retrying then
-                return true, retryStatus
-            end
-            if retryStatus then
-                return false, retryStatus
-            end
-            ReportFailure(self, assistantStateError)
-            return false, assistantStateError
-        end
-        currentIntent.TransientAssistantAttempts = 0
-    end
-    if not MutationApisAvailable(desired, everyoneAssistant) then
-        ReportFailure(self, "assignment-api-unavailable")
-        return false, "assignment-api-unavailable"
-    end
-    local controllerSafe, controllerError =
-        raidAssignments.ValidateDelegatedController(self, desired, everyoneAssistant)
-    if not controllerSafe then
-        ReportFailure(self, controllerError)
-        return false, controllerError
-    end
-
-    local operations = raidAssignments.PlanOperations(rosterState, desired, everyoneAssistant)
+    local operations = raidAssignments.PlanOperations(rosterState, desired)
     Trace(
         self,
         "raid-assignment-plan",
@@ -893,6 +810,15 @@ function AngryEra:PollDisplayedRaidAssignments(generation)
             Notify(self, true, changed)
         end
         return true, changed
+    end
+    local controllerSafe, controllerError = raidAssignments.ValidateDelegatedController(self)
+    if not controllerSafe then
+        ReportFailure(self, controllerError)
+        return false, controllerError
+    end
+    if not MutationApisAvailable(operations) then
+        ReportFailure(self, "assignment-api-unavailable")
+        return false, "assignment-api-unavailable"
     end
 
     local now = Now()
@@ -920,16 +846,6 @@ function AngryEra:PollDisplayedRaidAssignments(generation)
     operation.SentAt = now
     outstandingOperation = operation
     lastOperationSentAt = now
-    if
-        operation.Kind == "demote-assistant"
-        and type(self.IsDelegatedRaidController) == "function"
-        and self:IsDelegatedRaidController(operation.FullName)
-    then
-        outstandingOperation = nil
-        CancelTimer(self)
-        ReportFailure(self, "delegated-controller-demotion-blocked")
-        return false, "delegated-controller-demotion-blocked"
-    end
     if not IssueOperation(self, operation, rosterState) then
         outstandingOperation = nil
         CancelTimer(self)

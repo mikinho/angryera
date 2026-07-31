@@ -21,7 +21,7 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Inherited variables:** variables flow through nested categories to their pages, with the closest category or page value winning.
 - **Composable variable families:** combine numbered class, role, or assignment lists into reusable outputs such as `HEALER1...N` and `MELEE1...N`.
 - **Assigned-role import:** take an on-demand snapshot of Blizzard's Tank, Healer, and Damage assignments as numbered `RAID_TANK1...N`, `RAID_HEALER1...N`, and `RAID_DPS1...N` variables.
-- **Automatic raid roles and permissions:** inherited `$TANKS` and `$ASSISTS` lists let the actual Blizzard leader keep assigned Tanks and raid assistants synchronized with the controller's displayed page.
+- **Automatic raid roles and permissions:** inherited `$TANKS` and `$ASSISTS` lists let the actual Blizzard leader keep assigned Tanks synchronized and promote the displayed page's requested raid assistants.
 - **Page metadata:** `$` variables can drive automatic raid markers, encounter advancement, WeakAuras, and other addons.
 - **Automatic raid markers:** display a page and AngryEra can mark the assigned players.
 - **Boss-kill auto-advance:** after a successful encounter, the current Raid Controller can automatically display the next page in the category.
@@ -76,7 +76,7 @@ Only one controller may be active, and the grant applies only to the current rai
 
 Granting control does not automatically display the controller's selected page or clear the existing assignment. The current display stays visible until the controller deliberately changes it. Reclaiming likewise does not import the controller's library or select a page for the leader; the display remains until the leader changes or clears it.
 
-The Blizzard leader still performs protected leader-only game operations. When the controller displays a page containing `$TANKS` or `$ASSISTS`, the actual leader's AngryEra client executes the required Blizzard API calls. While control is delegated, a managed `$ASSISTS` list must explicitly include the controller and **Everyone Is Assistant** must already be off. AngryEra fails closed rather than demoting its controller or applying an ambiguous assistant list.
+The Blizzard leader still performs protected leader-only game operations. When the controller displays a page containing `$TANKS` or `$ASSISTS`, the actual leader's AngryEra client executes the required Blizzard API calls. `$ASSISTS` is additive, so it may promote requested players but never demotes the controller or another manually assigned assistant. The controller does not need to appear in the list.
 
 While a grant remains valid, there is no implicit takeover or reclaim: only the Blizzard leader's explicit **Reclaim Raid Control** action returns normal control. Safety invalidation resets Raid Control when the Blizzard leader changes, the relevant AngryEra leader/controller session changes, the group changes, the controller loses raid assistant, or the actual leader switches to **Ignore Shared Changes**. The assistant must request control and the current leader must grant it again; AngryEra never grants or regrants it automatically. A controller who is temporarily offline remains controller, with shared changes paused until they return or the leader explicitly reclaims control. Known participating AngryEra clients older than v3.3.0-BETA block the grant; update every addon user who should participate in delegated control before the raid.
 
@@ -426,7 +426,7 @@ Metadata can also appear in page text. It is excluded from automatic word highli
 | `$LAYOUT` | Define the effective named raid subgroup layout. |
 | `$AUTOAPPLYLAYOUT` | After the initial display state is recorded, let the Raid Controller apply a different destination page's effective layout. |
 | `$TANKS` | Keep Blizzard's assigned Tank role equal to an inherited comma-separated list. |
-| `$ASSISTS` | Keep actual raid-assistant rank equal to an inherited comma-separated list. |
+| `$ASSISTS` | Promote an inherited comma-separated list to raid assistant without removing existing assistants. |
 | Other custom `$KEY` values | Expose inherited metadata to WeakAuras or another addon. Importer-managed `$AE_RAID_ROSTER` remains private. |
 
 ### Automatic raid tanks and assistants
@@ -443,18 +443,21 @@ $ASSISTS={{ASSIST1}},{{ASSIST2}}
 
 `$TANKS` means Blizzard's modern assigned **Tank** role. It does not set Blizzard's separate **Main Tank** flag: the dedicated Main Tank raid-frame row and its target/target-of-target frames will remain unchanged, and the context menu may still offer **Promote to Main Tank**. Blizzard protects that flag behind a secure player action, so an automatic page update cannot apply it. `$ASSISTS` means actual **raid-assistant rank**, with the same permissions as assigning Assist through Blizzard's raid UI; it does not mean a Main Assist raid-frame flag. One player may appear in both lists.
 
-Both values inherit like other metadata. Put the normal roster on a category and override it only on pages that need different assignments. The nearest page or category value wins independently for each key:
+Both values inherit like other metadata. Put the normal roster on a category and override it only on pages that need different assignments. The nearest page or category value wins independently for each key, but the two directives have intentionally different runtime behavior:
 
 - When a key is absent throughout the effective hierarchy, AngryEra leaves that dimension unmanaged.
-- When a key is present, its comma-separated names are the exact desired set.
+- `$TANKS` is an exact desired set. AngryEra assigns Tank to listed players and removes Tank from unlisted players without replacing an existing Healer or Damage role.
+- `$ASSISTS` is an additive minimum list. AngryEra promotes listed players who need raid assistant and never demotes an unlisted or manually assigned assistant.
 - An explicit empty `$TANKS=` clears every assigned Tank by setting only those players to None; existing Healer and Damage roles are left unchanged.
-- An explicit empty `$ASSISTS=` clears every raid assistant.
+- An explicit empty `$ASSISTS=` overrides an inherited list but promotes nobody and removes nobody.
 
-When `$TANKS` is present, AngryEra assigns Tank to the listed players and removes Tank from unlisted players. It never replaces an unlisted player's existing Healer or Damage role. When `$ASSISTS` is present without delegated control, AngryEra first turns off Blizzard's **Everyone Is Assistant** option, then promotes listed players before demoting unlisted assistants until the list matches exactly.
+AngryEra never changes Blizzard's **Everyone Is Assistant** option. If it is enabled, listed players already have effective assistant authority and no individual promotion is needed. If it is later disabled while the page remains active, AngryEra can promote listed players who no longer have assistant authority.
 
 Names may be literal or come from resolved variables. A short name is accepted only when it identifies exactly one current raid member; use `Name-Realm` for a rare duplicate. If any requested name is missing or ambiguous, AngryEra does not guess. If any ancestor or page variable source cannot be resolved completely, both privileged actions fail closed instead of using a page-only fallback. If `$ASSISTS` includes the current raid leader, AngryEra simply skips that entry: the leader already has higher authority and cannot hold assistant rank.
 
-Only the current Blizzard raid leader performs these protected API calls. A delegated controller owns the page, variables, and desired values, but the actual leader's client validates and executes them. While control is delegated, `$ASSISTS` must explicitly include the controller and **Everyone Is Assistant** must already be off; otherwise the complete privileged plan fails closed before changing anyone. An already-correct roster stays silent. If the display changes repeatedly, unissued work is superseded by the latest exact page and inherited context. A Blizzard change that was already issued may settle, but AngryEra rechecks and compensates against the newest exact display before continuing. Changes that cannot run during combat wait until combat ends, then apply only if that same page and context are still current; another page replaces or cancels the older unissued request.
+Only the current Blizzard raid leader performs these protected API calls. A delegated controller owns the page, variables, and requested values, but the actual leader's client validates and executes them. The controller does not need to appear in `$ASSISTS`, because page-driven assistant automation never removes an existing rank. An invalid or recovering controller lease still pauses every protected change until control is validated or reclaimed. An already-correct roster stays silent.
+
+Assistant promotions are cumulative across page changes: displaying a later page with a different or empty `$ASSISTS` value does not revoke a promotion from an earlier page. Demote assistants manually through Blizzard's raid UI when needed. If the display changes repeatedly, unissued work is superseded by the latest exact page and inherited context. A promotion already accepted by Blizzard remains in place, while exact `$TANKS` work rechecks and compensates against the newest display before continuing. Changes that cannot run during combat wait until combat ends, then apply only if that same page and context are still current; another page replaces or cancels the older unissued request.
 
 `RAID_TANK1...N` variables created by **Import Assigned Raid Roles** are still a manual snapshot. Changing live Tanks through `$TANKS` does not rewrite them; import again and save when you want a fresh snapshot.
 
@@ -807,9 +810,9 @@ Also confirm the current Raid Controller is using **Leader + Qualified Assistant
 - Use comma-separated names. Verify each short name is unique in the current raid, or use `Name-Realm`.
 - `$TANKS` assigns the ordinary Tank role; it cannot populate Blizzard's protected Main Tank raid-frame row. Seeing **Promote to Main Tank** in the context menu does not mean the ordinary Tank role failed.
 - If Classic enforces hard class-role limits, every listed Tank must be eligible according to Blizzard's role API.
-- A current raid-leader entry in `$ASSISTS` is harmless and ignored; every other resolved entry still forms the exact desired assistant set.
-- While Raid Control is delegated, include the controller explicitly in `$ASSISTS` and turn off **Everyone Is Assistant** before displaying the page. AngryEra fails closed rather than demoting the controller.
-- Without delegated control, `$ASSISTS` disables **Everyone Is Assistant** before reconciling the exact list.
+- A current raid-leader entry in `$ASSISTS` is harmless and ignored. Every other resolved entry is promoted if needed; unlisted and manually assigned assistants are preserved.
+- While Raid Control is delegated, the controller does not need to appear in `$ASSISTS`. An invalid or recovering control lease pauses protected changes until it validates or the leader reclaims control.
+- `$ASSISTS` never disables **Everyone Is Assistant** and never demotes anyone. Use Blizzard's raid UI for removals.
 - During combat, keep the same exact page active until combat ends. A newer page or inherited context replaces or cancels the queued request.
 - Re-import **Assigned Raid Roles** if `RAID_TANK1...N` should reflect changes made by `$TANKS`; imported variables do not refresh automatically.
 - Run `/ae debug on`, redisplay the page, and look for `raid-assignment-plan` and `raid-assignment-role-call`. A zero-operation plan means the ordinary roles already match; a role call reports the selected API, raid unit, requested role, call status, and returned value without printing the assignment contents.
