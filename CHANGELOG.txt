@@ -14,6 +14,7 @@ G## v3.3.0-BETA
 * Improvement: Raid layouts now skip named players who have not joined yet and apply every uniquely resolved assignment, making full templates usable while a raid is still filling. Ambiguous short names, duplicate assignments, and subgroup overfill remain whole-plan errors; a layout with no currently present assignments makes no moves.
 * Behavior Change: `$ASSISTS` is now additive. AngryEra promotes listed players who need raid assistant but never demotes unlisted or manually assigned assistants, never changes **Everyone Is Assistant**, and treats an empty list as a no-op. Promotions persist across page changes, and a delegated controller no longer needs to appear in the list. A current raid-leader entry remains harmless and ignored.
 * Improvement: **Export → Output** now preserves descriptive raid-target tags such as `{SKULL}`, `{X}`, and `{SQUARE}` for Discord and document posts. In-game chat output still converts them to native `{rt1}` through `{rt8}` icon tokens.
+* Fix: Granting Raid Control now schedules compatibility review and request expiry against the protocol's epoch clock instead of session uptime, preventing `C_Timer.After duration is too large` and bounding defensive retries to the request lifetime.
 
 ## v3.2.3
 

@@ -3668,13 +3668,30 @@ local controllerUi = {
 layoutEditor.RaidController = controllerUi
 
 function controllerUi:Now()
-    if type(GetTime) == "function" then
-        local called, value = pcall(GetTime)
+    -- Protocol request deadlines use epoch seconds from time(). Keep every UI
+    -- deadline on that same clock; GetTime() is session-relative and would turn
+    -- an ordinary two-second capability wait into a multi-decade timer.
+    if type(time) == "function" then
+        local called, value = pcall(time)
+        if called and type(value) == "number" then
+            return value
+        end
+    end
+    if type(GetServerTime) == "function" then
+        local called, value = pcall(GetServerTime)
         if called and type(value) == "number" then
             return value
         end
     end
     return 0
+end
+
+function controllerUi:DelayUntil(deadline, fallback)
+    local delay = type(fallback) == "number" and fallback or 0.25
+    if type(deadline) == "number" and deadline == deadline and deadline > -math.huge and deadline < math.huge then
+        delay = deadline - self:Now() + 0.05
+    end
+    return math.min(math.max(0.05, delay), self.RequestTtl)
 end
 
 function controllerUi:IsInRaid()
@@ -3851,10 +3868,7 @@ function controllerUi:ScheduleReview(requestId, readyAt)
         AngryEra:Print("AngryEra is still checking raid compatibility. Review the request again from Menu.")
         return
     end
-    local delay = 0.25
-    if type(readyAt) == "number" then
-        delay = math.max(0.05, readyAt - self:Now() + 0.05)
-    end
+    local delay = self:DelayUntil(readyAt, 0.25)
     C_Timer.After(delay, function()
         if controllerUi:IsActualLeader() and controllerUi:RequestRecord(requestId) then
             controllerUi:ShowRequest(requestId)
@@ -3872,7 +3886,7 @@ function controllerUi:ScheduleRequestPopupExpiry(requestId, expiresAt)
         return
     end
 
-    C_Timer.After(math.max(0.05, expiresAt - self:Now() + 0.05), function()
+    C_Timer.After(self:DelayUntil(expiresAt), function()
         if controllerUi.OpenRequestId ~= requestId then
             return
         end

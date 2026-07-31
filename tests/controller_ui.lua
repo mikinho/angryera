@@ -42,12 +42,13 @@ AngryAssign_State = {
 local state = {
     CanRequest = true,
     Control = nil,
+    EpochNow = 1785369600,
     InRaid = true,
     Leader = "Roselea-Mankrik",
-    Now = 100,
     Outgoing = {},
     Pending = {},
     Role = "assistant",
+    SessionNow = 100,
 }
 local calls = {
     CloseMenus = 0,
@@ -67,7 +68,11 @@ rawset(_G, "IsInRaid", function()
 end)
 
 rawset(_G, "GetTime", function()
-    return state.Now
+    return state.SessionNow
+end)
+
+rawset(_G, "time", function()
+    return state.EpochNow
 end)
 
 rawset(_G, "C_Timer", {
@@ -145,6 +150,9 @@ function AngryEra:GrantDelegatedRaidControl(requestId)
     calls.Grant[#calls.Grant + 1] = requestId
     local request = state.Pending[requestId]
     assert(request, "the UI must revalidate a request before routing Grant")
+    if request.CapabilityReadyAt and state.EpochNow < request.CapabilityReadyAt then
+        return false, "capability-check-pending", request.CapabilityReadyAt
+    end
     state.Pending[requestId] = nil
     state.Control = {
         Controller = request.Controller,
@@ -296,13 +304,17 @@ assert(not MenuEntry(MainMenu(), "Review Request: Zessling"))
 local expiredId = "assistant-session:request:expired"
 state.Pending[expiredId] = {
     Controller = "Kwayteow-Mankrik",
-    ExpiresAt = state.Now + 1,
+    ExpiresAt = state.EpochNow + 1,
     MessageId = expiredId,
 }
 assert(AngryEra:ShowDelegatedControlRequest(expiredId) == true)
 local hidesBeforeExpiry = calls.HidePopup
 local expiryTimer = assert(deferred[#deferred], "an open request should schedule its exact expiry")
-state.Now = state.Pending[expiredId].ExpiresAt + 0.1
+assert(
+    expiryTimer.Delay >= 0.05 and expiryTimer.Delay <= 1.1,
+    "an epoch request deadline must schedule a short expiry timer instead of mixing in session uptime"
+)
+state.EpochNow = state.Pending[expiredId].ExpiresAt + 0.1
 expiryTimer.Callback()
 assert(
     calls.HidePopup == hidesBeforeExpiry + 1 and shownPopup == nil,
@@ -313,7 +325,7 @@ state.Pending[expiredId] = nil
 local supersededPopupId = "assistant-session:request:superseded-popup"
 state.Pending[supersededPopupId] = {
     Controller = "Kwayteow-Mankrik",
-    ExpiresAt = state.Now + 1,
+    ExpiresAt = state.EpochNow + 1,
     MessageId = supersededPopupId,
 }
 assert(AngryEra:ShowDelegatedControlRequest(supersededPopupId) == true)
@@ -321,12 +333,12 @@ local supersededExpiryTimer = assert(deferred[#deferred])
 local currentPopupId = "assistant-session:request:current-popup"
 state.Pending[currentPopupId] = {
     Controller = "Eblis-Mankrik",
-    ExpiresAt = state.Now + 10,
+    ExpiresAt = state.EpochNow + 10,
     MessageId = currentPopupId,
 }
 assert(AngryEra:ShowDelegatedControlRequest(currentPopupId) == true)
 local hidesBeforeSupersededTimer = calls.HidePopup
-state.Now = state.Pending[supersededPopupId].ExpiresAt + 0.1
+state.EpochNow = state.Pending[supersededPopupId].ExpiresAt + 0.1
 supersededExpiryTimer.Callback()
 assert(
     calls.HidePopup == hidesBeforeSupersededTimer
@@ -378,6 +390,58 @@ reclaim.func()
 assert(calls.Reclaim == 1, "Reclaim must route through ReclaimDelegatedRaidControl")
 assert(not state.Control)
 assert(MenuEntry(MainMenu(), "Raid Controller: Roselea (raid leader)"))
+
+-- Capability discovery deadlines come from protocol epoch time, while
+-- C_Timer.After consumes a relative delay. A large difference between epoch
+-- time and session uptime must still produce a short review timer, preserve the
+-- request, and reopen it once the capability result is ready.
+assert(
+    controllerUi:Now() == state.EpochNow and controllerUi:Now() ~= state.SessionNow,
+    "controller deadlines must use the protocol epoch clock rather than session uptime"
+)
+assert(
+    controllerUi:DelayUntil(state.EpochNow + 1000000000) == controllerUi.RequestTtl,
+    "an implausibly distant deadline must be capped to the request lifetime"
+)
+assert(
+    controllerUi:DelayUntil(0 / 0, 0.25) == 0.25 and controllerUi:DelayUntil(math.huge, 0.25) == 0.25,
+    "non-finite deadlines must use the bounded fallback delay"
+)
+local capabilityId = "assistant-session:request:capability"
+local capabilityReadyAt = state.EpochNow + 0.5
+state.Pending[capabilityId] = {
+    CapabilityReadyAt = capabilityReadyAt,
+    Controller = "Kwayteow-Mankrik",
+    ExpiresAt = state.EpochNow + 10,
+    MessageId = capabilityId,
+}
+assert(AngryEra:ShowDelegatedControlRequest(capabilityId) == true)
+local timersBeforeCapabilityGrant = #deferred
+dialog.OnAccept(shownPopup.Frame)
+assert(
+    state.Pending[capabilityId] and not state.Control,
+    "a pending capability check must keep the exact request reviewable"
+)
+assert(#deferred == timersBeforeCapabilityGrant + 1, "a pending capability check should schedule one review")
+local capabilityReviewTimer = deferred[#deferred]
+assert(
+    capabilityReviewTimer.Delay >= 0.05 and capabilityReviewTimer.Delay <= 1,
+    "an epoch capability deadline must become a short bounded relative delay"
+)
+state.EpochNow = capabilityReadyAt + 0.1
+capabilityReviewTimer.Callback()
+assert(
+    shownPopup
+        and shownPopup.Name == controllerUi.PopupName
+        and shownPopup.Data.RequestId == capabilityId
+        and controllerUi.OpenRequestId == capabilityId,
+    "a ready capability result should reopen the same request for leader review"
+)
+dialog.OnAccept(shownPopup.Frame)
+assert(
+    state.Control and state.Control.GrantId == capabilityId and not state.Pending[capabilityId],
+    "the leader should be able to grant the preserved request after capability readiness"
+)
 
 -- A non-leader controller sees the active status but cannot reclaim or request
 -- a second lease.
