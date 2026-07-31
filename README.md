@@ -10,7 +10,7 @@ Supported game clients:
 > [!IMPORTANT]
 > **BREAKING CHANGE FROM PRE-v3.1:** Protocol 3 releases cannot share assignments or displayed pages with older AngryEra or AngryAssignments versions. AngryEra v3.2.2 features—including priority assignments, group layouts, variable families, imported raid-role variables, automatic raid-tank and raid-assistant assignments, and the Key=Value `$true`/`$false` boolean literals—require v3.2.2 or newer on every client that must interpret them. Pages using only features common to v3.1 remain compatible with v3.1.x clients. Existing local pages and settings are migrated automatically for the v3.1 data model, but Key=Value automation flags are not rewritten: replace legacy `=true` and `=false` flag values with `=$true` and `=$false`, respectively. Downgrading across the v3.1 data migration requires restoring a SavedVariables backup.
 
-Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. For a production raid that uses any v3.2 feature, update every participating client to AngryEra v3.2.2 or newer. Delegated Raid Control requires v3.3.0-BETA or newer: a known participating AngryEra client that accepts shared changes but lacks delegated-control support blocks a grant rather than allowing two clients to act as authority.
+Before upgrading, export important categories as **Encoded AA** or copy your AngryEra SavedVariables file. For a production raid that uses any v3.2 feature, update every participating client to AngryEra v3.2.2 or newer. Delegated Raid Control requires v3.3.0 or newer: a known participating AngryEra client that accepts shared changes but lacks delegated-control support blocks a grant rather than allowing two clients to act as authority.
 
 ## What is new
 
@@ -24,7 +24,7 @@ Before upgrading, export important categories as **Encoded AA** or copy your Ang
 - **Automatic raid roles and permissions:** inherited `$TANKS` and `$ASSISTS` lists let the actual Blizzard leader keep assigned Tanks synchronized and promote the displayed page's requested raid assistants.
 - **Page metadata:** `$` variables can drive automatic raid markers, encounter advancement, WeakAuras, and other addons.
 - **Automatic raid markers:** display a page and AngryEra can mark the assigned players.
-- **Boss-kill auto-advance:** after a successful encounter, the current Raid Controller can automatically display the next page in the category.
+- **Boss-kill auto-advance:** after a successful encounter, the current Raid Controller can display the next page directly or stage it behind the category's first page for the **First Page** toggle.
 - **Displayed-note API:** WeakAuras and other addons can read the active note, resolved variables, metadata, and hierarchy.
 - **Safer restore workflow:** choosing an older page version loads it as a draft; nothing changes until you click **Save**.
 - **Safer imports and migration:** imported data is bounded and validated, and existing pages and settings are migrated automatically.
@@ -78,7 +78,7 @@ Granting control does not automatically display the controller's selected page o
 
 The Blizzard leader still performs protected leader-only game operations. When the controller displays a page containing `$TANKS` or `$ASSISTS`, the actual leader's AngryEra client executes the required Blizzard API calls. `$ASSISTS` is additive, so it may promote requested players but never demotes the controller or another manually assigned assistant. The controller does not need to appear in the list.
 
-While a grant remains valid, there is no implicit takeover or reclaim: only the Blizzard leader's explicit **Reclaim Raid Control** action returns normal control. Safety invalidation resets Raid Control when the Blizzard leader changes, the relevant AngryEra leader/controller session changes, the group changes, the controller loses raid assistant, or the actual leader switches to **Ignore Shared Changes**. The assistant must request control and the current leader must grant it again; AngryEra never grants or regrants it automatically. A controller who is temporarily offline remains controller, with shared changes paused until they return or the leader explicitly reclaims control. Known participating AngryEra clients older than v3.3.0-BETA block the grant; update every addon user who should participate in delegated control before the raid.
+While a grant remains valid, there is no implicit takeover or reclaim: only the Blizzard leader's explicit **Reclaim Raid Control** action returns normal control. Safety invalidation resets Raid Control when the Blizzard leader changes, the relevant AngryEra leader/controller session changes, you leave the raid or join a different group, the controller loses raid assistant, or the actual leader switches to **Ignore Shared Changes**. The assistant must request control and the current leader must grant it again; AngryEra never grants or regrants it automatically. A controller who is temporarily offline remains controller, with shared changes paused until they return or the leader explicitly reclaims control. A known participating client without delegated-control support blocks the grant; update every addon user who should participate in delegated control to v3.3.0 or newer before the raid.
 
 ## Shared pages and permissions
 
@@ -182,7 +182,7 @@ Keybindings under **Angry Era**:
 - **Toggle Window**
 - **Output Assignment to Chat**
 
-Previous, Next, and First Page start from the actively displayed page and stay within its category. **First Page** jumps to the first page in that category; pressing it again returns to the page it left when possible.
+Previous, Next, and First Page start from the actively displayed page and stay within its category. **First Page** jumps to the first page in that category; pressing it again returns to the page it left or to the normal next page staged by `$AUTOADVANCEFIRST`, when available.
 
 While grouped, only the current Raid Controller's navigation changes the shared display. Rapid navigation is coalesced so the group settles on that controller's latest choice.
 
@@ -538,6 +538,8 @@ The raid sees only the final first-page display; AngryEra does not briefly publi
 
 First-page staging is evaluated only while AngryEra handles a successful `ENCOUNTER_END`. Displaying, editing, receiving, or refreshing the first page does not run it. Repeated delivery of the same encounter result while the first page is already active only refreshes the same staged return target; it never toggles or republishes either page.
 
+The staged return target is transient and exists only on the current AngryEra authority's client. Reloading or changing the authority or control session clears it.
+
 Like other automation flags, only a typed boolean enables it. In Key=Value storage use `$AUTOADVANCEFIRST=$true`; in JSON use `"$AUTOADVANCEFIRST": true`. The value inherits normally, so a category-level `$true` affects every descendant unless a nearer page sets `$AUTOADVANCEFIRST=$false`. Put it on the individual source pages when back-to-back bosses should continue displaying normally.
 
 Only the current Raid Controller advances the shared display. Successful kills advance; wipes do not. Auto-advance uses that controller's locally owned sibling pages inside one category; it does not infer a sequence from root-level, unfiled, or received remote-owned pages. Advancement stops when there is no next page. Duplicate encounter names or IDs are treated as ambiguous and do not advance.
@@ -758,7 +760,7 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 
 ### A raider does not receive the displayed page
 
-1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). If the page uses any v3.2 feature, confirm every client that must interpret it is running AngryEra v3.2.2 or newer. Delegated raids should use v3.3.0-BETA or newer throughout.
+1. Confirm every client is running protocol 3 (AngryEra v3.1 or newer). If the page uses any v3.2 feature, confirm every client that must interpret it is running AngryEra v3.2.2 or newer. Delegated raids should use v3.3.0 or newer throughout.
 2. Run `/ae control` and confirm the sender is the reported Raid Controller.
 3. On the affected client, confirm **Receive Shared Page Changes** is not set to **Ignore Shared Changes**.
 4. Have the leader or a raid assistant run `/ae version` in the group.
@@ -769,9 +771,9 @@ Debug is off by default and resets to off after a UI reload. It never prints pag
 
 - The requester must currently have raid assistant and qualify through guild officer rank, **Trusted Assistants**, or **Allow All Raid Assistants**.
 - Confirm the requester is not using **Ignore Shared Changes**.
-- Have every participating AngryEra user who accepts shared changes update to v3.3.0-BETA or newer. A known older participating client blocks the grant rather than accepting a split authority; clients intentionally using **Ignore Shared Changes** do not participate in this check.
+- Have every participating AngryEra user who accepts shared changes update to v3.3.0 or newer. A known participating client without delegated-control support blocks the grant rather than accepting a split authority; clients intentionally using **Ignore Shared Changes** do not participate in this check.
 - If the controller is temporarily offline, shared changes pause instead of silently returning to the raid leader. Wait for the controller to reconnect, or have the actual leader explicitly reclaim control.
-- A leader change, relevant AngryEra session/reload change, group change, or loss of the controller's assistant rank ends the grant. Run `/ae control request` and have the current leader grant it again.
+- A leader change, relevant AngryEra session/reload change, leaving the raid or joining a different group, or loss of the controller's assistant rank ends the grant. Run `/ae control request` and have the current leader grant it again.
 - AngryEra never grants or regrants control automatically, and only one controller may be active.
 
 ### An assistant's edit is rejected
@@ -836,9 +838,8 @@ Also confirm the current Raid Controller is using **Leader + Qualified Assistant
 
 - Confirm the encounter ended successfully; wipes never advance.
 - Confirm the current client is the Raid Controller reported by `/ae control`.
-- Confirm the page is inside a category with a next sibling page.
-- Confirm the displayed page inherits `$AUTOADVANCE=$true`.
 - Match the page name to the encounter or add `$ENCOUNTER` or `$ENCOUNTERID`.
+- Confirm the encounter-matched page is inside a category with a normal next sibling and inherits `$AUTOADVANCE=$true`.
 - Remove duplicate encounter bindings.
 - For first-page staging, put `$AUTOADVANCEFIRST=$true` on the page matched to the defeated encounter, not on the staged next page or the category's first page.
 - Use the typed `$true` literal in Key=Value storage or native `true` in JSON. Plain `true`, `True`, and `TRUE` are strings and do not enable automation.

@@ -3822,7 +3822,7 @@ function controllerUi:CompatibilityFailure(detail)
         return "Raid Control requires this client to accept shared AngryEra pages."
     end
     if type(detail.Incompatible) == "table" and #detail.Incompatible > 0 then
-        return "Raid Control requires AngryEra 3.3.0-BETA or newer on participating addon users. Update: "
+        return "Raid Control requires delegated-control support (AngryEra 3.3.0 or newer). Update: "
             .. table.concat(detail.Incompatible, ", ")
             .. "."
     end

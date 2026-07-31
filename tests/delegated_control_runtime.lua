@@ -189,7 +189,7 @@ local helpers = {
 
 local AngryEra = {
     Title = "Angry Era",
-    Version = "3.3.0-BETA",
+    Version = "3.3.0",
     Timestamp = "20260729000000",
     core = {
         updateFrequency = 2,
@@ -548,7 +548,7 @@ end
 
 local function VersionPayload()
     return {
-        AddonVersion = "3.3.0-BETA",
+        AddonVersion = "3.3.0",
         BuildTimestamp = "20260729000000",
         Flavor = "ERA",
         Capabilities = {
