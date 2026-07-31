@@ -11,6 +11,7 @@
 * Safety: While Raid Control is delegated, a managed `$ASSISTS` list must explicitly include the controller and Blizzard's **Everyone Is Assistant** option must be off. AngryEra fails closed instead of demoting its active controller or applying an ambiguous assistant list.
 * Fix: A synchronized page owned by this installation can now be edited and saved normally while it is displayed for solo testing. AngryEra no longer misroutes that local Save through grouped assistant authorization.
 * Fix: Manual layout Apply now distinguishes the page open in the editor from the page actually displayed to the raid, names a conflicting displayed page, and directs the controller to Send the intended page first. Raid and delegated-control permission errors are reported before that page check.
+* Improvement: Raid layouts now skip named players who have not joined yet and apply every uniquely resolved assignment, making full templates usable while a raid is still filling. Ambiguous short names, duplicate assignments, and subgroup overfill remain whole-plan errors; a layout with no currently present assignments makes no moves.
 
 ## v3.2.3
 

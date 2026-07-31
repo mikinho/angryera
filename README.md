@@ -572,7 +572,7 @@ Tick **Inherit layout** to preview and use the nearest ancestor category layout.
 
 **Save** changes the stored layout choice; it does not rearrange the live raid. On a displayed page, **Apply** saves first and then attempts to rearrange the raid. While **Inherit layout** remains checked, neither action creates a page override, so later category changes continue to flow through. The category record remains local, but when one of its pages is displayed, AngryEra includes the inherited layout in that page's rendering context so the raid sees the same result.
 
-**Apply** moves resolved members into the bound subgroups. AngryEra validates the whole plan before moving anyone: ambiguous or missing names, duplicate assignments, and resolved expansions that overfill a subgroup are rejected. It then moves one identity at a time, waits for Classic to acknowledge the change, and resolves fresh raid indices before continuing so roster renumbering cannot redirect a later move.
+**Apply** moves resolved members into the bound subgroups. Named players who are not currently in the raid are skipped, so a 40-player layout can safely arrange whoever has joined while the raid is still filling. Ambiguous short names remain a whole-plan error—use `Name-Realm`—as do duplicate assignments and resolved expansions that overfill a subgroup. If none of the layout's assignments currently resolve to a raid member, there is nothing to apply. AngryEra then moves one identity at a time, waits for Classic to acknowledge the change, and resolves fresh raid indices before continuing so roster renumbering cannot redirect a later move.
 
 In a full 40-player raid, AngryEra rearranges full subgroups with swaps instead of attempting to add a sixth member. It prioritizes reciprocal exchanges that place both players at once, then the shortest remaining subgroup cycles, before using an unbound roster member as a filler. This reduces protected raid calls while keeping every intermediate subgroup valid.
 
@@ -780,9 +780,9 @@ Also confirm the current Raid Controller is using **Leader + Qualified Assistant
 - Confirm you are in a raid and the page whose effective layout you want is the exact shared display.
 - **Save** stores the layout but does not move anyone. Use **Apply** or `/ae applylayout`.
 - Without delegation, confirm the caller is the raid leader or a qualified raid assistant. With delegation, only the active Raid Controller may apply it.
-- Ensure every explicit or priority-selected name resolves uniquely in the current raid. Use `Name-Realm` when a short name is ambiguous.
+- Named players who have not joined yet are skipped. Use `Name-Realm` when a short name matches multiple current raid members; ambiguity still rejects the whole plan.
 - Ensure the same player is not produced twice and every subgroup remains at or below five players after variables, class fills, and `group:N` slots resolve.
-- A layout whose numbered variables are all missing resolves to no members and has nothing to apply.
+- A layout whose numbered variables are all missing—or whose assigned players are all absent—resolves to no members and has nothing to apply.
 - In combat, wait for the queued apply. Changing the displayed page, its revision, or inherited context cancels that exact request.
 
 ### Automatic group layouts do not run

@@ -25,7 +25,8 @@ local raidLayoutApplyErrors = {
     ["not-authorized"] = "You are not authorized to rearrange raid groups.",
     ["in-combat"] = "Groups cannot be rearranged during combat.",
     ["no-layout"] = "The displayed page has no $LAYOUT.",
-    ["no-bound-groups"] = "The displayed layout does not resolve to any raid members.",
+    ["no-bound-groups"] = "None of the layout's assignments currently resolve to raid members.",
+    ["ambiguous-member"] = "A layout name matches more than one current raid member; use Name-Realm.",
     ["duplicate-member"] = "The layout assigns the same raid member more than once.",
     ["unresolved-member"] = "Every named layout member must resolve uniquely in the current raid.",
     ["subgroup-oversubscribed"] = "A subgroup is assigned more than five members.",
@@ -84,6 +85,8 @@ local oncePerRaidAutomationWarnings = {
         ["unknown-assignment-member"] = true,
     },
     layout = {
+        ["ambiguous-member"] = true,
+        ["no-bound-groups"] = true,
         ["unresolved-member"] = true,
     },
 }

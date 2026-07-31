@@ -657,17 +657,35 @@ assert(
 calls = {}
 AngryEra:OnGroupLayoutApplyFinished(false, "display-changed")
 assert(#calls == 0, "an expected page-change cancellation should stay silent")
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "auto")
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "auto")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "auto")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "auto")
 assert(
     #calls == 1
         and calls[1].Name == "print"
-        and calls[1].Value == "Every named layout member must resolve uniquely in the current raid.",
-    "automatic layout validation should warn only once for one raid"
+        and calls[1].Value == "A layout name matches more than one current raid member; use Name-Realm.",
+    "automatic ambiguous-member validation should warn only once for one raid"
 )
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "manual")
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "manual")
-assert(CountCalls("print") == 3, "explicit manual layout attempts should continue reporting every actionable failure")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "manual")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "manual")
+assert(
+    CountCalls("print") == 3,
+    "explicit manual ambiguous-member attempts should continue reporting every actionable failure"
+)
+calls = {}
+AngryEra:OnGroupLayoutApplyFinished(false, "no-bound-groups", "auto")
+AngryEra:OnGroupLayoutApplyFinished(false, "no-bound-groups", "auto")
+assert(
+    #calls == 1
+        and calls[1].Name == "print"
+        and calls[1].Value == "None of the layout's assignments currently resolve to raid members.",
+    "automatic no-bound-groups validation should warn only once for one raid"
+)
+AngryEra:OnGroupLayoutApplyFinished(false, "no-bound-groups", "manual")
+AngryEra:OnGroupLayoutApplyFinished(false, "no-bound-groups", "manual")
+assert(
+    CountCalls("print") == 3,
+    "explicit manual no-bound-groups attempts should continue reporting every actionable failure"
+)
 calls = {}
 AngryEra:OnGroupLayoutApplyFinished(false, "duplicate-member", "auto")
 AngryEra:OnGroupLayoutApplyFinished(false, "duplicate-member", "auto")
@@ -763,21 +781,21 @@ for _, call in ipairs(calls) do
 end
 
 calls = {}
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "auto")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "auto")
 AngryEra:OnDisplayedRaidAssignmentsFinished(false, "unknown-assignment-member")
 assert(CountCalls("print") == 2, "joining a new group should allow each automatic setup warning once for the new raid")
 
 calls = {}
 AngryEra:GROUP_JOINED(nil, nil, "raid-guid-one")
 calls = {}
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "auto")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "auto")
 AngryEra:OnDisplayedRaidAssignmentsFinished(false, "unknown-assignment-member")
 assert(#calls == 0, "a duplicate group event for the same raid should preserve its setup-warning history")
 
 calls = {}
 AngryEra:GROUP_JOINED(nil, nil, "raid-guid-two")
 calls = {}
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "auto")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "auto")
 AngryEra:OnDisplayedRaidAssignmentsFinished(false, "unknown-assignment-member")
 assert(CountCalls("print") == 2, "a different raid GUID should begin a fresh setup-warning cycle")
 
@@ -865,7 +883,7 @@ assert(
     "a roster update should retry the current exact raid-assignment intent once"
 )
 calls = {}
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "auto")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "auto")
 AngryEra:OnDisplayedRaidAssignmentsFinished(false, "unknown-assignment-member")
 assert(#calls == 0, "routine roster changes within the same raid should not repeat automatic setup warnings")
 
@@ -888,7 +906,7 @@ assert(
     tenureRotationCount == rotationsBeforeSettledPromotion and AngryEra._leadershipRosterReconcilePending == true,
     "the stale leader event should defer one settled-roster reconciliation without rotating"
 )
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "auto")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "auto")
 AngryEra:OnDisplayedRaidAssignmentsFinished(false, "unknown-assignment-member")
 assert(CountCalls("print") == 0, "a leadership change within one raid should not repeat setup warnings")
 
@@ -1208,7 +1226,7 @@ assert(
     "a callback captured before group departure must remain inert"
 )
 calls = {}
-AngryEra:OnGroupLayoutApplyFinished(false, "unresolved-member", "auto")
+AngryEra:OnGroupLayoutApplyFinished(false, "ambiguous-member", "auto")
 AngryEra:OnDisplayedRaidAssignmentsFinished(false, "unknown-assignment-member")
 assert(CountCalls("print") == 2, "leaving the prior group should allow automatic setup warnings for a later raid")
 

@@ -482,12 +482,17 @@ local function ResolveDesiredLayout(self, request)
 
     local wantByIdentity = {}
     local subgroupCounts = {}
-    local unresolved = 0
+    local ambiguous = false
+    local unresolved = false
     local duplicate = false
+    -- A syntactically valid name with no current roster match is an optional
+    -- empty seat. This lets a complete raid template arrange the members
+    -- already present while the raid fills. Ambiguity remains a whole-plan
+    -- failure; guessing would make a protected subgroup change target-dependent.
     for _, group in ipairs(resolved.groups) do
         if type(group.subgroup) == "number" then
             for _, name in ipairs(group.members) do
-                local fullName = resolveRaidMember(name)
+                local fullName, _, resolutionError = resolveRaidMember(name)
                 if fullName then
                     local identity = fullName:lower()
                     if wantByIdentity[identity] then
@@ -496,8 +501,10 @@ local function ResolveDesiredLayout(self, request)
                         wantByIdentity[identity] = group.subgroup
                         subgroupCounts[group.subgroup] = (subgroupCounts[group.subgroup] or 0) + 1
                     end
-                else
-                    unresolved = unresolved + 1
+                elseif resolutionError == "ambiguous-member" then
+                    ambiguous = true
+                elseif resolutionError ~= "unknown-member" then
+                    unresolved = true
                 end
             end
         end
@@ -505,7 +512,10 @@ local function ResolveDesiredLayout(self, request)
     if duplicate or #resolved.duplicates > 0 then
         return nil, "duplicate-member"
     end
-    if unresolved > 0 then
+    if ambiguous then
+        return nil, "ambiguous-member"
+    end
+    if unresolved then
         return nil, "unresolved-member"
     end
     if next(wantByIdentity) == nil then

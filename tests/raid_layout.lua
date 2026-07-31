@@ -487,13 +487,15 @@ applied, reason = Apply({
     { Name = "Zed-Other", Subgroup = 1 },
     { Name = "Zed-Home", Subgroup = 2 },
 }, "Home/2: Zed")
-assert(not applied and reason == "unresolved-member", "a same-realm collision still requires Name-Realm")
+assert(not applied and reason == "ambiguous-member", "a same-realm collision still requires Name-Realm")
+assert(#operations == 0, "an ambiguous short name fails before mutation")
 
 applied, reason = Apply({
     { Name = "Zed-Other", Subgroup = 1 },
     { Name = "Zed-Third", Subgroup = 2 },
 }, "Ambiguous/2: Zed")
-assert(not applied and reason == "unresolved-member", "a duplicated short name is ambiguous")
+assert(not applied and reason == "ambiguous-member", "a duplicated short name is ambiguous")
+assert(#operations == 0, "cross-realm ambiguity fails before mutation")
 
 applied, reason = Apply({ { Name = "Zed-Other", Subgroup = 1 } }, "Cross/2: Zed")
 assert(applied and reason == 1, "a unique cross-realm short name can be applied")
@@ -514,8 +516,27 @@ applied, reason = Apply({
     { Name = "Alice-Home", Subgroup = 1 },
     { Name = "Bob-Home", Subgroup = 1 },
 }, "Move/2: Alice, Typo; Stay/1: Bob")
-assert(not applied and reason == "unresolved-member", "one unresolved member rejects the whole layout")
-assert(#operations == 0, "unresolved validation prevents a partial apply")
+assert(applied and reason == 1, "an absent member is skipped while current raid members remain applicable")
+assert(
+    #operations == 1 and operations[1].Name == "Alice-Home" and operations[1].Subgroup == 2,
+    "partial layouts move only members present in the current raid"
+)
+
+applied, reason = Apply({ { Name = "Alice-Home", Subgroup = 1 } }, "Absent/2: Typo")
+assert(not applied and reason == "no-bound-groups", "an all-absent layout has no applicable raid groups")
+assert(#operations == 0, "an all-absent layout performs no mutation")
+
+applied, reason = Apply({
+    { Name = "Zed-Other", Subgroup = 1 },
+    { Name = "Zed-Home", Subgroup = 1 },
+    { Name = "Backup-Home", Subgroup = 1 },
+}, "Move/2: Zed, Backup")
+assert(not applied and reason == "ambiguous-member", "ambiguity rejects the whole plan even beside a valid member")
+assert(#operations == 0, "an ambiguous plan never partially applies its valid members")
+
+applied, reason = Apply({ { Name = "Alice-Home", Subgroup = 1 } }, "One/2: Missing; Two/3: Missing")
+assert(not applied and reason == "duplicate-member", "duplicate absent assignments remain a hard layout error")
+assert(#operations == 0, "duplicate absent assignments fail before mutation")
 
 applied, reason = Apply({
     { Name = "A-Home", Subgroup = 2 },
