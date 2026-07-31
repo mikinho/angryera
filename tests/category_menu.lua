@@ -844,6 +844,183 @@ assert(#UISpecialFrames == 0, "Group Layout Close should release its Escape regi
 AngryAssign_Categories[5].Vars = nil
 _G.CreateFrame = previousCreateFrame
 
+-- Apply preflight must explain authority before page selection, then retain the
+-- exact displayed-page identity guard for an authorized leader/controller.
+-- This distinguishes a page merely visible in the editor from the assignment
+-- page currently displayed to the raid.
+local applyTargetId = 61
+local applyOtherId = 62
+local originalApplyTargetPage = AngryAssign_Pages[applyTargetId]
+local originalApplyOtherPage = AngryAssign_Pages[applyOtherId]
+local originalAngryAssignState = AngryAssign_State
+AngryAssign_Pages[applyTargetId] = {
+    Id = applyTargetId,
+    SyncId = "ae3i:1:2:3:4:page:61",
+    Name = "Patchwerk",
+    Vars = "$LAYOUT=",
+}
+AngryAssign_Pages[applyOtherId] = {
+    Id = applyOtherId,
+    SyncId = "ae3i:1:2:3:4:page:62",
+    Name = "Loatheb",
+    Vars = "$LAYOUT=",
+}
+AngryAssign_State = {
+    displayed = applyTargetId,
+    tree = {},
+}
+
+local applyActor = "leader"
+local applyPermissionCalls = 0
+local applyRequestCalls = 0
+local applySaveAttempts = 0
+local applyMessages = {}
+local originalLayoutApplyPermission = AngryEra.CanLocalPlayerApplyRaidLayout
+local originalLayoutApplyRequest = AngryEra.RequestGroupLayoutApply
+local originalLayoutApplyPrint = AngryEra.Print
+function AngryEra:CanLocalPlayerApplyRaidLayout()
+    applyPermissionCalls = applyPermissionCalls + 1
+    if applyActor == "solo" then
+        return false, "not-in-raid"
+    end
+    if applyActor == "delegated-leader" then
+        return false, "not-raid-controller"
+    end
+    return true
+end
+function AngryEra:RequestGroupLayoutApply()
+    applyRequestCalls = applyRequestCalls + 1
+    return true, 0
+end
+function AngryEra:Print(message)
+    applyMessages[#applyMessages + 1] = message
+end
+
+local originalLayoutSaveSource = layoutEditor.SaveSource
+layoutEditor.SaveSource = function(...)
+    applySaveAttempts = applySaveAttempts + 1
+    return originalLayoutSaveSource(...)
+end
+
+local function OpenApplyFixture(actor, displayedId)
+    applyActor = actor
+    applyPermissionCalls = 0
+    applyRequestCalls = 0
+    applySaveAttempts = 0
+    applyMessages = {}
+    AngryAssign_State.displayed = displayedId
+
+    local widgetStart = #createdWidgets + 1
+    local watcher
+    _G.CreateFrame = function()
+        watcher = {
+            events = {},
+            scripts = {},
+        }
+        function watcher:RegisterEvent(event)
+            self.events[event] = true
+        end
+        function watcher:UnregisterAllEvents()
+            self.events = {}
+            self.unregistered = true
+        end
+        function watcher:SetScript(event, callback)
+            self.scripts[event] = callback
+        end
+        return watcher
+    end
+    AngryEra:ShowGroupLayoutEditor(applyTargetId, "page")
+    _G.CreateFrame = previousCreateFrame
+
+    local applyButton
+    local window
+    for index = widgetStart, #createdWidgets do
+        local widget = createdWidgets[index]
+        if widget.Type == "Button" and widget.text == "Apply" then
+            applyButton = widget
+        elseif widget.Type == "Window" then
+            window = widget
+        end
+    end
+    assert(applyButton and window and watcher, "the page Group Layout fixture should build Apply and its window")
+    applyButton.callbacks.OnClick()
+    return window, watcher
+end
+
+local function CloseApplyFixture(window, watcher)
+    window.callbacks.OnClose()
+    assert(window.released and watcher.unregistered, "each page Group Layout fixture should close cleanly")
+    assert(#UISpecialFrames == 0, "closing an Apply fixture should release its Escape registration")
+end
+
+local applyWindow, applyWatcher = OpenApplyFixture("leader", applyTargetId)
+assert(
+    applyPermissionCalls == 1 and applySaveAttempts == 1 and applyRequestCalls == 1 and #applyMessages == 0,
+    "an authorized leader should apply the exact displayed page once"
+)
+CloseApplyFixture(applyWindow, applyWatcher)
+
+applyWindow, applyWatcher = OpenApplyFixture("controller", applyTargetId)
+assert(
+    applyPermissionCalls == 1 and applySaveAttempts == 1 and applyRequestCalls == 1 and #applyMessages == 0,
+    "the delegated controller should apply its exact displayed page once"
+)
+CloseApplyFixture(applyWindow, applyWatcher)
+
+applyWindow, applyWatcher = OpenApplyFixture("delegated-leader", applyOtherId)
+assert(
+    applyPermissionCalls == 1 and applySaveAttempts == 0 and applyRequestCalls == 0,
+    "the Blizzard leader should stop at delegated-control authorization before saving or applying"
+)
+assert(
+    applyMessages[1]
+        == "Could not apply the layout: Only the active Raid Controller can rearrange groups while Raid Control is delegated.",
+    "a delegated Blizzard leader should see the controller-specific denial before any page-selection diagnostic"
+)
+CloseApplyFixture(applyWindow, applyWatcher)
+
+applyWindow, applyWatcher = OpenApplyFixture("solo", nil)
+assert(
+    applyPermissionCalls == 1 and applySaveAttempts == 0 and applyRequestCalls == 0,
+    "solo Apply should stop before saving or requesting a raid mutation"
+)
+assert(
+    applyMessages[1] == "Could not apply the layout: You must be in a raid to rearrange groups.",
+    "solo Apply should explain that subgroup changes require a raid"
+)
+CloseApplyFixture(applyWindow, applyWatcher)
+
+applyWindow, applyWatcher = OpenApplyFixture("controller", applyOtherId)
+assert(
+    applyPermissionCalls == 1 and applySaveAttempts == 0 and applyRequestCalls == 0,
+    "an authorized controller should not apply a layout editor targeting a background page"
+)
+assert(
+    applyMessages[1]
+        == "Could not apply the layout: \"Loatheb\" is displayed, but this layout editor is for \"Patchwerk\"; select \"Patchwerk\" and click Send first.",
+    "a displayed-page mismatch should name both pages and explain how to make the target current"
+)
+CloseApplyFixture(applyWindow, applyWatcher)
+
+applyWindow, applyWatcher = OpenApplyFixture("controller", nil)
+assert(
+    applyPermissionCalls == 1 and applySaveAttempts == 0 and applyRequestCalls == 0,
+    "an authorized controller should not apply while no page is displayed"
+)
+assert(
+    applyMessages[1] == "Could not apply the layout: no page is displayed; select \"Patchwerk\" and click Send first.",
+    "an empty raid display should distinguish the editor selection and direct the controller to Send"
+)
+CloseApplyFixture(applyWindow, applyWatcher)
+
+layoutEditor.SaveSource = originalLayoutSaveSource
+AngryEra.CanLocalPlayerApplyRaidLayout = originalLayoutApplyPermission
+AngryEra.RequestGroupLayoutApply = originalLayoutApplyRequest
+AngryEra.Print = originalLayoutApplyPrint
+AngryAssign_Pages[applyTargetId] = originalApplyTargetPage
+AngryAssign_Pages[applyOtherId] = originalApplyOtherPage
+AngryAssign_State = originalAngryAssignState
+
 AngryEra:ShowBulkManagement()
 local firstBulkWindow = AngryEra._bulkManagementWindow
 assert(

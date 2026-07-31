@@ -1890,6 +1890,7 @@ local LAYOUT_EDIT_ERRORS = {
 local RAID_LAYOUT_APPLY_ERRORS = {
     ["not-in-raid"] = "You must be in a raid to rearrange groups.",
     ["not-authorized"] = "You are not authorized to rearrange raid groups.",
+    ["not-raid-controller"] = "Only the active Raid Controller can rearrange groups while Raid Control is delegated.",
     ["in-combat"] = "Groups cannot be rearranged during combat.",
     ["no-layout"] = "The displayed page has no $LAYOUT.",
     ["no-bound-groups"] = "The displayed layout does not resolve to any raid members.",
@@ -2901,15 +2902,33 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
         local target = layoutEditor.ResolveEntity(reference)
         local displayedId = type(AngryAssign_State) == "table" and AngryAssign_State.displayed or nil
         local displayed = displayedId and AngryAssign_Pages[displayedId] or nil
-        if not target or not displayed then
-            return false, "display this page before applying its layout"
+        if not target then
+            return false, "this page is no longer available"
+        end
+        local targetName = type(target.Name) == "string" and target.Name ~= "" and target.Name or "this page"
+        if not displayed then
+            return false, ("no page is displayed; select \"%s\" and click Send first"):format(targetName)
         end
         if reference.SyncId then
             if displayed.SyncId ~= reference.SyncId then
-                return false, "display this page before applying its layout"
+                local displayedName = type(displayed.Name) == "string" and displayed.Name ~= "" and displayed.Name
+                    or "another page"
+                return false,
+                    ("\"%s\" is displayed, but this layout editor is for \"%s\"; select \"%s\" and click Send first"):format(
+                        displayedName,
+                        targetName,
+                        targetName
+                    )
             end
         elseif displayed ~= target then
-            return false, "display this page before applying its layout"
+            local displayedName = type(displayed.Name) == "string" and displayed.Name ~= "" and displayed.Name
+                or "another page"
+            return false,
+                ("\"%s\" is displayed, but this layout editor is for \"%s\"; select \"%s\" and click Send first"):format(
+                    displayedName,
+                    targetName,
+                    targetName
+                )
         end
         return true
     end
@@ -3227,17 +3246,22 @@ function AngryEra:ShowGroupLayoutEditor(id, entityType)
             self:Print("Could not apply the layout: " .. tostring(viewError) .. "; review it and try again.")
             return
         end
+        if type(self.CanLocalPlayerApplyRaidLayout) == "function" then
+            local allowed, reason = self:CanLocalPlayerApplyRaidLayout()
+            if allowed ~= true then
+                self:Print(
+                    "Could not apply the layout: "
+                        .. (
+                            RAID_LAYOUT_APPLY_ERRORS[reason] or tostring(reason or "you are not authorized to apply it")
+                        )
+                )
+                return
+            end
+        end
         local targetsDisplay, displayError = TargetIsDisplayedPage()
         if not targetsDisplay then
             self:Print("Could not apply the layout: " .. displayError .. ".")
             return
-        end
-        if type(self.CanLocalPlayerApplyRaidLayout) == "function" then
-            local allowed, reason = self:CanLocalPlayerApplyRaidLayout()
-            if allowed ~= true then
-                self:Print("Could not apply the layout: " .. tostring(reason or "you are not authorized to apply it"))
-                return
-            end
         end
         local saved, proposed = SaveLayoutDraft()
         if not saved or proposed then

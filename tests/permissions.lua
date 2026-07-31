@@ -224,10 +224,8 @@ assert(
 )
 currentPlayer = "Officer-Realm"
 assert(AngryEra:IsQualifiedAssistant("Officer-Realm"), "An officer with assist should be a qualified assistant")
-assert(
-    AngryEra:CanLocalPlayerApplyRaidLayout(),
-    "A qualified officer assistant should be allowed to apply raid layouts"
-)
+local layoutAllowed, layoutReason = AngryEra:CanLocalPlayerApplyRaidLayout()
+assert(layoutAllowed and layoutReason == nil, "A qualified officer assistant should be allowed to apply raid layouts")
 currentPlayer = "OfficerMember-Realm"
 assert(not AngryEra:IsQualifiedAssistant("OfficerMember-Realm"), "An officer without assist should not qualify")
 assert(
@@ -300,8 +298,9 @@ assert(
     "The explicit assistant override should allow a raid assistant to apply layouts"
 )
 currentPlayer = "AnyMember-Realm"
+layoutAllowed, layoutReason = AngryEra:CanLocalPlayerApplyRaidLayout()
 assert(
-    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    not layoutAllowed and layoutReason == "not-authorized",
     "The explicit assistant override should not allow an ordinary raid member to apply layouts"
 )
 currentPlayer = "Viewer-Realm"
@@ -430,7 +429,8 @@ assert(
 assert(AngryEra:CanLocalPlayerPublish("display"), "the local controller should publish displays")
 assert(AngryEra:CanLocalPlayerPublish("pageUpsert"), "the local controller should publish pages")
 assert(AngryEra:CanLocalPlayerPublish("changeResult"), "the local controller should return proposal results")
-assert(AngryEra:CanLocalPlayerApplyRaidLayout(), "the local controller should apply raid layouts")
+layoutAllowed, layoutReason = AngryEra:CanLocalPlayerApplyRaidLayout()
+assert(layoutAllowed and layoutReason == nil, "the local controller should apply raid layouts without a denial reason")
 assert(AngryEra:CanLocalPlayerPublish("controlRequest"), "a qualified assistant should request control")
 assert(not AngryEra:CanLocalPlayerPublish("controlGrant"), "a controller cannot grant another controller")
 
@@ -450,7 +450,11 @@ assert(
     not AngryEra:CanReceiveFrom("PugLeader-Realm", "changeProposal"),
     "followers should reject Blizzard-leader change proposals while delegated"
 )
-assert(not AngryEra:CanLocalPlayerApplyRaidLayout(), "the Blizzard leader should not race controller layouts")
+layoutAllowed, layoutReason = AngryEra:CanLocalPlayerApplyRaidLayout()
+assert(
+    not layoutAllowed and layoutReason == "not-raid-controller",
+    "the Blizzard leader should not race controller layouts and should receive the delegated-control reason"
+)
 assert(AngryEra:CanLocalPlayerPublish("controlGrant"), "only the Blizzard leader should grant control")
 assert(AngryEra:CanLocalPlayerPublish("controlRevoke"), "only the Blizzard leader should revoke control")
 assert(AngryEra:CanLocalPlayerPublish("controlResult"), "only the Blizzard leader should answer requests")
@@ -462,8 +466,9 @@ assert(
     "an invalid but unreconciled lease must not silently reactivate the leader"
 )
 assert(not AngryEra:CanLocalPlayerPublish("display"), "an invalid lease should leave no local publisher")
+layoutAllowed, layoutReason = AngryEra:CanLocalPlayerApplyRaidLayout()
 assert(
-    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    not layoutAllowed and layoutReason == "not-authorized",
     "an invalid but unreconciled lease must not silently reactivate leader layout mutations"
 )
 delegatedControl = {
@@ -471,8 +476,9 @@ delegatedControl = {
     Leader = "PugLeader-Realm",
     PendingRecovery = true,
 }
+layoutAllowed, layoutReason = AngryEra:CanLocalPlayerApplyRaidLayout()
 assert(
-    not AngryEra:CanLocalPlayerApplyRaidLayout(),
+    not layoutAllowed and layoutReason == "not-authorized",
     "a recovery barrier must pause layout mutations until explicit authority recovery"
 )
 groupRoster[2].rank = 1
@@ -635,6 +641,11 @@ assert(not AngryEra:CanLocalPlayerOutput(), "An ordinary member must not output 
 
 grouped = false
 assert(AngryEra:CanLocalPlayerOutput(), "Solo chat-output previews should remain available")
+layoutAllowed, layoutReason = AngryEra:CanLocalPlayerApplyRaidLayout()
+assert(
+    not layoutAllowed and layoutReason == "not-in-raid",
+    "solo layout application should explain that raid subgroup changes require a raid"
+)
 assert(AngryEra:CanEditEntityLocally({ LocallyOwned = true }), "Local entities should remain editable while solo")
 assert(
     not AngryEra:CanEditEntityLocally({ SyncId = "remote", LocallyOwned = false, Contents = "" }),

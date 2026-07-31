@@ -418,13 +418,16 @@ function AngryEra:CanLocalPlayerOutput()
 end
 
 --- Returns whether the local player may rearrange raid subgroups from a
--- resolved layout. Leaders are always allowed. Assistants must satisfy the
--- same officer/trusted/allow-all policy used for shared page proposals, which
--- prevents a broadly granted raid assist from enabling this action by default.
+-- resolved layout. The Blizzard leader is allowed under normal control; while
+-- Raid Control is delegated, only its active controller is allowed. Otherwise,
+-- assistants must satisfy the same officer/trusted/allow-all policy used for
+-- shared page proposals, which prevents broadly granted raid assist from
+-- enabling this action by default.
 -- @treturn boolean allowed
+-- @treturn string|nil reason Stable denial reason when not allowed.
 function AngryEra:CanLocalPlayerApplyRaidLayout()
     if not IsInRaid() then
-        return false
+        return false, "not-in-raid"
     end
 
     local player = PlayerFullName()
@@ -436,13 +439,19 @@ function AngryEra:CanLocalPlayerApplyRaidLayout()
         -- fall back to the Blizzard leader. This matches canonical publication:
         -- layout mutations remain paused until the lease validates or is
         -- explicitly cleared/reclaimed.
-        return delegatedControl ~= nil and self:IsDelegatedRaidController(player)
+        if delegatedControl ~= nil then
+            if self:IsDelegatedRaidController(player) then
+                return true
+            end
+            return false, "not-raid-controller"
+        end
+        return false, "not-authorized"
     end
     if role == "leader" then
         return true
     end
     if role ~= "assistant" then
-        return false
+        return false, "not-authorized"
     end
     if self:GetConfig("allowAllAssistants") == true or self:IsDirectlyAllowlisted(player) then
         return true
@@ -452,7 +461,10 @@ function AngryEra:CanLocalPlayerApplyRaidLayout()
     -- in the same local guild roster. Without this check, an officer from an
     -- unrelated guild in a pug could gain the action merely by receiving assist.
     local leader = type(self.GetRaidLeader) == "function" and self:GetRaidLeader() or nil
-    return leader ~= nil and self:IsGuildMember(leader) and self:IsGuildOfficer(player)
+    if leader ~= nil and self:IsGuildMember(leader) and self:IsGuildOfficer(player) then
+        return true
+    end
+    return false, "not-authorized"
 end
 
 --- Returns whether an entity may be edited locally or proposed to the authority.
