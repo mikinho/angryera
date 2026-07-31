@@ -44,10 +44,13 @@ function AngryEra_OutputDisplayed()
     return AngryEra:OutputDisplayed()
 end
 
-local function ResolveChatOutputTag(self, page, tagContent)
+local function ResolveChatOutputTag(self, page, tagContent, preserveRaidTargetTags)
     local normalizedTag = tagContent:lower()
     local raidTargetTag = RaidTargetChatMap[normalizedTag]
     if raidTargetTag then
+        if preserveRaidTargetTags == true then
+            return "{" .. tagContent .. "}"
+        end
         return raidTargetTag
     end
 
@@ -121,12 +124,7 @@ local function StripChatOutputColors(text)
     end):gsub("|r", "")
 end
 
---- Renders a page into chat-ready plain output.
--- Applies variable rendering, tag substitution, and custom color stripping.
--- @tparam[opt] table page Page object.
--- @tparam[opt=false] boolean useActiveDisplayContext Render the exact active v3 snapshot.
--- @treturn string output Chat-ready text.
-function AngryEra:RenderPageForChatOutput(page, useActiveDisplayContext)
+local function RenderPageOutput(self, page, useActiveDisplayContext, preserveRaidTargetTags)
     if not page then
         return ""
     end
@@ -139,10 +137,21 @@ function AngryEra:RenderPageForChatOutput(page, useActiveDisplayContext)
     renderedPage = renderedPage or page
 
     output = output:gsub("{(.-)}", function(tagContent)
-        return ResolveChatOutputTag(self, renderedPage, tagContent)
+        return ResolveChatOutputTag(self, renderedPage, tagContent, preserveRaidTargetTags)
     end)
 
     return StripChatOutputColors(output)
+end
+
+--- Renders a page into chat-ready plain output.
+-- Applies variable rendering, tag substitution, and custom color stripping.
+-- Named raid targets become Blizzard's native `{rt1}` through `{rt8}` chat
+-- tokens so the game renders their icons.
+-- @tparam[opt] table page Page object.
+-- @tparam[opt=false] boolean useActiveDisplayContext Render the exact active v3 snapshot.
+-- @treturn string output Chat-ready text.
+function AngryEra:RenderPageForChatOutput(page, useActiveDisplayContext)
+    return RenderPageOutput(self, page, useActiveDisplayContext, false)
 end
 
 --- Outputs rendered page content to current group chat channel.
@@ -207,8 +216,10 @@ function AngryEra:OutputDisplayed(id)
 end
 
 --- Renders a page for export format `"Output"`.
+-- Raid-target tokens retain their descriptive source spelling for pasting into
+-- Discord or documents; every other template/tag transformation matches chat.
 -- @tparam[opt] table page Page object.
--- @treturn string output Chat-ready text.
+-- @treturn string output Posting-ready text.
 function AngryEra:ProcessPageForOutput(page)
-    return self:RenderPageForChatOutput(page)
+    return RenderPageOutput(self, page, false, true)
 end

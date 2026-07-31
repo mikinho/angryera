@@ -643,7 +643,7 @@ Right-click a page or category and choose **Export**:
 - **Encoded AA** is the best format for transferring or backing up complete AngryEra data. Its export window has **Include variables and metadata** checked by default; uncheck it when you intentionally want to share only the assignment content and organization.
 - **JSON** is useful for structured interchange.
 - **Markdown** is convenient for Discord, documents, or manual editing.
-- **Output** resolves templates and produces chat-ready text.
+- **Output** resolves templates and produces posting-ready text while preserving descriptive raid-target tags such as `{SKULL}`, `{X}`, and `{SQUARE}`.
 
 A standalone page export contains only variables and metadata declared directly on that page; inherited category values are not flattened into it. A category export applies the option recursively to that category, every nested category, and every page, preserving their inheritance structure. Values inherited from above the selected category are not included, so export the highest category whose context the recipient needs.
 
@@ -690,7 +690,7 @@ Use `{icon spell_holy_sealofprotection}` to insert a game texture. The following
 - **Faction:** `{alliance}`, `{horde}`
 - **Other:** `{hs}`, `{healthstone}`, `{bl}`, `{bloodlust}`
 
-Named raid targets become native `{rt1}` through `{rt8}` tokens when output to chat.
+Named raid targets become native `{rt1}` through `{rt8}` tokens when output to in-game chat. **Export → Output** preserves the descriptive tags as written for Discord and document posts.
 
 ## Display settings
 

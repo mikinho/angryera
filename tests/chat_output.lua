@@ -36,12 +36,25 @@ end
 local app = { AngryEra = AngryEra }
 assert(loadfile("modules/chat_output.lua"))("AngryEra", app)
 
+local markerSource = "{STAR} {rt1} {Circle} {DIAMOND} {Triangle} {MOON} {Square} {X} {cross} {SKULL}"
 local output = AngryEra:RenderPageForChatOutput({
     Name = "Target Page",
-    Contents = "{STAR} {RT1} {Circle} {X} {SKULL}",
+    Contents = markerSource,
 })
 
-assert(output == "{rt1} {rt1} {rt2} {rt7} {rt8}")
+assert(
+    output == "{rt1} {rt1} {rt2} {rt3} {rt4} {rt5} {rt6} {rt7} {rt7} {rt8}",
+    "chat output should continue normalizing named and explicit raid-target tokens"
+)
+
+local exportedOutput = AngryEra:ProcessPageForOutput({
+    Name = "Discord Page",
+    Contents = markerSource .. " {PAGE}",
+})
+assert(
+    exportedOutput == markerSource .. " Discord Page",
+    "Export -> Output should preserve every raid-target token's exact source spelling while resolving other tags"
+)
 
 AngryAssign_State = { displayed = 1 }
 AngryAssign_Pages = {

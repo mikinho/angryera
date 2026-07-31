@@ -189,6 +189,60 @@ exportToggle.callbacks.OnValueChanged(exportToggle, "OnValueChanged", true)
 assert(exportToggle.value == false, "A failed full rebuild should revert the export checkbox")
 assert(exportText.text == "AA:Page:2:content-only", "A failed full rebuild must not relabel the old content-only text")
 
+local processedOutputPages = {}
+function AngryEra:ProcessPageForOutput(page)
+    processedOutputPages[#processedOutputPages + 1] = page
+    return page.OutputFixture
+end
+
+AngryAssign_Pages[1].OutputFixture = "Zessy: {SKULL} {X} {SQUARE} {rt8}"
+createdWidgets = {}
+AngryEra:Export(1, "page", "Output")
+local pageOutputWindow = AngryEra._generalExportWindow
+exportText = LatestWidget("MultiLineEditBox")
+assert(
+    #processedOutputPages == 1 and processedOutputPages[1] == AngryAssign_Pages[1],
+    "page Output export should process the selected page"
+)
+assert(
+    exportText.text == AngryAssign_Pages[1].OutputFixture,
+    "page Output export should display ProcessPageForOutput text without rewriting marker tokens"
+)
+
+AngryAssign_Categories[2] = {
+    Id = 2,
+    Name = "Ordered Output",
+}
+AngryAssign_Pages[2] = {
+    Id = 2,
+    Name = "Second",
+    CategoryId = 2,
+    Index = 2,
+    OutputFixture = "Second: {SQUARE}",
+}
+AngryAssign_Pages[3] = {
+    Id = 3,
+    Name = "First",
+    CategoryId = 2,
+    Index = 1,
+    OutputFixture = "First: {SKULL}",
+}
+processedOutputPages = {}
+createdWidgets = {}
+AngryEra:Export(2, "category", "Output")
+exportText = LatestWidget("MultiLineEditBox")
+assert(releasedWidgets[pageOutputWindow], "opening category Output should release the prior page Output window")
+assert(
+    #processedOutputPages == 2
+        and processedOutputPages[1] == AngryAssign_Pages[3]
+        and processedOutputPages[2] == AngryAssign_Pages[2],
+    "category Output should process pages in visible order"
+)
+assert(
+    exportText.text == "First: {SKULL}\n\nSecond: {SQUARE}",
+    "category Output should concatenate processed text without rewriting marker tokens"
+)
+
 function AngryEra:ConfirmImportPage(_, options)
     parsedImportOptions = options
 end
