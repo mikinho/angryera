@@ -117,6 +117,9 @@ local function StripChatOutputColors(text)
                 return c:sub(i + 1)
             end
         end
+        if lowerC:match("^|c%x%x%x%x%x%x%x%x") then
+            return c:sub(11)
+        end
         if lowerC:match("^|c%x+$") then
             return ""
         end
@@ -124,20 +127,36 @@ local function StripChatOutputColors(text)
     end):gsub("|r", "")
 end
 
-local function RenderPageOutput(self, page, useActiveDisplayContext, preserveRaidTargetTags)
+--- Removes every UI escape sequence from untrusted page text.
+-- Runs before tag resolution so trusted links added by tag handlers survive.
+-- Pasted links keep their visible name, textures and atlases are dropped, and
+-- any leftover pipe is removed entirely, because a malformed escape sequence
+-- in outgoing chat can disconnect recipients.
+local function StripUiEscapes(text)
+    text = text:gsub("|H.-|h(.-)|h", "%1")
+    text = text:gsub("|T.-|t", "")
+    text = text:gsub("|A.-|a", "")
+    return (text:gsub("|", ""))
+end
+
+local function RenderPageOutput(self, page, options)
     if not page then
         return ""
     end
 
     local ctx = self:GetTemplateContext()
     local renderedText, _, _, renderedPage = self:RenderPageContent(page, ctx, {
-        UseActiveDisplayContext = useActiveDisplayContext == true,
+        UseActiveDisplayContext = options.UseActiveDisplayContext == true,
     })
     local output = renderedText or page.Contents or ""
     renderedPage = renderedPage or page
 
+    if options.SanitizeUiEscapes then
+        output = StripUiEscapes(StripChatOutputColors(output))
+    end
+
     output = output:gsub("{(.-)}", function(tagContent)
-        return ResolveChatOutputTag(self, renderedPage, tagContent, preserveRaidTargetTags)
+        return ResolveChatOutputTag(self, renderedPage, tagContent, options.PreserveRaidTargetTags)
     end)
 
     return StripChatOutputColors(output)
@@ -145,16 +164,55 @@ end
 
 --- Renders a page into chat-ready plain output.
 -- Applies variable rendering, tag substitution, and custom color stripping.
--- Named raid targets become Blizzard's native `{rt1}` through `{rt8}` chat
--- tokens so the game renders their icons.
+-- Page-authored UI escape sequences are removed before tag resolution, so
+-- links produced by tags such as `{spell}` remain intact while remote-authored
+-- escapes can never reach `SendChatMessage`. Named raid targets become
+-- Blizzard's native `{rt1}` through `{rt8}` chat tokens so the game renders
+-- their icons.
 -- @tparam[opt] table page Page object.
 -- @tparam[opt=false] boolean useActiveDisplayContext Render the exact active v3 snapshot.
 -- @treturn string output Chat-ready text.
 function AngryEra:RenderPageForChatOutput(page, useActiveDisplayContext)
-    return RenderPageOutput(self, page, useActiveDisplayContext, false)
+    return RenderPageOutput(self, page, {
+        UseActiveDisplayContext = useActiveDisplayContext,
+        SanitizeUiEscapes = true,
+    })
+end
+
+local MAX_CHAT_MESSAGE_BYTES = 255
+
+local function IsUtf8ContinuationByte(byte)
+    return byte ~= nil and byte >= 128 and byte < 192
+end
+
+--- Appends one rendered line to the send queue in chat-sized chunks.
+-- `SendChatMessage` cannot deliver more than 255 bytes, so longer lines wrap
+-- at the last space inside the limit, falling back to a hard split that never
+-- lands inside a UTF-8 sequence.
+local function AppendWrappedChatOutputLines(queue, line)
+    while #line > MAX_CHAT_MESSAGE_BYTES do
+        local head = line:sub(1, MAX_CHAT_MESSAGE_BYTES + 1)
+        local afterSpace = head:match("^.* ()")
+        if afterSpace and afterSpace > 2 then
+            table.insert(queue, line:sub(1, afterSpace - 2))
+            line = line:sub(afterSpace)
+        else
+            local cut = MAX_CHAT_MESSAGE_BYTES
+            while cut > 1 and IsUtf8ContinuationByte(line:byte(cut + 1)) do
+                cut = cut - 1
+            end
+            table.insert(queue, line:sub(1, cut))
+            line = line:sub(cut + 1)
+        end
+    end
+    if line ~= "" then
+        table.insert(queue, line)
+    end
 end
 
 --- Outputs rendered page content to current group chat channel.
+-- Lines longer than the chat limit are wrapped at word boundaries before
+-- queueing so no part of an assignment is silently dropped.
 -- @tparam[opt] number id Page id, defaults to currently displayed id.
 function AngryEra:OutputDisplayed(id)
     if type(self.CanLocalPlayerOutput) ~= "function" or not self:CanLocalPlayerOutput() then
@@ -186,11 +244,10 @@ function AngryEra:OutputDisplayed(id)
             self.outputTimer = nil
         end
 
-        local lines = { strsplit("\n", output) }
         local queue = {}
-        for _, line in ipairs(lines) do
+        for line in (output .. "\n"):gmatch("([^\n]*)\n") do
             if line ~= "" then
-                table.insert(queue, line)
+                AppendWrappedChatOutputLines(queue, line)
             end
         end
 
@@ -221,5 +278,7 @@ end
 -- @tparam[opt] table page Page object.
 -- @treturn string output Posting-ready text.
 function AngryEra:ProcessPageForOutput(page)
-    return RenderPageOutput(self, page, false, true)
+    return RenderPageOutput(self, page, {
+        PreserveRaidTargetTags = true,
+    })
 end

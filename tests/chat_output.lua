@@ -85,6 +85,37 @@ activeOutput = AngryEra:RenderPageForChatOutput({
 activeRenderFailure = false
 assert(activeOutput == "", "Active chat output must remain blank when its exact tuple is unavailable")
 
+AngryEra.utils.helpers.GetSpellLink = function(id)
+    return "|cff71d5ff|Hspell:" .. id .. "|h[Frostbolt]|h|r"
+end
+
+local strippedOutput = AngryEra:RenderPageForChatOutput({
+    Name = "Colored Page",
+    Contents = "|cffff0000Tanks|r and |cFF00FF00Heals|r",
+})
+assert(strippedOutput == "Tanks and Heals", "glued hex color codes must strip cleanly from chat output")
+
+local sanitizedOutput = AngryEra:RenderPageForChatOutput({
+    Name = "Hostile Page",
+    Contents = "|Hitem:123|h[Epic Cloak]|h pull |T133784:16|t now ||grouped",
+})
+assert(
+    sanitizedOutput == "[Epic Cloak] pull  now grouped",
+    "chat output must keep pasted link names while dropping every other escape and leftover pipe"
+)
+
+local spellOutput = AngryEra:RenderPageForChatOutput({
+    Name = "Spell Page",
+    Contents = "{spell 116} |Tbad|t",
+})
+assert(spellOutput == "|Hspell:116|h[Frostbolt]|h ", "links produced by tag resolution must survive chat sanitization")
+
+local exportOutput = AngryEra:ProcessPageForOutput({
+    Name = "Export Page",
+    Contents = "A||B |cffff0000Rend|r",
+})
+assert(exportOutput == "A||B Rend", "export output should strip colors while preserving literal pipes")
+
 local outputPermissionChecks = 0
 local deniedOutputMessage
 function AngryEra:CanLocalPlayerOutput()
@@ -100,6 +131,65 @@ assert(outputPermissionChecks == 1, "chat output should use its independent loca
 assert(
     deniedOutputMessage and deniedOutputMessage:find("permission to output", 1, true),
     "denied chat output should explain the permission failure"
+)
+
+function AngryEra:CanLocalPlayerOutput()
+    return true
+end
+local sentMessages = {}
+_G.SendChatMessage = function(message, channel)
+    assert(channel == "RAID")
+    table.insert(sentMessages, message)
+end
+_G.IsInRaid = function()
+    return true
+end
+_G.IsInGroup = function()
+    return true
+end
+local repeatingCallback
+function AngryEra:ScheduleRepeatingTimer(callback)
+    repeatingCallback = callback
+    return "chat-output-timer"
+end
+function AngryEra:CancelTimer(token)
+    assert(token == "chat-output-timer")
+    repeatingCallback = nil
+    return true
+end
+
+local longWords = {}
+for i = 1, 60 do
+    table.insert(longWords, "word" .. i)
+end
+local wordsLine = table.concat(longWords, " ")
+AngryAssign_Pages[2] = {
+    Name = "Long Page",
+    Contents = "short\n" .. wordsLine .. "\n" .. string.rep("x", 600),
+}
+AngryEra:OutputDisplayed(2)
+while repeatingCallback do
+    repeatingCallback()
+end
+assert(#sentMessages > 3, "long content should queue multiple wrapped chat lines")
+for _, message in ipairs(sentMessages) do
+    assert(#message > 0 and #message <= 255, "every queued chat line must fit the send limit")
+    assert(not message:find("\n", 1, true), "queued chat lines must never contain newlines")
+end
+assert(sentMessages[1] == "short", "the first rendered line should send immediately and unchanged")
+local expectedStream = (wordsLine .. string.rep("x", 600)):gsub(" ", "")
+local actualStream = table.concat(sentMessages, "", 2):gsub(" ", "")
+assert(actualStream == expectedStream, "wrapping must preserve every non-space character in order")
+
+sentMessages = {}
+AngryAssign_Pages[3] = {
+    Name = "Newline Page",
+    Contents = string.rep("\n", 9000) .. "x",
+}
+AngryEra:OutputDisplayed(3)
+assert(
+    #sentMessages == 1 and sentMessages[1] == "x",
+    "newline-heavy pages must send only their real content without exploding the line splitter"
 )
 
 local outputId = false
