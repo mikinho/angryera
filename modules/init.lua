@@ -1563,8 +1563,7 @@ function AngryEra:GuildDisplayRefresh()
     self:UpdateDisplayed()
 end
 
-function AngryEra:GUILD_ROSTER_UPDATE(...)
-    local canRequestRosterUpdate = ...
+function AngryEra:GUILD_ROSTER_UPDATE(_, canRequestRosterUpdate)
     self:ResetOfficerRank()
     self:PermissionsUpdated()
     self:UpdateGuildColors()

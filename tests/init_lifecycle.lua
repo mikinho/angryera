@@ -1435,13 +1435,13 @@ do
     AngryEra._guildDisplayRefreshTimer = nil
     guildDisplayRefreshes = 0
     local scheduledBefore = #scheduledTimers
-    AngryEra:GUILD_ROSTER_UPDATE(false)
+    AngryEra:GUILD_ROSTER_UPDATE("GUILD_ROSTER_UPDATE", false)
     local refreshTimer = scheduledTimers[#scheduledTimers]
     assert(
         #scheduledTimers == scheduledBefore + 1 and refreshTimer.Method == "GuildDisplayRefresh",
         "a roster update should schedule one cancelable display refresh"
     )
-    AngryEra:GUILD_ROSTER_UPDATE(false)
+    AngryEra:GUILD_ROSTER_UPDATE("GUILD_ROSTER_UPDATE", false)
     assert(#scheduledTimers == scheduledBefore + 1, "a pending refresh must not reschedule")
     assert(AngryEra._guildDisplayRefreshTimer == refreshTimer, "the pending refresh token should be retained")
 
@@ -1449,7 +1449,7 @@ do
     assert(guildDisplayRefreshes == 1, "firing the refresh should redraw once")
     assert(AngryEra._guildDisplayRefreshTimer == nil, "firing should clear the refresh token")
 
-    AngryEra:GUILD_ROSTER_UPDATE(false)
+    AngryEra:GUILD_ROSTER_UPDATE("GUILD_ROSTER_UPDATE", false)
     assert(
         #scheduledTimers == scheduledBefore + 2,
         "a settled refresh should allow the next roster update to reschedule"
