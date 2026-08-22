@@ -6321,8 +6321,19 @@ function AngryEra:ReceiveProtocolMessage(prefix, data, channel, sender)
     local correlatedRetiredLeaderRecovery = bindDisplayAuthority
         and (IsRetiredDisplayAuthority(auth) or delegation:IsRetiredLeader(auth))
         and delegation:CanRecoverRetiredLeader(self, auth, envelope, correlationKind)
+    -- A correlated display/page-request reply from the currently bound display
+    -- authority is canonical by definition. Extending bootstrap semantics to it
+    -- lets followers accept a leader whose revision counters regressed after
+    -- lost SavedVariables (crash or force-quit before a clean save); without
+    -- this, every diverged page after the binding reply is rejected as
+    -- page-revision-divergence for the rest of the session.
     local authorityBootstrap = bindDisplayAuthority
         or (correlationRecord and correlationRecord.AuthorityBootstrap == true)
+        or (
+            (correlationKind == "display-request" or correlationKind == "page-request")
+            and (envelope.Type == "DISPLAY" or envelope.Type == "PAGE_UPSERT")
+            and DisplayAuthorityMatches(auth)
+        )
     local accepted, result, warning =
         self:DispatchProtocolMessage(auth, channel, envelope, correlationKind, authorityBootstrap)
     if accepted and correlatedControlRecovery then

@@ -3890,6 +3890,58 @@ function AngryEra:RunAuthorityTenureTests()
             "the paired current display should advance the bootstrap floor"
         )
 
+        -- A correlated reply from the already-bound leader must retain
+        -- bootstrap privilege, so a leader whose SavedVariables regressed
+        -- (crash before a clean save) can republish diverged revisions without
+        -- wedging every follower that kept last week's pages.
+        local retainedSent, retainedRequestId = self:SendProtocolDisplayRequest("Beta-Realm")
+        assert(retainedSent, retainedRequestId)
+        local retainedReference = {
+            SyncId = installationB .. ":page:97",
+            Revision = 1,
+            RevisionId = "fcs32:97959595",
+            ContextRevisionId = "fcs32:98969696",
+        }
+        local retainedReply = BuildRemoteEnvelope(
+            "leader-b-bootstrap-floor",
+            "PAGE_UPSERT",
+            PageUpsert(retainedReference, installationB, "Beta-Realm"),
+            {
+                InstallationId = installationB,
+                ReplyTo = retainedRequestId,
+                Sequence = 110,
+            }
+        )
+        local retainedAccepted, retainedResult =
+            self:ReceiveProtocolMessage(protocol.PAGE_PREFIX, retainedReply, "WHISPER", "Beta-Realm")
+        assert(retainedAccepted, retainedResult)
+        local retainedCall = activeCalls[#activeCalls]
+        assert(
+            retainedCall.Name == "page-upsert"
+                and retainedCall.Options ~= nil
+                and retainedCall.Options.CorrelatedReply == true
+                and retainedCall.Options.AuthorityBootstrap == true,
+            "a correlated reply from the bound display authority must retain bootstrap privilege"
+        )
+
+        local retainedBroadcast = BuildRemoteEnvelope(
+            "leader-b-bootstrap-floor",
+            "PAGE_UPSERT",
+            PageUpsert(retainedReference, installationB, "Beta-Realm"),
+            {
+                InstallationId = installationB,
+                Sequence = 111,
+            }
+        )
+        local retainedBroadcastAccepted, retainedBroadcastResult =
+            self:ReceiveProtocolMessage(protocol.PAGE_PREFIX, retainedBroadcast, "RAID", "Beta-Realm")
+        assert(retainedBroadcastAccepted, retainedBroadcastResult)
+        local retainedBroadcastCall = activeCalls[#activeCalls]
+        assert(
+            retainedBroadcastCall.Name == "page-upsert" and retainedBroadcastCall.Options == nil,
+            "an uncorrelated broadcast must never receive correlated bootstrap privilege"
+        )
+
         -- Preserve the inverse valid arrival order too: DISPLAY seq 101 may bind
         -- first and wait for its already-sent PAGE seq 100. Exact ReplyTo
         -- correlation lets only that companion cross the established floor.
