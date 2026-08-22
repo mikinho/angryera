@@ -4380,12 +4380,19 @@ function AngryEra:CreateWindow()
     tree.treeframe:EnableKeyboard(true)
     tree.treeframe:SetPropagateKeyboardInput(true)
     tree.treeframe:SetScript("OnKeyDown", function(treeFrame, key)
+        local handled = false
         if key == "DELETE" then
             local selectedId = AngryEra:SelectedId()
             if selectedId and selectedId > 0 then
                 AngryEra_DeletePage(selectedId)
-                treeFrame:SetPropagateKeyboardInput(false)
+                handled = true
             end
+        end
+        -- Propagation must be restored on every keypress or the tree keeps
+        -- swallowing keyboard input; the call is protected during combat, so
+        -- leave the current state untouched there.
+        if not InCombatLockdown() then
+            treeFrame:SetPropagateKeyboardInput(not handled)
         end
     end)
 
