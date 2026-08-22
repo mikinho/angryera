@@ -1282,9 +1282,13 @@ function AngryEra:UpdateDisplayed()
         end)
     end
 
-    -- Render
+    -- Render. Lines are collected through gmatch because strsplit returns
+    -- every piece at once and errors on newline-heavy pages.
     self.display_text:Clear()
-    local lines = { strsplit("\n", text) }
+    local lines = {}
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        table.insert(lines, line)
+    end
     local lines_count = #lines
 
     for i = 1, lines_count do
